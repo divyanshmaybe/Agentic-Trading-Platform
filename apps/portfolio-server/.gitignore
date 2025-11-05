@@ -12,11 +12,8 @@ __pycache__/
 
 # Pipeline output files
 pipelines/**/*.jsonl
+pipelines/**/*.pdf
 pipelines/**/processed_announcements.json
-pipelines/**/backtest_*.jsonl
-pipelines/**/trading_signals.jsonl
-pipelines/**/backtest_metrics.jsonl
-pipelines/**/backtest_results.jsonl
 
 # Data files
 *.csv

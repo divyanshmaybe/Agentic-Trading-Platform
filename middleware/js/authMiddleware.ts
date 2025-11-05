@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from "express";
-import { ErrorHandling } from "./errorHandler.js";
-import { authClient } from "../shared/js/authService.client.js";
+import { ErrorHandling } from "./errorHandler";
+import { authClient } from "../../shared/js/authService.client";
 
 declare global {
   namespace Express {

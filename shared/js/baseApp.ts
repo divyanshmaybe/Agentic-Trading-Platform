@@ -18,7 +18,7 @@ import os from "os";
 import { QueueManager } from "./queueManager";
 import { RedisManager } from "./redisManager";
 
-import { errorHandler } from "../../middleware/errorHandler";
+import { errorHandler } from "../../middleware/js/errorHandler";
 import { BaseConfig } from "../../types/config";
 import webSocketService from "./webSocketServer";
 import { DatabaseManager } from "./dbManager";
