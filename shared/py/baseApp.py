@@ -8,29 +8,37 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 import logging
 import os
-from typing import Optional, Dict, Any
+import sys
+import uvicorn
+from typing import Optional, Dict, Any, Callable
 from contextlib import asynccontextmanager
 
-from .redisManager import RedisManager
-from .dbManager import DBManager
-from .queueManager import QueueManager
-from .emailService import EmailService
-from .webSocketServer import WebSocketServer
+# Add shared/py to path for imports
+_shared_py_path = os.path.dirname(os.path.abspath(__file__))
+if _shared_py_path not in sys.path:
+    sys.path.insert(0, _shared_py_path)
+
+from redisManager import RedisManager
+from dbManager import DBManager
+from queueManager import QueueManager
+from emailService import EmailService
+from webSocketServer import WebSocketServer
 
 
 class BaseApp:
     """Base FastAPI application with common utilities"""
 
-    def __init__(self, name: str, version: str = "1.0.0"):
+    def __init__(
+        self,
+        name: str,
+        version: str = "1.0.0",
+        custom_lifespan: Optional[Callable] = None,
+        custom_cors: Optional[Dict[str, Any]] = None,
+    ):
         self.name = name
         self.version = version
-        self.app = FastAPI(
-            title=name,
-            version=version,
-            docs_url="/docs",
-            redoc_url="/redoc"
-        )
-
+        self.custom_lifespan = custom_lifespan
+        
         # Initialize managers
         self.redis_manager: Optional[RedisManager] = None
         self.db_manager: Optional[DBManager] = None
@@ -41,14 +49,23 @@ class BaseApp:
         # Setup logging
         self._setup_logging()
 
+        # Create FastAPI app
+        lifespan_context = custom_lifespan if custom_lifespan else self._lifespan
+        self.app = FastAPI(
+            title=name,
+            version=version,
+            docs_url="/docs",
+            redoc_url="/redoc",
+            lifespan=lifespan_context,
+        )
+
         # Setup middleware
-        self._setup_middleware()
+        self._setup_middleware(custom_cors)
 
         # Setup routes
         self._setup_routes()
 
-        # Setup lifespan
-        self.app.router.lifespan_context = self._lifespan
+        # Error handling will be initialized separately via initialize_error_handling()
 
     def _setup_logging(self):
         """Setup application logging"""
@@ -58,22 +75,26 @@ class BaseApp:
         )
         self.logger = logging.getLogger(self.name)
 
-    def _setup_middleware(self):
+    def _setup_middleware(self, custom_cors: Optional[Dict[str, Any]] = None):
         """Setup FastAPI middleware"""
         # CORS middleware
+        cors_config = custom_cors or {
+            "allow_origins": ["*"],
+            "allow_credentials": True,
+            "allow_methods": ["*"],
+            "allow_headers": ["*"],
+        }
+        
         self.app.add_middleware(
             CORSMiddleware,
-            allow_origins=["*"],  # Configure as needed
-            allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
+            **cors_config
         )
 
         # Trusted host middleware (for production)
         if os.getenv("ENV") == "production":
             self.app.add_middleware(
                 TrustedHostMiddleware,
-                allowed_hosts=["*"]  # Configure allowed hosts
+                allowed_hosts=["*"]
             )
 
     def _setup_routes(self):
@@ -145,12 +166,86 @@ class BaseApp:
         if self.websocket_server:
             await self.websocket_server.disconnect()
 
+    def initialize_error_handling(self):
+        """Initialize error handling middleware"""
+        # Import error handler from middleware
+        try:
+            middleware_path = os.path.join(
+                os.path.dirname(__file__), "../../middleware/py"
+            )
+            if middleware_path not in sys.path:
+                sys.path.insert(0, middleware_path)
+            
+            from error_handler import error_handler
+            
+            async def exception_handler(request: Request, exc: Exception):
+                return await error_handler(request, exc)
+            
+            self.app.add_exception_handler(Exception, exception_handler)
+            self.logger.info("Error handling initialized")
+        except ImportError as e:
+            self.logger.warning(f"Error handler not found, using default: {e}")
+            # Fallback to default error handler
+            self.app.add_exception_handler(
+                Exception,
+                lambda request, exc: self.handle_error(request, exc)
+            )
+
+    def add_routes(self, path: str, router):
+        """Add routes to the application"""
+        self.app.include_router(router, prefix=path)
+
+    async def start(self, db: Optional[DBManager] = None, port: int = 8000):
+        """Start the server"""
+        if db:
+            await db.connect()
+            self.db_manager = db
+
+        # Initialize Redis if configured
+        if os.getenv("REDIS_HOST") and not self.redis_manager:
+            self.redis_manager = RedisManager()
+            await self.redis_manager.connect()
+
+        # Initialize Queue Manager if Redis is available
+        if self.redis_manager and not self.queue_manager:
+            self.queue_manager = QueueManager(self.redis_manager)
+
+        self.logger.info(f"🚀 {self.name} starting on port {port}")
+        config = uvicorn.Config(
+            app=self.app,
+            host="0.0.0.0",
+            port=port,
+            log_level="info",
+        )
+        server = uvicorn.Server(config)
+        await server.serve()
+
+    async def shutdown(self, db: Optional[DBManager] = None):
+        """Graceful shutdown"""
+        self.logger.info(f"🛑 Shutting down {self.name}")
+
+        if self.queue_manager:
+            await self.queue_manager.shutdown()
+
+        if self.redis_manager:
+            await self.redis_manager.disconnect()
+
+        if self.db_manager:
+            await self.db_manager.disconnect()
+        elif db:
+            await db.disconnect()
+
+        if self.websocket_server:
+            await self.websocket_server.disconnect()
+
+        self.logger.info(f"✅ {self.name} shutdown complete")
+
     def get_app(self) -> FastAPI:
         """Get the FastAPI application instance"""
         return self.app
 
     async def handle_error(self, request: Request, exc: Exception) -> JSONResponse:
-        """Global error handler"""
+        """Default error handler fallback"""
         self.logger.error(f"Error processing request: {exc}")
 
         if isinstance(exc, HTTPException):

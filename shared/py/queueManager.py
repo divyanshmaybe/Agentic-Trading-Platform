@@ -9,7 +9,15 @@ import logging
 from typing import Dict, Any, Optional, Callable
 from datetime import datetime
 
-from .redisManager import RedisManager
+import sys
+import os
+
+# Add shared/py to path for imports
+_shared_py_path = os.path.dirname(os.path.abspath(__file__))
+if _shared_py_path not in sys.path:
+    sys.path.insert(0, _shared_py_path)
+
+from redisManager import RedisManager
 
 
 class QueueManager:

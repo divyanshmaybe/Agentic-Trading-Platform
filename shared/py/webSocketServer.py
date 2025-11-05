@@ -6,11 +6,18 @@ Provides real-time communication using WebSockets
 import asyncio
 import json
 import logging
+import sys
+import os
 from typing import Dict, Set, Optional, Any
 from fastapi import WebSocket, WebSocketDisconnect
 import uuid
 
-from .redisManager import RedisManager
+# Add shared/py to path for imports
+_shared_py_path = os.path.dirname(os.path.abspath(__file__))
+if _shared_py_path not in sys.path:
+    sys.path.insert(0, _shared_py_path)
+
+from redisManager import RedisManager
 
 
 class WebSocketServer:
