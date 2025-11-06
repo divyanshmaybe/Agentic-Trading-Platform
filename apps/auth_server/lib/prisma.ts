@@ -37,8 +37,8 @@ const prismaClient = new PrismaClient({
 const db = DatabaseManager.getInstance(authConfig, prismaClient);
 
 // Export prisma client getter (lazy access - requires connection first)
-export function getPrismaClient() {
-  return db.getClient();
+export function getPrismaClient(): PrismaClientType {
+  return db.getClient() as PrismaClientType;
 }
 
 // Export prisma client for direct access (convenience)

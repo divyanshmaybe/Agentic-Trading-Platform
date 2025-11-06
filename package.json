@@ -9,6 +9,7 @@
     "check-types": "turbo run check-types"
   },
   "dependencies": {
+    "@prisma/client": "^5.20.0",
     "@sendgrid/mail": "^8.1.6",
     "axios": "^1.13.2",
     "body-parser": "^2.2.0",
@@ -41,6 +42,7 @@
     "@types/morgan": "^1.9.10",
     "@types/node": "^24.10.0",
     "prettier": "^3.6.2",
+    "prisma": "^5.20.0",
     "turbo": "^2.6.0",
     "typescript": "5.9.2"
   },

@@ -150,7 +150,7 @@ export class DatabaseManager {
     callback: (prisma: PrismaClient) => Promise<T>
   ): Promise<T> {
     const client = this.getClient();
-    return client.$transaction(callback);
+    return client.$transaction(callback as any) as Promise<T>;
   }
 
   /**
