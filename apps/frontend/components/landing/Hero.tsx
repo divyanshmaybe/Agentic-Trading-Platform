@@ -24,7 +24,7 @@ export function Hero() {
 				  <h1 className="text-4xl font-medium tracking-tight sm:text-5xl text-[#111827] drop-shadow-[0_1px_1.5px_rgba(0,0,0,0.15)] -translate-y-12 sm:-translate-y-20 md:-translate-y-28 lg:-translate-y-32">
             {hero.title}
           </h1>
-				  <p className="mx-auto mt-4 max-w-2xl text-lg text-[#374151] drop-shadow-[0_1px_1.5px_rgba(0,0,0,0.12)] -translate-y-12 sm:-translate-y-20 md:-translate-y-28 lg:-translate-y-32">
+				  <p className="mx-auto mt-4 max-w-2xl text-lg text-[#374151] drop-shadow-[0_1px_1.5px_rgba(0,0,0,0.12)] -translate-y-12 sm:-translate-y-20 md:-translate-y-28 lg:-translate-y-32 font-playfair">
             {hero.description}
           </p>
         </FadeIn>

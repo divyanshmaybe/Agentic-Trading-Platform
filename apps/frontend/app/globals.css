@@ -140,6 +140,8 @@ html { scroll-behavior: smooth; }
 }
 
 h1, h2, h3 { font-family: 'Playfair Display', serif; }
+/* Utility to apply Playfair Display anywhere (e.g., buttons) */
+.font-playfair { font-family: 'Playfair Display', serif; }
 
 /* App-wide vertical gradient that flows from dusk to deep, glassy dark
    with subtle indigo/violet/cyan glows toward the lower sections. */

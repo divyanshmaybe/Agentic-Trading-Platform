@@ -17,9 +17,9 @@ export function Header() {
     <header className="fixed inset-x-0 top-0 z-50 w-full bg-white/20 backdrop-blur-md backdrop-saturate-100 dark:bg-white/15">
       <Container className="flex h-16 items-center justify-between text-primary-foreground">
         <Link href="#" className="flex items-center gap-2 font-semibold">
-          <span className={cn("text-xl")}>{brand.name}</span>
+          <span className={cn("text-3xl font-playfair")}>{brand.name}</span>
         </Link>
-        <nav className="hidden items-center gap-6 text-sm font-medium md:flex">
+        <nav className="hidden items-center gap-6 text-lg font-playfair font-medium md:flex">
           {nav.map((item) => (
             <Link key={item.href} href={item.href} className="text-primary-foreground/90 hover:text-primary-foreground">
               {item.label}
