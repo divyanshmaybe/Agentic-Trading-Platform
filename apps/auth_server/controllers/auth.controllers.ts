@@ -651,3 +651,136 @@ export const googleLogin = async (
     next(err);
   }
 };
+
+export const getUsers = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    // Get authenticated user's organization_id
+    const organizationId = req.user?.organizationId;
+    if (!organizationId) {
+      return next(new ErrorHandling("Organization ID not found", 400));
+    }
+
+    // Parse query parameters
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 10;
+    const role = req.query.role as string | undefined; // 'admin' | 'staff' | 'viewer'
+    const status = req.query.status as string | undefined; // 'active' | 'suspended' | 'inactive'
+    const search = req.query.search as string | undefined; // Search by email, first_name, or last_name
+
+    // Validate pagination
+    if (page < 1) {
+      return next(new ErrorHandling("Page must be greater than 0", 400));
+    }
+    if (limit < 1 || limit > 100) {
+      return next(new ErrorHandling("Limit must be between 1 and 100", 400));
+    }
+
+    // Validate role filter
+    if (role && !["admin", "staff", "viewer"].includes(role)) {
+      return next(
+        new ErrorHandling("Role must be one of: admin, staff, viewer", 400)
+      );
+    }
+
+    // Validate status filter
+    if (status && !["active", "suspended", "inactive"].includes(status)) {
+      return next(
+        new ErrorHandling(
+          "Status must be one of: active, suspended, inactive",
+          400
+        )
+      );
+    }
+
+    // Build where clause
+    const where: any = {
+      organization_id: organizationId, // Filter by authenticated user's organization
+      deleted_at: null, // Only non-deleted users
+    };
+
+    // Add role filter
+    // When role=staff, include both staff and admin (since admins are also staff)
+    if (role) {
+      if (role === "staff") {
+        // Staff filter should include both staff and admin roles
+        where.role = { in: ["staff", "admin"] };
+      } else {
+        // For admin or viewer, filter by exact role
+        where.role = role;
+      }
+    }
+
+    // Add status filter
+    if (status) {
+      where.status = status;
+    }
+
+    // Add search filter (email, first_name, or last_name)
+    if (search) {
+      where.OR = [
+        { email: { contains: search, mode: "insensitive" } },
+        { first_name: { contains: search, mode: "insensitive" } },
+        { last_name: { contains: search, mode: "insensitive" } },
+      ];
+    }
+
+    // Calculate skip
+    const skip = (page - 1) * limit;
+
+    // Get total count for pagination metadata
+    const total = await prisma.user.count({ where });
+
+    // Fetch users with pagination
+    const users = await prisma.user.findMany({
+      where,
+      skip,
+      take: limit,
+      orderBy: { created_at: "desc" },
+      select: {
+        id: true,
+        email: true,
+        first_name: true,
+        last_name: true,
+        phone: true,
+        role: true,
+        status: true,
+        last_login_at: true,
+        two_factor_enabled: true,
+        created_at: true,
+        updated_at: true,
+        // Exclude sensitive fields: password_hash, two_factor_secret, metadata
+      },
+    });
+
+    // Calculate pagination metadata
+    const totalPages = Math.ceil(total / limit);
+    const hasNextPage = page < totalPages;
+    const hasPrevPage = page > 1;
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        users,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages,
+          hasNextPage,
+          hasPrevPage,
+        },
+        filters: {
+          role: role || null,
+          status: status || null,
+          search: search || null,
+        },
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};

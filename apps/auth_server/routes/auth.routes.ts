@@ -1,13 +1,13 @@
 import { Router } from "express";
 import {
   protectRoute,
-  isAdmin,
   isStaff,
   isUser,
 } from "../../../middleware/js/authMiddleware";
 import {
   changePassword,
   createUser,
+  getUsers,
   googleLogin,
   loginUser,
   logoutUser,
@@ -36,6 +36,7 @@ authRoutes.post("/logout", protectRoute, isUser, logoutUser);
 
 // Staff/Admin routes (staff or admin privileges required)
 authRoutes.post("/users", protectRoute, isStaff, createUser);
+authRoutes.get("/users", protectRoute, isStaff, getUsers);
 
 // User routes (any authenticated user)
 authRoutes.post("/user/update", protectRoute, isUser, updateUserProfile);
