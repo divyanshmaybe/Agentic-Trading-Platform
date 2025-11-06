@@ -10,7 +10,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
- 
 
 export function Header() {
   return (
@@ -27,9 +26,9 @@ export function Header() {
           ))}
         </nav>
         <div className="hidden items-center gap-3 md:flex">
-          <Button className="bg-[var(--brand-navy)] text-white hover:opacity-90">
-            Sign up
-          </Button>
+        	<Button asChild className="bg-(--brand-navy) text-white hover:opacity-90">
+            <Link href="/signup">Get Started</Link>
+			</Button>		
         </div>
         <div className="flex items-center gap-2 md:hidden">
           <DropdownMenu>
