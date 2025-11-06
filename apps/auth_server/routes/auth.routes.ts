@@ -1,12 +1,18 @@
 import { Router } from "express";
-import { protectRoute } from "../../../middleware/js/authMiddleware";
+import {
+  protectRoute,
+  isAdmin,
+  isStaff,
+  isUser,
+} from "../../../middleware/js/authMiddleware";
 import {
   changePassword,
-  googleAuth,
+  createUser,
+  googleLogin,
   loginUser,
   logoutUser,
   refreshToken,
-  registerUser,
+  registerOrganization,
   requestActivationEmail,
   requestPasswordEmail,
   updateUserProfile,
@@ -15,17 +21,23 @@ import {
 
 const authRoutes: Router = Router();
 
-authRoutes.post("/register", registerUser);
+// Public routes (no authentication required)
+authRoutes.post("/organizations/register", registerOrganization);
 authRoutes.post("/login", loginUser);
-authRoutes.post("/refresh-token", refreshToken);
-authRoutes.post("/logout", protectRoute, logoutUser);
+authRoutes.post("/google-login", googleLogin);
 authRoutes.post("/refresh-token", refreshToken);
 authRoutes.post("/request-password-mail", requestPasswordEmail);
 authRoutes.post("/request-activation-mail", requestActivationEmail);
 authRoutes.post("/change-password", changePassword);
 authRoutes.post("/verify-email", verifyEmail);
-authRoutes.post("/google-login", googleAuth);
-authRoutes.post("/user/update",protectRoute,updateUserProfile);
 
+// Protected routes (authentication required)
+authRoutes.post("/logout", protectRoute, isUser, logoutUser);
+
+// Staff/Admin routes (staff or admin privileges required)
+authRoutes.post("/users", protectRoute, isStaff, createUser);
+
+// User routes (any authenticated user)
+authRoutes.post("/user/update", protectRoute, isUser, updateUserProfile);
 
 export { authRoutes };

@@ -10,7 +10,8 @@ declare global {
         email: string;
         firstName: string;
         lastName: string;
-        role: "user" | "admin" | "trader" | "premium";
+        role: "admin" | "staff" | "viewer";
+        organizationId: string;
         isEmailVerified: boolean;
       };
     }
@@ -65,4 +66,69 @@ export const protectRoute = async (
     console.error("❌ Auth middleware error:", err);
     return next(new ErrorHandling("Not authorized, invalid token", 401));
   }
+};
+
+// Role-based middleware functions
+// These should be used AFTER protectRoute middleware
+
+/**
+ * Middleware to check if user is an admin
+ * Usage: router.get("/admin-only", protectRoute, isAdmin, handler);
+ */
+export const isAdmin = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  if (!req.user) {
+    return next(new ErrorHandling("Not authenticated", 401));
+  }
+
+  if (req.user.role !== "admin") {
+    return next(
+      new ErrorHandling("Access denied. Admin privileges required.", 403)
+    );
+  }
+
+  next();
+};
+
+/**
+ * Middleware to check if user is staff (staff or admin)
+ * Usage: router.get("/staff-only", protectRoute, isStaff, handler);
+ */
+export const isStaff = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  if (!req.user) {
+    return next(new ErrorHandling("Not authenticated", 401));
+  }
+
+  if (req.user.role !== "staff" && req.user.role !== "admin") {
+    return next(
+      new ErrorHandling("Access denied. Staff privileges required.", 403)
+    );
+  }
+
+  next();
+};
+
+/**
+ * Middleware to check if user is authenticated (any role)
+ * This is essentially the same as protectRoute but can be used for clarity
+ * Usage: router.get("/user-only", protectRoute, isUser, handler);
+ */
+export const isUser = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  if (!req.user) {
+    return next(new ErrorHandling("Not authenticated", 401));
+  }
+
+  // Any authenticated user can proceed
+  next();
 };

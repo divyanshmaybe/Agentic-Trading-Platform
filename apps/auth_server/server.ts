@@ -1,14 +1,11 @@
 import { BaseApp } from "../../shared/js/baseApp";
 import { QueueManager } from "../../shared/js/queueManager";
 import { authConfig } from "./config";
+import { databaseManager } from "./lib/prisma";
 import { authRoutes } from "./routes/auth.routes";
 import { internalRoutes } from "./routes/internal.routes";
 import { setupAuthQueues } from "./queue.setup";
 import { allowedOrigins } from "./config";
-import { DatabaseManager } from "../../shared/js/dbManager";
-
-// Initialize database
-const db = DatabaseManager.getInstance(authConfig);
 
 // Initialize queue manager
 const queueManager = QueueManager.getInstance();
@@ -18,11 +15,11 @@ const app = new BaseApp({
   serviceName: "BullReckon Auth Service",
   config: authConfig,
   enableSessions: true,
-  enableFileUpload: true,
+  enableFileUpload: false,
   enableQueues: true,
   customRateLimit: {
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 500, // Stricter for auth service
+    windowMs: 15 * 60 * 1000,
+    max: 500,
   },
   customCors: {
     origin: allowedOrigins,
@@ -40,15 +37,17 @@ app.initializeErrorHandling();
 
 // Start server and initialize auth-specific queues
 async function startServer() {
-  await app.start(db, authConfig.PORT);
+  await app.start(databaseManager, authConfig.PORT);
 
-  // Initialize auth server queues and workers
   if (app.queueManager) {
     await setupAuthQueues(app.queueManager);
   }
 }
 
-startServer();
+startServer().catch((error) => {
+  console.error("Failed to start server:", error);
+  process.exit(1);
+});
 
-process.on("SIGTERM", () => app.shutdown(db));
-process.on("SIGINT", () => app.shutdown(db));
+process.on("SIGTERM", () => app.shutdown(databaseManager));
+process.on("SIGINT", () => app.shutdown(databaseManager));

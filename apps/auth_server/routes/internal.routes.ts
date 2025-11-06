@@ -1,6 +1,6 @@
 import { Router } from "express";
 import jwt from "jsonwebtoken";
-import { User } from "../models/user";
+import { prisma } from "../lib/prisma";
 import { internalAuth } from "../../../middleware/js/internalAuthMiddleware";
 import { setUserFromApiEmail } from "../../../middleware/js/setUserFromApiEmail";
 
@@ -13,28 +13,50 @@ router.post("/validate-token", async (req, res) => {
   try {
     const { token } = req.body;
 
+    if (!token) {
+      return res.status(400).json({ error: "Token is required" });
+    }
+
     const decoded = jwt.verify(token, process.env.JWT_SECRET_ACCESS!) as any;
-    const user = await User.findById(decoded.id)
-      .select("firstName lastName email role isEmailVerified")
-      .lean();
+    const user = await prisma.user.findFirst({
+      where: { 
+        id: decoded.id,
+        deleted_at: null,
+      },
+      select: {
+        id: true,
+        email: true,
+        first_name: true,
+        last_name: true,
+        role: true,
+        organization_id: true,
+        status: true,
+      },
+    });
 
     if (!user) {
       return res.status(401).json({ error: "User not found" });
     }
 
+    if (user.status !== "active") {
+      return res.status(401).json({ error: "User account is not active" });
+    }
+
     res.json({
-      success: true,
+      valid: true,
       user: {
-        _id: decoded.id,
+        _id: user.id,
         email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
+        firstName: user.first_name,
+        lastName: user.last_name,
         role: user.role,
-        isEmailVerified: user.isEmailVerified,
+        organizationId: user.organization_id,
+        isEmailVerified: user.status === "active",
       },
     });
   } catch (error: any) {
     res.status(401).json({
+      valid: false,
       error:
         error.name === "TokenExpiredError" ? "Token expired" : "Invalid token",
     });
@@ -44,7 +66,10 @@ router.post("/validate-token", async (req, res) => {
 router.get("/get-user-email/:userId", async (req, res) => {
   try {
     const { userId } = req.params;
-    const user = await User.findById(userId).select("email").lean();
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true },
+    });
 
     if (!user) {
       return res.status(404).json({ error: "User not found" });
@@ -59,78 +84,74 @@ router.get("/get-user-email/:userId", async (req, res) => {
 router.get("/get-user-details/:userId", async (req, res) => {
   try {
     const { userId } = req.params;
-    const user = await User.findById(userId)
-      .select("_id firstName lastName email role isEmailVerified")
-      .lean();
+    const user = await prisma.user.findFirst({
+      where: { 
+        id: userId,
+        deleted_at: null,
+      },
+      select: {
+        id: true,
+        email: true,
+        first_name: true,
+        last_name: true,
+        role: true,
+        organization_id: true,
+        status: true,
+      },
+    });
 
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
-
-    res.json({ user });
-  } catch (error) {
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-router.post("/store-public-key", async (req, res) => {
-  try {
-    const { email, publicKey } = req.body;
-
-    if (!email || !publicKey) {
-      return res
-        .status(400)
-        .json({ error: "Email and public key are required" });
-    }
-
-    const user = await User.findOne({ email });
-
-    if (!user) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    user.apiKey = publicKey;
-    await user.save();
 
     res.json({
-      success: true,
-      message: "Public key stored successfully",
+      user: {
+        _id: user.id,
+        email: user.email,
+        firstName: user.first_name,
+        lastName: user.last_name,
+        role: user.role,
+        organizationId: user.organization_id,
+        isEmailVerified: user.status === "active",
+      },
     });
   } catch (error) {
-    console.error("Error storing public key:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
 
-// Get public key for verification
-router.get("/get-public-key/:email", async (req, res) => {
-  try {
-    const { email } = req.params;
-    const user = await User.findOne({ email }).select("apiKey").lean();
-
-    if (!user) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    res.json({ publicKey: user.apiKey });
-  } catch (error) {
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-// Get user by email (for internal API calls from api_server)
 router.get("/user-by-email/:email", async (req, res) => {
   try {
     const { email } = req.params;
-    const user = await User.findOne({ email })
-      .select("_id firstName lastName email role isEmailVerified")
-      .lean();
+    const user = await prisma.user.findFirst({
+      where: { email, deleted_at: null },
+      select: {
+        id: true,
+        email: true,
+        first_name: true,
+        last_name: true,
+        role: true,
+        organization_id: true,
+        status: true,
+      },
+    });
 
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
 
-    res.json({ success: true, user });
+    res.json({
+      success: true,
+      user: {
+        _id: user.id,
+        email: user.email,
+        firstName: user.first_name,
+        lastName: user.last_name,
+        role: user.role,
+        organizationId: user.organization_id,
+        isEmailVerified: user.status === "active",
+      },
+    });
   } catch (error) {
     console.error("Error fetching user by email:", error);
     res.status(500).json({ error: "Internal server error" });

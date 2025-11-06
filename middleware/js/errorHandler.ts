@@ -1,7 +1,6 @@
 import { NextFunction, Request, Response } from "express";
 import { HttpError } from "http-errors";
 import { ZodError } from "zod";
-import mongoose from "mongoose";
 
 interface ErrorResponse {
   error: {
@@ -46,18 +45,18 @@ export const errorHandler = (
     errorResponse.error.status = (err as HttpError).status;
     errorResponse.error.message = err.message;
   }
-  // Mongoose Validation Error
-  else if (err instanceof mongoose.Error.ValidationError) {
-    errorResponse.error.status = 400;
-    errorResponse.error.message = "Validation Error";
-    errorResponse.error.details = Object.values(err.errors).map((e) => e.message);
-  }
-  // Mongoose Duplicate Key Error
-  else if ((err as any).code === 11000) {
+  // Prisma Unique Constraint Error (P2002)
+  else if ((err as any).code === "P2002") {
     errorResponse.error.status = 400;
     errorResponse.error.message = "Duplicate field value";
-    const field = Object.keys((err as any).keyValue)[0];
+    const field = (err as any).meta?.target?.[0] || "field";
     errorResponse.error.details = `${field} already exists`;
+  }
+  // Prisma Validation Error
+  else if ((err as any).code?.startsWith("P")) {
+    errorResponse.error.status = 400;
+    errorResponse.error.message = "Database validation error";
+    errorResponse.error.details = (err as any).message || "Invalid data provided";
   }
   // Zod Validation Error
   else if (err instanceof ZodError) {

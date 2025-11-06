@@ -56,11 +56,11 @@ export async function setupAuthQueues(
     // Register queue events for monitoring
     const queueEvents = queueManager.registerQueueEvents("auth-emails");
 
-    queueEvents.on("completed", ({ jobId }) => {
+    queueEvents.on("completed", ({ jobId }: { jobId: string }) => {
       console.log(`✅ [Auth] Email job ${jobId} completed successfully`);
     });
 
-    queueEvents.on("failed", ({ jobId, failedReason }) => {
+    queueEvents.on("failed", ({ jobId, failedReason }: { jobId: string; failedReason: string }) => {
       console.error(`❌ [Auth] Email job ${jobId} failed:`, failedReason);
     });
 

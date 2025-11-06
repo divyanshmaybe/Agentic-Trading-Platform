@@ -1,19 +1,19 @@
-import mongoose from "mongoose";
 import jwt from "jsonwebtoken";
-import { User } from "../models/user";
+import { prisma } from "../lib/prisma";
 
-export const generateAccessToken = (user: any) => {
+export const generateAccessToken = (userId: string, role: string, organizationId: string) => {
   return jwt.sign(
-    { id: user._id, role: user.role },
+    { id: userId, role, organizationId },
     process.env.JWT_SECRET_ACCESS!,
     {
       expiresIn: "1d",
     }
   );
 };
-export const generateRefreshToken = (user: any) => {
+
+export const generateRefreshToken = (userId: string, role: string, organizationId: string) => {
   return jwt.sign(
-    { id: user._id, role: user.role },
+    { id: userId, role, organizationId },
     process.env.JWT_SECRET_REFRESH!,
     {
       expiresIn: "7d",
@@ -21,12 +21,16 @@ export const generateRefreshToken = (user: any) => {
   );
 };
 
-export const generateTokens = async (user_id: mongoose.Types.ObjectId) => {
-  const user = await User.findById(user_id);
+export const generateTokens = async (userId: string) => {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, role: true, organization_id: true },
+  });
+
   if (!user) throw new Error("User not found");
 
-  const accessToken = generateAccessToken(user);
-  const refreshToken = generateRefreshToken(user);
+  const accessToken = generateAccessToken(user.id, user.role, user.organization_id);
+  const refreshToken = generateRefreshToken(user.id, user.role, user.organization_id);
 
   return { accessToken, refreshToken };
 };

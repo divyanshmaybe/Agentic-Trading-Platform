@@ -5,7 +5,8 @@ export interface AuthUser {
   email: string;
   firstName: string;
   lastName: string;
-  role: "user" | "admin" | "trader" | "premium";
+  role: "admin" | "staff" | "viewer";
+  organizationId: string;
   isEmailVerified: boolean;
 }
 

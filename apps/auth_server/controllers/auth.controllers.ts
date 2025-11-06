@@ -9,78 +9,130 @@ import {
   sendWelcomeEmail,
 } from "../utils/emailUtils";
 import { AuthenticatedRequest } from "../../../types/auth";
+import { prisma } from "../lib/prisma";
 import { OAuth2Client } from "google-auth-library";
-import { Types } from "mongoose";
-import { User } from "../models/user";
 
-export const registerUser = async (
+export const registerOrganization = async (
   req: Request,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    const { firstName, lastName, email, password, photo } = req.body;
-    if (!firstName || !lastName || !email || !password) {
+    const {
+      name,
+      email,
+      phone,
+      address,
+      registration_number,
+      tax_id,
+      admin,
+    } = req.body;
+
+    if (!name || !email || !admin) {
       return next(
         new ErrorHandling(
-          "All fields (firstName, lastName, email, password) are required",
+          "Organization name, email, and admin details are required",
           400
         )
       );
     }
-    const existingUser = await User.findOne({ email });
+
+    if (!admin.email || !admin.password || !admin.first_name || !admin.last_name) {
+      return next(
+        new ErrorHandling(
+          "Admin email, password, first_name, and last_name are required",
+          400
+        )
+      );
+    }
+
+    const existingOrg = await prisma.organization.findUnique({
+      where: { email },
+    });
+
+    if (existingOrg) {
+      return next(
+        new ErrorHandling("Organization with this email already exists", 409)
+      );
+    }
+
+    const existingUser = await prisma.user.findFirst({
+      where: { email: admin.email },
+    });
+
     if (existingUser) {
       return next(
         new ErrorHandling("User with this email already exists", 409)
       );
     }
-    const userData: any = {
-      firstName,
-      lastName,
-      email,
-      password,
-      role: "user",
-      authMethod: "password",
-      isEmailVerified: false,
-    };
-    if (photo) userData.photo = photo;
 
-    const user = await User.create(userData);
-    await sendActivationEmail(user._id.toString(), user.email);
+    const passwordHash = await bcrypt.hash(admin.password, 12);
 
-    const { accessToken, refreshToken } = await generateTokens(user._id);
-    try {
-      res.cookie("refreshToken", refreshToken, {
-        httpOnly: true,
-        maxAge: 7 * 24 * 60 * 60 * 1000,
-        sameSite: "none",
-        secure: process.env.NODE_ENV === "production",
-        path: "/",
-      });
-      if (!user) {
-        return next(
-          new ErrorHandling("User not found after registration", 500)
-        );
-      }
-
-      return res.status(201).json({
-        status: "success",
-        message: "User registered successfully",
-        user: {
-          _id: user._id,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          photo: user.photo,
-          email: user.email,
-          role: user.role,
-          balance: user.balance,
+    const organization = await prisma.organization.create({
+      data: {
+        name,
+        email,
+        phone,
+        address,
+        registration_number,
+        tax_id,
+        status: "active",
+        subscription_tier: "basic",
+        users: {
+          create: {
+            email: admin.email,
+            password_hash: passwordHash,
+            first_name: admin.first_name,
+            last_name: admin.last_name,
+            role: "admin",
+            status: "active",
+          },
         },
-        accessToken,
-      });
-    } catch (err) {
-      return next(new ErrorHandling("Error while sending response", 500));
+      },
+      include: {
+        users: {
+          where: { email: admin.email },
+          take: 1,
+        },
+      },
+    });
+
+    const adminUser = organization.users[0];
+
+    await sendActivationEmail(adminUser.id, adminUser.email);
+
+    const { accessToken, refreshToken } = await generateTokens(adminUser.id);
+
+    res.cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      sameSite: "none",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+    });
+
+    return res.status(201).json({
+      success: true,
+      data: {
+        organization: {
+          id: organization.id,
+          name: organization.name,
+          email: organization.email,
+          status: organization.status,
+        },
+        admin: {
+          id: adminUser.id,
+          email: adminUser.email,
+          role: adminUser.role,
+        },
+        access_token: accessToken,
+        refresh_token: refreshToken,
+      },
+    });
+  } catch (err: any) {
+    if (err.code === "P2002") {
+      return next(new ErrorHandling("Email already exists", 409));
     }
-  } catch (err) {
     next(err);
   }
 };
@@ -91,64 +143,69 @@ export const loginUser = async (
   next: NextFunction
 ) => {
   try {
-    const { email, password } = req.body;
+    // Safety check for req.body
+    if (!req.body) {
+      return next(new ErrorHandling("Request body is missing", 400));
+    }
+
+    const { email, password, organization_id } = req.body;
+
     if (!email || !password) {
       return next(new ErrorHandling("Email and password are required", 400));
     }
 
-    const user = await User.findOne({ email }).select("+password");
-    if (!user || !user.password) {
-      return next(new ErrorHandling("Invalid email or password", 401));
-    }
-    // Check if user can login with password
-    if (!user.hasPasswordAuth()) {
-      return next(
-        new ErrorHandling(
-          "This account is registered with Google only. Please use Google login.",
-          401
-        )
-      );
-    }
-    // check user is verified
-    if (!user.isEmailVerified) {
-      return next(
-        new ErrorHandling("Please verify your email before logging in", 401)
-      );
+    const whereClause: any = { email, deleted_at: null };
+    if (organization_id) {
+      whereClause.organization_id = organization_id;
     }
 
-    const isMatch = await bcrypt.compare(password, user.password);
+    const user = await prisma.user.findFirst({
+      where: whereClause,
+    });
+
+    if (!user || !user.password_hash) {
+      return next(new ErrorHandling("Invalid email or password", 401));
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password_hash);
     if (!isMatch) {
       return next(new ErrorHandling("Invalid email or password", 401));
     }
 
-    const { accessToken, refreshToken } = await generateTokens(user._id);
-    try {
-      res.cookie("refreshToken", refreshToken, {
-        httpOnly: true,
-        maxAge: 7 * 24 * 60 * 60 * 1000,
-        sameSite: "none",
-        secure: process.env.NODE_ENV === "production",
-        path: "/",
-      });
-      user.lastLogin = new Date();
-      await user.save();
-
-      return res.status(200).json({
-        status: "success",
-        message: "Logged in successfully",
-        user: {
-          _id: user._id,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          photo: user.photo,
-          email: user.email,
-          balance: user.balance,
-        },
-        accessToken,
-      });
-    } catch (err) {
-      return next(new ErrorHandling("Error while sending response", 500));
+    if (user.status !== "active") {
+      return next(new ErrorHandling("Account is suspended or inactive", 401));
     }
+
+    const { accessToken, refreshToken } = await generateTokens(user.id);
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { last_login_at: new Date() },
+    });
+
+    res.cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      sameSite: "none",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        user: {
+          id: user.id,
+          role: user.role,
+          email: user.email,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          organization_id: user.organization_id,
+        },
+        access_token: accessToken,
+        refresh_token: refreshToken,
+      },
+    });
   } catch (err) {
     next(err);
   }
@@ -170,7 +227,7 @@ export const logoutUser = async (
   });
 
   return res.status(200).json({
-    status: "success",
+    success: true,
     message: "User logged out successfully",
   });
 };
@@ -181,7 +238,7 @@ export const refreshToken = async (
   next: NextFunction
 ) => {
   try {
-    const token = req.cookies.refreshToken;
+    const token = req.cookies.refreshToken || req.body.refresh_token;
     if (!token) {
       return next(new ErrorHandling("Refresh token not provided", 401));
     }
@@ -192,29 +249,32 @@ export const refreshToken = async (
     } catch (err) {
       return next(new ErrorHandling("Invalid or expired refresh token", 401));
     }
-    const user = await User.findById(decoded.id);
-    if (!user) {
+
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.id },
+    });
+
+    if (!user || user.deleted_at) {
       return next(new ErrorHandling("User not found", 401));
     }
 
-    const { accessToken, refreshToken } = await generateTokens(user._id);
-    try {
-      res.cookie("refreshToken", refreshToken, {
-        httpOnly: true,
-        maxAge: 7 * 24 * 60 * 60 * 1000,
-        sameSite: "none",
-        secure: process.env.NODE_ENV === "production",
-        path: "/",
-      });
+    const { accessToken, refreshToken: newRefreshToken } = await generateTokens(user.id);
 
-      return res.status(200).json({
-        status: "success",
-        message: "Token refreshed successfully",
-        accessToken,
-      });
-    } catch (err) {
-      return next(new ErrorHandling("Error while sending response", 500));
-    }
+    res.cookie("refreshToken", newRefreshToken, {
+      httpOnly: true,
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      sameSite: "none",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        access_token: accessToken,
+        refresh_token: newRefreshToken,
+      },
+    });
   } catch (err) {
     next(err);
   }
@@ -231,19 +291,18 @@ export const requestActivationEmail = async (
       return next(new ErrorHandling("Email is required", 400));
     }
 
-    const user = await User.findOne({ email });
+    const user = await prisma.user.findFirst({
+      where: { email, deleted_at: null },
+    });
+
     if (!user) {
       return next(new ErrorHandling("User with this email not found", 404));
     }
 
-    if (user.isEmailVerified) {
-      return next(new ErrorHandling("Email is already verified", 400));
-    }
-
-    await sendActivationEmail(user._id.toString(), user.email);
+    await sendActivationEmail(user.id, user.email);
 
     return res.status(200).json({
-      status: "success",
+      success: true,
       message: "Activation email sent successfully",
     });
   } catch (err) {
@@ -257,24 +316,23 @@ export const requestPasswordEmail = async (
   next: NextFunction
 ) => {
   try {
-    const { email, type } = req.body;
+    const { email } = req.body;
     if (!email) {
       return next(new ErrorHandling("Email is required", 400));
     }
 
-    const user = await User.findOne({ email });
+    const user = await prisma.user.findFirst({
+      where: { email, deleted_at: null },
+    });
+
     if (!user) {
       return next(new ErrorHandling("User with this email not found", 404));
     }
 
-    if (!user.hasPasswordAuth()) {
-      user.authMethod = "both"; // Enable password authentication
-      await user.save();
-    }
-    await sendPasswordResetEmail(user._id.toString(), user.email, type);
+    await sendPasswordResetEmail(user.id, user.email, "reset");
 
     return res.status(200).json({
-      status: "success",
+      success: true,
       message: "Password reset email sent successfully",
     });
   } catch (err) {
@@ -303,26 +361,25 @@ export const verifyEmail = async (
       return next(new ErrorHandling("Activation token is incorrect", 400));
     }
 
-    const user = await User.findById(decoded.id);
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.id },
+    });
+
     if (!user) {
       return next(new ErrorHandling("User not found", 404));
     }
 
-    if (user.isEmailVerified) {
-      return next(new ErrorHandling("Email is already verified", 400));
-    }
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { status: "active" },
+    });
 
-    user.isEmailVerified = true;
-    await user.save();
-
-    // Send welcome email after successful verification (non-blocking)
-    sendWelcomeEmail(user.email, user.firstName).catch((error) => {
+    sendWelcomeEmail(user.email, user.first_name).catch((error) => {
       console.error("Failed to send welcome email:", error);
-      // Don't fail the verification if welcome email fails
     });
 
     return res.status(200).json({
-      status: "success",
+      success: true,
       message: "Email verified successfully",
     });
   } catch (err) {
@@ -343,115 +400,101 @@ export const changePassword = async (
   let decoded: any;
   try {
     decoded = jwt.verify(token, process.env.JWT_SECRET_EMAIL!);
-    console.log("Decoded token:", decoded);
-  } catch (err) {
-    if (
-      typeof err === "object" &&
-      err !== null &&
-      "name" in err &&
-      (err as any).name === "TokenExpiredError"
-    ) {
-      return next(new ErrorHandling("Activation token has expired", 400));
+  } catch (err: any) {
+    if (err.name === "TokenExpiredError") {
+      return next(new ErrorHandling("Token has expired", 400));
     }
-    return next(new ErrorHandling("Activation token is incorrect", 400));
+    return next(new ErrorHandling("Invalid token", 400));
   }
 
-  const user = await User.findById(decoded.id).select("+password");
+  const user = await prisma.user.findUnique({
+    where: { id: decoded.id },
+  });
+
   if (!user) {
     return next(new ErrorHandling("User not found", 404));
   }
 
-  // Check if user can change password
-  if (!user.hasPasswordAuth()) {
-    user.authMethod = "both"; // Enable password authentication
-  }
+  const passwordHash = await bcrypt.hash(newPassword, 12);
 
-  user.password = newPassword;
-  await user.save();
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { password_hash: passwordHash },
+  });
 
   return res.status(200).json({
-    status: "success",
+    success: true,
     message: "Password changed successfully",
   });
 };
 
-export const googleAuth = async (
-  req: Request,
+export const createUser = async (
+  req: AuthenticatedRequest,
   res: Response,
   next: NextFunction
 ) => {
-  const googleClient = new OAuth2Client(
-    process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID
-  );
   try {
-    const { credential } = req.body;
-    const ticket = await googleClient.verifyIdToken({
-      idToken: credential,
-      audience: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID,
-    });
-    const payload = ticket.getPayload();
-    if (!payload) {
-      return next(new ErrorHandling("Invalid Google token", 401));
+    const { email, password, first_name, last_name, role } = (req as any).body;
+
+    if (!email || !password || !first_name || !last_name) {
+      return next(
+        new ErrorHandling(
+          "Email, password, first_name, and last_name are required",
+          400
+        )
+      );
     }
-    // console.log("Google payload:", payload);
-    const { sub: googleId, email, picture, family_name, given_name } = payload;
 
-    let isNewUser = false;
-    let user = await User.findOne({ email });
+    const organizationId = (req as AuthenticatedRequest).user?.organizationId || (req as any).body.organization_id;
+    if (!organizationId) {
+      return next(new ErrorHandling("Organization ID is required", 400));
+    }
 
-    if (!user) {
-      isNewUser = true;
-      user = await User.create({
-        googleId,
+    const existingUser = await prisma.user.findFirst({
+      where: {
         email,
-        firstName: given_name,
-        lastName: family_name,
-        photo: picture,
-        isEmailVerified: true,
-        authMethod: "google",
-      });
-    } else if (!user.googleId) {
-      user.googleId = googleId;
-      user.authMethod = "both";
-      await user.save();
-    }
-    const { accessToken, refreshToken } = await generateTokens(
-      user._id as Types.ObjectId
-    );
-    if (!user) {
-      return next(new ErrorHandling("User not found after registration", 500));
-    }
-    if (isNewUser) {
-      await sendWelcomeEmail(user.email, user.firstName);
-    }
-    try {
-      res.cookie("refreshToken", refreshToken, {
-        httpOnly: true,
-        maxAge: 7 * 24 * 60 * 60 * 1000,
-        sameSite: "none",
-        secure: process.env.NODE_ENV === "production",
-        path: "/",
-      });
-    } catch (error) {
-      console.error("Error setting cookie:", error);
-      return next(new ErrorHandling("Error while setting cookie", 500));
-    }
-
-    return res.json({
-      accessToken,
-      isNewUser,
-      user: {
-        _id: user._id,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        photo: user.photo,
-        email: user.email,
-        balance: user.balance,
+        organization_id: organizationId,
+        deleted_at: null,
       },
     });
-  } catch (error) {
-    console.error("Google auth error:", error);
-    return next(new ErrorHandling("Authentication failed", 401));
+
+    if (existingUser) {
+      return next(
+        new ErrorHandling("User with this email already exists", 409)
+      );
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+
+    const user = await prisma.user.create({
+      data: {
+        email,
+        password_hash: passwordHash,
+        first_name,
+        last_name,
+        role: role || "staff",
+        organization_id: organizationId,
+        status: "active",
+      },
+    });
+
+    await sendActivationEmail(user.id, user.email);
+
+    return res.status(201).json({
+      success: true,
+      data: {
+        id: user.id,
+        role: user.role,
+        email: user.email,
+        first_name: user.first_name,
+        last_name: user.last_name,
+      },
+    });
+  } catch (err: any) {
+    if (err.code === "P2002") {
+      return next(new ErrorHandling("User already exists", 409));
+    }
+    next(err);
   }
 };
 
@@ -461,36 +504,149 @@ export const updateUserProfile = async (
   next: NextFunction
 ) => {
   try {
-    const userId = req.user?._id;
-    const { firstName, lastName, photo } = req.body;
+    const userId = (req as AuthenticatedRequest).user?._id;
+    const { first_name, last_name, phone } = req.body;
 
-    const updateData: any = {};
-    if (firstName) updateData.firstName = firstName;
-    if (lastName) updateData.lastName = lastName;
-    if (photo) updateData.photo = photo;
-
-    const updatedUser = await User.findByIdAndUpdate(
-      userId,
-      { $set: updateData },
-      { new: true }
-    );
-
-    if (!updatedUser) {
-      return next(new ErrorHandling("User not found", 404));
+    if (!userId) {
+      return next(new ErrorHandling("User not authenticated", 401));
     }
 
+    const updateData: any = {};
+    if (first_name) updateData.first_name = first_name;
+    if (last_name) updateData.last_name = last_name;
+    if (phone) updateData.phone = phone;
+
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: updateData,
+    });
+
     return res.status(200).json({
-      status: "success",
-      message: "Profile updated successfully",
-      user: {
-        _id: updatedUser._id,
-        firstName: updatedUser.firstName,
-        lastName: updatedUser.lastName,
-        photo: updatedUser.photo,
+      success: true,
+      data: {
+        id: updatedUser.id,
         email: updatedUser.email,
-        balance: updatedUser.balance,
+        first_name: updatedUser.first_name,
+        last_name: updatedUser.last_name,
+        phone: updatedUser.phone,
+        role: updatedUser.role,
       },
     });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const googleLogin = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { credential, organization_id } = req.body;
+
+    if (!credential) {
+      return next(new ErrorHandling("Google credential is required", 400));
+    }
+
+    const googleClient = new OAuth2Client(
+      process.env.GOOGLE_CLIENT_ID || process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID
+    );
+
+    try {
+      const ticket = await googleClient.verifyIdToken({
+        idToken: credential,
+        audience:
+          process.env.GOOGLE_CLIENT_ID ||
+          process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID,
+      });
+
+      const payload = ticket.getPayload();
+      if (!payload) {
+        return next(new ErrorHandling("Invalid Google token", 401));
+      }
+
+      const { sub: googleId, email, picture, family_name, given_name } =
+        payload;
+
+      if (!email) {
+        return next(new ErrorHandling("Email not provided by Google", 400));
+      }
+
+      // Find user in database
+      let user = await prisma.user.findFirst({
+        where: {
+          email,
+          deleted_at: null,
+        },
+        include: {
+          organization: true,
+        },
+      });
+
+      // If organization_id is provided, ensure user belongs to it
+      if (organization_id) {
+        if (user && user.organization_id !== organization_id) {
+          return next(
+            new ErrorHandling(
+              "User does not belong to the specified organization",
+              403
+            )
+          );
+        }
+      }
+
+      // If user doesn't exist, they need to register first
+      if (!user) {
+        return next(
+          new ErrorHandling(
+            "User not found. Please register your organization first.",
+            404
+          )
+        );
+      }
+
+      // Update last login
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { last_login_at: new Date() },
+      });
+
+      // Generate tokens
+      const { accessToken, refreshToken } = await generateTokens(user.id);
+
+      res.cookie("refreshToken", refreshToken, {
+        httpOnly: true,
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+        sameSite: "none",
+        secure: process.env.NODE_ENV === "production",
+        path: "/",
+      });
+
+      return res.status(200).json({
+        success: true,
+        data: {
+          user: {
+            id: user.id,
+            email: user.email,
+            first_name: user.first_name,
+            last_name: user.last_name,
+            role: user.role,
+            organization_id: user.organization_id,
+            organization: {
+              id: user.organization.id,
+              name: user.organization.name,
+              email: user.organization.email,
+            },
+          },
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        },
+      });
+    } catch (error: any) {
+      console.error("Google auth error:", error);
+      return next(new ErrorHandling("Google authentication failed", 401));
+    }
   } catch (err) {
     next(err);
   }

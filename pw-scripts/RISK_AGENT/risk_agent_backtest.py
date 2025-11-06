@@ -9,8 +9,9 @@ simulating portfolio performance if actions were taken based on alerts.
 import pathway as pw
 import pandas as pd
 import numpy as np
+import json
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Any
 
 
 # Configuration
@@ -49,12 +50,12 @@ def simulate_risk_action(
     alert_price: float,
     alert_time_str: str,
     severity: str
-) -> tuple[float, str, str]:
+) -> str:
     """
     Simulate action taken based on risk alert
     Assumes: SELL on alert, then check if we should have bought back
     
-    Returns: (pnl_percent, exit_time_str, exit_reason)
+    Returns: JSON string with pnl_percent, exit_time, exit_reason
     """
     try:
         import yfinance as yf
@@ -76,12 +77,20 @@ def simulate_risk_action(
         )
         
         if data.empty:
-            return np.nan, alert_time_str, "no_data"
+            return json.dumps({
+                "pnl_percent": None,
+                "exit_time": alert_time_str,
+                "exit_reason": "no_data"
+            })
         
         # Filter data after alert time
         valid_data = data.loc[data.index >= alert_time]
         if valid_data.empty:
-            return np.nan, alert_time_str, "no_data"
+            return json.dumps({
+                "pnl_percent": None,
+                "exit_time": alert_time_str,
+                "exit_reason": "no_data"
+            })
         
         # Simulate: SELL at alert price, then track if price recovered
         # If price goes down further, we avoided loss (positive PnL)
@@ -136,14 +145,53 @@ def simulate_risk_action(
             exit_price = final_price
             exit_time = final_time
         
-        return (
-            pnl,
-            exit_time.strftime("%Y-%m-%d %H:%M:%S"),
-            exit_reason
-        )
+        return json.dumps({
+            "pnl_percent": float(pnl) if not (isinstance(pnl, float) and np.isnan(pnl)) else None,
+            "exit_time": exit_time.strftime("%Y-%m-%d %H:%M:%S"),
+            "exit_reason": exit_reason
+        })
         
     except Exception as e:
-        return np.nan, alert_time_str, f"error: {str(e)}"
+        return json.dumps({
+            "pnl_percent": None,
+            "exit_time": alert_time_str,
+            "exit_reason": f"error: {str(e)}"
+        })
+
+
+@pw.udf
+def extract_pnl(trade_result_json: str) -> float:
+    """Extract PnL from trade result JSON."""
+    try:
+        result = json.loads(trade_result_json)
+        pnl = result.get("pnl_percent")
+        if pnl is not None:
+            return float(pnl)
+    except:
+        pass
+    return 0.0
+
+
+@pw.udf
+def extract_exit_time(trade_result_json: str) -> str:
+    """Extract exit time from trade result JSON."""
+    try:
+        result = json.loads(trade_result_json)
+        return result.get("exit_time", "")
+    except:
+        pass
+    return ""
+
+
+@pw.udf
+def extract_exit_reason(trade_result_json: str) -> str:
+    """Extract exit reason from trade result JSON."""
+    try:
+        result = json.loads(trade_result_json)
+        return result.get("exit_reason", "error")
+    except:
+        pass
+    return "error"
 
 
 def create_risk_backtest_pipeline(alerts_table: pw.Table) -> pw.Table:
@@ -160,36 +208,42 @@ def create_risk_backtest_pipeline(alerts_table: pw.Table) -> pw.Table:
     # Get current timestamp for alert time
     alerts_with_time = alerts_table.select(
         *pw.this,
-        alert_time=pw.apply(lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"), pw.this.ticker)
+        alert_time=pw.apply(lambda ticker: datetime.now().strftime("%Y-%m-%d %H:%M:%S"), pw.this.ticker)
     )
     
-    # Simulate actions
-    backtest_results = alerts_with_time.select(
+    # Simulate actions - call UDF directly (not with pw.apply)
+    with_trade_result = alerts_with_time.select(
         ticker=pw.this.ticker,
         alert_time=pw.this.alert_time,
         severity=pw.this.severity,
         alert_price=pw.this.current_price,
-        trade_result=pw.apply(
-            simulate_risk_action,
+        trade_result=simulate_risk_action(
             pw.this.ticker,
             pw.this.current_price,
             pw.this.alert_time,
             pw.this.severity
         )
+    )
+    
+    # Extract each element from the tuple using helper UDFs
+    backtest_results = with_trade_result.select(
+        ticker=pw.this.ticker,
+        alert_time=pw.this.alert_time,
+        severity=pw.this.severity,
+        alert_price=pw.this.alert_price,
+        pnl_percent=extract_pnl(pw.this.trade_result),
+        exit_time=extract_exit_time(pw.this.trade_result),
+        exit_reason=extract_exit_reason(pw.this.trade_result)
     ).select(
         ticker=pw.this.ticker,
         alert_time=pw.this.alert_time,
         severity=pw.this.severity,
         alert_price=pw.this.alert_price,
-        pnl_percent=pw.this.trade_result[0],
-        exit_time=pw.this.trade_result[1],
-        exit_reason=pw.this.trade_result[2]
-    ).select(
-        ticker=pw.this.ticker,
-        alert_time=pw.this.alert_time,
-        severity=pw.this.severity,
-        alert_price=pw.this.alert_price,
-        exit_price=pw.this.alert_price * (1 + pw.this.pnl_percent),  # Approximate
+        exit_price=pw.apply(
+            lambda price, pnl: price * (1 + pnl) if not (isinstance(pnl, float) and np.isnan(pnl)) else price,
+            pw.this.alert_price,
+            pw.this.pnl_percent
+        ),
         exit_time=pw.this.exit_time,
         pnl_percent=pw.this.pnl_percent,
         exit_reason=pw.this.exit_reason

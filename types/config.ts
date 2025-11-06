@@ -1,11 +1,16 @@
 export interface BaseConfig {
-  NODE_ENV: 'development' | 'production' | 'test';
-  PORT: number;
-  DB_URL: string;
-  SESSION_SECRET: string;
-  CLIENT_URL: string;
+  NODE_ENV?: 'development' | 'production' | 'test';
+  PORT?: number;
+  DB_URL?: string; // Legacy MongoDB URL (deprecated, use DATABASE_URL)
+  DATABASE_URL?: string; // PostgreSQL/Prisma connection string
+  SESSION_SECRET?: string;
+  CLIENT_URL?: string;
   JWT_SECRET?: string;
   JWT_REFRESH_SECRET?: string;
+  JWT_SECRET_ACCESS?: string;
+  JWT_SECRET_REFRESH?: string;
+  JWT_SECRET_EMAIL?: string;
+  INTERNAL_SERVICE_SECRET?: string;
 }
 
 export interface AuthConfig extends BaseConfig {

@@ -1,0 +1,59 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Organization {
+  id                  String    @id @default(uuid())
+  name                String
+  email               String    @unique
+  phone               String?
+  address             String?
+  registration_number String?
+  tax_id              String?
+  status              String    @default("active") // 'active' | 'suspended' | 'inactive'
+  subscription_tier   String    @default("basic") // 'basic' | 'standard' | 'premium' | 'enterprise'
+  billing_cycle        String?  // 'monthly' | 'quarterly' | 'annual'
+  metadata            Json?     @default("{}")
+  created_at          DateTime  @default(now())
+  updated_at          DateTime  @updatedAt
+  deleted_at          DateTime?
+
+  users               User[]
+
+  @@index([email])
+  @@index([status])
+  @@map("organizations")
+}
+
+model User {
+  id                  String    @id @default(uuid())
+  organization_id     String
+  email               String
+  password_hash       String?
+  first_name          String
+  last_name           String
+  phone               String?
+  role                String    @default("staff") // 'admin' | 'staff' | 'viewer'
+  status              String    @default("active") // 'active' | 'suspended' | 'inactive'
+  last_login_at       DateTime?
+  two_factor_enabled  Boolean   @default(false)
+  two_factor_secret   String?
+  metadata            Json?     @default("{}")
+  created_at          DateTime  @default(now())
+  updated_at          DateTime  @updatedAt
+  deleted_at          DateTime?
+
+  organization        Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+
+  @@unique([organization_id, email])
+  @@index([email])
+  @@index([organization_id])
+  @@index([status])
+  @@map("users")
+}
+

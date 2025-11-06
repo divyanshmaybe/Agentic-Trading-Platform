@@ -14,6 +14,9 @@ Usage:
 """
 
 import os
+import sys
+import signal
+import atexit
 import pathway as pw
 from risk_agent_pipeline import (
     build_risk_agent_pipeline,
@@ -90,21 +93,47 @@ def main():
     print(f"Backtest metrics will be written to: {metrics_file}")
     print("=" * 60)
     
-    try:
-        pw.run(monitoring_level=pw.MonitoringLevel.NONE)
-    except KeyboardInterrupt:
+    # Register exit handler to prevent segfault during cleanup
+    def exit_handler():
+        """Exit immediately to prevent Pathway cleanup segfault"""
+        if all(os.path.exists(f) for f in [alerts_file, backtest_file, metrics_file]):
+            # Files are written, exit immediately
+            os._exit(0)
+    
+    atexit.register(exit_handler)
+    
+    def signal_handler(sig, frame):
+        """Handle interrupt signal gracefully"""
         print("\n\nPipeline stopped by user.")
-        print(f"✓ Alerts written to {alerts_file}")
-        print(f"✓ Backtest results written to {backtest_file}")
-        print(f"✓ Metrics written to {metrics_file}")
-    except Exception as e:
-        print(f"\nPipeline completed with status: {type(e).__name__}")
         if os.path.exists(alerts_file):
             print(f"✓ Alerts written to {alerts_file}")
         if os.path.exists(backtest_file):
             print(f"✓ Backtest results written to {backtest_file}")
         if os.path.exists(metrics_file):
             print(f"✓ Metrics written to {metrics_file}")
+        os._exit(0)
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    try:
+        # Run pipeline - segfault may occur during cleanup, but data is written
+        pw.run(monitoring_level=pw.MonitoringLevel.NONE)
+    except KeyboardInterrupt:
+        signal_handler(signal.SIGINT, None)
+    except Exception as e:
+        print(f"\nPipeline error: {type(e).__name__}: {e}")
+    
+    # If we get here, check if files were written
+    if all(os.path.exists(f) for f in [alerts_file, backtest_file, metrics_file]):
+        print("\n\nPipeline completed successfully.")
+        print(f"✓ Alerts written to {alerts_file}")
+        print(f"✓ Backtest results written to {backtest_file}")
+        print(f"✓ Metrics written to {metrics_file}")
+    
+    # Exit immediately to avoid segfault during cleanup
+    # Note: Segfault may still occur in Pathway's Rust backend, but data is safe
+    os._exit(0)
 
 
 if __name__ == "__main__":
