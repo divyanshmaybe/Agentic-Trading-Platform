@@ -1,12 +1,13 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useCallback, useMemo, useState } from "react"
 import "@/lib/chart"
 import { Line } from "react-chartjs-2"
 import { Container } from "@/components/shared/Container"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { useForm } from "react-hook-form"
+import { AppHeader } from "@/components/layout/AppHeader"
 import {
   DashboardData,
   Investor,
@@ -135,6 +136,18 @@ export default function AdminDashboardPage() {
     }
   }, [months, totals, topK])
 
+  const handleLogout = useCallback(() => {
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("access_token")
+      localStorage.removeItem("refresh_token")
+      localStorage.removeItem("user_id")
+      localStorage.removeItem("organization_id")
+    }
+    if (typeof window !== "undefined") {
+      window.location.href = "/login"
+    }
+  }, [])
+
   function handleRoleChange(id: string, role: Investor["role"]) {
     const idx = formUsers.findIndex((u) => u.id === id)
     if (idx >= 0) setValue(`users.${idx}.role`, role, { shouldDirty: true })
@@ -154,14 +167,16 @@ export default function AdminDashboardPage() {
   }
 
   return (
-    <main className="py-6">
-      <Container className="space-y-6">
+    <>
+      <AppHeader subtitle="admin" onLogout={handleLogout} className="bg-black" />
+      <main className="py-6">
+        <Container className="space-y-6">
         {/* Grid */}
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
           {/* Stats card */}
           <Card className="card-glass neon-hover rounded-2xl lg:col-span-6">
             <CardHeader>
-              <CardTitle className="h-title text-xl">Key Financial Stats</CardTitle>
+              <CardTitle className="h-title text-xl`">Key Financial Stats</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -285,8 +300,9 @@ export default function AdminDashboardPage() {
             </CardContent>
           </form>
         </div>
-      </Container>
-    </main>
+        </Container>
+      </main>
+    </>
   )
 }
 
