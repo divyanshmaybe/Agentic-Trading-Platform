@@ -371,7 +371,7 @@ You must return a structured json output in the following format:
  Do not return anything apart from this, such as here's the summary or here's the answer.
 """)]
 
-        prompts.append(HumanMessage(f"""Here is the sector based analysis: f{sector_analysis}.
+        prompts.append(HumanMessage(f"""Here is the sector based analysis: {sector_analysis}.
                                     Here is the json for the technical indicators for nifty 500
                                     stocks: {tech_json}"""))
         
@@ -381,7 +381,12 @@ You must return a structured json output in the following format:
             api_key=api_key
         )
         decision = model.invoke(prompts)
-        return decision.content if hasattr(decision, 'content') else str(decision)
+        try:
+            json_array = json.loads(decision.content)
+            return json_array
+        except Exception as e:
+            print(f"[WARN] Failed to parse JSON output: {e}")
+            return []
     except Exception as e:
         import traceback
         error_msg = f"Error generating stock recommendations: {str(e)}\n{traceback.format_exc()}"
