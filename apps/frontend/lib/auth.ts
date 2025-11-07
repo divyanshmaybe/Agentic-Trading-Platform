@@ -61,8 +61,92 @@ type AuthApiError = {
   errors?: Record<string, string[]> | string
 }
 
+export type CreateUserPayload = {
+  email: string
+  password: string
+  first_name: string
+  last_name: string
+  role: "staff" | "viewer" | "customer"
+}
+
+export type CreateUserResponse = {
+  success: boolean
+  data: {
+    id: string
+    role: string
+    email: string
+    first_name: string
+    last_name: string
+  }
+}
+
+export type UserRole = "admin" | "staff" | "viewer"
+
+export type UserStatus = "active" | "suspended" | "inactive"
+
+export type AuthUserSummary = {
+  id: string
+  email: string
+  first_name: string
+  last_name: string
+  phone: string | null
+  role: UserRole
+  status: UserStatus
+  last_login_at: string | null
+  two_factor_enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+export type GetUsersParams = {
+  role?: UserRole
+  status?: UserStatus
+  search?: string
+  page?: number
+  limit?: number
+}
+
+export type GetUsersResponse = {
+  success: boolean
+  data: {
+    users: AuthUserSummary[]
+    pagination: {
+      page: number
+      limit: number
+      total: number
+      totalPages: number
+      hasNextPage: boolean
+      hasPrevPage: boolean
+    }
+    filters: {
+      role: UserRole | null
+      status: UserStatus | null
+      search: string | null
+    }
+  }
+}
+
+export type UpdateUserPayload = {
+  role?: UserRole
+  status?: UserStatus
+}
+
+export type UpdateUserResponse = {
+  success: boolean
+  data: AuthUserSummary
+}
+
 const AUTH_BASE_URL =
   process.env.NEXT_PUBLIC_AUTH_BASE_URL ?? "http://localhost:4000/api/auth"
+
+function resolveAccessToken(explicitToken?: string) {
+  if (explicitToken) return explicitToken
+  if (typeof window !== "undefined") {
+    const token = localStorage.getItem("access_token")
+    if (token) return token
+  }
+  throw new Error("Missing access token. Please log in again.")
+}
 
 async function request<T>(path: string, options: RequestInit): Promise<T> {
   const response = await fetch(`${AUTH_BASE_URL}${path}`, {
@@ -117,4 +201,59 @@ export async function login(payload: LoginPayload) {
   })
 }
 
+export async function createUser(payload: CreateUserPayload, accessToken?: string) {
+  const token = resolveAccessToken(accessToken)
+
+  const normalizedPayload = {
+    ...payload,
+    role: payload.role === "customer" ? "viewer" : payload.role,
+  }
+
+  return request<CreateUserResponse>("/users", {
+    method: "POST",
+    body: JSON.stringify(normalizedPayload),
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+}
+
 export type { AuthApiError }
+
+export async function getUsers(params: GetUsersParams = {}, accessToken?: string) {
+  const token = resolveAccessToken(accessToken)
+
+  const searchParams = new URLSearchParams()
+
+  if (params.role) searchParams.set("role", params.role)
+  if (params.status) searchParams.set("status", params.status)
+  if (params.search) searchParams.set("search", params.search)
+  if (params.page) searchParams.set("page", String(params.page))
+  if (params.limit) searchParams.set("limit", String(params.limit))
+
+  const query = searchParams.toString()
+  const path = `/users${query ? `?${query}` : ""}`
+
+  return request<GetUsersResponse>(path, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+}
+
+export async function updateUser(
+  userId: string,
+  payload: UpdateUserPayload,
+  accessToken?: string,
+) {
+  const token = resolveAccessToken(accessToken)
+
+  return request<UpdateUserResponse>(`/users/${userId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+}

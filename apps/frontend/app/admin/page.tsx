@@ -1,39 +1,66 @@
 "use client"
 
-import { useCallback, useMemo, useState } from "react"
-import "@/lib/chart"
-import { Line } from "react-chartjs-2"
-import { Container } from "@/components/shared/Container"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { useForm } from "react-hook-form"
+
+import { CompanySettingsCard } from "@/components/admin/CompanySettingsCard"
+import { CreateUserModal } from "@/components/admin/CreateUserModal"
+import { FinancialStatsCard } from "@/components/admin/FinancialStatsCard"
+import { PerformanceCard } from "@/components/admin/PerformanceCard"
+import { UserManagementCard } from "@/components/admin/UserManagementCard"
+import type { AdminSettingsForm, AdminSettingsUserField, CreateUserFormValues, DirectoryUser } from "@/components/admin/types"
+import { Container } from "@/components/shared/Container"
 import { AppHeader } from "@/components/layout/AppHeader"
+import { createUser, getUsers, type AuthUserSummary, type UserRole, updateUser } from "@/lib/auth"
+import "@/lib/chart"
 import {
-  DashboardData,
-  Investor,
+  type DashboardData,
   computeRoiPct,
   formatCurrency,
   getDashboardData,
   getTopKInvestors,
 } from "@/lib/dashboardData"
 
-type SettingsForm = {
-  users: { id: string; role: Investor["role"]; active: boolean }[]
-}
-
 export default function AdminDashboardPage() {
   const initial: DashboardData = getDashboardData()
   const [data] = useState<DashboardData>(initial)
 
-  const { register, handleSubmit, watch, setValue } = useForm<SettingsForm>({
+  const {
+    register: registerSettings,
+    handleSubmit: handleSettingsSubmit,
+    reset: resetSettingsForm,
+  } = useForm<AdminSettingsForm>({
     defaultValues: {
-      users: data.investors.map((u) => ({ id: u.id, role: "Viewer", active: true })),
+      users: [],
     },
   })
-  const formUsers = watch("users")
 
   const [saving, setSaving] = useState(false)
   const [savedAt, setSavedAt] = useState<number | null>(null)
+  const [settingsError, setSettingsError] = useState<string | null>(null)
+  const [settingsSuccess, setSettingsSuccess] = useState<string | null>(null)
+
+  const {
+    register: registerCreateUser,
+    handleSubmit: handleCreateUserSubmit,
+    reset: resetCreateUserForm,
+    formState: { errors: createUserErrors },
+  } = useForm<CreateUserFormValues>({
+    defaultValues: {
+      role: "staff",
+    },
+  })
+
+  const [creatingUser, setCreatingUser] = useState(false)
+  const [createUserError, setCreateUserError] = useState<string | null>(null)
+  const [createUserSuccess, setCreateUserSuccess] = useState<string | null>(null)
+
+  const [teamUsers, setTeamUsers] = useState<AuthUserSummary[]>([])
+  const [customerUsers, setCustomerUsers] = useState<AuthUserSummary[]>([])
+  const [usersLoading, setUsersLoading] = useState(false)
+  const [usersError, setUsersError] = useState<string | null>(null)
+  const [selectedRoles, setSelectedRoles] = useState<UserRole[]>(["admin", "staff", "viewer"])
+  const [isCreateUserModalOpen, setCreateUserModalOpen] = useState(false)
 
   const months = data.months
   const totals = data.companyTotals
@@ -42,6 +69,163 @@ export default function AdminDashboardPage() {
   const roiPct = computeRoiPct(totals)
 
   const topK = useMemo(() => getTopKInvestors(data.investors, 3), [data.investors])
+
+  const formatUserName = useCallback((user: AuthUserSummary) => {
+    const fullName = `${user.first_name} ${user.last_name}`.trim()
+    return fullName || user.email
+  }, [])
+
+  const teamDirectory = useMemo<DirectoryUser[]>(
+    () =>
+      teamUsers.map((user) => ({
+        id: user.id,
+        name: formatUserName(user),
+        email: user.email,
+        role: user.role,
+        status: user.status,
+        lastActive: formatLastActive(user.last_login_at),
+      })),
+    [teamUsers, formatUserName],
+  )
+
+  const customerDirectory = useMemo<DirectoryUser[]>(
+    () =>
+      customerUsers.map((user) => ({
+        id: user.id,
+        name: formatUserName(user),
+        email: user.email,
+        role: user.role,
+        status: user.status,
+        lastActive: formatLastActive(user.last_login_at),
+      })),
+    [customerUsers, formatUserName],
+  )
+
+  const combinedDirectory = useMemo(() => {
+    const merged = [...teamDirectory, ...customerDirectory]
+    return merged.sort((a, b) => a.name.localeCompare(b.name))
+  }, [teamDirectory, customerDirectory])
+
+  const filteredDirectory = useMemo(
+    () => combinedDirectory.filter((user) => selectedRoles.includes(user.role as UserRole)),
+    [combinedDirectory, selectedRoles],
+  )
+
+  const teamById = useMemo(() => {
+    const map = new Map<string, AuthUserSummary>()
+    teamUsers.forEach((user) => {
+      map.set(user.id, user)
+    })
+    return map
+  }, [teamUsers])
+
+  const settingsUsers = useMemo<AdminSettingsUserField[]>(
+    () =>
+      teamUsers.map((user, idx) => ({
+        id: user.id,
+        name: formatUserName(user),
+        email: user.email,
+        roleField: `users.${idx}.role` as const,
+        activeField: `users.${idx}.active` as const,
+      })),
+    [teamUsers, formatUserName],
+  )
+
+  useEffect(() => {
+    resetSettingsForm({
+      users: teamUsers.map((user) => ({
+        id: user.id,
+        role: user.role,
+        active: user.status === "active",
+      })),
+    })
+  }, [teamUsers, resetSettingsForm])
+
+  const fetchUsers = useCallback(async () => {
+    setUsersLoading(true)
+    setUsersError(null)
+
+    try {
+      const [staffResponse, customerResponse, adminResponse] = await Promise.all([
+        getUsers({ role: "staff", limit: 50 }),
+        getUsers({ role: "viewer", limit: 50 }),
+        getUsers({ role: "admin", limit: 50 }),
+      ])
+
+      const combinedTeam = [...adminResponse.data.users, ...staffResponse.data.users]
+      const uniqueTeamById = new Map<string, AuthUserSummary>()
+      combinedTeam.forEach((user) => {
+        uniqueTeamById.set(user.id, user)
+      })
+
+      const sortedTeam = Array.from(uniqueTeamById.values()).sort((a, b) => {
+        const nameA = `${a.first_name} ${a.last_name}`.trim().toLowerCase()
+        const nameB = `${b.first_name} ${b.last_name}`.trim().toLowerCase()
+        return nameA.localeCompare(nameB)
+      })
+
+      setTeamUsers(sortedTeam)
+      setCustomerUsers(customerResponse.data.users)
+    } catch (error) {
+      setUsersError(error instanceof Error ? error.message : "Unable to load users")
+      setTeamUsers([])
+      setCustomerUsers([])
+    } finally {
+      setUsersLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void fetchUsers()
+  }, [fetchUsers])
+
+  useEffect(() => {
+    if (!settingsError && !settingsSuccess) {
+      return
+    }
+
+    const timer = window.setTimeout(() => {
+      setSettingsError(null)
+      setSettingsSuccess(null)
+    }, 5000)
+
+    return () => window.clearTimeout(timer)
+  }, [settingsError, settingsSuccess])
+
+  useEffect(() => {
+    if (!createUserError && !createUserSuccess) {
+      return
+    }
+
+    const timer = window.setTimeout(() => {
+      setCreateUserError(null)
+      setCreateUserSuccess(null)
+    }, 5000)
+
+    return () => window.clearTimeout(timer)
+  }, [createUserError, createUserSuccess])
+
+  const financialMetrics = useMemo(
+    () => [
+      {
+        label: "Total Investment",
+        value: formatCurrency(totalInvestment),
+        title: "Total invested capital to date",
+      },
+      {
+        label: "Total Profit",
+        value: formatCurrency(totalProfit),
+        title: "Profit accumulated across all strategies",
+      },
+      {
+        label: "ROI",
+        value: `${roiPct.toFixed(1)}%`,
+        valueClassName: roiPct >= 0 ? "text-[#00FF88]" : "text-rose-400",
+        title: "Return on investment for the period",
+      },
+    ],
+    [roiPct, totalInvestment, totalProfit],
+  )
 
   const chart = useMemo(() => {
     const gradientFor = (ctx: CanvasRenderingContext2D) => {
@@ -102,7 +286,7 @@ export default function AdminDashboardPage() {
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        animation: { duration: 700, easing: "easeOutQuart" },
+        animation: { duration: 700, easing: "easeOutQuart" as const },
         plugins: {
           legend: {
             labels: {
@@ -148,181 +332,160 @@ export default function AdminDashboardPage() {
     }
   }, [])
 
-  function handleRoleChange(id: string, role: Investor["role"]) {
-    const idx = formUsers.findIndex((u) => u.id === id)
-    if (idx >= 0) setValue(`users.${idx}.role`, role, { shouldDirty: true })
-  }
-  function handleActiveToggle(id: string, active: boolean) {
-    const idx = formUsers.findIndex((u) => u.id === id)
-    if (idx >= 0) setValue(`users.${idx}.active`, active, { shouldDirty: true })
-  }
-  function onSubmit(values: SettingsForm) {
-    setSaving(true)
-    setTimeout(() => {
-      setSaving(false)
-      setSavedAt(Date.now())
-      // eslint-disable-next-line no-console
-      console.log("Saved settings", values)
-    }, 700)
-  }
+  const handleSettingsSave = useCallback(
+    async (values: AdminSettingsForm) => {
+      setSaving(true)
+      setSettingsError(null)
+      setSettingsSuccess(null)
+
+      try {
+        const pendingUpdates = values.users
+          .map((formUser) => {
+            const original = teamById.get(formUser.id)
+            if (!original) return null
+
+            const updates: { role?: "admin" | "staff" | "viewer"; status?: "active" | "inactive" } = {}
+
+            if (formUser.role !== original.role) {
+              updates.role = formUser.role
+            }
+
+            const originalActive = original.status === "active"
+            if (formUser.active !== originalActive) {
+              updates.status = formUser.active ? "active" : "inactive"
+            }
+
+            if (!Object.keys(updates).length) {
+              return null
+            }
+
+            return updateUser(formUser.id, updates)
+          })
+          .filter((update): update is ReturnType<typeof updateUser> => Boolean(update))
+
+        if (!pendingUpdates.length) {
+          setSettingsSuccess("No changes to save.")
+          setSavedAt(Date.now())
+          return
+        }
+
+        await Promise.all(pendingUpdates)
+        setSettingsSuccess("User permissions updated.")
+        setSavedAt(Date.now())
+        await fetchUsers()
+      } catch (error) {
+        setSettingsError(error instanceof Error ? error.message : "Unable to update users")
+      } finally {
+        setSaving(false)
+      }
+    },
+    [fetchUsers, teamById],
+  )
+
+  const handleCreateUser = useCallback(
+    async (values: CreateUserFormValues) => {
+      setCreatingUser(true)
+      setCreateUserError(null)
+      setCreateUserSuccess(null)
+
+      try {
+        const response = await createUser({
+          email: values.email.trim(),
+          password: values.password,
+          first_name: values.firstName.trim(),
+          last_name: values.lastName.trim(),
+          role: values.role,
+        })
+
+        setCreateUserSuccess(`User ${response.data.email} created successfully.`)
+        resetCreateUserForm({ email: "", password: "", firstName: "", lastName: "", role: "staff" })
+        await fetchUsers()
+      } catch (error) {
+        setCreateUserError(error instanceof Error ? error.message : "Unable to create user")
+      } finally {
+        setCreatingUser(false)
+      }
+    },
+    [fetchUsers, resetCreateUserForm],
+  )
+
+  const handleRoleFilterChange = useCallback((roles: UserRole[]) => {
+    setSelectedRoles(roles)
+  }, [])
+
+  const handleOpenCreateUserModal = useCallback(() => {
+    setCreateUserError(null)
+    setCreateUserSuccess(null)
+    setCreateUserModalOpen(true)
+  }, [])
+
+  const handleCreateUserModalOpenChange = useCallback(
+    (open: boolean) => {
+      setCreateUserModalOpen(open)
+      if (!open) {
+        setCreateUserError(null)
+        setCreateUserSuccess(null)
+        resetCreateUserForm({ email: "", password: "", firstName: "", lastName: "", role: "staff" })
+      }
+    },
+    [resetCreateUserForm],
+  )
+
+  const directoryDescription = usersError
+    ? usersError
+    : usersLoading
+      ? "Loading users..."
+      : "View all staff and customers. Use the role filter to focus the directory."
 
   return (
     <>
       <AppHeader subtitle="admin" onLogout={handleLogout} className="bg-black" />
       <main className="py-6">
-        <Container className="space-y-6">
-        {/* Grid */}
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-          {/* Stats card */}
-          <Card className="card-glass neon-hover rounded-2xl lg:col-span-6">
-            <CardHeader>
-              <CardTitle className="h-title text-xl`">Key Financial Stats</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                <Stat label="Total Investment" value={formatCurrency(totalInvestment)} title="Total invested capital to date" />
-                <Stat label="Total Profit" value={formatCurrency(totalProfit)} title="Profit accumulated across all strategies" />
-                <Stat
-                  label="ROI"
-                  value={`${roiPct.toFixed(1)}%`}
-                  valueClassName={roiPct >= 0 ? "text-[#00FF88]" : "text-rose-400"}
-                  title="Return on investment for the period"
-                />
-              </div>
-              <div className="mt-2 text-xs text-white/60">{savedAt ? `Last saved ${new Date(savedAt).toLocaleTimeString()}` : "\u00A0"}</div>
-            </CardContent>
-          </Card>
-
-          {/* User list */}
-          <Card className="card-glass neon-hover rounded-2xl lg:col-span-6">
-            <CardHeader>
-              <CardTitle className="h-title text-xl">Investors</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="max-h-64 space-y-3 overflow-auto pr-2" role="list">
-                {data.investors.map((inv) => (
-                  <div
-                    key={inv.id}
-                    role="listitem"
-                    className="neon-hover flex items-center justify-between rounded-xl border border-white/10 bg-white/5 px-4 py-3"
-                  >
-                    <div className="flex min-w-0 items-center gap-3">
-                      <div className="size-8 rounded-full bg-white/10 ring-1 ring-white/30" />
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-medium">{inv.name}</div>
-                        <div className="text-xs text-white/60">{formatCurrency(inv.value)}</div>
-                      </div>
-                    </div>
-                    <div
-                      className={`text-sm font-medium ${
-                        inv.growthPct >= 0 ? "text-[#00FF88]" : "text-rose-400"
-                      }`}
-                    >
-                      {inv.growthPct >= 0 ? "+" : ""}
-                      {inv.growthPct}%
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Chart */}
-          <Card className="card-glass neon-hover rounded-2xl lg:col-span-8">
-            <CardHeader>
-              <CardTitle className="h-title text-xl">Performance</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="h-[360px] w-full rounded-xl border border-white/10 bg-black/20 p-2">
-                <Line data={chart.data} options={chart.options as any} plugins={chart.plugins as any} />
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Settings */}
-          <form
-            onSubmit={handleSubmit(onSubmit)}
-            className="card-glass neon-hover rounded-2xl lg:col-span-4"
-            role="region"
-            aria-label="Company Settings"
-          >
-            <CardHeader>
-              <CardTitle className="h-title text-xl">Company Settings</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-3">
-                {data.investors.slice(0, 6).map((u, idx) => (
-                  <div
-                    key={u.id}
-                    className="neon-hover flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/5 p-3"
-                  >
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-medium">{u.name}</div>
-                      <div className="text-xs text-white/60">{formatCurrency(u.value)}</div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <select
-                        {...register(`users.${idx}.role`)}
-                        defaultValue="Viewer"
-                        onChange={(e) => handleRoleChange(u.id, e.target.value as Investor["role"])}
-                        className="rounded-md border border-white/10 bg-black/40 px-2.5 py-1.5 text-sm text-white focus:outline-none"
-                        aria-label={`Role for ${u.name}`}
-                      >
-                        <option>Viewer</option>
-                        <option>Editor</option>
-                        <option>Admin</option>
-                      </select>
-                      <label className="inline-flex items-center gap-2 text-sm">
-                        <input
-                          type="checkbox"
-                          {...register(`users.${idx}.active`)}
-                          defaultChecked
-                          onChange={(e) => handleActiveToggle(u.id, e.target.checked)}
-                          className="size-4 rounded border-white/20 bg-black/40 accent-white"
-                          aria-label={`Active state for ${u.name}`}
-                        />
-                        <span className="text-white/80">Active</span>
-                      </label>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div className="flex items-center justify-end">
-                <Button
-                  type="submit"
-                  disabled={saving}
-                  className="neon-hover border border-white/10 bg-white/10 text-white hover:bg-white/20"
-                  aria-busy={saving}
-                >
-                  {saving ? "Saving..." : "Save changes"}
-                </Button>
-              </div>
-            </CardContent>
-          </form>
-        </div>
+        <Container className="space-y-6 max-w-7xl">
+          <div className="space-y-6">
+            <PerformanceCard chart={chart} />
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+              <FinancialStatsCard metrics={financialMetrics} savedAt={savedAt} className="lg:col-span-1" />
+              <CompanySettingsCard
+                users={settingsUsers}
+                register={registerSettings}
+                onSubmit={handleSettingsSubmit(handleSettingsSave)}
+                saving={saving}
+                errorMessage={settingsError}
+                successMessage={settingsSuccess}
+                className="lg:col-span-1"
+              />
+            </div>
+            <UserManagementCard
+              description={directoryDescription}
+              users={filteredDirectory}
+              selectedRoles={selectedRoles}
+              onSelectedRolesChange={handleRoleFilterChange}
+              onOpenCreateUser={handleOpenCreateUserModal}
+            />
+          </div>
         </Container>
+        <CreateUserModal
+          open={isCreateUserModalOpen}
+          onOpenChange={handleCreateUserModalOpenChange}
+          register={registerCreateUser}
+          errors={createUserErrors}
+          onSubmit={handleCreateUserSubmit(handleCreateUser)}
+          isSubmitting={creatingUser}
+          errorMessage={createUserError}
+          successMessage={createUserSuccess}
+        />
       </main>
     </>
   )
 }
 
-function Stat({
-  label,
-  value,
-  valueClassName,
-  title,
-}: {
-  label: string
-  value: string
-  valueClassName?: string
-  title?: string
-}) {
-  return (
-    <div className="rounded-xl border border-white/10 bg-white/5 p-4" title={title}>
-      <div className="text-xs text-white/60">{label}</div>
-      <div className={`mt-1 text-lg font-semibold ${valueClassName ?? ""}`}>{value}</div>
-    </div>
-  )
+function formatLastActive(timestamp: string | null) {
+  if (!timestamp) return "Never"
+  const parsed = new Date(timestamp)
+  if (Number.isNaN(parsed.getTime())) {
+    return "Never"
+  }
+
+  return parsed.toLocaleString()
 }
-
-
