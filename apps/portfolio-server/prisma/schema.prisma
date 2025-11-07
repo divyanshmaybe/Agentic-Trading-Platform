@@ -1,0 +1,159 @@
+generator client {
+  provider                   = "prisma-client-py"
+  enable_experimental_decimal = true
+  recursive_type_depth        = -1
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Portfolio {
+  id                       String   @id @default(uuid())
+  organization_id          String
+  customer_id              String
+  portfolio_name           String
+  investment_amount        Decimal  @db.Decimal(20, 4)
+  current_value            Decimal  @db.Decimal(20, 4) @default(0)
+  investment_horizon_years Int
+  expected_return_target   Decimal  @db.Decimal(7, 4)
+  risk_tolerance           String
+  liquidity_needs          String
+  rebalancing_frequency    Json?
+  allocation_strategy      Json?
+  constraints              Json?
+  status                   String   @default("active")
+  last_rebalanced_at       DateTime?
+  next_rebalance_at        DateTime?
+  metadata                 Json?    @default("{}")
+  created_at               DateTime @default(now())
+  updated_at               DateTime @updatedAt
+  deleted_at               DateTime?
+
+  allocations PortfolioAllocation[]
+  trades      Trade[]
+  positions   Position[]
+
+  @@index([organization_id])
+  @@index([customer_id])
+  @@index([status])
+  @@map("portfolios")
+}
+
+model PortfolioAllocation {
+  id                   String   @id @default(uuid())
+  portfolio_id         String
+  allocation_type      String
+  target_weight        Decimal  @db.Decimal(9, 6)
+  current_weight       Decimal  @db.Decimal(9, 6) @default(0)
+  allocated_amount     Decimal  @db.Decimal(20, 4) @default(0)
+  current_value        Decimal  @db.Decimal(20, 4) @default(0)
+  pnl                  Decimal  @db.Decimal(20, 4) @default(0)
+  pnl_percentage       Decimal  @db.Decimal(9, 6) @default(0)
+  drift_percentage     Decimal  @db.Decimal(9, 6) @default(0)
+  requires_rebalancing Boolean  @default(false)
+  metadata             Json?    @default("{}")
+  created_at           DateTime @default(now())
+  updated_at           DateTime @updatedAt
+
+  portfolio    Portfolio     @relation(fields: [portfolio_id], references: [id], onDelete: Cascade)
+  tradingAgent TradingAgent? @relation("AllocationAgent")
+
+  @@index([portfolio_id])
+  @@index([allocation_type])
+  @@map("portfolio_allocations")
+}
+
+model TradingAgent {
+  id                     String   @id @default(uuid())
+  portfolio_allocation_id String
+  agent_type             String
+  agent_name             String
+  status                 String   @default("active")
+  strategy_config        Json?
+  performance_metrics    Json?
+  last_executed_at       DateTime?
+  error_count            Int      @default(0)
+  last_error_message     String?
+  metadata               Json?    @default("{}")
+  created_at             DateTime @default(now())
+  updated_at             DateTime @updatedAt
+
+  allocation PortfolioAllocation @relation("AllocationAgent", fields: [portfolio_allocation_id], references: [id], onDelete: Cascade)
+  trades     Trade[]
+  positions  Position[]
+
+  @@index([portfolio_allocation_id])
+  @@index([agent_type])
+  @@unique([portfolio_allocation_id])
+  @@map("trading_agents")
+}
+
+model Trade {
+  id                String   @id @default(uuid())
+  organization_id   String
+  portfolio_id      String
+  agent_id          String?
+  customer_id       String
+  trade_type        String
+  symbol            String
+  exchange          String
+  segment           String
+  side              String
+  order_type        String
+  quantity          Int
+  price             Decimal? @db.Decimal(20, 4)
+  trigger_price     Decimal? @db.Decimal(20, 4)
+  executed_quantity Int      @default(0)
+  executed_price    Decimal? @db.Decimal(20, 4)
+  status            String   @default("pending")
+  order_id          String?
+  execution_time    DateTime?
+  rejection_reason  String?
+  fees              Decimal? @db.Decimal(20, 4)
+  taxes             Decimal? @db.Decimal(20, 4)
+  net_amount        Decimal? @db.Decimal(20, 4)
+  source            String?
+  metadata          Json?    @default("{}")
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  portfolio Portfolio     @relation(fields: [portfolio_id], references: [id], onDelete: Cascade)
+  agent     TradingAgent? @relation(fields: [agent_id], references: [id])
+
+  @@index([organization_id])
+  @@index([portfolio_id])
+  @@index([customer_id])
+  @@index([status])
+  @@map("trades")
+}
+
+model Position {
+  id                String   @id @default(uuid())
+  portfolio_id      String
+  agent_id          String?
+  symbol            String
+  exchange          String
+  segment           String
+  quantity          Int
+  average_buy_price Decimal  @db.Decimal(20, 4)
+  current_price     Decimal  @db.Decimal(20, 4)
+  current_value     Decimal  @db.Decimal(20, 4)
+  pnl               Decimal  @db.Decimal(20, 4) @default(0)
+  pnl_percentage    Decimal  @db.Decimal(9, 6)  @default(0)
+  position_type     String
+  status            String   @default("open")
+  opened_at         DateTime?
+  closed_at         DateTime?
+  metadata          Json?    @default("{}")
+  updated_at        DateTime @updatedAt
+
+  portfolio Portfolio     @relation(fields: [portfolio_id], references: [id], onDelete: Cascade)
+  agent     TradingAgent? @relation(fields: [agent_id], references: [id])
+
+  @@index([portfolio_id])
+  @@index([agent_id])
+  @@index([status])
+  @@map("positions")
+}

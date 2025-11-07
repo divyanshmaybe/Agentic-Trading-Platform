@@ -27,6 +27,11 @@ sys.path.insert(0, os.path.dirname(__file__))
 from config import PORT, SERVICE_NAME, ALLOWED_ORIGINS
 from services.pipeline_service import PipelineService
 from routes.pipeline_routes import create_pipeline_routes, create_health_routes
+from routes.market_routes import router as market_router
+from routes.portfolio_routes import router as portfolio_router
+from routes.trade_routes import router as trade_router
+from utils.pipeline_utils import get_pipeline_status
+from workers.pipeline_tasks import start_nse_pipeline
 
 # Get server directory for pipelines
 server_dir = os.path.dirname(__file__)
@@ -43,11 +48,24 @@ def create_lifespan(base_app_instance, pipeline_service_instance):
         # Run base startup
         await base_app_instance._startup()
         
-        # Start NSE pipeline
-        base_app_instance.logger.info("Starting NSE pipeline...")
-        pipeline_thread = pipeline_service_instance.start_nse_pipeline()
-        app.state.pipeline_thread = pipeline_thread
-        base_app_instance.logger.info("✓ NSE pipeline started in background thread")
+        # Start NSE pipeline via Celery task
+        app.state.pipeline_status = "initializing"
+        app.state.pipeline_job_id = None
+
+        try:
+            base_app_instance.logger.info("Dispatching NSE pipeline task to Celery...")
+            task_result = start_nse_pipeline.delay()
+            app.state.pipeline_job_id = task_result.id
+            app.state.pipeline_status = "queued"
+            base_app_instance.logger.info(
+                "✓ NSE pipeline task dispatched (task_id=%s)", task_result.id
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            app.state.pipeline_job_id = None
+            app.state.pipeline_status = "error"
+            base_app_instance.logger.exception(
+                "Failed to dispatch NSE pipeline task: %s", exc
+            )
         
         yield
         
@@ -81,24 +99,27 @@ base_app.initialize_error_handling()
 
 # Setup routes
 base_app.add_routes("/api/pipeline", create_pipeline_routes(pipeline_service, server_dir))
+base_app.add_routes("/api", trade_router)
+base_app.add_routes("/api", market_router)
+base_app.add_routes("/api", portfolio_router)
 base_app.add_routes("", create_health_routes(pipeline_service, server_dir))
 
 # Override root endpoint
 @base_app.app.get("/")
 async def root():
     """Root endpoint"""
-    pipeline_running = (
-        hasattr(base_app.app.state, "pipeline_thread")
-        and base_app.app.state.pipeline_thread.is_alive()
+    pipeline_status = getattr(base_app.app.state, "pipeline_status", "unknown")
+    pipeline_job_id = getattr(base_app.app.state, "pipeline_job_id", None)
+    status_payload = get_pipeline_status(
+        server_dir,
+        pipeline_status,
+        pipeline_job_id,
     )
     return {
         "message": f"Welcome to {SERVICE_NAME}",
         "version": "1.0.0",
         "docs": "/docs",
-        "pipeline": {
-            "running": pipeline_running,
-            "status": "active" if pipeline_running else "stopped",
-        },
+        "pipeline": status_payload,
     }
 
 # Export app for uvicorn

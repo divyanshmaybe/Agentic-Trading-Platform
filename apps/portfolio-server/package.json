@@ -4,7 +4,8 @@
   "private": true,
   "description": "Portfolio Server - FastAPI server with NSE pipeline integration",
   "scripts": {
-    "dev": "~/.pyenv/versions/myenv/bin/python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000"
+    "dev": "PYTHONPATH=../../shared/py ~/.pyenv/versions/myenv/bin/python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000",
+    "celery": "PYTHONPATH=../../shared/py:../../middleware/py ~/.pyenv/versions/myenv/bin/celery -A celery_app:celery_app worker --loglevel=info"
   },
   "dependencies": {},
   "devDependencies": {}

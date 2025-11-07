@@ -8,7 +8,9 @@ httpx>=0.25.0
 redis[hiredis]>=5.0.0
 pydantic>=2.0.0
 PyJWT>=2.8.0
-motor>=3.3.0
+prisma>=0.15.0
+celery[redis]>=5.4.0
+websockets>=11.0.0
 
 # Pathway and NSE Pipeline Dependencies
 pathway[xpack-llm]

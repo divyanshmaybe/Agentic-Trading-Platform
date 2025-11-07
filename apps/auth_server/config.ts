@@ -19,4 +19,5 @@ export const authConfig = {
 export const allowedOrigins = [
   process.env.CLIENT_URL || "http://localhost:3000",
   process.env.AUTH_SERVER_URL || "http://localhost:4000",
+  process.env.PORTFOLIO_SERVICE_URL || "http://localhost:8000",
 ];
