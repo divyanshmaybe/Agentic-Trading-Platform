@@ -13,6 +13,7 @@ import json
 from typing import List
 from dotenv import load_dotenv
 import pathway as pw
+from langchain_core.messages import SystemMessage, HumanMessage
 
 # Load env vars
 load_dotenv()
@@ -84,9 +85,10 @@ def fetch_articles(stream: str, query: str, top_k: int, api_key: str) -> List[tu
         for a in data.get("articles", []):
             title = a.get("title") or ""
             content = a.get("content") or a.get("description") or title
+            url = a.get("url") or ""
             if "[" in content and content.strip().endswith("]"):
                 content = content.rsplit("[", 1)[0].strip()
-            articles.append((title, content))
+            articles.append((title, content, url))
         return articles
     except Exception as e:
         print(f"[WARN] fetch_articles({stream}) failed: {e}")
@@ -150,7 +152,8 @@ def build_news_sentiment_pipeline(streams: pw.Table, news_api_key: str, top_k_de
     flat = fetched.flatten(pw.this.articles).select(
         stream=pw.this.stream,
         title=pw.this.articles[0],
-        content=pw.this.articles[1]
+        content=pw.this.articles[1],
+        url=pw.this.articles[2]
     )
 
     # Sentiment per article
@@ -158,6 +161,7 @@ def build_news_sentiment_pipeline(streams: pw.Table, news_api_key: str, top_k_de
         stream=pw.this.stream,
         title=pw.this.title,
         content=pw.this.content,
+        url=pw.this.url,
         sentiment=finbert_sentiment(pw.this.title, pw.this.content)
     )
 
@@ -217,12 +221,15 @@ Be very cautious while analysing the news, since the market movement can be both
 We are catering specifically to the Indian Market. Thus, all the global news for all sectors must strictly be co-verified with India's existing status in all these sectors, since the trading signals are to be generated specifically with reference to Indian markets and investment firms. Also, be very cautious while generating a buy or a sell signal, since a buy or a sell signal wrongly classified as a hold signal is hazardous, but a hold signal wrongly classified as a buy or a sell signal is extremely risky and dangerous. Only generate a buy or a sell signal with an apt time window for investment as long as you are extremely confident about the same. Also be careful while analysing sectors and individual companies.
 
 For example, pertaining to certain war situations or a medical news like COVID outbreak, the market sentiment may be down or bearish, however a renound company like Reliance or TATA, their shares may go down but due to the trust on their credibility it would rather be better to buy them, because right now their shares might be at a lower price but in the future, the price will increase, and over long term it would be profitable. Since you are tasked with only generating short term signals, you must be careful in analysing such situations and not generating an immediate sell signal for such companies under such circumstances or news articles.
+The response you generate will be directly passed to a final sector and stock based trade recommendation agent
+therefore, for every news article, you must clearly mention its source url, since that will be displayed
+to the user for making the final recommendations.
 """
         
         for stream, articles in sentiment_data.items():
             prompt += f"\nSector: {stream}\n"
             for a in articles:
-                prompt += f"- News title: {a['title']} | News Description: {a['content']} | Sentiment: {a['sentiment']}\n"
+                prompt += f"- News title: {a['title']} | News Description: {a['content']} | Sentiment: {a['sentiment']} | News URL: {a.get('url', 'N/A')}\n"
             prompt += "\n"
         
         model = ChatGoogleGenerativeAI(
@@ -324,7 +331,7 @@ def stock_recommender_llm(sector_analysis: str, tech_json: str, api_key: str) ->
     try:
         from langchain_google_genai import ChatGoogleGenerativeAI
         
-        prompt = f"""
+        prompts = [SystemMessage("""
 You are a stock recommendation AI agent responsible for providing top stock investment recommendations by integrating sector-wise insights from a news sentiment agent and detailed technical indicators for each stock.
 
 You should take as input sector-wise sentiment scores, time windows for investing, and explanations from the news sentiment agent detailing why and when to invest in each sector.
@@ -346,53 +353,34 @@ Be very cautious while analysing the news, since the market movement can be both
 Also, be very cautious while generating a buy or a sell signal, since a buy or a sell signal wrongly classified as a hold signal is hazardous, but a hold signal wrongly classified as a buy or a sell signal is extremely risky and dangerous. Only generate a buy or a sell signal with an apt time window for investment as long as you are extremely confident about the same.
 
 The technical indicators you have been provided is for nifty 500 stocks, thus we are catering strongly to the Inidan market.
-
-Here is the sector based analysis:
-{sector_analysis}
-
-Here is the table of technical indicators per stock:
-{tech_json}
-
 The table is in the json format and the sector based analysis is in markdown format so analyse accordingly
 
 Also, you are supposed to do a detailed analysis of the technical indicators provided in the json and strike a balance between sentiment and technicality
+You must return a structured json output in the following format:
+    {
+        sector:<sector_name>,
+        stock_name:<stock_name>,
+        trade_signal:<trade_signal>,
+        detailed_analysis:<detailed_analysis>,
+        time_window_investment:<time_window_for_investment>,
+        news_source:<news_url>
+    }
+ Output must be a single JSON array containing one object per sector.
+ Use valid JSON syntax (double quotes, commas, brackets).
+ You must strictly adhere to this output format and must return a valid array of json objects.
+ Do not return anything apart from this, such as here's the summary or here's the answer.
+""")]
 
-Also being a financial expert you must also output an accurate mathematical number, based on the technical indicators over the past three months as well as the previous and the current day, on daily and hourly basis respectively, and then output an estimated and accurate number which indicates the most apt degree of investemnt or profit booking, as in for a given stock , output a statement, like buy and wait till 10% profit booking and then sell for maximum profitability or maybe keep it for a longer time since the value may increase ven further and then sell at the right time for maximum profitability, output the time as well as the necessary and correct percentage.
-
-Use the value of the technical indicators to calculate this profit percentage:
-
-You are a stock trading assistant.
-
-Given the following technical indicators for a stock:
-- Close Price: 105
-- SMA20: 100
-- EMA20: 101
-- RSI14: 72
-- ADX14: 30
-- BB_UPPER: 104
-- BB_LOWER: 96
-- STOCHK: 85
-
-Calculate a "profit booking percentage" (0-100%) based on these rules:
-1. If the price is above the upper Bollinger Band, add 1 point.
-2. If RSI14 > 70, add 1 point.
-3. If STOCHK > 80, add 1 point.
-4. If price > 1.02 * SMA20, add 1 point.
-5. If price > 1.02 * EMA20, add 1 point.
-6. If ADX14 > 25 and DI_NEG > DI_POS, add 1 point.
-
-Total points = 6. Convert points to percentage:
-Profit Booking % = (points / 6) * 100.
-
-Provide the final Profit Booking Percentage and a short explanation of which indicators contributed most.
-"""
+        prompts.append(HumanMessage(f"""Here is the sector based analysis: f{sector_analysis}.
+                                    Here is the json for the technical indicators for nifty 500
+                                    stocks: {tech_json}"""))
         
         model = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash",
             temperature=0.7,
             api_key=api_key
         )
-        decision = model.invoke(prompt)
+        decision = model.invoke(prompts)
         return decision.content if hasattr(decision, 'content') else str(decision)
     except Exception as e:
         import traceback
