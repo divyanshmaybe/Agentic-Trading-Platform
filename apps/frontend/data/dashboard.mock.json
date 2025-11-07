@@ -1,0 +1,15 @@
+{
+  "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+  "companyTotals": [120, 138, 150, 172, 195, 218, 245, 272, 305, 338, 372, 410],
+  "investors": [
+    { "id": "u1", "name": "Ariel Chen", "value": 182000, "growthPct": 12.4, "series": [10, 12, 14, 16, 18, 21, 23, 26, 29, 33, 36, 40] },
+    { "id": "u2", "name": "David Rao", "value": 165500, "growthPct": 9.1, "series": [9, 11, 13, 15, 17, 19, 21, 23, 26, 28, 31, 34] },
+    { "id": "u3", "name": "Priya Nair", "value": 149200, "growthPct": 8.7, "series": [8, 9, 11, 13, 15, 16, 18, 20, 22, 24, 26, 28] },
+    { "id": "u4", "name": "Miguel Lopez", "value": 121000, "growthPct": 6.2, "series": [6, 7, 8, 9, 11, 12, 14, 15, 17, 18, 20, 22] },
+    { "id": "u5", "name": "Sofia Petrov", "value": 98000, "growthPct": 4.3, "series": [4, 5, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14] },
+    { "id": "u6", "name": "Liam O'Connor", "value": 87000, "growthPct": 3.1, "series": [3, 3, 4, 5, 6, 6, 7, 8, 9, 10, 11, 12] },
+    { "id": "u7", "name": "Emma Johansson", "value": 76000, "growthPct": 2.4, "series": [2, 2, 3, 4, 4, 5, 6, 6, 7, 8, 9, 10] },
+    { "id": "u8", "name": "Noah Kim", "value": 69000, "growthPct": 1.8, "series": [2, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7] }
+  ]
+}
+
