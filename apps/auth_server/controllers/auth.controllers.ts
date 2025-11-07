@@ -498,6 +498,98 @@ export const createUser = async (
   }
 };
 
+export const updateUser = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const userId = req.params.id;
+    const { role, status } = req.body || {};
+
+    if (!userId) {
+      return next(new ErrorHandling("User ID is required", 400));
+    }
+
+    const organizationId = req.user?.organizationId;
+    if (!organizationId) {
+      return next(new ErrorHandling("Organization ID not found", 400));
+    }
+
+    const allowedRoles = ["admin", "staff", "viewer"];
+    const allowedStatuses = ["active", "suspended", "inactive"];
+
+    const updateData: Record<string, any> = {};
+
+    if (typeof role !== "undefined") {
+      if (role === "customer") {
+        updateData.role = "viewer";
+      } else if (allowedRoles.includes(role)) {
+        updateData.role = role;
+      } else {
+        return next(
+          new ErrorHandling("Role must be one of: admin, staff, viewer", 400)
+        );
+      }
+    }
+
+    if (typeof status !== "undefined") {
+      if (!allowedStatuses.includes(status)) {
+        return next(
+          new ErrorHandling(
+            "Status must be one of: active, suspended, inactive",
+            400
+          )
+        );
+      }
+      updateData.status = status;
+    }
+
+    if (!Object.keys(updateData).length) {
+      return next(
+        new ErrorHandling("At least one of role or status must be provided", 400)
+      );
+    }
+
+    const existingUser = await prisma.user.findFirst({
+      where: {
+        id: userId,
+        organization_id: organizationId,
+        deleted_at: null,
+      },
+    });
+
+    if (!existingUser) {
+      return next(new ErrorHandling("User not found", 404));
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: updateData,
+      select: {
+        id: true,
+        email: true,
+        first_name: true,
+        last_name: true,
+        role: true,
+        status: true,
+        phone: true,
+        last_login_at: true,
+        two_factor_enabled: true,
+        created_at: true,
+        updated_at: true,
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: updatedUser,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
 export const updateUserProfile = async (
   req: AuthenticatedRequest,
   res: Response,

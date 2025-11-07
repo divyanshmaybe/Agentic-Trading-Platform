@@ -15,6 +15,7 @@ import {
   registerOrganization,
   requestActivationEmail,
   requestPasswordEmail,
+  updateUser,
   updateUserProfile,
   verifyEmail,
 } from "../controllers/auth.controllers";
@@ -37,6 +38,7 @@ authRoutes.post("/logout", protectRoute, isUser, logoutUser);
 // Staff/Admin routes (staff or admin privileges required)
 authRoutes.post("/users", protectRoute, isStaff, createUser);
 authRoutes.get("/users", protectRoute, isStaff, getUsers);
+authRoutes.patch("/users/:id", protectRoute, isStaff, updateUser);
 
 // User routes (any authenticated user)
 authRoutes.post("/user/update", protectRoute, isUser, updateUserProfile);
