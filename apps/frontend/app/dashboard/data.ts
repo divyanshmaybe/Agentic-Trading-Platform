@@ -3,8 +3,8 @@ import type { NewsItem, NotificationItem, PortfolioSummary, StockItem } from "@/
 export const notificationItems: NotificationItem[] = [
   {
     id: "notif-1",
-    title: "Risk Model Review",
-    body: "Rebalance suggestion for Momentum Basket. Approve auto-adjustment?",
+    title: "AI Trade Execution Required",
+    body: "AI detected Fed rate pivot signals in macro news. Recommends rotating 15% into defensive utilities. Approve execution?",
     timestamp: "2 min ago",
     actions: [
       { label: "Yes", value: "yes" },
@@ -13,15 +13,15 @@ export const notificationItems: NotificationItem[] = [
   },
   {
     id: "notif-2",
-    title: "Trade Executed",
-    body: "High-Risk bucket filled 1.2k shares of XYZ at $41.28 (▲1.9%).",
-    timestamp: "12 min ago",
+    title: "AI Executed Trade",
+    body: "AI auto-executed: Bought 2.4k shares AAPL at $178.32 based on earnings sentiment surge (+94% positive signals).",
+    timestamp: "8 min ago",
   },
   {
     id: "notif-3",
-    title: "Liquidity Check",
-    body: "Would you like to enable auto-roll for expiring options hedge?",
-    timestamp: "35 min ago",
+    title: "AI Alpha Signal Generated",
+    body: "AI identified 3 high-conviction alpha opportunities in energy sector. Expected return: +8.2% over 30 days. Review signals?",
+    timestamp: "15 min ago",
     actions: [
       { label: "Yes", value: "yes" },
       { label: "No", value: "no" },
@@ -29,33 +29,41 @@ export const notificationItems: NotificationItem[] = [
   },
   {
     id: "notif-4",
-    title: "Portfolio Insight",
-    body: "Smart signals flag: Alpha sleeve outperforming benchmark by 3.4% today.",
-    timestamp: "1 hr ago",
+    title: "AI News Reaction",
+    body: "AI processed Fed minutes release: Detected hawkish tilt. Auto-hedging treasury positions with 200 TLT puts at $92.50.",
+    timestamp: "28 min ago",
   },
   {
     id: "notif-5",
-    title: "Desk Broadcast",
-    body: "Head trader requests confirmation on auto-hedge ladder for EURUSD carry strip.",
-    timestamp: "1 hr 25 min ago",
+    title: "AI Risk Alert",
+    body: "AI flagged correlation breakdown in crypto momentum basket. Volatility spike detected. Approve risk reduction?",
+    timestamp: "42 min ago",
+    actions: [
+      { label: "Yes", value: "yes" },
+      { label: "No", value: "no" },
+    ],
   },
   {
     id: "notif-6",
-    title: "Overnight Sweep",
-    body: "Asia desk closed Nikkei futures leg at 28,440. Settlement summary available for review.",
-    timestamp: "2 hr ago",
+    title: "AI Generated Alpha",
+    body: "Smart sentiment model identified mean-reversion opportunity: TSLA oversold by 2.3σ vs 90-day baseline. Entry suggested at $242.",
+    timestamp: "1 hr 5 min ago",
   },
   {
     id: "notif-7",
-    title: "Signal Drift",
-    body: "Momentum model variance rose 0.6σ. Approve sensitivity adjustment for Smart Beta sleeve?",
-    timestamp: "2 hr 40 min ago",
+    title: "AI Trade Alert",
+    body: "AI executed pairs trade: Long NVDA / Short AMD based on relative strength divergence. Net exposure: $480k.",
+    timestamp: "1 hr 30 min ago",
   },
   {
     id: "notif-8",
-    title: "Credit Sweep",
-    body: "IG tranche spreads widened 3 bps. Add-on hedge suggestion ready for execution.",
-    timestamp: "3 hr 15 min ago",
+    title: "AI Rebalance Suggestion",
+    body: "AI analyzed sector rotation news. Recommends shifting 12% from tech to healthcare. Approve rebalance?",
+    timestamp: "2 hr 15 min ago",
+    actions: [
+      { label: "Yes", value: "yes" },
+      { label: "No", value: "no" },
+    ],
   },
 ]
 

@@ -19,7 +19,7 @@ export function StocksWatchlistCard({ stocks }: StocksWatchlistCardProps) {
 				<CardDescription className="text-xs uppercase tracking-[0.3em] text-white/45">
 					Stocks
 				</CardDescription>
-				<CardTitle className="h-title text-2xl text-[#fafafa]">Watchlist Signals</CardTitle>
+				<CardTitle className="h-title text-2xl text-[#fafafa]">Watchlist</CardTitle>
 			</CardHeader>
 			<CardContent className="flex flex-col gap-4">
 				{stocks.map((stock) => (

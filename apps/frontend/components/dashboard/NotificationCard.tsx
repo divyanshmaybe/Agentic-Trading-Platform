@@ -17,9 +17,9 @@ export function NotificationCard({ notifications }: NotificationCardProps) {
     <Card className="card-glass neon-hover flex h-full flex-col rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_28px_65px_-38px_rgba(0,0,0,0.9)] backdrop-blur">
       <CardHeader className="gap-1">
         <CardDescription className="text-xs uppercase tracking-[0.3em] text-white/45">
-          Desk Notifications
+			Keep up with your AI
         </CardDescription>
-        <CardTitle className="h-title text-xl text-[#fafafa]">Live Signal Stream</CardTitle>
+        <CardTitle className="h-title text-xl text-[#fafafa]">Live Notifications</CardTitle>
       </CardHeader>
       <CardContent className="flex-1 overflow-y-auto">
         <div className="space-y-3 pr-2">
@@ -44,6 +44,23 @@ export function NotificationCard({ notifications }: NotificationCardProps) {
                 </div>
                 <h3 className="mb-1.5 text-base font-semibold text-[#fafafa]">{notification.title}</h3>
                 <p className="text-sm leading-relaxed text-white/70">{notification.body}</p>
+                
+                {notification.actions && notification.actions.length > 0 && (
+                  <div className="mt-4 flex gap-2">
+                    {notification.actions.map((action, idx) => (
+                      <button
+                        key={`${notification.id}-${action.value}`}
+                        className={`flex-1 rounded-lg px-4 py-2 text-sm font-semibold transition-all duration-200 ${
+                          idx === 0
+                            ? "bg-gradient-to-r from-emerald-500/20 to-green-500/20 text-emerald-300 hover:from-emerald-500/30 hover:to-green-500/30 border border-emerald-500/30 hover:border-emerald-400/50"
+                            : "bg-white/5 text-white/70 hover:bg-white/10 border border-white/10 hover:border-white/20"
+                        }`}
+                      >
+                        {action.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </motion.div>
             ))}
           </AnimatePresence>
