@@ -61,6 +61,25 @@ type AuthApiError = {
   errors?: Record<string, string[]> | string
 }
 
+export type CreateUserPayload = {
+  email: string
+  password: string
+  first_name: string
+  last_name: string
+  role: "staff" | "customer"
+}
+
+export type CreateUserResponse = {
+  success: boolean
+  data: {
+    id: string
+    role: string
+    email: string
+    first_name: string
+    last_name: string
+  }
+}
+
 const AUTH_BASE_URL =
   process.env.NEXT_PUBLIC_AUTH_BASE_URL ?? "http://localhost:4000/api/auth"
 
@@ -114,6 +133,23 @@ export async function login(payload: LoginPayload) {
   return request<LoginResponse>("/login", {
     method: "POST",
     body: JSON.stringify(payload),
+  })
+}
+
+export async function createUser(payload: CreateUserPayload, accessToken?: string) {
+  const token =
+    accessToken || (typeof window !== "undefined" ? localStorage.getItem("access_token") : null)
+
+  if (!token) {
+    throw new Error("Missing access token. Please log in again.")
+  }
+
+  return request<CreateUserResponse>("/users", {
+    method: "POST",
+    body: JSON.stringify(payload),
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
   })
 }
 
