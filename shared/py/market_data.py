@@ -208,6 +208,285 @@ class FinnhubAdapter(WebsocketAdapter):
         return messages
 
 
+class AngelOneAdapter(WebsocketAdapter):
+    """Adapter for Angel One SmartAPI WebSocket 2.0 streaming."""
+
+    def __init__(self) -> None:
+        super().__init__("angelone")
+        self.base_ws_url = os.getenv("ANGELONE_WS_URL", "wss://smartapisocket.angelone.in/smart-stream")
+        self.client_code = os.getenv("ANGELONE_CLIENT_CODE")
+        self.api_key = os.getenv("ANGELONE_API_KEY")
+        self.password = os.getenv("ANGELONE_PASSWORD")
+        self.totp_secret = os.getenv("ANGELONE_TOTP_SECRET")
+        
+        if not all([self.client_code, self.api_key, self.password, self.totp_secret]):
+            raise RuntimeError(
+                "Angel One requires: ANGELONE_CLIENT_CODE, ANGELONE_API_KEY, ANGELONE_PASSWORD, ANGELONE_TOTP_SECRET"
+            )
+        
+        # These will be set after login
+        self.jwt_token = None
+        self.feed_token = None
+        self.refresh_token = None
+        
+        # Perform login to get tokens
+        self._login()
+        
+        # Build WebSocket URL with query params
+        self.ws_url = f"{self.base_ws_url}?clientCode={self.client_code}&feedToken={self.feed_token}&apiKey={self.api_key}"
+        
+        # Token mapping: symbol -> {"exchangeType": int, "token": str}
+        self._token_map: Dict[str, Dict[str, Any]] = {}
+        self._load_token_map()
+        
+        # Heartbeat tracking
+        self._last_heartbeat = time.time()
+        self._heartbeat_interval = 30
+    
+    def _login(self) -> None:
+        """Login to Angel One API to get JWT and feed tokens."""
+        import pyotp
+        import httpx
+        
+        try:
+            # Generate TOTP
+            totp = pyotp.TOTP(self.totp_secret).now()
+            logger.info(f"Generated TOTP: {totp}")
+            
+            # Login API endpoint
+            login_url = "https://apiconnect.angelone.in/rest/auth/angelbroking/user/v1/loginByPassword"
+            
+            # Prepare headers and payload
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "X-UserType": "USER",
+                "X-SourceID": "WEB",
+                "X-ClientLocalIP": "127.0.0.1",
+                "X-ClientPublicIP": "127.0.0.1",
+                "X-MACAddress": "00:00:00:00:00:00",
+                "X-PrivateKey": self.api_key
+            }
+            
+            payload = {
+                "clientcode": self.client_code,
+                "password": self.password,
+                "totp": totp
+            }
+            
+            # Make login request
+            with httpx.Client(timeout=30.0) as client:
+                response = client.post(login_url, json=payload, headers=headers)
+                response.raise_for_status()
+                
+                data = response.json()
+                
+                if not data.get("status"):
+                    error_msg = data.get("message", "Unknown error")
+                    raise RuntimeError(f"Angel One login failed: {error_msg}")
+                
+                # Extract tokens
+                response_data = data.get("data", {})
+                self.jwt_token = response_data.get("jwtToken")
+                self.feed_token = response_data.get("feedToken")
+                self.refresh_token = response_data.get("refreshToken")
+                
+                if not all([self.jwt_token, self.feed_token]):
+                    raise RuntimeError("Failed to get tokens from Angel One login response")
+                
+                logger.info(f"✅ Angel One login successful! Feed token: {self.feed_token[:10]}...")
+                
+        except ImportError:
+            logger.error("pyotp package not installed. Install: pip install pyotp")
+            raise RuntimeError("pyotp required for Angel One TOTP")
+        except Exception as e:
+            logger.error(f"Angel One login failed: {e}")
+            raise
+        
+    def _load_token_map(self) -> None:
+        """Load token mapping from environment or file."""
+        # You can load from a JSON file or environment variable
+        # Format: {"RELIANCE": {"exchangeType": 1, "token": "2885"}, ...}
+        token_map_str = os.getenv("ANGELONE_TOKEN_MAP", "{}")
+        try:
+            self._token_map = json.loads(token_map_str)
+        except json.JSONDecodeError:
+            logger.warning("Failed to parse ANGELONE_TOKEN_MAP, using empty map")
+            self._token_map = {}
+    
+    def _get_token_info(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """Get exchange type and token for a symbol."""
+        return self._token_map.get(symbol.upper())
+    
+    async def on_connect(self, ws, symbols: Iterable[str]) -> None:
+        """Subscribe to initial symbols on connection."""
+        if symbols:
+            await self._batch_subscribe(ws, list(symbols), subscribe=True)
+    
+    async def subscribe_symbol(self, ws, symbol: str) -> None:
+        """Subscribe to a single symbol."""
+        await self._batch_subscribe(ws, [symbol], subscribe=True)
+    
+    async def unsubscribe_symbol(self, ws, symbol: str) -> None:
+        """Unsubscribe from a single symbol."""
+        await self._batch_subscribe(ws, [symbol], subscribe=False)
+    
+    async def _batch_subscribe(self, ws, symbols: List[str], subscribe: bool) -> None:
+        """
+        Batch subscribe/unsubscribe to multiple symbols.
+        Angel One format:
+        {
+            "correlationID": "abcde12345",
+            "action": 1,  # 1=subscribe, 0=unsubscribe
+            "params": {
+                "mode": 1,  # 1=LTP, 2=Quote, 3=SnapQuote
+                "tokenList": [
+                    {
+                        "exchangeType": 1,  # 1=nse_cm, 2=nse_fo, 3=bse_cm, etc.
+                        "tokens": ["10626", "5290"]
+                    }
+                ]
+            }
+        }
+        """
+        # Group symbols by exchange type
+        exchange_groups: Dict[int, List[str]] = {}
+        
+        for symbol in symbols:
+            token_info = self._get_token_info(symbol)
+            if not token_info:
+                logger.warning(f"No token mapping found for {symbol}, skipping")
+                continue
+            
+            exchange_type = token_info.get("exchangeType", 1)  # Default to NSE CM
+            token = token_info.get("token")
+            
+            if not token:
+                logger.warning(f"No token found for {symbol}, skipping")
+                continue
+            
+            if exchange_type not in exchange_groups:
+                exchange_groups[exchange_type] = []
+            exchange_groups[exchange_type].append(token)
+        
+        if not exchange_groups:
+            return
+        
+        # Build tokenList
+        token_list = [
+            {"exchangeType": ex_type, "tokens": tokens}
+            for ex_type, tokens in exchange_groups.items()
+        ]
+        
+        # Build request
+        request = {
+            "correlationID": f"req_{int(time.time() * 1000)}",
+            "action": 1 if subscribe else 0,
+            "params": {
+                "mode": 1,  # LTP mode for now (can be configurable)
+                "tokenList": token_list
+            }
+        }
+        
+        await ws.send(json.dumps(request))
+        logger.info(f"{'Subscribed to' if subscribe else 'Unsubscribed from'} {len(symbols)} symbols")
+    
+    async def send_heartbeat(self, ws) -> None:
+        """Send heartbeat ping message."""
+        current_time = time.time()
+        if current_time - self._last_heartbeat >= self._heartbeat_interval:
+            await ws.send("ping")
+            self._last_heartbeat = current_time
+    
+    async def handle_message(self, message: str) -> Sequence[WebsocketMessage]:
+        """
+        Handle Angel One WebSocket messages.
+        - Text messages: "pong" (heartbeat response) or JSON error responses
+        - Binary messages: Market data in binary format (Little Endian)
+        """
+        # Handle text messages (heartbeat, errors)
+        if isinstance(message, str):
+            if message == "pong":
+                return []
+            
+            # Try to parse as JSON error
+            try:
+                error_data = json.loads(message)
+                if "errorCode" in error_data:
+                    logger.error(f"Angel One error: {error_data}")
+                return []
+            except json.JSONDecodeError:
+                return []
+        
+        # Handle binary data
+        if isinstance(message, bytes):
+            return self._parse_binary_message(message)
+        
+        return []
+    
+    def _parse_binary_message(self, data: bytes) -> Sequence[WebsocketMessage]:
+        """
+        Parse binary market data from Angel One.
+        
+        LTP Mode (51 bytes):
+        - Subscription Mode (1 byte) at index 0
+        - Exchange Type (1 byte) at index 1
+        - Token (25 bytes) at index 2-26
+        - Sequence Number (8 bytes) at index 27
+        - Exchange Timestamp (8 bytes) at index 35
+        - Last Traded Price (8 bytes) at index 43
+        """
+        try:
+            if len(data) < 51:
+                logger.debug(f"Binary packet too small: {len(data)} bytes")
+                return []
+            
+            # Parse subscription mode
+            subscription_mode = data[0]
+            
+            # Parse exchange type
+            exchange_type = data[1]
+            
+            # Parse token (25 bytes, null-terminated string)
+            token_bytes = data[2:27]
+            token = token_bytes.split(b'\x00')[0].decode('utf-8').strip()
+            
+            # Parse LTP (8 bytes at index 43, int64 little endian)
+            ltp_raw = int.from_bytes(data[43:51], byteorder='little', signed=True)
+            
+            # Convert price: divide by 100 for stocks (paise to rupees)
+            # For currencies, divide by 10000000.0 for 4 decimal places
+            if exchange_type == 5:  # MCX
+                price = Decimal(ltp_raw) / Decimal('10000000.0')
+            else:
+                price = Decimal(ltp_raw) / Decimal('100')
+            
+            # Find symbol from token
+            symbol = self._find_symbol_by_token(token, exchange_type)
+            if not symbol:
+                logger.debug(f"Symbol not found for token {token}, exchange {exchange_type}")
+                return []
+            
+            return [
+                WebsocketMessage(
+                    symbol=symbol.upper(),
+                    price=price,
+                    raw={"token": token, "exchangeType": exchange_type, "mode": subscription_mode}
+                )
+            ]
+            
+        except Exception as e:
+            logger.error(f"Error parsing Angel One binary message: {e}")
+            return []
+    
+    def _find_symbol_by_token(self, token: str, exchange_type: int) -> Optional[str]:
+        """Find symbol name from token and exchange type."""
+        for symbol, info in self._token_map.items():
+            if info.get("token") == token and info.get("exchangeType") == exchange_type:
+                return symbol
+        return None
+
+
 class FivePaisaAdapter(WebsocketAdapter):
     """Adapter for 5paisa websocket price streams with configurable payloads."""
 
@@ -317,6 +596,11 @@ class MarketPriceSubject(ConnectorSubject):
     @property
     def adapter(self) -> WebsocketAdapter:
         return self._adapter
+    
+    @property
+    def _deletions_enabled(self) -> bool:
+        """Disable deletions for better performance since we only add price updates."""
+        return False
 
     def add_symbol(self, symbol: str) -> None:
         normalized = symbol.upper()
@@ -330,6 +614,7 @@ class MarketPriceSubject(ConnectorSubject):
                 self._pending.add(normalized)
 
     def run(self) -> None:
+        """Main entry point called by Pathway in dedicated thread."""
         asyncio.run(self._run_forever())
 
     async def _run_forever(self) -> None:
@@ -347,16 +632,20 @@ class MarketPriceSubject(ConnectorSubject):
 
         url = getattr(self._adapter, "ws_url", DEFAULT_WS_URL)
         logger.info("Connecting to market data stream: %s", url)
+        
         async with websockets.connect(url, ping_interval=20, ping_timeout=10) as ws:
             self._loop = asyncio.get_running_loop()
             self._symbol_queue = asyncio.Queue()
 
+            # Add pending symbols to queue
             for symbol in list(self._pending):
                 await self._symbol_queue.put(symbol)
             self._pending.clear()
 
+            # Initial connection and subscription
             await self._adapter.on_connect(ws, list(self._symbols))
 
+            # Run message consumer and subscription dispatcher concurrently
             consumer = asyncio.create_task(self._consume_messages(ws))
             subscriber = asyncio.create_task(self._dispatch_subscriptions(ws, self._symbol_queue))
 
@@ -365,32 +654,47 @@ class MarketPriceSubject(ConnectorSubject):
                 return_when=asyncio.FIRST_EXCEPTION,
             )
 
+            # Cancel pending tasks
             for task in pending:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
 
+            # Re-raise exceptions
             for task in done:
                 if task.exception():
                     raise task.exception()
+                    
         self._symbol_queue = None
         self._loop = None
 
     async def _consume_messages(self, ws) -> None:
+        """Consume WebSocket messages and push to Pathway buffer."""
         async for message in ws:
-            parsed_messages = await self._adapter.handle_message(message)
-            if not parsed_messages:
+            try:
+                # Send heartbeat for Angel One if needed
+                if isinstance(self._adapter, AngelOneAdapter):
+                    await self._adapter.send_heartbeat(ws)
+                
+                parsed_messages = await self._adapter.handle_message(message)
+                if not parsed_messages:
+                    continue
+                    
+                # Send each parsed message to Pathway immediately
+                for parsed in parsed_messages:
+                    self.next(
+                        symbol=parsed.symbol,
+                        price=str(parsed.price),
+                        provider=self._adapter.name,
+                        raw=json.dumps(parsed.raw, default=str),
+                        received_at=time.time(),
+                    )
+            except Exception as exc:
+                logger.error(f"Error processing message: {exc}", exc_info=True)
                 continue
-            for parsed in parsed_messages:
-                self.next(
-                    symbol=parsed.symbol,
-                    price=str(parsed.price),
-                    provider=self._adapter.name,
-                    raw=json.dumps(parsed.raw, default=str),
-                    received_at=asyncio.get_running_loop().time(),
-                )
 
     async def _dispatch_subscriptions(self, ws, queue: asyncio.Queue[str]) -> None:
+        """Handle dynamic symbol subscriptions."""
         while True:
             symbol = await queue.get()
             try:
@@ -453,27 +757,38 @@ class MarketDataService:
 
         raise RuntimeError(f"Live price for {normalized} unavailable from provider {self.adapter.name}")
 
-    async def await_price(self, symbol: str, timeout: float = 10.0) -> Decimal:
+    async def await_price(self, symbol: str, timeout: float = 3.0) -> Decimal:
+        """Wait for a price update for the given symbol with short timeout for responsiveness."""
         normalized = symbol.upper()
         self.register_symbol(normalized)
         deadline = time.time() + timeout
 
+        # Quick initial check
         price = self.get_latest_price(normalized)
         if price is not None:
             return price
 
+        # Poll with short intervals for real-time responsiveness
         while time.time() < deadline:
             price = self.get_latest_price(normalized)
             if price is not None:
                 return price
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(0.1)  # Poll every 100ms
 
         raise RuntimeError(f"Timed out waiting for live price for {normalized}")
 
     def _run_pathway_runtime(self) -> None:
-        table = pw.io.python.read(self.subject, schema=MarketTickSchema)
+        """Run Pathway runtime with optimized settings for real-time streaming."""
+        # Read from the WebSocket subject
+        table = pw.io.python.read(
+            self.subject,
+            schema=MarketTickSchema,
+            autocommit_duration_ms=100,  # Commit every 100ms for near real-time updates
+            name="market_data_stream",
+        )
 
-        def on_tick(_key: pw.Pointer, row: Dict[str, Any], _time: float, is_addition: bool) -> None:
+        def on_tick(key, row, time, is_addition) -> None:
+            """Process each price update immediately."""
             if not is_addition:
                 return
             try:
@@ -483,14 +798,22 @@ class MarketDataService:
                 return
             symbol = row["symbol"].upper()
             with self._lock:
+                old_price = self._latest.get(symbol)
                 self._latest[symbol] = price
+                if old_price != price:
+                    logger.debug(f"💰 {symbol}: {old_price} → {price}")
 
+        # Subscribe to table changes
         pw.io.subscribe(table, on_tick)
+        
+        # Signal that we're ready to start
         self._started.set()
+        
         try:
+            # Run with minimal monitoring overhead
             monitoring_level = getattr(pw, "MonitoringLevel", None)
-            if monitoring_level is not None and hasattr(monitoring_level, "ERRORS_ONLY"):
-                pw.run(monitoring_level=monitoring_level.ERRORS_ONLY)
+            if monitoring_level is not None and hasattr(monitoring_level, "NONE"):
+                pw.run(monitoring_level=monitoring_level.NONE)
             else:
                 pw.run()
         except AttributeError:
@@ -500,6 +823,8 @@ class MarketDataService:
         provider = os.getenv("MARKET_DATA_PROVIDER", DEFAULT_PROVIDER).lower()
         if provider == "finnhub":
             return FinnhubAdapter()
+        if provider in {"angelone", "angel", "smartapi"}:
+            return AngelOneAdapter()
         if provider in {"5paisa", "fivepaisa"}:
             return FivePaisaAdapter()
         return GenericJSONAdapter()

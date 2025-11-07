@@ -12,6 +12,9 @@ prisma>=0.15.0
 celery[redis]>=5.4.0
 websockets>=11.0.0
 
+# Market Data Dependencies
+pyotp>=2.9.0
+
 # Pathway and NSE Pipeline Dependencies
 pathway[xpack-llm]
 langchain>=0.1.0

@@ -123,7 +123,7 @@ async def get_market_quotes(
         if price is None:
             service.register_symbol(provider_symbol)
             try:
-                price = await service.await_price(provider_symbol, timeout=5.0)
+                price = await service.await_price(provider_symbol, timeout=3.0)
                 source = "live-stream"
             except RuntimeError:
                 price = None
