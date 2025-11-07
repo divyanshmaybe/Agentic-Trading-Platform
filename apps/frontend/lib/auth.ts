@@ -43,7 +43,7 @@ export type LoginResponse = {
   data: {
     user: {
       id: string
-      role: string
+      role: UserRole
       email: string
       first_name: string
       last_name: string

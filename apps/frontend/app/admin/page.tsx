@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { useForm } from "react-hook-form"
+import type { ChartData, ScriptableContext } from "chart.js"
 
 import { CompanySettingsCard } from "@/components/admin/CompanySettingsCard"
 import { CreateUserModal } from "@/components/admin/CreateUserModal"
@@ -13,6 +14,7 @@ import { Container } from "@/components/shared/Container"
 import { AppHeader } from "@/components/layout/AppHeader"
 import { createUser, getUsers, type AuthUserSummary, type UserRole, updateUser } from "@/lib/auth"
 import "@/lib/chart"
+import { lineDepthPlugin } from "@/components/dashboard/chartConfig"
 import {
   type DashboardData,
   computeRoiPct,
@@ -20,6 +22,46 @@ import {
   getDashboardData,
   getTopKInvestors,
 } from "@/lib/dashboardData"
+
+const POSITIVE_LINE_STYLE = {
+  border: "#22c55e",
+  gradientFrom: "rgba(34,197,94,0.2)",
+  gradientSoft: "rgba(34,197,94,0.12)",
+  gradientTo: "rgba(34,197,94,0)",
+  shadow: "rgba(34,197,94,0.25)",
+} as const
+
+const NEGATIVE_LINE_STYLE = {
+  border: "#ef4444",
+  gradientFrom: "rgba(239,68,68,0.2)",
+  gradientSoft: "rgba(239,68,68,0.12)",
+  gradientTo: "rgba(239,68,68,0)",
+  shadow: "rgba(239,68,68,0.25)",
+} as const
+
+type LinePalette = typeof POSITIVE_LINE_STYLE | typeof NEGATIVE_LINE_STYLE
+type LineDatasetWithShadow = ChartData<"line">["datasets"][number] & { shadowColor: string }
+
+const pickPalette = (series: number[]): LinePalette => {
+  if (!series.length) {
+    return POSITIVE_LINE_STYLE
+  }
+  const delta = series[series.length - 1] - series[0]
+  return delta >= 0 ? POSITIVE_LINE_STYLE : NEGATIVE_LINE_STYLE
+}
+
+const gradientFill = (from: string, to: string) =>
+  (context: ScriptableContext<"line">) => {
+    const { ctx, chartArea } = context.chart
+    if (!chartArea) {
+      return from
+    }
+
+    const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top)
+    gradient.addColorStop(0, from)
+    gradient.addColorStop(1, to)
+    return gradient
+  }
 
 export default function AdminDashboardPage() {
   const initial: DashboardData = getDashboardData()
@@ -220,7 +262,7 @@ export default function AdminDashboardPage() {
       {
         label: "ROI",
         value: `${roiPct.toFixed(1)}%`,
-        valueClassName: roiPct >= 0 ? "text-[#00FF88]" : "text-rose-400",
+        valueClassName: roiPct >= 0 ? "text-[#22c55e]" : "text-[#ef4444]",
         title: "Return on investment for the period",
       },
     ],
@@ -228,55 +270,39 @@ export default function AdminDashboardPage() {
   )
 
   const chart = useMemo(() => {
-    const gradientFor = (ctx: CanvasRenderingContext2D) => {
-      const g = ctx.createLinearGradient(0, 0, 0, 320)
-      g.addColorStop(0, "rgba(0,255,136,0.35)")
-      g.addColorStop(1, "rgba(0,255,136,0.02)")
-      return g
+    const companyPalette = pickPalette(totals)
+    const companyDataset: LineDatasetWithShadow = {
+      label: "Company",
+      data: totals,
+      borderColor: companyPalette.border,
+      backgroundColor: gradientFill(companyPalette.gradientFrom, companyPalette.gradientTo),
+      borderWidth: 2,
+      tension: 0.35,
+      fill: true,
+      pointRadius: 0,
+      borderCapStyle: "round",
+      borderJoinStyle: "round",
+      shadowColor: companyPalette.shadow,
     }
 
-    const datasets = [
-      {
-        label: "Company",
-        data: totals,
-        borderColor: "#00FF88",
-        backgroundColor: (ctx: any) => gradientFor(ctx.chart.ctx),
-        borderWidth: 2,
-        tension: 0.35,
-        fill: true,
-        pointRadius: 0,
-      },
-      ...topK.slice(0, 2).map((inv, idx) => ({
+    const investorDatasets: LineDatasetWithShadow[] = topK.slice(0, 2).map((inv) => {
+      const palette = pickPalette(inv.series)
+      return {
         label: inv.name,
         data: inv.series,
-        borderColor: idx === 0 ? "#22d3ee" : "#60a5fa",
-        backgroundColor: "transparent",
+        borderColor: palette.border,
+        backgroundColor: gradientFill(palette.gradientSoft, palette.gradientTo),
         borderWidth: 1.6,
         pointRadius: 0,
         tension: 0.35,
-        fill: false,
-      })),
-    ]
+        fill: true,
+        borderCapStyle: "round",
+        borderJoinStyle: "round",
+        shadowColor: palette.shadow,
+      }
+    })
 
-    const glowPlugin = {
-      id: "neon-glow",
-      afterDatasetsDraw(chart: any) {
-        const { ctx } = chart
-        chart.data.datasets.forEach((_: any, i: number) => {
-          const meta = chart.getDatasetMeta(i)
-          if (!meta.hidden && meta.dataset) {
-            ctx.save()
-            ctx.shadowColor = "rgba(0,255,136,0.6)"
-            ctx.shadowBlur = i === 0 ? 16 : 6
-            ctx.lineWidth = i === 0 ? 2 : 1.5
-            ctx.strokeStyle = i === 0 ? "#00FF88" : ctx.strokeStyle
-            ctx.beginPath()
-            meta.dataset.draw(ctx)
-            ctx.restore()
-          }
-        })
-      },
-    }
+    const datasets: ChartData<"line">["datasets"] = [companyDataset, ...investorDatasets]
 
     return {
       data: {
@@ -316,7 +342,7 @@ export default function AdminDashboardPage() {
           },
         },
       },
-      plugins: [glowPlugin],
+      plugins: [lineDepthPlugin],
     }
   }, [months, totals, topK])
 
@@ -382,6 +408,18 @@ export default function AdminDashboardPage() {
     [fetchUsers, teamById],
   )
 
+  const handleCreateUserModalOpenChange = useCallback(
+    (open: boolean) => {
+      setCreateUserModalOpen(open)
+      if (!open) {
+        setCreateUserError(null)
+        setCreateUserSuccess(null)
+        resetCreateUserForm({ email: "", password: "", firstName: "", lastName: "", role: "staff" })
+      }
+    },
+    [resetCreateUserForm],
+  )
+
   const handleCreateUser = useCallback(
     async (values: CreateUserFormValues) => {
       setCreatingUser(true)
@@ -398,15 +436,17 @@ export default function AdminDashboardPage() {
         })
 
         setCreateUserSuccess(`User ${response.data.email} created successfully.`)
-        resetCreateUserForm({ email: "", password: "", firstName: "", lastName: "", role: "staff" })
         await fetchUsers()
+        window.setTimeout(() => {
+          handleCreateUserModalOpenChange(false)
+        }, 1000)
       } catch (error) {
         setCreateUserError(error instanceof Error ? error.message : "Unable to create user")
       } finally {
         setCreatingUser(false)
       }
     },
-    [fetchUsers, resetCreateUserForm],
+    [fetchUsers, handleCreateUserModalOpenChange],
   )
 
   const handleRoleFilterChange = useCallback((roles: UserRole[]) => {
@@ -418,18 +458,6 @@ export default function AdminDashboardPage() {
     setCreateUserSuccess(null)
     setCreateUserModalOpen(true)
   }, [])
-
-  const handleCreateUserModalOpenChange = useCallback(
-    (open: boolean) => {
-      setCreateUserModalOpen(open)
-      if (!open) {
-        setCreateUserError(null)
-        setCreateUserSuccess(null)
-        resetCreateUserForm({ email: "", password: "", firstName: "", lastName: "", role: "staff" })
-      }
-    },
-    [resetCreateUserForm],
-  )
 
   const directoryDescription = usersError
     ? usersError

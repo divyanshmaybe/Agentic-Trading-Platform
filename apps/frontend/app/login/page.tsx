@@ -43,9 +43,14 @@ export default function LoginPage() {
 				localStorage.setItem("refresh_token", refresh_token)
 				localStorage.setItem("user_id", user.id)
 				localStorage.setItem("organization_id", user.organization_id)
+				localStorage.setItem("user_role", user.role)
 			}
 
-			router.push("/admin")
+			if (user.role === "admin") {
+				router.push("/admin")
+			} else {
+				router.push("/dashboard")
+			}
 		} catch (error) {
 			setApiError(error instanceof Error ? error.message : "Login failed")
 		} finally {

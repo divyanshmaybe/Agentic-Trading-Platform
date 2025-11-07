@@ -1,6 +1,16 @@
 // Register Chart.js elements once to keep components lean
-import { Chart, LineElement, CategoryScale, LinearScale, PointElement, Tooltip, Filler, Legend } from "chart.js";
+import {
+  ArcElement,
+  CategoryScale,
+  Chart,
+  Filler,
+  Legend,
+  LineElement,
+  LinearScale,
+  PointElement,
+  Tooltip,
+} from "chart.js";
 
-Chart.register(LineElement, CategoryScale, LinearScale, PointElement, Tooltip, Filler, Legend);
+Chart.register(ArcElement, LineElement, CategoryScale, LinearScale, PointElement, Tooltip, Filler, Legend);
 
 export { Chart };
