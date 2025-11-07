@@ -1,13 +1,15 @@
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
+import { AnimatePresence, motion } from "framer-motion"
+
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
 import type { NewsItem } from "@/lib/dashboardTypes"
 
 type NewsFeedCardProps = {
-  news: NewsItem | null
+  news: NewsItem[]
 }
 
 export function NewsFeedCard({ news }: NewsFeedCardProps) {
-  if (!news) {
+  if (!news || !news.length) {
     return null
   }
 
@@ -15,18 +17,34 @@ export function NewsFeedCard({ news }: NewsFeedCardProps) {
     <Card className="card-glass neon-hover rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_28px_65px_-38px_rgba(0,0,0,0.9)] backdrop-blur">
       <CardHeader className="gap-1">
         <CardDescription className="text-xs uppercase tracking-[0.3em] text-white/45">
-          Live News Feed
+          Live Macro Feed
         </CardDescription>
-        <CardTitle className="h-title text-xl text-[#fafafa]">{news.headline}</CardTitle>
+        <CardTitle className="h-title text-xl text-[#fafafa]">Top Headlines</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-4 text-sm text-white/70">
-        <p className="leading-relaxed text-white/70">{news.summary}</p>
+      <CardContent className="space-y-3">
+        <AnimatePresence initial={false} mode="popLayout">
+          {news.map((item) => (
+            <motion.article
+              key={item.id}
+              layout
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              transition={{ duration: 0.45, ease: [0.21, 0.61, 0.35, 1] }}
+              className="rounded-xl border border-white/10 bg-black/30 p-4 shadow-[0_8px_24px_-8px_rgba(0,0,0,0.6)] backdrop-blur-sm"
+            >
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <span className="rounded-md bg-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white/50">
+                  {item.publisher}
+                </span>
+                <span className="text-xs font-medium uppercase tracking-wide text-white/45">{item.timestamp}</span>
+              </div>
+              <h3 className="mb-2 text-lg font-semibold leading-tight text-[#fafafa]">{item.headline}</h3>
+              <p className="text-sm leading-relaxed text-white/70">{item.summary}</p>
+            </motion.article>
+          ))}
+        </AnimatePresence>
       </CardContent>
-      <CardFooter className="flex flex-col items-start gap-1 text-xs text-white/45">
-        <span className="uppercase tracking-wide">{news.publisher}</span>
-        <span>{news.timestamp}</span>
-      </CardFooter>
     </Card>
   )
 }
-

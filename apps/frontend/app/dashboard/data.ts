@@ -1,17 +1,5 @@
 import type { NewsItem, NotificationItem, PortfolioSummary, StockItem } from "@/lib/dashboardTypes"
 
-const randomAllocation = (): PortfolioSummary["allocation"] => {
-  const alpha = Math.random() * 40 + 20
-  const lowRisk = Math.random() * (70 - alpha) + 10
-  const highRisk = Math.max(100 - alpha - lowRisk, 5)
-
-  return [
-    { label: "Alpha", value: Math.round(alpha) },
-    { label: "Low-Risk", value: Math.round(lowRisk) },
-    { label: "High-Risk", value: Math.round(highRisk) },
-  ]
-}
-
 export const notificationItems: NotificationItem[] = [
   {
     id: "notif-1",
@@ -52,7 +40,11 @@ export const portfolioSummary: PortfolioSummary = {
   changePct: 1.86,
   changeValue: 22840,
   dailyPnL: 14280,
-  allocation: randomAllocation(),
+  allocation: [
+    { label: "Alpha", value: 45 },
+    { label: "Low-Risk", value: 32 },
+    { label: "High-Risk", value: 23 },
+  ],
 }
 
 export const stocks: StockItem[] = [
@@ -103,5 +95,40 @@ export const newsFeedItems: NewsItem[] = [
     publisher: "GlobalComms",
     timestamp: "18 min ago",
     summary: "Smart beta portfolios triggered auto-rebalancing after energy complex rallied 2.4% on unexpected inventory drawdowns.",
+  },
+  {
+    id: "news-4",
+    headline: "Desk Liquidity Models Flag Yen Carry Wobble",
+    publisher: "FXScope",
+    timestamp: "32 min ago",
+    summary: "Overnight cross-currency spreads widened 11 bps, prompting automated hedge overlays across the G10 carry sleeve.",
+  },
+  {
+    id: "news-5",
+    headline: "Vol Control Funds Rebalance Into Green Energy",
+    publisher: "EnergyQuant",
+    timestamp: "46 min ago",
+    summary: "Carbon-linked ETNs outperformed and triggered systematic inflows as realized volatility compressed within target bands.",
+  },
+  {
+    id: "news-6",
+    headline: "Rates Traders Fade Front-End Hike Bets",
+    publisher: "MacroSignal",
+    timestamp: "1 hr 5 min ago",
+    summary: "Swap desks unwind hawkish Eurodollar positioning after CPI print undershoots consensus for the second month.",
+  },
+  {
+    id: "news-7",
+    headline: "Crypto Basis Narrows Ahead of ETF Vote",
+    publisher: "ChainBeat",
+    timestamp: "1 hr 40 min ago",
+    summary: "Funding rates normalize as spot-futures basis compresses, with arbitrage desks rotating collateral into short-term treasuries.",
+  },
+  {
+    id: "news-8",
+    headline: "European Utilities Bounce On Policy Clarity",
+    publisher: "EuroWire",
+    timestamp: "2 hr 12 min ago",
+    summary: "Commission guidance eases price-cap fears, driving sector rally and sparking cross-asset rotation signals.",
   },
 ]

@@ -1,44 +1,52 @@
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
+import { AnimatePresence, motion } from "framer-motion"
+
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
 import type { NotificationItem } from "@/lib/dashboardTypes"
 
 type NotificationCardProps = {
-  notification: NotificationItem | null
+  notifications: NotificationItem[]
 }
 
-export function NotificationCard({ notification }: NotificationCardProps) {
-  if (!notification) {
+export function NotificationCard({ notifications }: NotificationCardProps) {
+  if (!notifications || !notifications.length) {
     return null
   }
 
   return (
     <Card className="card-glass neon-hover rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_28px_65px_-38px_rgba(0,0,0,0.9)] backdrop-blur">
       <CardHeader className="gap-1">
-        <CardTitle className="h-title text-lg text-[#fafafa]">{notification.title}</CardTitle>
         <CardDescription className="text-xs uppercase tracking-[0.3em] text-white/45">
-          Notifications
+          Desk Notifications
         </CardDescription>
+        <CardTitle className="h-title text-xl text-[#fafafa]">Live Signal Stream</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-4 text-sm text-white/70">
-        <p className="leading-relaxed text-white/70">{notification.body}</p>
-        <div className="text-xs font-medium uppercase tracking-wide text-white/45">{notification.timestamp}</div>
-      </CardContent>
-      {notification.actions?.length ? (
-        <CardFooter className="gap-3">
-          {notification.actions.map((action) => (
-            <Button
-              key={`${notification.id}-${action.value}`}
-              size="sm"
-              variant="outline"
-              className="neon-hover rounded-lg border border-white/15 bg-white/5 px-4 text-xs font-semibold text-[#fafafa] transition hover:-translate-y-0.5 hover:border-white/25 hover:bg-white/10"
+      <CardContent className="space-y-3">
+        <AnimatePresence initial={false} mode="popLayout">
+          {notifications.map((notification) => (
+            <motion.div
+              key={notification.id}
+              layout
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              transition={{ duration: 0.45, ease: [0.21, 0.61, 0.35, 1] }}
+              className="group relative rounded-xl border border-white/10 bg-black/30 p-4 shadow-[0_8px_24px_-8px_rgba(0,0,0,0.6)] backdrop-blur-sm"
             >
-              {action.label}
-            </Button>
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <span className="text-xs font-medium uppercase tracking-wide text-white/45">
+                  {notification.timestamp}
+                </span>
+                <span className="rounded-md bg-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white/50">
+                  Alert
+                </span>
+              </div>
+              <h3 className="mb-1.5 text-base font-semibold text-[#fafafa]">{notification.title}</h3>
+              <p className="text-sm leading-relaxed text-white/70">{notification.body}</p>
+            </motion.div>
           ))}
-        </CardFooter>
-      ) : null}
+        </AnimatePresence>
+      </CardContent>
     </Card>
   )
 }
-

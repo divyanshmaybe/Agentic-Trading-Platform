@@ -20,7 +20,6 @@ import {
   computeRoiPct,
   formatCurrency,
   getDashboardData,
-  getTopKInvestors,
 } from "@/lib/dashboardData"
 
 const POSITIVE_LINE_STYLE = {
@@ -109,8 +108,6 @@ export default function AdminDashboardPage() {
   const totalInvestment = totals[totals.length - 1] * 1_000_000
   const totalProfit = (totals[totals.length - 1] - totals[0]) * 1_000_000
   const roiPct = computeRoiPct(totals)
-
-  const topK = useMemo(() => getTopKInvestors(data.investors, 3), [data.investors])
 
   const formatUserName = useCallback((user: AuthUserSummary) => {
     const fullName = `${user.first_name} ${user.last_name}`.trim()
@@ -271,38 +268,21 @@ export default function AdminDashboardPage() {
 
   const chart = useMemo(() => {
     const companyPalette = pickPalette(totals)
-    const companyDataset: LineDatasetWithShadow = {
-      label: "Company",
-      data: totals,
-      borderColor: companyPalette.border,
-      backgroundColor: gradientFill(companyPalette.gradientFrom, companyPalette.gradientTo),
-      borderWidth: 2,
-      tension: 0.35,
-      fill: true,
-      pointRadius: 0,
-      borderCapStyle: "round",
-      borderJoinStyle: "round",
-      shadowColor: companyPalette.shadow,
-    }
-
-    const investorDatasets: LineDatasetWithShadow[] = topK.slice(0, 2).map((inv) => {
-      const palette = pickPalette(inv.series)
-      return {
-        label: inv.name,
-        data: inv.series,
-        borderColor: palette.border,
-        backgroundColor: gradientFill(palette.gradientSoft, palette.gradientTo),
-        borderWidth: 1.6,
-        pointRadius: 0,
+    const datasets: ChartData<"line">["datasets"] = [
+      {
+        label: "Company",
+        data: totals,
+        borderColor: companyPalette.border,
+        backgroundColor: gradientFill(companyPalette.gradientFrom, companyPalette.gradientTo),
+        borderWidth: 2,
         tension: 0.35,
         fill: true,
+        pointRadius: 0,
         borderCapStyle: "round",
         borderJoinStyle: "round",
-        shadowColor: palette.shadow,
-      }
-    })
-
-    const datasets: ChartData<"line">["datasets"] = [companyDataset, ...investorDatasets]
+        shadowColor: companyPalette.shadow,
+      } as LineDatasetWithShadow,
+    ]
 
     return {
       data: {
@@ -344,7 +324,7 @@ export default function AdminDashboardPage() {
       },
       plugins: [lineDepthPlugin],
     }
-  }, [months, totals, topK])
+  }, [months, totals])
 
   const handleLogout = useCallback(() => {
     if (typeof window !== "undefined") {

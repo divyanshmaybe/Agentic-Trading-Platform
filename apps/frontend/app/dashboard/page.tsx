@@ -8,19 +8,17 @@ import { PortfolioOverviewCard } from "@/components/dashboard/PortfolioOverviewC
 import { StocksWatchlistCard } from "@/components/dashboard/StocksWatchlistCard"
 import { Button } from "@/components/ui/button"
 import { Container } from "@/components/shared/Container"
-import { useRotatingItem } from "@/hooks/useRotatingItem"
+import { useRotatingList } from "@/hooks/useRotatingItem"
 import { cn } from "@/lib/utils"
 import "@/lib/chart"
-
-import type { NewsItem, NotificationItem } from "@/lib/dashboardTypes"
 
 import { notificationItems, newsFeedItems, portfolioSummary, stocks } from "./data"
 
 const playfair = Playfair_Display({ subsets: ["latin"], weight: ["400", "500", "600", "700"] })
 
 export default function DashboardPage() {
-  const activeNotification = useRotatingItem<NotificationItem>(notificationItems, 5500)
-  const activeNews = useRotatingItem<NewsItem>(newsFeedItems, 6500)
+  const activeNotifications = useRotatingList(notificationItems, 5500, 3)
+  const activeNews = useRotatingList(newsFeedItems, 6000, 3)
 
   return (
     <div className="min-h-screen bg-[#0c0c0c] text-[#fafafa]">
@@ -42,9 +40,9 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        <main className="grid gap-6 xl:grid-cols-[1.1fr_1.8fr_1fr]">
-          <div className="flex flex-col gap-6">
-            <NotificationCard notification={activeNotification} />
+        <main className="grid gap-6 lg:grid-cols-[1fr_1.6fr_1fr]">
+          <div className="flex flex-col">
+            <NotificationCard notifications={activeNotifications} />
           </div>
 
           <div className="flex flex-col gap-6">
@@ -52,7 +50,7 @@ export default function DashboardPage() {
             <StocksWatchlistCard stocks={stocks} />
           </div>
 
-          <div className="flex flex-col gap-6">
+          <div className="flex flex-col">
             <NewsFeedCard news={activeNews} />
           </div>
         </main>
@@ -60,5 +58,3 @@ export default function DashboardPage() {
     </div>
   )
 }
-
-
