@@ -3,9 +3,6 @@ kind: Application
 metadata:
   name: pathway-submission
   namespace: argocd
-  # Finalizer ensures the Application is deleted properly
-  finalizers:
-    - resources-finalizer.argocd.argoproj.io
 spec:
   # Project to which this application belongs
   project: default

@@ -13,6 +13,5 @@ kubectl delete crd prometheusrules.monitoring.coreos.com
 kubectl delete crd scrapeconfigs.monitoring.coreos.com
 kubectl delete crd servicemonitors.monitoring.coreos.com
 kubectl delete crd thanosrulers.monitoring.coreos.com
-helm uninstall argocd -n argocd
-kubectl delete namespace argocd
+kubectl delete -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
 terraform destroy -auto-approve
