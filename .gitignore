@@ -40,6 +40,9 @@ yarn-error.log*
 *.so
 .Python
 
+# Angel One token cache
+apps/portfolio-server/docs/angelone_tokens.json
+
 # Misc
 .DS_Store
 *.pem

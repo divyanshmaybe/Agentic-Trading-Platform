@@ -39,14 +39,28 @@ server_dir = os.path.dirname(__file__)
 # Initialize services
 pipeline_service = PipelineService(server_dir, None)
 
-# Create custom lifespan to start NSE pipeline
+# Create custom lifespan to start NSE pipeline and Angel One token generation
 def create_lifespan(base_app_instance, pipeline_service_instance):
     """Create lifespan context manager with pipeline startup"""
     @asynccontextmanager
     async def lifespan_with_pipeline(app: FastAPI):
-        """Application lifespan with NSE pipeline startup"""
+        """Application lifespan with NSE pipeline and Angel One token generation"""
         # Run base startup
         await base_app_instance._startup()
+        
+        # Start Angel One token map generation (async via Celery)
+        if os.getenv("MARKET_DATA_PROVIDER", "").lower() in {"angelone", "angel", "smartapi"}:
+            try:
+                from workers.angelone_token_task import generate_angelone_tokens_task
+                base_app_instance.logger.info("🚀 Dispatching Angel One token map generation to Celery...")
+                token_task = generate_angelone_tokens_task.delay(force_refresh=False)
+                base_app_instance.logger.info(
+                    "✓ Angel One token task dispatched (task_id=%s)", token_task.id
+                )
+            except Exception as exc:
+                base_app_instance.logger.warning(
+                    "Failed to dispatch Angel One token task: %s (will use fallback)", exc
+                )
         
         # Start NSE pipeline via Celery task
         app.state.pipeline_status = "initializing"
