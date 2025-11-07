@@ -1,12 +1,12 @@
 import type { ComponentPropsWithoutRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-import type { UserSummary } from "@/data/adminUsers";
+import type { DirectoryUser } from "./types";
 
 type UserDirectoryCardProps = {
   title: string;
   description: string;
-  users: UserSummary[];
+  users: DirectoryUser[];
   className?: string;
 } & ComponentPropsWithoutRef<typeof Card>;
 
@@ -28,7 +28,7 @@ export function UserDirectoryCard({ title, description, users, className = "", .
               <div className="flex min-w-0 flex-col">
                 <span className="truncate text-sm font-medium text-white">{user.name}</span>
                 <span className="truncate text-xs text-white/60">{user.email}</span>
-                <span className="text-xs text-white/50">{user.title}</span>
+                <span className="text-xs text-white/50 capitalize">{user.role}</span>
               </div>
               <div className="text-right text-xs text-white/60">
                 <StatusBadge status={user.status} />
@@ -38,8 +38,6 @@ export function UserDirectoryCard({ title, description, users, className = "", .
           ))}
         </div>
         <div className="mt-auto flex items-center justify-end gap-2 text-xs text-white/50">
-          <span>Pagination ready</span>
-          <span className="size-1 rounded-full bg-white/40" aria-hidden />
           <span>Showing {users.length} users</span>
         </div>
       </CardContent>
@@ -48,16 +46,21 @@ export function UserDirectoryCard({ title, description, users, className = "", .
 }
 
 type StatusBadgeProps = {
-  status: UserSummary["status"];
+  status: DirectoryUser["status"];
 };
 
 function StatusBadge({ status }: StatusBadgeProps) {
-  const isActive = status === "active";
-  const badgeClass = isActive ? "bg-emerald-500/20 text-emerald-300" : "bg-amber-500/10 text-amber-200";
+  const statusClasses: Record<DirectoryUser["status"], string> = {
+    active: "bg-emerald-500/20 text-emerald-300",
+    suspended: "bg-amber-500/20 text-amber-200",
+    inactive: "bg-slate-500/20 text-slate-200",
+  };
+
+  const badgeClass = statusClasses[status];
 
   return (
     <span className={`inline-flex items-center justify-center rounded-full px-2 py-0.5 text-[11px] font-medium ${badgeClass}`}>
-      {isActive ? "Active" : "Invited"}
+      {status.charAt(0).toUpperCase() + status.slice(1)}
     </span>
   );
 }

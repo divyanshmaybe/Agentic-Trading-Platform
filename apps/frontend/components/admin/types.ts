@@ -1,13 +1,11 @@
-import type { Investor } from "@/lib/dashboardData";
-
 export type AdminSettingsForm = {
-  users: { id: string; role: NonNullable<Investor["role"]>; active: boolean }[];
+  users: { id: string; role: "admin" | "staff" | "viewer"; active: boolean }[];
 };
 
 export type AdminSettingsUserField = {
   id: string;
   name: string;
-  value: string;
+  email: string;
   roleField: `users.${number}.role`;
   activeField: `users.${number}.active`;
 };
@@ -17,5 +15,14 @@ export type CreateUserFormValues = {
   password: string;
   firstName: string;
   lastName: string;
-  role: "staff" | "customer";
+  role: "staff" | "viewer";
+};
+
+export type DirectoryUser = {
+  id: string;
+  name: string;
+  email: string;
+  role: "admin" | "staff" | "viewer";
+  status: "active" | "suspended" | "inactive";
+  lastActive: string;
 };

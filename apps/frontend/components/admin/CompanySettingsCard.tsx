@@ -12,6 +12,8 @@ type CompanySettingsCardProps = {
   register: UseFormRegister<AdminSettingsForm>;
   onSubmit: FormEventHandler<HTMLFormElement>;
   saving: boolean;
+  errorMessage?: string | null;
+  successMessage?: string | null;
   className?: string;
 } & ComponentPropsWithoutRef<typeof Card>;
 
@@ -21,6 +23,8 @@ export function CompanySettingsCard({
   register,
   onSubmit,
   saving,
+  errorMessage,
+  successMessage,
   className = "",
   ...cardProps
 }: CompanySettingsCardProps) {
@@ -36,6 +40,16 @@ export function CompanySettingsCard({
       </CardHeader>
       <CardContent className="flex-1">
         <form onSubmit={onSubmit} className="space-y-4">
+          {errorMessage && (
+            <div className="rounded-lg border border-red-400/40 bg-red-500/10 px-3 py-2 text-sm text-red-200" role="alert">
+              {errorMessage}
+            </div>
+          )}
+          {successMessage && (
+            <div className="rounded-lg border border-emerald-400/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200" role="status">
+              {successMessage}
+            </div>
+          )}
           <div className="space-y-3">
             {users.map((user) => (
               <div
@@ -44,7 +58,7 @@ export function CompanySettingsCard({
               >
                 <div className="min-w-0">
                   <div className="truncate text-sm font-medium">{user.name}</div>
-                  <div className="text-xs text-white/60">{user.value}</div>
+                  <div className="text-xs text-white/60">{user.email}</div>
                 </div>
                 <div className="flex items-center gap-3">
                   <select
@@ -52,9 +66,9 @@ export function CompanySettingsCard({
                     className="rounded-md border border-white/10 bg-black/40 px-2.5 py-1.5 text-sm text-white focus:outline-none"
                     aria-label={`Role for ${user.name}`}
                   >
-                    <option>Viewer</option>
-                    <option>Editor</option>
-                    <option>Admin</option>
+                    <option value="viewer">Viewer</option>
+                    <option value="staff">Staff</option>
+                    <option value="admin">Admin</option>
                   </select>
                   <label className="inline-flex items-center gap-2 text-sm">
                     <input
