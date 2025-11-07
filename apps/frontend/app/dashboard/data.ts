@@ -33,6 +33,30 @@ export const notificationItems: NotificationItem[] = [
     body: "Smart signals flag: Alpha sleeve outperforming benchmark by 3.4% today.",
     timestamp: "1 hr ago",
   },
+  {
+    id: "notif-5",
+    title: "Desk Broadcast",
+    body: "Head trader requests confirmation on auto-hedge ladder for EURUSD carry strip.",
+    timestamp: "1 hr 25 min ago",
+  },
+  {
+    id: "notif-6",
+    title: "Overnight Sweep",
+    body: "Asia desk closed Nikkei futures leg at 28,440. Settlement summary available for review.",
+    timestamp: "2 hr ago",
+  },
+  {
+    id: "notif-7",
+    title: "Signal Drift",
+    body: "Momentum model variance rose 0.6σ. Approve sensitivity adjustment for Smart Beta sleeve?",
+    timestamp: "2 hr 40 min ago",
+  },
+  {
+    id: "notif-8",
+    title: "Credit Sweep",
+    body: "IG tranche spreads widened 3 bps. Add-on hedge suggestion ready for execution.",
+    timestamp: "3 hr 15 min ago",
+  },
 ]
 
 export const portfolioSummary: PortfolioSummary = {

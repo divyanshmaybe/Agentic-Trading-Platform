@@ -40,19 +40,15 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        <main className="grid gap-6 lg:grid-cols-[1fr_1.6fr_1fr]">
-          <div className="flex flex-col">
-            <NotificationCard notifications={activeNotifications} />
-          </div>
+        <main className="grid h-[calc(40vh-12rem)] gap-6 lg:grid-cols-[1fr_1.6fr_1fr]">
+          <NotificationCard notifications={activeNotifications} />
 
           <div className="flex flex-col gap-6">
             <PortfolioOverviewCard summary={portfolioSummary} />
             <StocksWatchlistCard stocks={stocks} />
           </div>
 
-          <div className="flex flex-col">
-            <NewsFeedCard news={activeNews} />
-          </div>
+          <NewsFeedCard news={activeNews} />
         </main>
       </Container>
     </div>
