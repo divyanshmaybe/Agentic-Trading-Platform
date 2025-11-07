@@ -87,15 +87,7 @@ helm upgrade --install thanos stevehipwell/thanos \
 
 # ServiceMonitor will be applied by ArgoCD from app directory
 
-# Install ArgoCD
-kubectl create namespace argocd || true
-helm repo add argo https://argoproj.github.io/argo-helm
-helm repo update
-helm install argocd argo/argo-cd \
-  --namespace argocd \
-  --version 7.6.12 \
-  --set server.service.type=ClusterIP \
-  --wait
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
 
 # Wait for ArgoCD to be ready
 kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=argocd-server -n argocd --timeout=300s
