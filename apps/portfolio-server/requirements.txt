@@ -30,6 +30,10 @@ yfinance>=0.2.0
 pandas>=2.0.0
 numpy>=1.24.0
 
+# Developer Tooling
+pytest>=7.4.0
+pytest-asyncio>=0.23.0
+
 # HTTP and API (for pipeline)
 requests>=2.31.0
 beautifulsoup4>=4.12.0
