@@ -2,6 +2,7 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN apk add --no-cache openssl curl
 
 # Copy workspace configuration files
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.json ./
@@ -33,6 +34,7 @@ RUN pnpm --filter=auth_server run build
 FROM node:20-alpine AS runner
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN apk add --no-cache openssl curl
 ENV NODE_ENV=production
 
 # Copy workspace configuration

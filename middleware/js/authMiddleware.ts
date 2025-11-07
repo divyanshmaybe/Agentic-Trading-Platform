@@ -45,7 +45,6 @@ export const protectRoute = async (
     if (!token) {
       return next(new ErrorHandling("Not authorized, no token", 401));
     }
-
     // Validate token
     const validation = await authClient.validateToken(token);
 
