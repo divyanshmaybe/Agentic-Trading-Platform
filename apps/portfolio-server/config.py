@@ -5,7 +5,14 @@ Portfolio Server Configuration
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+BASE_DIR = os.path.dirname(__file__)
+PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, "../.."))
+
+# Load environment variables from repo root first, then app-specific overrides
+load_dotenv(os.path.join(PROJECT_ROOT, ".env"), override=False)
+load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
+
+load_dotenv()  # Fallback to default resolution in case a different cwd supplies vars
 
 # Server Configuration
 PORT = int(os.getenv("PORT", "8000"))

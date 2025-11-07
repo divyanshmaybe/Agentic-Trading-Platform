@@ -115,7 +115,7 @@ Client for communicating with other internal services.
 from shared.py.internalApi import InternalApiClient
 
 api = InternalApiClient()
-data = await api.get_market_data(["AAPL", "GOOGL"])
+portfolio_status = await api.call_service("portfolio", "GET", "/health")
 ```
 
 ## JavaScript (Express) Utilities
@@ -204,10 +204,11 @@ const user = await auth.getUser("user_id");
 Client for communicating with other internal services.
 
 ```typescript
-import { InternalApiClient } from "../shared/js/internalApi.client";
+import { internalApi } from "../shared/js/internalApi.client";
 
-const api = new InternalApiClient();
-const data = await api.getMarketData(["AAPL", "GOOGL"]);
+const status = await internalApi.get(
+  `${process.env.PORTFOLIO_SERVICE_URL ?? "http://localhost:8000"}/health`
+);
 ```
 
 ## Environment Variables
@@ -217,7 +218,7 @@ All utilities respect the following environment variables:
 - `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_DB`
 - `DB_URL`, `DB_NAME`
 - `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USERNAME`, `EMAIL_PASSWORD`, `EMAIL_FROM`
-- `AUTH_SERVICE_URL`, `MARKET_SERVICE_URL`, `CALC_SERVICE_URL`, `API_SERVICE_URL`, `CODE_SERVICE_URL`
+- `AUTH_SERVICE_URL`, `PORTFOLIO_SERVICE_URL`
 - `JWT_SECRET`
 - `APP_NAME`
 
@@ -247,3 +248,5 @@ All utilities respect the following environment variables:
 ## Usage
 
 These utilities provide a consistent interface across all BullReckon services, whether built with FastAPI (Python) or Express (JavaScript). Each service can import the appropriate utilities based on its technology stack.
+
+```

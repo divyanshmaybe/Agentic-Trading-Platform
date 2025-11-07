@@ -8,6 +8,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 import logging
 import sys
 import os
+from typing import Iterable, Set
 
 # Add shared directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../shared/py"))
@@ -18,6 +19,31 @@ logger = logging.getLogger(__name__)
 
 # Singleton instance
 _auth_client_instance = None
+
+_DEFAULT_PUBLIC_PATHS: Set[str] = {
+    "/",
+    "/health",
+    "/docs",
+    "/redoc",
+    "/openapi.json",
+}
+_DEFAULT_PUBLIC_PREFIXES: Iterable[str] = (
+    "/docs",
+    "/openapi",
+    "/static",
+    "/api/pipeline",
+)
+
+_extra_paths = {
+    path.strip()
+    for path in os.getenv("AUTH_PUBLIC_PATHS", "").split(",")
+    if path.strip()
+}
+_extra_prefixes = tuple(
+    prefix.strip()
+    for prefix in os.getenv("AUTH_PUBLIC_PREFIXES", "").split(",")
+    if prefix.strip()
+)
 
 
 def get_auth_client() -> AuthServiceClient:
@@ -37,8 +63,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if request.method == "OPTIONS":
             return await call_next(request)
 
-        # Check if route requires authentication
-        if not hasattr(request.state, "require_auth") or not request.state.require_auth:
+        path = request.url.path
+
+        require_auth_flag = getattr(request.state, "require_auth", None)
+
+        if require_auth_flag is False or self._is_public_path(path):
+            return await call_next(request)
+
+        if getattr(request.state, "user", None):
             return await call_next(request)
 
         token = None
@@ -82,12 +114,21 @@ class AuthMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         return response
 
+    def _is_public_path(self, path: str) -> bool:
+        if path in _DEFAULT_PUBLIC_PATHS or path in _extra_paths:
+            return True
+        prefixes = tuple(_DEFAULT_PUBLIC_PREFIXES) + _extra_prefixes
+        return any(path.startswith(prefix) for prefix in prefixes)
+
 
 async def protect_route(request: Request) -> dict:
     """Dependency function for protecting routes"""
     # Allow CORS preflight requests
     if request.method == "OPTIONS":
         return {}
+
+    if getattr(request.state, "user", None):
+        return request.state.user
 
     token = None
 
@@ -125,5 +166,6 @@ async def protect_route(request: Request) -> dict:
         )
 
     # Return user for dependency injection
+    request.state.user = user
     return user
 

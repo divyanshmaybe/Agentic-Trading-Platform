@@ -5,7 +5,7 @@ Provides communication with other internal services
 
 import httpx
 import logging
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 import os
 import json
 
@@ -21,10 +21,7 @@ class InternalApiClient:
         # Service URLs
         self.services = {
             "auth": os.getenv("AUTH_SERVICE_URL", "http://localhost:4000"),
-            "market": os.getenv("MARKET_SERVICE_URL", "http://localhost:5000"),
-            "calc": os.getenv("CALC_SERVICE_URL", "http://localhost:8000"),
-            "api": os.getenv("API_SERVICE_URL", "http://localhost:3004"),
-            "code": os.getenv("CODE_SERVICE_URL", "http://localhost:2000"),
+            "portfolio": os.getenv("PORTFOLIO_SERVICE_URL", "http://localhost:8000"),
         }
 
     async def call_service(
@@ -95,56 +92,6 @@ class InternalApiClient:
         return await self.call_service(
             "auth", "POST", "/api/auth/validate-key", {"api_key": api_key}
         )
-
-    # Market service methods
-    async def get_market_data(self, symbols: List[str]) -> Optional[Dict[str, Any]]:
-        """Get market data from market service"""
-        return await self.call_service(
-            "market", "POST", "/api/market/quotes", {"symbols": symbols}
-        )
-
-    async def search_symbols(self, query: str) -> Optional[Dict[str, Any]]:
-        """Search for symbols in market service"""
-        return await self.call_service("market", "GET", f"/api/market/search?q={query}")
-
-    # Calc service methods
-    async def calculate_portfolio(
-        self, portfolio_data: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
-        """Calculate portfolio metrics"""
-        return await self.call_service(
-            "calc", "POST", "/api/calc/portfolio", portfolio_data
-        )
-
-    async def run_backtest(
-        self, strategy_data: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
-        """Run backtesting"""
-        return await self.call_service(
-            "calc", "POST", "/api/calc/backtest", strategy_data
-        )
-
-    # API service methods
-    async def get_api_keys(self, user_id: str) -> Optional[Dict[str, Any]]:
-        """Get API keys for user"""
-        return await self.call_service("api", "GET", f"/api/users/{user_id}/api-keys")
-
-    async def create_api_key(self, user_id: str, name: str) -> Optional[Dict[str, Any]]:
-        """Create API key for user"""
-        return await self.call_service(
-            "api", "POST", f"/api/users/{user_id}/api-keys", {"name": name}
-        )
-
-    # Code service methods
-    async def execute_code(self, language: str, code: str) -> Optional[Dict[str, Any]]:
-        """Execute code in code service"""
-        return await self.call_service(
-            "code", "POST", "/api/code/execute", {"language": language, "code": code}
-        )
-
-    async def get_execution_status(self, job_id: str) -> Optional[Dict[str, Any]]:
-        """Get code execution status"""
-        return await self.call_service("code", "GET", f"/api/code/status/{job_id}")
 
     async def health_check_service(self, service_name: str) -> bool:
         """Check if a service is healthy"""

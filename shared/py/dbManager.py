@@ -1,134 +1,105 @@
-"""
-Database Manager for FastAPI applications
-Provides MongoDB connection and operations
-"""
+"""Prisma-powered database manager for FastAPI services."""
 
-from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
-import os
+from __future__ import annotations
+
 import logging
-from typing import Optional, Dict, Any, List
-from pymongo.errors import ConnectionFailure
+import os
+from typing import Optional, Any
+
+from prisma import Prisma
+from prisma.errors import PrismaError
 
 
 class DBManager:
-    """MongoDB connection manager"""
+    """Singleton wrapper around Prisma Client Python."""
 
-    def __init__(self):
-        self.client: Optional[AsyncIOMotorClient] = None
-        self.db: Optional[AsyncIOMotorDatabase] = None
+    _instance: Optional["DBManager"] = None
+
+    def __init__(self, database_url: Optional[str] = None, log_queries: bool = False):
+        if DBManager._instance is not None:
+            raise RuntimeError("Use DBManager.get_instance() to access the database manager")
+
         self.logger = logging.getLogger(__name__)
+        self.database_url = database_url or os.getenv("DATABASE_URL") or os.getenv("DB_URL")
 
-        # Database configuration
-        self.url = os.getenv("DB_URL", "mongodb://localhost:27017")
-        self.db_name = os.getenv("DB_NAME", "bullreckon")
+        if not self.database_url:
+            raise ValueError("DATABASE_URL environment variable is not set")
+
+        # Ensure Prisma can discover the database connection string
+        os.environ.setdefault("DATABASE_URL", self.database_url)
+
+        self.client: Prisma = Prisma(auto_register=True, log_queries=log_queries)
+        self._connected: bool = False
+
+    @classmethod
+    def get_instance(cls, database_url: Optional[str] = None, log_queries: bool = False) -> "DBManager":
+        """Return (or create) the shared DB manager instance."""
+
+        if cls._instance is None:
+            cls._instance = cls(database_url=database_url, log_queries=log_queries)
+        return cls._instance
 
     async def connect(self) -> None:
-        """Connect to MongoDB"""
+        """Establish a connection to the database via Prisma."""
+
+        if self._connected:
+            return
+
         try:
-            self.client = AsyncIOMotorClient(self.url)
-            self.db = self.client[self.db_name]
-
-            # Test connection
-            await self.client.admin.command("ping")
-            self.logger.info(f"Connected to MongoDB: {self.db_name}")
-
-        except ConnectionFailure as e:
-            self.logger.error(f"Failed to connect to MongoDB: {e}")
+            await self.client.connect()
+            self._connected = True
+            self.logger.info("✅ Connected to database via Prisma")
+        except PrismaError as exc:
+            self.logger.error("❌ Failed to connect to database via Prisma", exc_info=exc)
             raise
 
     async def disconnect(self) -> None:
-        """Disconnect from MongoDB"""
-        if self.client:
-            self.client.close()
-            self.logger.info("Disconnected from MongoDB")
+        """Close the Prisma connection if it is active."""
 
-    def get_collection(self, name: str):
-        """Get a collection from the database"""
-        if not self.db:
-            raise RuntimeError("Database not connected")
-        return self.db[name]
+        if not self._connected:
+            return
 
-    async def insert_one(self, collection: str, document: Dict[str, Any]) -> str:
-        """Insert a single document"""
-        coll = self.get_collection(collection)
-        result = await coll.insert_one(document)
-        return str(result.inserted_id)
+        try:
+            await self.client.disconnect()
+            self.logger.info("🔌 Disconnected Prisma client")
+        finally:
+            self._connected = False
 
-    async def insert_many(
-        self, collection: str, documents: List[Dict[str, Any]]
-    ) -> List[str]:
-        """Insert multiple documents"""
-        coll = self.get_collection(collection)
-        result = await coll.insert_many(documents)
-        return [str(id) for id in result.inserted_ids]
+    def get_client(self) -> Prisma:
+        """Return the underlying Prisma client (requires active connection)."""
 
-    async def find_one(
-        self, collection: str, query: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
-        """Find a single document"""
-        coll = self.get_collection(collection)
-        return await coll.find_one(query)
+        if not self._connected:
+            raise RuntimeError("Database not connected. Call connect() before accessing the client.")
+        return self.client
 
-    async def find_many(
-        self,
-        collection: str,
-        query: Dict[str, Any] = None,
-        skip: int = 0,
-        limit: int = 0,
-    ) -> List[Dict[str, Any]]:
-        """Find multiple documents"""
-        coll = self.get_collection(collection)
-        cursor = coll.find(query or {}).skip(skip).limit(limit)
-        return await cursor.to_list(length=None)
+    def is_connected(self) -> bool:
+        """Return True if the Prisma client is connected."""
 
-    async def update_one(
-        self, collection: str, query: Dict[str, Any], update: Dict[str, Any]
-    ) -> int:
-        """Update a single document"""
-        coll = self.get_collection(collection)
-        result = await coll.update_one(query, {"$set": update})
-        return result.modified_count
-
-    async def update_many(
-        self, collection: str, query: Dict[str, Any], update: Dict[str, Any]
-    ) -> int:
-        """Update multiple documents"""
-        coll = self.get_collection(collection)
-        result = await coll.update_many(query, {"$set": update})
-        return result.modified_count
-
-    async def delete_one(self, collection: str, query: Dict[str, Any]) -> int:
-        """Delete a single document"""
-        coll = self.get_collection(collection)
-        result = await coll.delete_one(query)
-        return result.deleted_count
-
-    async def delete_many(self, collection: str, query: Dict[str, Any]) -> int:
-        """Delete multiple documents"""
-        coll = self.get_collection(collection)
-        result = await coll.delete_many(query)
-        return result.deleted_count
-
-    async def count_documents(
-        self, collection: str, query: Dict[str, Any] = None
-    ) -> int:
-        """Count documents in collection"""
-        coll = self.get_collection(collection)
-        return await coll.count_documents(query or {})
-
-    async def create_index(
-        self, collection: str, keys: Dict[str, Any], unique: bool = False
-    ) -> str:
-        """Create an index on a collection"""
-        coll = self.get_collection(collection)
-        return await coll.create_index(keys, unique=unique)
+        return self._connected
 
     async def health_check(self) -> bool:
-        """Check database connection health"""
-        try:
-            if not self.client:
-                return False
-            await self.client.admin.command("ping")
-            return True
-        except Exception:
+        """Perform a basic health check against the database."""
+
+        if not self._connected:
             return False
+
+        try:
+            # Lightweight query to verify connectivity
+            await self.client.query_raw("SELECT 1")
+            return True
+        except Exception as exc:  # pragma: no cover - defensive
+            self.logger.warning("Database health check failed", exc_info=exc)
+            return False
+
+    async def execute_raw(self, query: str, parameters: Optional[Any] = None) -> Any:
+        """Execute a raw query using the Prisma client."""
+
+        if not self._connected:
+            raise RuntimeError("Database not connected. Call connect() before executing queries.")
+
+        if parameters is None:
+            return await self.client.execute_raw(query)
+        return await self.client.execute_raw(query, parameters)
+
+
+__all__ = ["DBManager"]

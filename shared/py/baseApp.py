@@ -136,8 +136,9 @@ class BaseApp:
             await self.redis_manager.connect()
 
         # Initialize DB if configured
-        if os.getenv("DB_URL"):
-            self.db_manager = DBManager()
+        db_url = os.getenv("DATABASE_URL") or os.getenv("DB_URL")
+        if db_url:
+            self.db_manager = DBManager.get_instance(database_url=db_url)
             await self.db_manager.connect()
 
         # Initialize Queue Manager if Redis is available
@@ -200,6 +201,11 @@ class BaseApp:
         if db:
             await db.connect()
             self.db_manager = db
+        elif not self.db_manager:
+            db_url = os.getenv("DATABASE_URL") or os.getenv("DB_URL")
+            if db_url:
+                self.db_manager = DBManager.get_instance(database_url=db_url)
+                await self.db_manager.connect()
 
         # Initialize Redis if configured
         if os.getenv("REDIS_HOST") and not self.redis_manager:
