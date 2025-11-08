@@ -60,6 +60,9 @@ function StockSparklineRow({ stock }: StockSparklineRowProps) {
 					<span className="rounded-md bg-black/60 px-2 py-0.5 text-xs uppercase tracking-wide text-white/50">
 						{stock.symbol}
 					</span>
+					{stock.pricesError && (
+						<span className="text-xs text-white/30" title="Using fallback data">⚠</span>
+					)}
 				</div>
 				<span className={cn("text-sm font-semibold", positive ? "text-[#22c55e]" : "text-[#dc2626]")}>
 					{positive ? "+" : ""}

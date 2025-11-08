@@ -17,7 +17,7 @@ import "@/lib/chart"
 
 import { notificationItems, newsFeedItems, portfolioSummary as mockPortfolioSummary, stocks as mockStocks } from "../data"
 import type { PortfolioSummary, StockItem } from "@/lib/dashboardTypes"
-import { getPortfolio, getPositions, fetchQuotes } from "@/lib/portfolio"
+import { getPortfolio, getPositions, fetchQuotes, fetchMarketCandles } from "@/lib/portfolio"
 import type { Portfolio, Position } from "@/lib/portfolio"
 
 const playfair = Playfair_Display({ subsets: ["latin"], weight: ["400", "500", "600", "700"] })
@@ -87,26 +87,73 @@ export default function DashboardPage() {
         })
         
         if (positionsData.items.length > 0) {
-          // Transform positions to stock items
-          const stockItems: StockItem[] = positionsData.items.map((pos) => {
-            const currentPrice = parseFloat(pos.current_price)
-            const avgBuyPrice = parseFloat(pos.average_buy_price)
-            
-            // Calculate actual change percentage
-            const changePct = ((currentPrice - avgBuyPrice) / avgBuyPrice) * 100
-            
-            // Generate simple price history (last 7 data points)
-            const prices = generatePriceHistory(avgBuyPrice, currentPrice, 7)
-            
-            return {
-              symbol: pos.symbol,
-              name: pos.symbol, // Using symbol as name for now
-              changePct: changePct,
-              prices: prices,
-            }
-          })
+          // Fetch 7-day candle data for all symbols (using 30d period for hourly intervals)
+          const symbols = positionsData.items.map((pos) => pos.symbol)
           
-          setStocks(stockItems)
+          try {
+            const candlesResponse = await fetchMarketCandles(symbols, "30d")
+            
+            // Transform positions to stock items with real candle data
+            const stockItems: StockItem[] = positionsData.items.map((pos) => {
+              const currentPrice = parseFloat(pos.current_price)
+              const avgBuyPrice = parseFloat(pos.average_buy_price)
+              
+              // Calculate actual change percentage
+              const changePct = ((currentPrice - avgBuyPrice) / avgBuyPrice) * 100
+              
+              // Extract close prices from candle data
+              const candles = candlesResponse.metadata?.candles?.[pos.symbol]
+              let prices: number[]
+              let pricesError = false
+              
+              if (candles && candles.length > 0) {
+                // Use all candles (close prices) - hourly intervals
+                // Filter to last 7 days only (approximately 42 hourly candles)
+                const sevenDaysAgo = new Date()
+                sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
+                
+                const filteredCandles = candles.filter((c) => {
+                  const candleDate = new Date(c.timestamp)
+                  return candleDate >= sevenDaysAgo
+                })
+                
+                prices = filteredCandles.map((c) => parseFloat(c.close))
+              } else {
+                // Fallback to generated history if no candles available
+                prices = generatePriceHistory(avgBuyPrice, currentPrice, 7)
+                pricesError = true
+              }
+              
+              return {
+                symbol: pos.symbol,
+                name: pos.symbol, // Using symbol as name for now
+                changePct: changePct,
+                prices: prices,
+                pricesError: pricesError,
+              }
+            })
+            
+            setStocks(stockItems)
+          } catch (err) {
+            console.error("Error fetching candle data:", err)
+            
+            // Fallback to generated history on error
+            const stockItems: StockItem[] = positionsData.items.map((pos) => {
+              const currentPrice = parseFloat(pos.current_price)
+              const avgBuyPrice = parseFloat(pos.average_buy_price)
+              const changePct = ((currentPrice - avgBuyPrice) / avgBuyPrice) * 100
+              
+              return {
+                symbol: pos.symbol,
+                name: pos.symbol,
+                changePct: changePct,
+                prices: generatePriceHistory(avgBuyPrice, currentPrice, 7),
+                pricesError: true,
+              }
+            })
+            
+            setStocks(stockItems)
+          }
         } else {
           // Clear stocks if no positions
           setStocks([])

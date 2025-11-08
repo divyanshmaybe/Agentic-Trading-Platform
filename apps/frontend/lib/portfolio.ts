@@ -56,6 +56,25 @@ export type QuotesResponse = {
   missing: string[] | null
 }
 
+export type CandleData = {
+  timestamp: string
+  open: string
+  high: string
+  low: string
+  close: string
+  volume: string
+}
+
+export type MarketCandlesResponse = {
+  data: Quote[]
+  count: number
+  requested_at: string
+  missing: string[] | null
+  metadata?: {
+    candles?: Record<string, CandleData[]>
+  }
+}
+
 export type Trade = {
   id: string
   portfolio_id: string
@@ -177,6 +196,25 @@ export async function fetchQuotes(
   symbols.forEach((symbol) => params.append("symbols", symbol))
 
   return request<QuotesResponse>(`/api/market/quotes?${params}`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+}
+
+export async function fetchMarketCandles(
+  symbols: string[],
+  period: string = "7d",
+  accessToken?: string,
+): Promise<MarketCandlesResponse> {
+  const token = resolveAccessToken(accessToken)
+
+  const params = new URLSearchParams()
+  params.append("candle", period)
+  symbols.forEach((symbol) => params.append("symbols", symbol))
+
+  return request<MarketCandlesResponse>(`/api/market/quotes?${params}`, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${token}`,

@@ -35,6 +35,7 @@ export type StockItem = {
   name: string
   changePct: number
   prices: number[]
+  pricesError?: boolean
 }
 
 export type NewsItem = {

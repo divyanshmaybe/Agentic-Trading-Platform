@@ -165,22 +165,31 @@ export function createSparklineChart(stock: StockItem): {
   options: ChartOptions<"line">
   plugins: Plugin<"line">[]
 } {
-  const positive = stock.changePct >= 0
+  // Determine color based on first vs last price in the sparkline
+  const firstPrice = stock.prices[0] || 0
+  const lastPrice = stock.prices[stock.prices.length - 1] || 0
+  const positive = lastPrice >= firstPrice
+  const hasError = stock.pricesError === true
   const palette = positive ? LINE_STYLES.positive : LINE_STYLES.negative
 
   const dataset: LineDatasetWithShadow = {
     label: stock.symbol,
     data: stock.prices,
-    borderColor: palette.border,
-    backgroundColor: (context: ScriptableContext<"line">) =>
-      createLinearGradient(context, palette.gradientFrom, palette.gradientTo),
+    borderColor: hasError ? "rgba(156, 163, 175, 0.5)" : palette.border,
+    backgroundColor: (context: ScriptableContext<"line">) => {
+      if (hasError) {
+        return createLinearGradient(context, "rgba(156, 163, 175, 0.05)", "rgba(156, 163, 175, 0)")
+      }
+      return createLinearGradient(context, palette.gradientFrom, palette.gradientTo)
+    },
     fill: true,
-    tension: 0.4,
-    borderWidth: 2,
+    tension: 0,
+    borderWidth: hasError ? 1 : 2,
     pointRadius: 0,
-    shadowColor: palette.shadow,
+    shadowColor: hasError ? "rgba(156, 163, 175, 0.1)" : palette.shadow,
     borderCapStyle: "round",
     borderJoinStyle: "round",
+    borderDash: hasError ? [3, 3] : undefined,
   }
 
   const data: ChartData<"line"> = {
