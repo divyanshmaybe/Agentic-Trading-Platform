@@ -22,10 +22,14 @@ export type RegisterOrganizationResponse = {
       email: string
       status: string
     }
-    admin: {
+    user: {
       id: string
       email: string
+      first_name: string
+      last_name: string
       role: string
+      organization_id: string
+      username: string
     }
     access_token: string
     refresh_token: string
@@ -48,6 +52,7 @@ export type LoginResponse = {
       first_name: string
       last_name: string
       organization_id: string
+      username: string
     }
     access_token: string
     refresh_token: string
@@ -77,6 +82,7 @@ export type CreateUserResponse = {
     email: string
     first_name: string
     last_name: string
+    username: string
   }
 }
 

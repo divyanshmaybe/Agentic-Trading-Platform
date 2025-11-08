@@ -11,6 +11,7 @@ import {
 import { AuthenticatedRequest } from "../../../types/auth";
 import { prisma } from "../lib/prisma";
 import { OAuth2Client } from "google-auth-library";
+import { generateUsername } from "../utils/username";
 
 export const registerOrganization = async (
   req: Request,
@@ -103,10 +104,17 @@ export const registerOrganization = async (
 
     const { accessToken, refreshToken } = await generateTokens(adminUser.id);
 
+    // Generate username for the admin user
+    const username = generateUsername(
+      adminUser.first_name,
+      adminUser.last_name,
+      organization.name
+    );
+
     res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
       maxAge: 7 * 24 * 60 * 60 * 1000,
-      sameSite: "none",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
       secure: process.env.NODE_ENV === "production",
       path: "/",
     });
@@ -120,10 +128,14 @@ export const registerOrganization = async (
           email: organization.email,
           status: organization.status,
         },
-        admin: {
+        user: {
           id: adminUser.id,
           email: adminUser.email,
+          first_name: adminUser.first_name,
+          last_name: adminUser.last_name,
           role: adminUser.role,
+          organization_id: adminUser.organization_id,
+          username: username,
         },
         access_token: accessToken,
         refresh_token: refreshToken,
@@ -161,6 +173,9 @@ export const loginUser = async (
 
     const user = await prisma.user.findFirst({
       where: whereClause,
+      include: {
+        organization: true,
+      },
     });
 
     if (!user || !user.password_hash) {
@@ -183,10 +198,17 @@ export const loginUser = async (
       data: { last_login_at: new Date() },
     });
 
+    // Generate username
+    const username = generateUsername(
+      user.first_name,
+      user.last_name,
+      user.organization.name
+    );
+
     res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
       maxAge: 7 * 24 * 60 * 60 * 1000,
-      sameSite: "none",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
       secure: process.env.NODE_ENV === "production",
       path: "/",
     });
@@ -201,6 +223,7 @@ export const loginUser = async (
           first_name: user.first_name,
           last_name: user.last_name,
           organization_id: user.organization_id,
+          username: username,
         },
         access_token: accessToken,
         refresh_token: refreshToken,
@@ -222,7 +245,7 @@ export const logoutUser = async (
 
   res.clearCookie("refreshToken", {
     httpOnly: true,
-    sameSite: "none",
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
     secure: process.env.NODE_ENV === "production",
   });
 
@@ -252,10 +275,27 @@ export const refreshToken = async (
 
     const user = await prisma.user.findUnique({
       where: { id: decoded.id },
+      include: {
+        organization: true,
+      },
     });
 
     if (!user || user.deleted_at) {
       return next(new ErrorHandling("User not found", 401));
+    }
+
+    // SECURITY: Validate user status before issuing new tokens
+    if (user.status !== "active") {
+      return next(new ErrorHandling("User account is not active", 401));
+    }
+
+    // SECURITY: Validate organization status before issuing new tokens
+    if (user.organization.status !== "active") {
+      return next(new ErrorHandling("Organization is not active", 401));
+    }
+
+    if (user.organization.deleted_at) {
+      return next(new ErrorHandling("Organization no longer exists", 401));
     }
 
     const { accessToken, refreshToken: newRefreshToken } = await generateTokens(user.id);
@@ -445,7 +485,8 @@ export const createUser = async (
       );
     }
 
-    const organizationId = (req as AuthenticatedRequest).user?.organizationId || (req as any).body.organization_id;
+    // SECURITY: Only use organization ID from authenticated user, never from request body
+    const organizationId = (req as AuthenticatedRequest).user?.organizationId;
     if (!organizationId) {
       return next(new ErrorHandling("Organization ID is required", 400));
     }
@@ -476,9 +517,19 @@ export const createUser = async (
         organization_id: organizationId,
         status: "active",
       },
+      include: {
+        organization: true,
+      },
     });
 
     await sendActivationEmail(user.id, user.email);
+
+    // Generate username
+    const username = generateUsername(
+      user.first_name,
+      user.last_name,
+      user.organization.name
+    );
 
     return res.status(201).json({
       success: true,
@@ -488,6 +539,7 @@ export const createUser = async (
         email: user.email,
         first_name: user.first_name,
         last_name: user.last_name,
+        username: username,
       },
     });
   } catch (err: any) {
@@ -514,6 +566,11 @@ export const updateUser = async (
     const organizationId = req.user?.organizationId;
     if (!organizationId) {
       return next(new ErrorHandling("Organization ID not found", 400));
+    }
+
+    const requestingUserId = req.user?._id;
+    if (!requestingUserId) {
+      return next(new ErrorHandling("Requesting user ID not found", 401));
     }
 
     const allowedRoles = ["admin", "staff", "viewer"];
@@ -561,6 +618,20 @@ export const updateUser = async (
 
     if (!existingUser) {
       return next(new ErrorHandling("User not found", 404));
+    }
+
+    // SECURITY: Prevent self-escalation to admin role
+    if (requestingUserId === userId && updateData.role === "admin" && existingUser.role !== "admin") {
+      return next(
+        new ErrorHandling("Cannot self-escalate to admin role", 403)
+      );
+    }
+
+    // SECURITY: Only admins can promote users to admin role
+    if (updateData.role === "admin" && req.user?.role !== "admin") {
+      return next(
+        new ErrorHandling("Only admins can grant admin privileges", 403)
+      );
     }
 
     const updatedUser = await prisma.user.update({
@@ -707,6 +778,13 @@ export const googleLogin = async (
       // Generate tokens
       const { accessToken, refreshToken } = await generateTokens(user.id);
 
+      // Generate username
+      const username = generateUsername(
+        user.first_name,
+        user.last_name,
+        user.organization.name
+      );
+
       res.cookie("refreshToken", refreshToken, {
         httpOnly: true,
         maxAge: 7 * 24 * 60 * 60 * 1000,
@@ -725,6 +803,7 @@ export const googleLogin = async (
             last_name: user.last_name,
             role: user.role,
             organization_id: user.organization_id,
+            username: username,
             organization: {
               id: user.organization.id,
               name: user.organization.name,

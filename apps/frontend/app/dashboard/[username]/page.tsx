@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { useParams } from "next/navigation"
 import { Playfair_Display } from "next/font/google"
 
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader"
@@ -10,10 +11,11 @@ import { PortfolioOverviewCard } from "@/components/dashboard/PortfolioOverviewC
 import { StocksWatchlistCard } from "@/components/dashboard/StocksWatchlistCard"
 import { Container } from "@/components/shared/Container"
 import { useRotatingList } from "@/hooks/useRotatingItem"
+import { useAuth } from "@/hooks/useAuth"
 import { cn } from "@/lib/utils"
 import "@/lib/chart"
 
-import { notificationItems, newsFeedItems, portfolioSummary as mockPortfolioSummary, stocks as mockStocks } from "./data"
+import { notificationItems, newsFeedItems, portfolioSummary as mockPortfolioSummary, stocks as mockStocks } from "../data"
 import type { PortfolioSummary, StockItem } from "@/lib/dashboardTypes"
 import { getPortfolio, getPositions, fetchQuotes } from "@/lib/portfolio"
 import type { Portfolio, Position } from "@/lib/portfolio"
@@ -21,8 +23,13 @@ import type { Portfolio, Position } from "@/lib/portfolio"
 const playfair = Playfair_Display({ subsets: ["latin"], weight: ["400", "500", "600", "700"] })
 
 export default function DashboardPage() {
+  const params = useParams()
+  const username = params.username as string
   const activeNotifications = useRotatingList(notificationItems, 5500, 3)
   const activeNews = useRotatingList(newsFeedItems, 6000, 3)
+
+  // SECURE: Get user data from server-validated token, NOT localStorage
+  const { user: authUser, loading: authLoading } = useAuth()
 
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null)
   const [portfolioSummary, setPortfolioSummary] = useState<PortfolioSummary>(mockPortfolioSummary)
@@ -139,9 +146,18 @@ export default function DashboardPage() {
     return prices
   }
 
+  // Show loading state while auth is being verified
+  if (authLoading || !authUser) {
+    return (
+      <div className="min-h-screen bg-[#0c0c0c] text-[#fafafa] flex items-center justify-center">
+        <div className="text-white/60">Loading...</div>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-[#0c0c0c] text-[#fafafa]">
-      <DashboardHeader userName="Aayush" />
+      <DashboardHeader userName={authUser.firstName} username={username} userRole={authUser.role} />
       
       <Container className="max-w-10xl space-y-6 py-8">
 

@@ -8,101 +8,97 @@ import { cn } from "@/lib/utils"
 
 const playfair = Playfair_Display({ subsets: ["latin"], weight: ["400", "500", "600", "700"] })
 
-type DashboardHeaderProps = {
+type AdminHeaderProps = {
   userName?: string
-  username: string
-  userRole?: "admin" | "staff" | "viewer"
+  username?: string
   onLogout?: () => void
 }
 
-export function DashboardHeader({ userName = "User", username, userRole, onLogout }: DashboardHeaderProps) {
+export function AdminHeader({ userName = "Admin", username, onLogout }: AdminHeaderProps) {
   const pathname = usePathname()
 
-  const portfolioTypes = [
+  // Dashboard navigation links (only show if username is provided)
+  const dashboardLinks = username ? [
     { name: "Dashboard", href: `/dashboard/${username}` },
     { name: "Alphas", href: `/dashboard/${username}/alphas` },
     { name: "High-Risk", href: `/dashboard/${username}/high-risk` },
     { name: "Low-Risk", href: `/dashboard/${username}/low-risk` },
-  ]
-  
-  const isAdmin = userRole === "admin"
+  ] : []
 
   const handleLogout = () => {
     if (onLogout) {
       onLogout()
     } else {
-      // Clear localStorage
+      // Clear localStorage and cookies
       if (typeof window !== "undefined") {
         localStorage.clear()
-        // Clear cookies
         document.cookie = "access_token=; path=/; max-age=0"
         document.cookie = "refreshToken=; path=/; max-age=0"
       }
-      // Redirect to login
       window.location.href = "/login"
     }
   }
 
   return (
-    <header className="sticky h-[10vh]  top-0 z-40 w-full border-b border-white/10 bg-black/80 backdrop-blur-xl">
+    <header className="sticky h-[10vh] top-0 z-40 w-full border-b border-white/10 bg-black/80 backdrop-blur-xl">
       <div className="flex h-full items-center justify-between px-8">
-        {/* Left: Greeting + Admin Link (if admin) + Navigation */}
+        {/* Left: Admin Title & Navigation */}
         <div className="flex items-center gap-8">
-          {/* Greeting */}
           <div className="flex flex-col">
             <span className={cn("text-2xl font-semibold text-[#fafafa]", playfair.className)}>
-              Hello, {userName}
+              Admin Panel
             </span>
-            <span className="text-xs text-white/50">Welcome to your trading desk</span>
+            <span className="text-xs text-white/50">Hello, {userName}</span>
           </div>
 
-          {/* Admin Link - After Greeting */}
-          {isAdmin && (
+          {/* Navigation Tabs - Only show if username is available */}
+          {dashboardLinks.length > 0 && (
             <>
               <div className="h-8 w-px bg-white/10" />
-              <Link
-                href="/admin"
-                className={cn(
-                  "relative px-5 py-2 text-sm font-medium transition-all duration-200",
-                  "rounded-lg",
-                  pathname === "/admin"
-                    ? "text-[#fafafa] bg-white/10"
-                    : "text-white/60 hover:text-white/90 hover:bg-white/5"
-                )}
-              >
-                Admin
-                {pathname === "/admin" && (
-                  <span className="absolute inset-x-0 -bottom-[1.3rem] h-[2px] bg-gradient-to-r from-blue-500 via-purple-500 to-cyan-500" />
-                )}
-              </Link>
-            </>
-          )}
-
-          {/* Navigation Tabs */}
-          <nav className="hidden md:flex items-center gap-2">
-            {portfolioTypes.map((type) => {
-              const isActive = pathname === type.href
-              
-              return (
+              <nav className="hidden md:flex items-center gap-2">
+                {/* Admin Panel Link */}
                 <Link
-                  key={type.name}
-                  href={type.href}
+                  href="/admin"
                   className={cn(
                     "relative px-5 py-2 text-sm font-medium transition-all duration-200",
                     "rounded-lg",
-                    isActive
+                    pathname === "/admin"
                       ? "text-[#fafafa] bg-white/10"
                       : "text-white/60 hover:text-white/90 hover:bg-white/5"
                   )}
                 >
-                  {type.name}
-                  {isActive && (
+                  Admin
+                  {pathname === "/admin" && (
                     <span className="absolute inset-x-0 -bottom-[1.3rem] h-[2px] bg-gradient-to-r from-blue-500 via-purple-500 to-cyan-500" />
                   )}
                 </Link>
-              )
-            })}
-          </nav>
+
+                {/* Dashboard Links */}
+                {dashboardLinks.map((link) => {
+                  const isActive = pathname === link.href
+                  
+                  return (
+                    <Link
+                      key={link.name}
+                      href={link.href}
+                      className={cn(
+                        "relative px-5 py-2 text-sm font-medium transition-all duration-200",
+                        "rounded-lg",
+                        isActive
+                          ? "text-[#fafafa] bg-white/10"
+                          : "text-white/60 hover:text-white/90 hover:bg-white/5"
+                      )}
+                    >
+                      {link.name}
+                      {isActive && (
+                        <span className="absolute inset-x-0 -bottom-[1.3rem] h-[2px] bg-gradient-to-r from-blue-500 via-purple-500 to-cyan-500" />
+                      )}
+                    </Link>
+                  )
+                })}
+              </nav>
+            </>
+          )}
         </div>
 
         {/* Right: Logout */}

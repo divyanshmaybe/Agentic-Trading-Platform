@@ -75,19 +75,23 @@ export default function SignupPage() {
 				},
 			})
 
-			const { access_token, refresh_token, organization } = response.data
+		const { access_token, refresh_token, organization, user } = response.data
 
-			if (typeof window !== "undefined") {
-				localStorage.setItem("access_token", access_token)
-				localStorage.setItem("refresh_token", refresh_token)
-				localStorage.setItem("organization_id", organization.id)
-			}
+		if (typeof window !== "undefined") {
+			// SECURITY: Only store tokens in cookies (httpOnly for refresh, regular for access)
+			// DO NOT store user role, username, or any auth data in localStorage - it can be manipulated!
+			document.cookie = `access_token=${access_token}; path=/; max-age=${7 * 24 * 60 * 60}; SameSite=Lax`
+			
+			// Store non-sensitive display data only (for UI convenience, NOT security)
+			localStorage.setItem("user_first_name", user.first_name)
+			localStorage.setItem("user_id", user.id) // Only for API calls, NOT authorization
+		}
 
-			setSuccessMessage("Organization registered successfully. Redirecting...")
-			reset()
-			setTimeout(() => {
-				router.push("/login")
-			}, 1500)
+		setSuccessMessage("Organization registered successfully. Redirecting...")
+		reset()
+		setTimeout(() => {
+			router.push(`/dashboard/${user.username}`)
+		}, 1500)
 		} catch (error) {
 			setApiError(error instanceof Error ? error.message : "Failed to register organization")
 		} finally {

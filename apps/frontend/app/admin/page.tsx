@@ -11,8 +11,9 @@ import { PerformanceCard } from "@/components/admin/PerformanceCard"
 import { UserManagementCard } from "@/components/admin/UserManagementCard"
 import type { AdminSettingsForm, AdminSettingsUserField, CreateUserFormValues, DirectoryUser } from "@/components/admin/types"
 import { Container } from "@/components/shared/Container"
-import { AppHeader } from "@/components/layout/AppHeader"
+import { AdminHeader } from "@/components/admin/AdminHeader"
 import { createUser, getUsers, type AuthUserSummary, type UserRole, updateUser } from "@/lib/auth"
+import { useAuth } from "@/hooks/useAuth"
 import "@/lib/chart"
 import { lineDepthPlugin } from "@/components/dashboard/chartConfig"
 import {
@@ -65,6 +66,9 @@ const gradientFill = (from: string, to: string) =>
 export default function AdminDashboardPage() {
   const initial: DashboardData = getDashboardData()
   const [data] = useState<DashboardData>(initial)
+
+  // Get admin user data securely from server-validated token
+  const { user: authUser, loading: authLoading } = useAuth()
 
   const {
     register: registerSettings,
@@ -445,10 +449,23 @@ export default function AdminDashboardPage() {
       ? "Loading users..."
       : "View all staff and customers. Use the role filter to focus the directory."
 
+  // Show loading state while auth is being verified
+  if (authLoading || !authUser) {
+    return (
+      <div className="min-h-screen bg-[#0c0c0c] text-[#fafafa] flex items-center justify-center">
+        <div className="text-white/60">Loading...</div>
+      </div>
+    )
+  }
+
   return (
     <>
-      <AppHeader subtitle="admin" onLogout={handleLogout} className="bg-black" />
-      <main className="py-6">
+      <AdminHeader 
+        userName={authUser.firstName} 
+        username={authUser.username}
+        onLogout={handleLogout} 
+      />
+      <main className="py-6 bg-[#0c0c0c] min-h-screen">
         <Container className="space-y-6 max-w-7xl">
           <div className="space-y-6">
             <PerformanceCard chart={chart} />

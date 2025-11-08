@@ -58,8 +58,10 @@ class PortfolioController:
         if requester_id and requester_id == str(target_user_id):
             return
 
+        # SECURITY: Only accept validated roles from auth system (admin, staff, viewer)
+        # Removed unvalidated roles: superadmin, portfolio_admin, portfolio_manager
         role = (request_user.get("role") or "").lower()
-        if role in {"admin", "superadmin", "portfolio_admin", "portfolio_manager"}:
+        if role == "admin":
             return
 
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to access this user")

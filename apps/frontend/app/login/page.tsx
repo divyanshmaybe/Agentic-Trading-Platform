@@ -30,27 +30,29 @@ export default function LoginPage() {
 		setApiError(null)
 		setSubmitting(true)
 		try {
-			const response = await loginRequest({
-				email: values.email,
-				password: values.password,
-				organization_id: values.organizationId?.trim() || undefined,
-			})
+		const response = await loginRequest({
+			email: values.email,
+			password: values.password,
+			organization_id: values.organizationId?.trim() || undefined,
+		})
 
-			const { access_token, refresh_token, user } = response.data
+		const { access_token, refresh_token, user } = response.data
 
-			if (typeof window !== "undefined") {
-				localStorage.setItem("access_token", access_token)
-				localStorage.setItem("refresh_token", refresh_token)
-				localStorage.setItem("user_id", user.id)
-				localStorage.setItem("organization_id", user.organization_id)
-				localStorage.setItem("user_role", user.role)
-			}
+		if (typeof window !== "undefined") {
+			// SECURITY: Only store tokens in cookies (httpOnly for refresh, regular for access)
+			// DO NOT store user role, username, or any auth data in localStorage - it can be manipulated!
+			document.cookie = `access_token=${access_token}; path=/; max-age=${7 * 24 * 60 * 60}; SameSite=Lax`
+			
+			// Store non-sensitive display data only (for UI convenience, NOT security)
+			localStorage.setItem("user_first_name", user.first_name)
+			localStorage.setItem("user_id", user.id) // Only for API calls, NOT authorization
+		}
 
-			if (user.role === "admin") {
-				router.push("/admin")
-			} else {
-				router.push("/dashboard")
-			}
+		if (user.role === "admin") {
+			router.push("/admin")
+		} else {
+			router.push(`/dashboard/${user.username}`)
+		}
 		} catch (error) {
 			setApiError(error instanceof Error ? error.message : "Login failed")
 		} finally {
