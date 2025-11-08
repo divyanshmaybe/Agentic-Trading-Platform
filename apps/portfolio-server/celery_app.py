@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import timedelta
 
 from celery import Celery
 
@@ -28,5 +29,15 @@ celery_app.conf.update(
     task_acks_late=True,
     worker_max_tasks_per_child=100,
 )
+
+NEWS_FETCH_RATE = int(os.getenv("NEWS_FETCH_RATE", "3600"))
+
+celery_app.conf.beat_schedule = {
+    "news-sentiment-pipeline": {
+        "task": "pipeline.news_sentiment.run",
+        "schedule": timedelta(seconds=NEWS_FETCH_RATE),
+        "options": {"queue": os.getenv("NEWS_PIPELINE_QUEUE", "default")},
+    }
+}
 
 __all__ = ["celery_app"]

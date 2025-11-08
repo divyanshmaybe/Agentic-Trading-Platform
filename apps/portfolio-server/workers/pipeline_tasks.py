@@ -24,3 +24,21 @@ def start_nse_pipeline(self) -> None:
     server_dir = Path(__file__).resolve().parents[1]
     service = PipelineService(str(server_dir), logger=task_logger)
     service.run_nse_pipeline_forever()
+
+
+@celery_app.task(
+    bind=True,
+    name="pipeline.news_sentiment.run",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_kwargs={"max_retries": 3},
+)
+def run_news_sentiment_pipeline(self, top_k: int | None = None) -> dict:
+    """Celery task that runs the News sentiment pipeline once."""
+
+    server_dir = Path(__file__).resolve().parents[1]
+    service = PipelineService(str(server_dir), logger=task_logger)
+    top_k_value = top_k or int(os.getenv("NEWS_TOP_K", "3"))
+    metadata = service.run_news_sentiment_pipeline(top_k=top_k_value)
+    task_logger.info("News sentiment pipeline completed: %s", metadata)
+    return metadata

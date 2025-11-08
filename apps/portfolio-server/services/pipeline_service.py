@@ -10,8 +10,10 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
+
+from dotenv import load_dotenv
 
 class PipelineService:
     """Service for managing pipeline operations."""
@@ -20,6 +22,8 @@ class PipelineService:
         self.server_dir = server_dir
         self.logger = logger or logging.getLogger(__name__)
         self.status_file = Path(self.server_dir) / "pipeline_status.json"
+        self.news_status_file = Path(self.server_dir) / "news_pipeline_status.json"
+        self._env_loaded = False
 
     # ---------------------------------------------------------------------
     # Public API
@@ -27,12 +31,28 @@ class PipelineService:
 
     def run_nse_pipeline_forever(self) -> None:
         """Run the NSE pipeline continuously (intended for Celery worker)."""
+        self._load_environment()
         self._update_status("starting")
         try:
             self.logger.info("Starting NSE pipeline in Celery worker")
             self._execute_nse_pipeline()
         finally:
             self._update_status("stopped")
+
+    def run_news_sentiment_pipeline(self, *, top_k: int = 3) -> Dict[str, Any]:
+        """Run the News sentiment pipeline once and return metadata."""
+
+        self._load_environment()
+        self._update_news_status("starting")
+        try:
+            self.logger.info("Running news sentiment pipeline (top_k=%s)", top_k)
+            metadata = self._execute_news_pipeline(top_k=top_k)
+            self._update_news_status("succeeded", metadata=metadata)
+            return metadata
+        except Exception as exc:  # pragma: no cover - execution failures surfaced to Celery
+            self.logger.exception("News sentiment pipeline failed: %s", exc)
+            self._update_news_status("failed", error=str(exc))
+            raise
 
     # Backwards compatibility hook (no longer threaded)
     def start_nse_pipeline(self) -> None:  # pragma: no cover - legacy entrypoint
@@ -48,19 +68,6 @@ class PipelineService:
     def _execute_nse_pipeline(self) -> None:
         nse_dir = os.path.join(self.server_dir, "pipelines/nse")
         original_dir = os.getcwd()
-
-        # Load .env once from service root so the pipeline code can read configuration
-        env_file = os.path.join(self.server_dir, ".env")
-        if not os.path.exists(env_file):
-            raise FileNotFoundError(
-                f".env file not found in portfolio-server directory: {env_file}"
-            )
-
-        from dotenv import load_dotenv
-
-        load_dotenv(env_file, override=True)
-        os.environ["PORTFOLIO_SERVER_ENV_PATH"] = env_file
-        self.logger.info("✓ Loaded .env from portfolio-server: %s", env_file)
 
         try:
             os.chdir(nse_dir)
@@ -156,6 +163,46 @@ class PipelineService:
         finally:
             os.chdir(original_dir)
 
+    def _execute_news_pipeline(self, *, top_k: int) -> Dict[str, Any]:
+        pipelines_dir = Path(self.server_dir) / "pipelines"
+        news_dir = pipelines_dir / "news"
+        sys.path.insert(0, str(pipelines_dir))
+
+        from pipelines.news import execute_news_sentiment_pipeline  # type: ignore  # noqa: E402
+
+        metadata = execute_news_sentiment_pipeline(
+            news_dir,
+            news_api_key=os.getenv("NEWS_ORG_API_KEY"),
+            gemini_api_key=os.getenv("GEMINI_API_KEY"),
+            top_k=top_k,
+            logger=self.logger,
+        )
+
+        return metadata
+
+    def _load_environment(self) -> None:
+        if self._env_loaded:
+            return
+
+        server_env = Path(self.server_dir) / ".env"
+        project_root = Path(self.server_dir).resolve().parents[1]
+        root_env = project_root / ".env"
+
+        if root_env.exists():
+            load_dotenv(root_env, override=False)
+            self.logger.debug("Loaded root .env: %s", root_env)
+
+        if server_env.exists():
+            load_dotenv(server_env, override=True)
+            os.environ.setdefault("PORTFOLIO_SERVER_ENV_PATH", str(server_env))
+            self.logger.debug("Loaded server .env: %s", server_env)
+        else:
+            raise FileNotFoundError(
+                f".env file not found in portfolio-server directory: {server_env}"
+            )
+
+        self._env_loaded = True
+
     def _update_status(self, state: str) -> None:
         payload = {
             "state": state,
@@ -165,6 +212,27 @@ class PipelineService:
             self.status_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         except Exception as exc:  # pragma: no cover - filesystem issues
             self.logger.warning("Failed to write pipeline status: %s", exc)
+
+    def _update_news_status(
+        self,
+        state: str,
+        *,
+        metadata: Optional[Dict[str, Any]] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        payload: Dict[str, Any] = {
+            "state": state,
+            "updated_at": datetime.utcnow().isoformat() + "Z",
+        }
+        if metadata is not None:
+            payload["metadata"] = metadata
+        if error is not None:
+            payload["error"] = error
+
+        try:
+            self.news_status_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        except Exception as exc:  # pragma: no cover - filesystem issues
+            self.logger.warning("Failed to write news pipeline status: %s", exc)
 
     # Legacy helper retained for compatibility
     def is_pipeline_running(self) -> bool:  # pragma: no cover - compatibility

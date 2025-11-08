@@ -31,7 +31,7 @@ from routes.market_routes import router as market_router
 from routes.portfolio_routes import router as portfolio_router
 from routes.trade_routes import router as trade_router
 from utils.pipeline_utils import get_pipeline_status
-from workers.pipeline_tasks import start_nse_pipeline
+from workers.pipeline_tasks import start_nse_pipeline, run_news_sentiment_pipeline
 
 # Get server directory for pipelines
 server_dir = os.path.dirname(__file__)
@@ -65,6 +65,7 @@ def create_lifespan(base_app_instance, pipeline_service_instance):
         # Start NSE pipeline via Celery task
         app.state.pipeline_status = "initializing"
         app.state.pipeline_job_id = None
+        app.state.news_pipeline_job_id = None
 
         try:
             base_app_instance.logger.info("Dispatching NSE pipeline task to Celery...")
@@ -79,6 +80,20 @@ def create_lifespan(base_app_instance, pipeline_service_instance):
             app.state.pipeline_status = "error"
             base_app_instance.logger.exception(
                 "Failed to dispatch NSE pipeline task: %s", exc
+            )
+
+        # Dispatch news sentiment pipeline once at startup (Celery beat handles subsequent runs)
+        try:
+            base_app_instance.logger.info("Dispatching news sentiment pipeline task to Celery...")
+            news_task = run_news_sentiment_pipeline.delay()
+            app.state.news_pipeline_job_id = news_task.id
+            base_app_instance.logger.info(
+                "✓ News sentiment pipeline task dispatched (task_id=%s)", news_task.id
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            app.state.news_pipeline_job_id = None
+            base_app_instance.logger.exception(
+                "Failed to dispatch news sentiment pipeline task: %s", exc
             )
         
         yield

@@ -28,6 +28,8 @@ NSE_PIPELINE_DIR = os.path.join(
     os.path.dirname(__file__), "pipelines/nse"
 )
 NSE_REFRESH_INTERVAL = int(os.getenv("NSE_REFRESH_INTERVAL", "60"))
+NEWS_FETCH_RATE = int(os.getenv("NEWS_FETCH_RATE", "3600"))
+NEWS_TOP_K = int(os.getenv("NEWS_TOP_K", "3"))
 
 # Environment
 NODE_ENV = os.getenv("NODE_ENV", "development")
