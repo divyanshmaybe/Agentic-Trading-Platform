@@ -10,21 +10,35 @@ import { createSparklineChart } from "./chartConfig"
 
 type StocksWatchlistCardProps = {
 	stocks: StockItem[]
+	loading?: boolean
 }
 
-export function StocksWatchlistCard({ stocks }: StocksWatchlistCardProps) {
+export function StocksWatchlistCard({ stocks, loading = false }: StocksWatchlistCardProps) {
 	return (
 		<Card className="card-glass neon-hover rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_32px_70px_-45px_rgba(0,0,0,0.95)] backdrop-blur">
 			<CardHeader className="gap-2">
 				<CardDescription className="text-xs uppercase tracking-[0.3em] text-white/45">
-					Stocks
+					Your Holdings
 				</CardDescription>
-				<CardTitle className="h-title text-2xl text-[#fafafa]">Watchlist</CardTitle>
+				<CardTitle className="h-title text-2xl text-[#fafafa]">Positions</CardTitle>
 			</CardHeader>
 			<CardContent className="flex flex-col gap-4">
-				{stocks.map((stock) => (
-					<StockSparklineRow key={stock.symbol} stock={stock} />
-				))}
+				{loading ? (
+					<>
+						{[1, 2, 3, 4].map((i) => (
+							<div
+								key={i}
+								className="h-20 animate-pulse rounded-xl border border-white/10 bg-white/7"
+							/>
+						))}
+					</>
+				) : stocks.length === 0 ? (
+					<div className="py-8 text-center text-sm text-white/50">
+						No positions yet. Start trading to see your holdings here.
+					</div>
+				) : (
+					stocks.map((stock) => <StockSparklineRow key={stock.symbol} stock={stock} />)
+				)}
 			</CardContent>
 		</Card>
 	)

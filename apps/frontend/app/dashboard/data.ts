@@ -68,10 +68,16 @@ export const notificationItems: NotificationItem[] = [
 ]
 
 export const portfolioSummary: PortfolioSummary = {
+  portfolioName: "Managed Portfolio",
   totalValue: 1245000,
+  investmentAmount: 1200000,
   changePct: 1.86,
   changeValue: 22840,
   dailyPnL: 14280,
+  riskTolerance: "moderate",
+  expectedReturn: 8.0,
+  investmentHorizon: 3,
+  liquidityNeeds: "standard",
   allocation: [
     { label: "Alpha", value: 45 },
     { label: "Low-Risk", value: 32 },

@@ -17,10 +17,16 @@ export type PortfolioAllocation = {
 }
 
 export type PortfolioSummary = {
+  portfolioName: string
   totalValue: number
+  investmentAmount: number
   changePct: number
   changeValue: number
   dailyPnL: number
+  riskTolerance: string
+  expectedReturn: number
+  investmentHorizon: number
+  liquidityNeeds: string
   allocation: PortfolioAllocation[]
 }
 
