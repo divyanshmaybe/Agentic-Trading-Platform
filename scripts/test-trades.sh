@@ -13,10 +13,10 @@
 
 # API Configuration
 API_URL="http://localhost:8000"
-ACCESS_TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImY4MjU1OGQ3LTRjYWQtNDU4OS1iYzc1LTJjMzg4YmQ1MDUzOCIsInJvbGUiOiJhZG1pbiIsIm9yZ2FuaXphdGlvbklkIjoiN2MzNjk4MzEtYmJkMS00MTdkLWJhMzQtYzcwN2FkNTBhMTYxIiwiaWF0IjoxNzYyNTk3ODAyLCJleHAiOjE3NjI2ODQyMDJ9.8K6LQcXHhsqTAqRK4uwcwpLRCaSnv14dyZ3h8uZfVfM"
+ACCESS_TOKEN=""
 
 # Portfolio ID (leave empty to auto-fetch)
-PORTFOLIO_ID="34ecaf30-7aaf-4153-bf7b-18e847dc98fe"
+PORTFOLIO_ID=""
 
 # Trade Configuration
 EXCHANGE="NSE"
