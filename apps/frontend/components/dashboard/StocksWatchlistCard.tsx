@@ -15,14 +15,14 @@ type StocksWatchlistCardProps = {
 
 export function StocksWatchlistCard({ stocks, loading = false }: StocksWatchlistCardProps) {
 	return (
-		<Card className="card-glass neon-hover rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_32px_70px_-45px_rgba(0,0,0,0.95)] backdrop-blur">
+		<Card className="card-glass neon-hover min-h-[50vh] flex flex-col rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_32px_70px_-45px_rgba(0,0,0,0.95)] backdrop-blur">
 			<CardHeader className="gap-2">
 				<CardDescription className="text-xs uppercase tracking-[0.3em] text-white/45">
 					Your Holdings
 				</CardDescription>
 				<CardTitle className="h-title text-2xl text-[#fafafa]">Positions</CardTitle>
 			</CardHeader>
-			<CardContent className="flex flex-col gap-4">
+			<CardContent className={stocks.length === 0 && !loading ? "flex flex-col items-center justify-center flex-1" : "flex flex-col gap-4"}>
 				{loading ? (
 					<>
 						{[1, 2, 3, 4].map((i) => (
@@ -33,7 +33,7 @@ export function StocksWatchlistCard({ stocks, loading = false }: StocksWatchlist
 						))}
 					</>
 				) : stocks.length === 0 ? (
-					<div className="py-8 text-center text-sm text-white/50">
+					<div className="text-center text-sm text-white/50">
 						No positions yet. Start trading to see your holdings here.
 					</div>
 				) : (
@@ -61,7 +61,7 @@ function StockSparklineRow({ stock }: StockSparklineRowProps) {
 						{stock.symbol}
 					</span>
 				</div>
-				<span className={cn("text-sm font-semibold", positive ? "text-[#22c55e]" : "text-[#ef4444]")}>
+				<span className={cn("text-sm font-semibold", positive ? "text-[#22c55e]" : "text-[#dc2626]")}>
 					{positive ? "+" : ""}
 					{stock.changePct.toFixed(2)}%
 				</span>

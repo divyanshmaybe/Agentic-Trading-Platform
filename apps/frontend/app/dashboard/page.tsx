@@ -83,17 +83,18 @@ export default function DashboardPage() {
           // Transform positions to stock items
           const stockItems: StockItem[] = positionsData.items.map((pos) => {
             const currentPrice = parseFloat(pos.current_price)
-            const pnlPct = parseFloat(pos.pnl_percentage)
+            const avgBuyPrice = parseFloat(pos.average_buy_price)
+            
+            // Calculate actual change percentage
+            const changePct = ((currentPrice - avgBuyPrice) / avgBuyPrice) * 100
             
             // Generate simple price history (last 7 data points)
-            // In production, you'd fetch historical data
-            const basePrice = currentPrice / (1 + pnlPct / 100)
-            const prices = generatePriceHistory(basePrice, currentPrice, 7)
+            const prices = generatePriceHistory(avgBuyPrice, currentPrice, 7)
             
             return {
               symbol: pos.symbol,
               name: pos.symbol, // Using symbol as name for now
-              changePct: pnlPct,
+              changePct: changePct,
               prices: prices,
             }
           })
@@ -119,17 +120,20 @@ export default function DashboardPage() {
   // Generate simple price history for sparkline
   function generatePriceHistory(startPrice: number, endPrice: number, points: number): number[] {
     const prices: number[] = []
-    const diff = endPrice - startPrice
-    const step = diff / (points - 1)
+    const totalChange = endPrice - startPrice
     
     for (let i = 0; i < points; i++) {
-      // Add some random variation for realistic sparkline
-      const basePrice = startPrice + step * i
-      const variation = basePrice * (Math.random() * 0.02 - 0.01) // ±1% variation
-      prices.push(parseFloat((basePrice + variation).toFixed(2)))
+      const progress = i / (points - 1)
+      const basePrice = startPrice + totalChange * progress
+      
+      // Add some realistic volatility (±1.5% random variation)
+      const variation = basePrice * (Math.random() * 0.03 - 0.015)
+      const price = basePrice + variation
+      
+      prices.push(parseFloat(price.toFixed(2)))
     }
     
-    // Ensure last price matches current price
+    // Ensure last price is exactly the end price
     prices[points - 1] = endPrice
     
     return prices

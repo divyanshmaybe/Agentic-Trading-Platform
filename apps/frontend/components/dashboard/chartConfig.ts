@@ -116,10 +116,10 @@ const LINE_STYLES = {
     shadow: "rgba(34,197,94,0.25)",
   },
   negative: {
-    border: "#ef4444",
-    gradientFrom: "rgba(239,68,68,0.2)",
-    gradientTo: "rgba(239,68,68,0)",
-    shadow: "rgba(239,68,68,0.25)",
+    border: "#dc2626",
+    gradientFrom: "rgba(220,38,38,0.12)",
+    gradientTo: "rgba(220,38,38,0)",
+    shadow: "rgba(220,38,38,0.15)",
   },
 } as const
 
