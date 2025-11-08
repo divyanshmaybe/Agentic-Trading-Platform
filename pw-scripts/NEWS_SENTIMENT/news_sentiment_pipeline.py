@@ -371,6 +371,9 @@ You must return a structured json output in the following format:
  You must strictly adhere to this output format and must return a valid array of json objects.
  Do not return anything apart from this, such as here's the summary or here's the answer.
  Return only an array of json strings and nothing else
+ Also for hold signals since investment time window is not valid, instead of simply printing
+ 'N/A', in the time_investment_window field write a proper message like no time window valid for
+ hold signals.
                               
  Also if a url is invalid, starting with https://example.com, then dont include that and leave 
  the url field blank for that particular json object.
