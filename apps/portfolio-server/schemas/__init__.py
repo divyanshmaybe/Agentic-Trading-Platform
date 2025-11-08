@@ -5,7 +5,7 @@ from .portfolio import (
     PositionSummary,
     TradeListResponse,
 )
-from .market import MarketQuote, MarketQuoteResponse
+from .market import CandleData, MarketQuote, MarketQuoteResponse
 from .trade import PortfolioSnapshot, TradeCreate, TradeRequest, TradeResponse, TradeSummary
 
 __all__ = [
@@ -14,6 +14,7 @@ __all__ = [
     "PositionListResponse",
     "PositionSummary",
     "TradeListResponse",
+    "CandleData",
     "MarketQuote",
     "MarketQuoteResponse",
     "PortfolioSnapshot",

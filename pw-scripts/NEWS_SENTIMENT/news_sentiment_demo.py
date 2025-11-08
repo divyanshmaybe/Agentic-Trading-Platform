@@ -20,8 +20,8 @@ from news_sentiment_pipeline import (
     NEWS_STREAMS,
     build_news_sentiment_pipeline,
     trading_agent_llm,
-    get_technical_indicators,
-    stock_recommender_llm,
+    compute_technical_indicators,
+    stock_recommender,
     StreamSchema,
     StockSchema
 )
@@ -120,7 +120,8 @@ def main():
             sentiment_by_stream[stream].append({
                 'title': row['title'],
                 'content': row['content'],
-                'sentiment': row['sentiment']
+                'sentiment': row['sentiment'],
+                'url': row.get('url')
             })
         
         print(f"  Aggregated into {len(sentiment_by_stream)} streams")
@@ -144,88 +145,36 @@ def main():
             ("KOTAKBANK", "Financial Services"),
             ("LT", "Construction"),
         ]
-        
-        for symbol, industry in sample_stocks[:10]:
+
+        for symbol, industry in sample_stocks:
             print(f"  Fetching indicators for {symbol}...")
-            # Call the UDF function directly - need to extract the actual value
-            # Since it's a UDF, we need to call it as a regular function
-            # Let's create a wrapper that calls the actual implementation
             try:
-                import yfinance as yf
-                import pandas as pd
-                import numpy as np
-                
-                # Manual technical indicator calculations (since pandas_ta requires Python 3.12+)
-                def calculate_sma(data, period):
-                    return data.rolling(window=period).mean()
-                
-                def calculate_ema(data, period):
-                    return data.ewm(span=period, adjust=False).mean()
-                
-                def calculate_rsi(data, period=14):
-                    delta = data.diff()
-                    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-                    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-                    rs = gain / loss
-                    rsi = 100 - (100 / (1 + rs))
-                    return rsi
-                
-                def calculate_bollinger_bands(data, period=20, std_dev=2):
-                    sma = calculate_sma(data, period)
-                    std = data.rolling(window=period).std()
-                    upper = sma + (std * std_dev)
-                    lower = sma - (std * std_dev)
-                    return upper, lower
-                
-                def calculate_stochastic(high, low, close, k_period=14):
-                    lowest_low = low.rolling(window=k_period).min()
-                    highest_high = high.rolling(window=k_period).max()
-                    k_percent = 100 * ((close - lowest_low) / (highest_high - lowest_low))
-                    return k_percent
-                
-                ticker = f"{symbol}.NS"
-                t = yf.Ticker(ticker)
-                
-                daily = t.history(period="3mo", interval="1d", auto_adjust=True)
-                hourly = t.history(period="2d", interval="1h", auto_adjust=True)
-                
-                if not hourly.empty:
-                    hourly['Date'] = hourly.index.date
-                    today = pd.Timestamp.today().date()
-                    hourly_today = hourly[hourly['Date'] == today].drop(columns=['Date'])
-                    data = pd.concat([daily, hourly_today])
-                else:
-                    data = daily
-                
-                if data is None or data.empty or len(data) < 20:
+                indicators = compute_technical_indicators(symbol)
+                if not indicators:
                     continue
-                
-                out = {}
-                out['Symbol'] = symbol
-                out['SMA20'] = float(calculate_sma(data['Close'], 20).iloc[-1])
-                out['EMA20'] = float(calculate_ema(data['Close'], 20).iloc[-1])
-                out['RSI14'] = float(calculate_rsi(data['Close'], 14).iloc[-1])
-                out['ADX14'] = None  # ADX is complex, skipping for now
-                
-                bb_upper, bb_lower = calculate_bollinger_bands(data['Close'], 20, 2)
-                out['BB_UPPER'] = float(bb_upper.iloc[-1])
-                out['BB_LOWER'] = float(bb_lower.iloc[-1])
-                
-                out['STOCHK'] = float(calculate_stochastic(data['High'], data['Low'], data['Close'], 14).iloc[-1])
-                
-                tech_indicators_list.append(out)
-            except Exception as e:
-                print(f"    Error fetching {symbol}: {e}")
+                indicators["Industry"] = industry
+                tech_indicators_list.append(indicators)
+            except Exception as exc:
+                print(f"    Error fetching {symbol}: {exc}")
                 continue
-        
+
         tech_json_str = json.dumps(tech_indicators_list)
         print(f"✓ Fetched indicators for {len(tech_indicators_list)} stocks")
         
         # Step 6: Call stock recommender
         print("\n[Step 6] Calling Gemini stock recommender...")
-        final_recommendations = stock_recommender_llm(sector_analysis, tech_json_str, gemini_api_key)
+        final_recommendations = stock_recommender(sector_analysis, tech_json_str, gemini_api_key=gemini_api_key)
         print("✓ Stock recommendations complete")
-        
+
+        if isinstance(final_recommendations, list):
+            final_recommendations_str = json.dumps(final_recommendations, indent=2)
+        else:
+            final_recommendations_str = (
+                json.dumps(final_recommendations, indent=2)
+                if isinstance(final_recommendations, dict)
+                else str(final_recommendations)
+            )
+
         # Write recommendations to file
         output_file = "stock_recommendations.txt"
         print(f"\n[Step 7] Writing recommendations to {output_file}...")
@@ -239,20 +188,20 @@ def main():
             f.write("\n\n" + "=" * 60 + "\n")
             f.write("STOCK RECOMMENDATIONS:\n")
             f.write("-" * 60 + "\n")
-            f.write(final_recommendations)
+            f.write(final_recommendations_str)
             f.write("\n")
-        
+
         print(f"✓ Recommendations written to {output_file}")
         print(f"   File location: {os.path.abspath(output_file)}")
-        
+
         # Print preview
         print("\n" + "=" * 60)
         print("Pipeline Complete!")
         print("=" * 60)
         print("\nRecommendations Preview:")
         print("-" * 60)
-        print(final_recommendations[:1000] + "..." if len(final_recommendations) > 1000 else final_recommendations)
-        
+        print(final_recommendations_str[:1000] + "..." if len(final_recommendations_str) > 1000 else final_recommendations_str)
+                
     except Exception as e:
         print(f"Error processing data: {e}")
         import traceback
