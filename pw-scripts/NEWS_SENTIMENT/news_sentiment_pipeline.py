@@ -371,6 +371,9 @@ You must return a structured json output in the following format:
  You must strictly adhere to this output format and must return a valid array of json objects.
  Do not return anything apart from this, such as here's the summary or here's the answer.
  Return only an array of json strings and nothing else
+                              
+ Also if a url is invalid, starting with https://example.com, then dont include that and leave 
+ the url field blank for that particular json object.
 """).content
 
         prompt=prompt+ "\n"+ HumanMessage(f"""Here is the sector based analysis: {sector_analysis}.
