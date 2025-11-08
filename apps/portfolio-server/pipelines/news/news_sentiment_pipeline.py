@@ -18,45 +18,36 @@ downstream consumers always have a well-formed JSON payload to work with.
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import logging
 import os
-import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import pathway as pw
+from dotenv import load_dotenv
+
+from .research_pipeline import (
+    NEWS_STREAMS,
+    StreamSchema,
+    build_news_sentiment_pipeline,
+    compute_technical_indicators,
+    stock_recommender,
+    trading_agent_llm,
+)
 
 
-# ---------------------------------------------------------------------------
-# Import the research pipeline utilities
-# ---------------------------------------------------------------------------
-
-PROJECT_ROOT = Path(__file__).resolve().parents[4]
-NEWS_SCRIPT_DIR = PROJECT_ROOT / "pw-scripts" / "NEWS_SENTIMENT"
-
-def _load_research_module():
-    module_name = "news_sentiment_pipeline_scripts"
-    module_path = NEWS_SCRIPT_DIR / "news_sentiment_pipeline.py"
-    spec = importlib.util.spec_from_file_location(module_name, module_path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Unable to load news sentiment pipeline from {module_path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-_research = _load_research_module()
-
-NEWS_STREAMS = getattr(_research, "NEWS_STREAMS")
-StreamSchema = getattr(_research, "StreamSchema")
-build_news_sentiment_pipeline = getattr(_research, "build_news_sentiment_pipeline")
-compute_technical_indicators = getattr(_research, "compute_technical_indicators")
-stock_recommender = getattr(_research, "stock_recommender")
-trading_agent_llm = getattr(_research, "trading_agent_llm")
+# Ensure environment variables from the portfolio server are loaded even when
+# the pipeline is executed in isolation (e.g. via Celery worker).
+PORTFOLIO_ENV_PATH = os.getenv("PORTFOLIO_SERVER_ENV_PATH")
+if PORTFOLIO_ENV_PATH and Path(PORTFOLIO_ENV_PATH).exists():
+    load_dotenv(PORTFOLIO_ENV_PATH, override=False)
+else:
+    server_env = Path(__file__).resolve().parents[3] / ".env"
+    if server_env.exists():
+        load_dotenv(server_env, override=False)
 
 
 # ---------------------------------------------------------------------------

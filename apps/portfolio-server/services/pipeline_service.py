@@ -112,7 +112,7 @@ class PipelineService:
             pw.io.jsonlines.write(backtest_results, backtest_output)
             pw.io.jsonlines.write(backtest_metrics, metrics_output)
 
-            def on_new_signal(_key, row, _time, is_addition):
+            def on_new_signal(key, row, time, is_addition, **_):
                 if is_addition:
                     symbol = row.get("symbol", "N/A")
                     signal = row.get("signal", "N/A")

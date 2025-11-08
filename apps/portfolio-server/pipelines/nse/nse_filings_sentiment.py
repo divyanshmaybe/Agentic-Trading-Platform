@@ -6,13 +6,33 @@ This script processes NSE corporate filings in real-time, extracts text from PDF
 fetches stock technical data, and generates trading signals using LLM analysis.
 """
 
+import asyncio
 import os
 import re
-import requests
-import pathway as pw
+import sys
+import threading
+from concurrent.futures import TimeoutError
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional
+
+import pathway as pw
+import requests
 from dotenv import load_dotenv
+from pydantic import BaseModel
+
+# Ensure shared utilities (Kafka service, etc.) are importable when the pipeline
+# runs in isolation (e.g. Celery worker context or manual execution).
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
+SHARED_PY_PATH = PROJECT_ROOT / "shared" / "py"
+if str(SHARED_PY_PATH) not in sys.path:
+    sys.path.insert(0, str(SHARED_PY_PATH))
+
+from kafka_service import (  # type: ignore  # noqa: E402
+    KafkaPublisher,
+    PublisherAlreadyRegistered,
+    default_kafka_bus,
+)
 
 # LLM imports
 from pathway.xpacks.llm import llms
@@ -102,6 +122,99 @@ class TradingSignalSchema(pw.Schema):
 
 
 # ============================================================================
+# Kafka publishing for generated trading signals
+# ============================================================================
+
+KAFKA_SIGNAL_TOPIC = os.getenv("NSE_FILINGS_SIGNAL_TOPIC", "nse_filings_trading_signal")
+KAFKA_PUBLISHER_NAME = "nse_filings_signal_publisher"
+
+
+class NSESignalEvent(BaseModel):
+    symbol: str
+    filing_time: str
+    signal: int
+    explanation: str
+    generated_at: str
+    source: str = "nse_filings_pipeline"
+
+
+_signal_publisher: Optional[KafkaPublisher] = None
+_publish_loop = asyncio.new_event_loop()
+
+
+def _publish_loop_runner() -> None:
+    asyncio.set_event_loop(_publish_loop)
+    _publish_loop.run_forever()
+
+
+_publish_loop_thread = threading.Thread(target=_publish_loop_runner, name="nse-kafka-publisher-loop", daemon=True)
+_publish_loop_thread.start()
+
+
+def _get_signal_publisher() -> KafkaPublisher:
+    global _signal_publisher
+
+    if _signal_publisher is not None:
+        return _signal_publisher
+
+    bus = default_kafka_bus
+    try:
+        _signal_publisher = bus.register_publisher(
+            KAFKA_PUBLISHER_NAME,
+            topic=KAFKA_SIGNAL_TOPIC,
+            value_model=NSESignalEvent,
+            default_headers={"stream": "nse_filings"},
+        )
+    except PublisherAlreadyRegistered:
+        _signal_publisher = bus.get_publisher(KAFKA_PUBLISHER_NAME)
+
+    return _signal_publisher
+
+
+def _publish_to_kafka(event: NSESignalEvent) -> None:
+    """Internal function to publish event to Kafka"""
+    publisher = _get_signal_publisher()
+    payload = event.model_dump()
+    publisher.publish(payload, key=event.symbol)
+
+
+print("[KAFKA] Initialising NSE filings signal publisher...")
+try:
+    _get_signal_publisher()
+    print(f"[KAFKA] Connected to Kafka service; topic '{KAFKA_SIGNAL_TOPIC}' ready.")
+except Exception as exc:
+    print(f"[KAFKA] Failed to initialise Kafka publisher: {exc}")
+
+
+@pw.udf
+def publish_signal_to_kafka(symbol: str, filing_time: str, signal: int, explanation: str) -> str:
+    """Publish the generated trading signal to Kafka and return a status string."""
+
+    try:
+        signal_value = int(signal)
+    except (TypeError, ValueError):  # pragma: no cover - defensive fallback
+        signal_value = 0
+
+    event = NSESignalEvent(
+        symbol=symbol,
+        filing_time=filing_time,
+        signal=signal_value,
+        explanation=explanation or "",
+        generated_at=datetime.utcnow().isoformat() + "Z",
+    )
+
+    try:
+        _publish_to_kafka(event)
+        return "published"
+    except TimeoutError:
+        print("[KAFKA] Publish timed out for symbol", symbol)
+        return "timeout"
+    except Exception as exc:  # pragma: no cover - defensive logging
+        print(f"[KAFKA] Failed to publish signal for {symbol}: {exc}")
+        return f"error:{exc}"
+
+
+# ============================================================================
 # PDF DOWNLOAD AND PARSING
 # ============================================================================
 
@@ -113,14 +226,19 @@ def download_and_parse_pdf(url: str, filename: str) -> str:
         import requests
         import os
         import warnings
+        import tempfile
+        import uuid
         
         # Suppress pdfplumber warnings about invalid color values
         warnings.filterwarnings("ignore", message=".*Cannot set gray.*")
         
         print(f"[PIPELINE] Downloading PDF: {filename}")
         
+        # Use unique temporary file per worker to avoid race conditions
         os.makedirs("docs", exist_ok=True)
-        path = os.path.join("docs", filename)
+        unique_suffix = str(uuid.uuid4())[:8]
+        temp_filename = f"{filename}.{unique_suffix}.tmp"
+        path = os.path.join("docs", temp_filename)
         
         # Always download fresh (scraper handles deduplication)
         headers = {
@@ -163,23 +281,25 @@ def download_and_parse_pdf(url: str, filename: str) -> str:
                     # Restore stderr
                     sys.stderr = original_stderr
         finally:
-            # Clean up PDF file after extraction
+            # Clean up temporary PDF file after extraction
             try:
                 if os.path.exists(path):
                     os.remove(path)
-                    print(f"[PIPELINE] PDF cleaned up: {filename}")
+                    print(f"[PIPELINE] Temporary PDF cleaned up: {temp_filename}")
             except Exception as cleanup_error:
-                print(f"Warning: Could not delete PDF {filename}: {cleanup_error}")
+                print(f"Warning: Could not delete temporary PDF {temp_filename}: {cleanup_error}")
         
         print(f"[PIPELINE] PDF processed: {filename} ({len(text)} chars extracted)")
         return text
     except Exception as e:
         print(f"Error processing PDF {filename}: {e}")
-        # Try to clean up on error too
+        # Try to clean up on error too (use temp_filename if it was created)
         try:
-            path = os.path.join("docs", filename)
-            if os.path.exists(path):
-                os.remove(path)
+            # Check if temp_filename variable exists (was created before error)
+            if 'temp_filename' in locals():
+                path = os.path.join("docs", temp_filename)
+                if os.path.exists(path):
+                    os.remove(path)
         except:
             pass
         return ""
@@ -357,6 +477,7 @@ def generate_trading_signal(
             return f"Error: {error_msg}"
         
         from langchain_google_genai import ChatGoogleGenerativeAI
+        import time
         
         # langchain_google_genai uses GOOGLE_API_KEY env var, so set it
         original_google_key = os.environ.get("GOOGLE_API_KEY", None)
@@ -375,15 +496,42 @@ def generate_trading_signal(
                 os.environ["GOOGLE_API_KEY"] = original_google_key
             elif "GOOGLE_API_KEY" in os.environ:
                 del os.environ["GOOGLE_API_KEY"]
-        decision = trading_model.invoke(user_prompt)
         
-        # Get response content (match original notebook implementation)
-        response_text = decision.content if hasattr(decision, 'content') else str(decision)
+        # Retry logic for rate limits
+        max_retries = 2
+        retry_delay = 5  # Start with 5 seconds
         
-        # Debug: Print response to see what LLM is returning
-        print(f"[PIPELINE] LLM Response: {response_text[:200]}...")
+        for attempt in range(max_retries + 1):
+            try:
+                decision = trading_model.invoke(user_prompt)
+                
+                # Get response content (match original notebook implementation)
+                response_text = decision.content if hasattr(decision, 'content') else str(decision)
+                
+                # Debug: Print response to see what LLM is returning
+                print(f"[PIPELINE] LLM Response: {response_text[:200]}...")
+                
+                return response_text
+                
+            except Exception as invoke_error:
+                error_str = str(invoke_error)
+                
+                # Check if it's a rate limit error
+                if "429" in error_str or "quota" in error_str.lower() or "rate limit" in error_str.lower():
+                    if attempt < max_retries:
+                        wait_time = retry_delay * (2 ** attempt)  # Exponential backoff
+                        print(f"[WARN] Rate limit hit, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        print(f"[ERROR] Rate limit exceeded after {max_retries} retries")
+                        return "Error: Rate limit exceeded. Please reduce scraping frequency or upgrade Gemini API tier."
+                else:
+                    # Not a rate limit error, re-raise
+                    raise invoke_error
         
-        return response_text
+        return "Error: Max retries exceeded"
+        
     except Exception as e:
         error_msg = str(e)
         print(f"[ERROR] LLM generation failed: {error_msg}")
@@ -391,6 +539,8 @@ def generate_trading_signal(
         # Provide helpful error message
         if "credentials" in error_msg.lower() or "api key" in error_msg.lower():
             return f"Error: API key issue - {error_msg}. Please check GEMINI_API_KEY in .env file."
+        if "429" in error_msg or "quota" in error_msg.lower():
+            return "Error: Rate limit exceeded. Please reduce scraping frequency or upgrade Gemini API tier."
         return f"Error generating signal: {error_msg}"
 
 
@@ -398,6 +548,11 @@ def generate_trading_signal(
 def parse_trading_signal_value(response: str) -> int:
     """Parse trading signal value (1, 0, or -1) from LLM response"""
     try:
+        # Check if response is an error message
+        if not response or "error" in response.lower() or "429" in response or "quota" in response.lower():
+            print(f"[WARN] Invalid LLM response (error detected): {response[:200]}")
+            return 0
+        
         # Try multiple patterns to match various response formats
         patterns = [
             r"trading_signal:\s*(-?\d+)",  # Original format
@@ -414,6 +569,10 @@ def parse_trading_signal_value(response: str) -> int:
                 signal_str = next((g for g in signal_match.groups() if g is not None), None)
                 if signal_str:
                     signal = int(signal_str)
+                    # Validate signal is in valid range
+                    if signal not in [-1, 0, 1]:
+                        print(f"[WARN] Invalid signal value {signal}, defaulting to HOLD (0)")
+                        return 0
                     print(f"[PIPELINE] Parsed signal: {signal} from response")
                     return signal
         
@@ -527,13 +686,34 @@ def create_nse_filings_pipeline(
         signal=parse_trading_signal_value(pw.this.llm_response),
         explanation=parse_trading_signal_explanation(pw.this.llm_response)
     )
-    
-    # Step 6: Output results
-    print(f"[SENTIMENT] Step 6: Writing signals to {output_path}...")
-    pw.io.jsonlines.write(trading_signals, output_path)
-    
+ 
+    # Step 6: Publish to Kafka and output results
+    print("[SENTIMENT] Step 6: Publishing signals to Kafka and writing to disk...")
+    signals_with_kafka = trading_signals.select(
+        symbol=pw.this.symbol,
+        filing_time=pw.this.filing_time,
+        signal=pw.this.signal,
+        explanation=pw.this.explanation,
+        kafka_status=publish_signal_to_kafka(
+            pw.this.symbol,
+            pw.this.filing_time,
+            pw.this.signal,
+            pw.this.explanation,
+        ),
+    )
+
+    pw.io.jsonlines.write(
+        signals_with_kafka.select(
+            symbol=pw.this.symbol,
+            filing_time=pw.this.filing_time,
+            signal=pw.this.signal,
+            explanation=pw.this.explanation,
+        ),
+        output_path,
+    )
+ 
     print("[SENTIMENT] Pipeline ready - waiting for data from scraper...")
-    return trading_signals
+    return signals_with_kafka
 
 
 # ============================================================================

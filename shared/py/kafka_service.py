@@ -20,6 +20,7 @@ from typing import Any, Callable, Dict, Optional, Type, Union
 
 import pathway as pw
 from pydantic import BaseModel, ValidationError
+from confluent_kafka.admin import AdminClient, NewTopic  # type: ignore
 
 
 LOGGER = logging.getLogger("shared.kafka")
@@ -66,6 +67,9 @@ class KafkaSettings:
     sasl_password: Optional[str] = field(default_factory=lambda: os.getenv("KAFKA_SASL_PASSWORD"))
     ssl_cafile: Optional[str] = field(default_factory=lambda: os.getenv("KAFKA_SSL_CAFILE"))
 
+    num_partitions: int = field(default_factory=lambda: int(os.getenv("KAFKA_TOPIC_PARTITIONS", "1")))
+    replication_factor: int = field(default_factory=lambda: int(os.getenv("KAFKA_TOPIC_REPLICATION", "1")))
+
     def client_config(self) -> Dict[str, Any]:
         config: Dict[str, Any] = {
             "bootstrap.servers": self.bootstrap_servers,
@@ -82,6 +86,9 @@ class KafkaSettings:
             config["ssl.ca.location"] = self.ssl_cafile
         return config
 
+    def admin_client(self) -> AdminClient:
+        return AdminClient(self.client_config())
+
 
 class _KafkaEventSchema(pw.Schema):
     """Schema for normalised Kafka records."""
@@ -93,6 +100,55 @@ class _KafkaEventSchema(pw.Schema):
 
 def _default_serializer(payload: Dict[str, Any]) -> str:
     return json.dumps(payload, separators=(",", ":"), default=str)
+
+
+class _KafkaQueueSubject(pw.io.python.ConnectorSubject):
+    """Pathway subject that drains a Queue[dict] and emits rows."""
+
+    deletions_enabled = False
+
+    def __init__(
+        self,
+        name: str,
+        event_queue: "queue.Queue[Optional[Dict[str, Any]]]",
+        stop_event: threading.Event,
+    ) -> None:
+        super().__init__(datasource_name=f"kafka_publisher:{name}")
+        self._name = name
+        self._queue = event_queue
+        self._stop_event = stop_event
+
+    def run(self) -> None:  # pragma: no cover - exercised via integration
+        LOGGER.debug("Kafka subject %s loop started", self._name)
+        while True:
+            if self._stop_event.is_set():
+                try:
+                    item = self._queue.get_nowait()
+                except queue.Empty:
+                    LOGGER.debug(
+                        "Kafka subject %s stop event set and queue drained", self._name
+                    )
+                    break
+            try:
+                item = self._queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
+
+            if item is None:
+                LOGGER.debug("Kafka subject %s received sentinel", self._name)
+                break
+
+            try:
+                self.next(**item)
+            except Exception as exc:  # pragma: no cover - guard rail
+                LOGGER.exception(
+                    "Kafka subject %s failed to forward message %s: %s",
+                    self._name,
+                    item,
+                    exc,
+                )
+
+        LOGGER.debug("Kafka subject %s loop exited", self._name)
 
 
 class KafkaPublisher:
@@ -119,17 +175,19 @@ class KafkaPublisher:
         self._queue: "queue.Queue[Optional[Dict[str, Any]]]" = queue.Queue(maxsize=10_000)
         self._started = threading.Event()
         self._stop_event = threading.Event()
-        self._worker_thread: Optional[threading.Thread] = None
+        self._runtime_thread: Optional[threading.Thread] = None
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-    async def publish(
+    def publish(
         self,
         payload: Union[BaseModel, Dict[str, Any]],
         *,
         key: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
+        block: bool = True,
+        timeout: Optional[float] = None,
     ) -> None:
         """Validate and enqueue an event for publication.
 
@@ -143,6 +201,11 @@ class KafkaPublisher:
             key factory (if any).
         headers:
             Optional Kafka headers to attach to the record.
+        block:
+            Whether to block if the internal queue is full (defaults to True).
+        timeout:
+            Optional timeout (in seconds) for the enqueue operation when
+            ``block`` is True.
         """
 
         if not self._started.is_set():
@@ -166,7 +229,31 @@ class KafkaPublisher:
             "headers": record_headers or None,
         }
 
-        await asyncio.to_thread(self._queue.put, envelope)
+        try:
+            self._queue.put(envelope, block=block, timeout=timeout)
+        except queue.Full as exc:  # pragma: no cover - guard rail
+            raise KafkaPublishError(
+                f"Publisher {self.name} queue is full; consider increasing capacity."
+            ) from exc
+
+    async def publish_async(
+        self,
+        payload: Union[BaseModel, Dict[str, Any]],
+        *,
+        key: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+        timeout: Optional[float] = None,
+    ) -> None:
+        """Async-compatible helper that defers to :meth:`publish`."""
+
+        await asyncio.to_thread(
+            self.publish,
+            payload,
+            key=key,
+            headers=headers,
+            block=True,
+            timeout=timeout,
+        )
 
     def start(self) -> None:
         """Start the background Pathway pipeline for this publisher."""
@@ -175,12 +262,12 @@ class KafkaPublisher:
             return
 
         self._stop_event.clear()
-        self._worker_thread = threading.Thread(
+        self._runtime_thread = threading.Thread(
             target=self._run_pipeline,
-            name=f"KafkaPublisher[{self.name}]",
+            name=f"KafkaPublisher[{self.name}]-runtime",
             daemon=True,
         )
-        self._worker_thread.start()
+        self._runtime_thread.start()
         self._started.set()
         LOGGER.info("Kafka publisher %s -> topic %s started", self.name, self.topic)
 
@@ -192,8 +279,8 @@ class KafkaPublisher:
 
         self._stop_event.set()
         self._queue.put(None)
-        if self._worker_thread and self._worker_thread.is_alive():
-            self._worker_thread.join(timeout=timeout)
+        if self._runtime_thread and self._runtime_thread.is_alive():
+            self._runtime_thread.join(timeout=timeout)
         self._started.clear()
         LOGGER.info("Kafka publisher %s stopped", self.name)
 
@@ -229,32 +316,34 @@ class KafkaPublisher:
     # Pathway runtime
     # ------------------------------------------------------------------
     def _run_pipeline(self) -> None:
-        """Run a dedicated Pathway pipeline that drains the queue into Kafka."""
-
         LOGGER.debug("Launching Pathway pipeline for publisher %s", self.name)
 
-        def _queue_iterator():
-            while not self._stop_event.is_set():
-                try:
-                    item = self._queue.get(timeout=0.5)
-                except queue.Empty:
-                    continue
-                if item is None:
-                    break
-                yield item
-
-        source = pw.io.python.read(_queue_iterator, schema=_KafkaEventSchema)
+        subject = _KafkaQueueSubject(self.name, self._queue, self._stop_event)
+        source = pw.io.python.read(
+            subject,
+            schema=_KafkaEventSchema,
+            autocommit_duration_ms=500,
+            max_backlog_size=self._queue.maxsize,
+            name=f"{self.name}_subject",
+        )
+        # Pathway requires Kafka keys to be either bytes or strings; ensure we
+        # always provide a string key (empty when no partition key is supplied).
+        table = source.select(
+            key=pw.apply(lambda maybe_key: "" if maybe_key is None else str(maybe_key), pw.this.key),
+            value=pw.this.value,
+            headers=pw.this.headers,
+        )
         pw.io.kafka.write(
-            source,
-            servers=self.settings.bootstrap_servers,
-            topic=self.topic,
-            key="key",
-            value="value",
-            headers="headers",
+            table,
+            self.settings.client_config(),
+            self.topic,
+            format="json",
+            key=table.key,
+            name=f"{self.name}_sink",
         )
 
         try:
-            pw.run()
+            pw.run(monitoring_level=pw.MonitoringLevel.NONE)
         finally:  # pragma: no cover - Pathway cleanup best effort
             LOGGER.debug("Pathway pipeline for %s exited", self.name)
 
@@ -309,6 +398,8 @@ class KafkaEventBus:
             )
             self._publishers[name] = publisher
 
+        self._ensure_topic(topic)
+
         if auto_start:
             publisher.start()
 
@@ -329,6 +420,41 @@ class KafkaEventBus:
         with self._lock:
             for publisher in self._publishers.values():
                 publisher.stop()
+
+    # ------------------------------------------------------------------
+    # Topic helpers
+    # ------------------------------------------------------------------
+    def _ensure_topic(self, topic: str) -> None:
+        admin = self.settings.admin_client()
+        LOGGER.info("Connecting to Kafka at %s", self.settings.bootstrap_servers)
+        metadata = admin.list_topics(timeout=5)
+        if topic in metadata.topics and metadata.topics[topic].error is None:
+            LOGGER.info("✓ Kafka topic %s already exists", topic)
+            return
+
+        LOGGER.info(
+            "Creating Kafka topic %s (partitions=%s, replication=%s)",
+            topic,
+            self.settings.num_partitions,
+            self.settings.replication_factor,
+        )
+        new_topic = NewTopic(
+            topic,
+            num_partitions=self.settings.num_partitions,
+            replication_factor=self.settings.replication_factor,
+        )
+        futures = admin.create_topics([new_topic])
+
+        try:
+            futures[topic].result(timeout=10)
+            LOGGER.info("✓ Kafka topic %s created", topic)
+        except Exception as exc:  # pragma: no cover - topic may already exist or race condition
+            # If topic already exists, ignore error, otherwise log
+            if "Topic already exists" not in str(exc):
+                LOGGER.warning("Failed to create topic %s: %s", topic, exc)
+            else:
+                LOGGER.info("ℹ︎ Kafka topic %s already existed", topic)
+                return
 
 
 # Default bus exposed for convenience -------------------------------------------------

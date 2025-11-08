@@ -455,7 +455,10 @@ def parse_trading_signal_explanation(response: str) -> str:
 def create_nse_filings_pipeline(
     filings_source: pw.Table,
     static_data_path: str = "staticdata.csv",
-    output_path: str = "trading_signals.jsonl"
+    output_path: str = "trading_signals.jsonl",
+    kafka_output: bool = False,
+    kafka_topic: str = "nse_filings_trading_signal",
+    kafka_servers: str = "localhost:9092"
 ):
     """
     Create the main Pathway pipeline for NSE filings sentiment analysis
@@ -463,7 +466,10 @@ def create_nse_filings_pipeline(
     Args:
         filings_source: Pathway table with NSE filing data
         static_data_path: Path to CSV with filing type impact scenarios
-        output_path: Path to write trading signals
+        output_path: Path to write trading signals (JSONL file)
+        kafka_output: Enable Kafka output (default: False)
+        kafka_topic: Kafka topic name (default: nse_filings_trading_signal)
+        kafka_servers: Kafka bootstrap servers (default: localhost:9092)
     """
     
     # Step 1: Download PDFs and extract filenames
@@ -519,6 +525,27 @@ def create_nse_filings_pipeline(
     # Step 6: Output results
     print(f"[SENTIMENT] Step 6: Writing signals to {output_path}...")
     pw.io.jsonlines.write(trading_signals, output_path)
+    
+    # Step 7: Optional Kafka output
+    if kafka_output:
+        print(f"[SENTIMENT] Step 7: Publishing signals to Kafka topic '{kafka_topic}'...")
+        kafka_config = {
+            "bootstrap.servers": kafka_servers,
+            "client.id": "nse-filings-sentiment",
+            "acks": "all",
+            "compression.type": "snappy",
+            "linger.ms": "10",
+            "batch.size": "16384",
+        }
+        
+        # Write to Kafka with proper schema
+        pw.io.kafka.write(
+            trading_signals,
+            kafka_config,
+            topic_name=kafka_topic,
+            format="json"
+        )
+        print(f"[SENTIMENT] ✅ Kafka output enabled - publishing to {kafka_topic} on {kafka_servers}")
     
     print("[SENTIMENT] Pipeline ready - waiting for data from scraper...")
     return trading_signals
@@ -599,11 +626,19 @@ def main():
     # Option 3: HTTP input (for testing)
     filings_input, writer = create_filings_input_from_http(port=8001)
     
-    # Create pipeline
+    # Get Kafka configuration from environment
+    kafka_enabled = os.getenv("KAFKA_OUTPUT_ENABLED", "true").lower() in ("true", "1", "yes")
+    kafka_topic = os.getenv("KAFKA_TOPIC", "nse_filings_trading_signal")
+    kafka_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+    
+    # Create pipeline with Kafka output
     trading_signals = create_nse_filings_pipeline(
         filings_source=filings_input,
         static_data_path="staticdata.csv",
-        output_path="trading_signals.jsonl"
+        output_path="trading_signals.jsonl",
+        kafka_output=kafka_enabled,
+        kafka_topic=kafka_topic,
+        kafka_servers=kafka_servers
     )
     
     # Optional: Write signals back via HTTP
