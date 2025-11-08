@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { useForm } from "react-hook-form"
+import type { ChartData, ScriptableContext } from "chart.js"
 
 import { CompanySettingsCard } from "@/components/admin/CompanySettingsCard"
 import { CreateUserModal } from "@/components/admin/CreateUserModal"
@@ -10,20 +11,64 @@ import { PerformanceCard } from "@/components/admin/PerformanceCard"
 import { UserManagementCard } from "@/components/admin/UserManagementCard"
 import type { AdminSettingsForm, AdminSettingsUserField, CreateUserFormValues, DirectoryUser } from "@/components/admin/types"
 import { Container } from "@/components/shared/Container"
-import { AppHeader } from "@/components/layout/AppHeader"
+import { AdminHeader } from "@/components/admin/AdminHeader"
 import { createUser, getUsers, type AuthUserSummary, type UserRole, updateUser } from "@/lib/auth"
+import { useAuth } from "@/hooks/useAuth"
 import "@/lib/chart"
+import { lineDepthPlugin } from "@/components/dashboard/chartConfig"
 import {
   type DashboardData,
   computeRoiPct,
   formatCurrency,
   getDashboardData,
-  getTopKInvestors,
 } from "@/lib/dashboardData"
+
+const POSITIVE_LINE_STYLE = {
+  border: "#22c55e",
+  gradientFrom: "rgba(34,197,94,0.2)",
+  gradientSoft: "rgba(34,197,94,0.12)",
+  gradientTo: "rgba(34,197,94,0)",
+  shadow: "rgba(34,197,94,0.25)",
+} as const
+
+const NEGATIVE_LINE_STYLE = {
+  border: "#ef4444",
+  gradientFrom: "rgba(239,68,68,0.2)",
+  gradientSoft: "rgba(239,68,68,0.12)",
+  gradientTo: "rgba(239,68,68,0)",
+  shadow: "rgba(239,68,68,0.25)",
+} as const
+
+type LinePalette = typeof POSITIVE_LINE_STYLE | typeof NEGATIVE_LINE_STYLE
+type LineDatasetWithShadow = ChartData<"line">["datasets"][number] & { shadowColor: string }
+
+const pickPalette = (series: number[]): LinePalette => {
+  if (!series.length) {
+    return POSITIVE_LINE_STYLE
+  }
+  const delta = series[series.length - 1] - series[0]
+  return delta >= 0 ? POSITIVE_LINE_STYLE : NEGATIVE_LINE_STYLE
+}
+
+const gradientFill = (from: string, to: string) =>
+  (context: ScriptableContext<"line">) => {
+    const { ctx, chartArea } = context.chart
+    if (!chartArea) {
+      return from
+    }
+
+    const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top)
+    gradient.addColorStop(0, from)
+    gradient.addColorStop(1, to)
+    return gradient
+  }
 
 export default function AdminDashboardPage() {
   const initial: DashboardData = getDashboardData()
   const [data] = useState<DashboardData>(initial)
+
+  // Get admin user data securely from server-validated token
+  const { user: authUser, loading: authLoading } = useAuth()
 
   const {
     register: registerSettings,
@@ -67,8 +112,6 @@ export default function AdminDashboardPage() {
   const totalInvestment = totals[totals.length - 1] * 1_000_000
   const totalProfit = (totals[totals.length - 1] - totals[0]) * 1_000_000
   const roiPct = computeRoiPct(totals)
-
-  const topK = useMemo(() => getTopKInvestors(data.investors, 3), [data.investors])
 
   const formatUserName = useCallback((user: AuthUserSummary) => {
     const fullName = `${user.first_name} ${user.last_name}`.trim()
@@ -220,7 +263,7 @@ export default function AdminDashboardPage() {
       {
         label: "ROI",
         value: `${roiPct.toFixed(1)}%`,
-        valueClassName: roiPct >= 0 ? "text-[#00FF88]" : "text-rose-400",
+        valueClassName: roiPct >= 0 ? "text-[#22c55e]" : "text-[#ef4444]",
         title: "Return on investment for the period",
       },
     ],
@@ -228,55 +271,22 @@ export default function AdminDashboardPage() {
   )
 
   const chart = useMemo(() => {
-    const gradientFor = (ctx: CanvasRenderingContext2D) => {
-      const g = ctx.createLinearGradient(0, 0, 0, 320)
-      g.addColorStop(0, "rgba(0,255,136,0.35)")
-      g.addColorStop(1, "rgba(0,255,136,0.02)")
-      return g
-    }
-
-    const datasets = [
+    const companyPalette = pickPalette(totals)
+    const datasets: ChartData<"line">["datasets"] = [
       {
         label: "Company",
         data: totals,
-        borderColor: "#00FF88",
-        backgroundColor: (ctx: any) => gradientFor(ctx.chart.ctx),
+        borderColor: companyPalette.border,
+        backgroundColor: gradientFill(companyPalette.gradientFrom, companyPalette.gradientTo),
         borderWidth: 2,
         tension: 0.35,
         fill: true,
         pointRadius: 0,
-      },
-      ...topK.slice(0, 2).map((inv, idx) => ({
-        label: inv.name,
-        data: inv.series,
-        borderColor: idx === 0 ? "#22d3ee" : "#60a5fa",
-        backgroundColor: "transparent",
-        borderWidth: 1.6,
-        pointRadius: 0,
-        tension: 0.35,
-        fill: false,
-      })),
+        borderCapStyle: "round",
+        borderJoinStyle: "round",
+        shadowColor: companyPalette.shadow,
+      } as LineDatasetWithShadow,
     ]
-
-    const glowPlugin = {
-      id: "neon-glow",
-      afterDatasetsDraw(chart: any) {
-        const { ctx } = chart
-        chart.data.datasets.forEach((_: any, i: number) => {
-          const meta = chart.getDatasetMeta(i)
-          if (!meta.hidden && meta.dataset) {
-            ctx.save()
-            ctx.shadowColor = "rgba(0,255,136,0.6)"
-            ctx.shadowBlur = i === 0 ? 16 : 6
-            ctx.lineWidth = i === 0 ? 2 : 1.5
-            ctx.strokeStyle = i === 0 ? "#00FF88" : ctx.strokeStyle
-            ctx.beginPath()
-            meta.dataset.draw(ctx)
-            ctx.restore()
-          }
-        })
-      },
-    }
 
     return {
       data: {
@@ -316,9 +326,9 @@ export default function AdminDashboardPage() {
           },
         },
       },
-      plugins: [glowPlugin],
+      plugins: [lineDepthPlugin],
     }
-  }, [months, totals, topK])
+  }, [months, totals])
 
   const handleLogout = useCallback(() => {
     if (typeof window !== "undefined") {
@@ -382,6 +392,18 @@ export default function AdminDashboardPage() {
     [fetchUsers, teamById],
   )
 
+  const handleCreateUserModalOpenChange = useCallback(
+    (open: boolean) => {
+      setCreateUserModalOpen(open)
+      if (!open) {
+        setCreateUserError(null)
+        setCreateUserSuccess(null)
+        resetCreateUserForm({ email: "", password: "", firstName: "", lastName: "", role: "staff" })
+      }
+    },
+    [resetCreateUserForm],
+  )
+
   const handleCreateUser = useCallback(
     async (values: CreateUserFormValues) => {
       setCreatingUser(true)
@@ -398,15 +420,17 @@ export default function AdminDashboardPage() {
         })
 
         setCreateUserSuccess(`User ${response.data.email} created successfully.`)
-        resetCreateUserForm({ email: "", password: "", firstName: "", lastName: "", role: "staff" })
         await fetchUsers()
+        window.setTimeout(() => {
+          handleCreateUserModalOpenChange(false)
+        }, 1000)
       } catch (error) {
         setCreateUserError(error instanceof Error ? error.message : "Unable to create user")
       } finally {
         setCreatingUser(false)
       }
     },
-    [fetchUsers, resetCreateUserForm],
+    [fetchUsers, handleCreateUserModalOpenChange],
   )
 
   const handleRoleFilterChange = useCallback((roles: UserRole[]) => {
@@ -419,28 +443,29 @@ export default function AdminDashboardPage() {
     setCreateUserModalOpen(true)
   }, [])
 
-  const handleCreateUserModalOpenChange = useCallback(
-    (open: boolean) => {
-      setCreateUserModalOpen(open)
-      if (!open) {
-        setCreateUserError(null)
-        setCreateUserSuccess(null)
-        resetCreateUserForm({ email: "", password: "", firstName: "", lastName: "", role: "staff" })
-      }
-    },
-    [resetCreateUserForm],
-  )
-
   const directoryDescription = usersError
     ? usersError
     : usersLoading
       ? "Loading users..."
       : "View all staff and customers. Use the role filter to focus the directory."
 
+  // Show loading state while auth is being verified
+  if (authLoading || !authUser) {
+    return (
+      <div className="min-h-screen bg-[#0c0c0c] text-[#fafafa] flex items-center justify-center">
+        <div className="text-white/60">Loading...</div>
+      </div>
+    )
+  }
+
   return (
     <>
-      <AppHeader subtitle="admin" onLogout={handleLogout} className="bg-black" />
-      <main className="py-6">
+      <AdminHeader 
+        userName={authUser.firstName} 
+        username={authUser.username}
+        onLogout={handleLogout} 
+      />
+      <main className="py-6 bg-[#0c0c0c] min-h-screen">
         <Container className="space-y-6 max-w-7xl">
           <div className="space-y-6">
             <PerformanceCard chart={chart} />

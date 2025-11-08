@@ -31,11 +31,13 @@ def _decimal_from_env(env_key: str, default: str) -> Decimal:
 
 
 DEFAULT_PORTFOLIO_NAME = os.getenv("DEFAULT_PORTFOLIO_NAME", "Managed Portfolio")
-DEFAULT_INVESTMENT_AMOUNT = _decimal_from_env("DEFAULT_PORTFOLIO_INVESTMENT_AMOUNT", "0")
+DEFAULT_PORTFOLIO_CASH = _decimal_from_env("DEFAULT_PORTFOLIO_CASH", "100000")
 DEFAULT_EXPECTED_RETURN_TARGET = _decimal_from_env("DEFAULT_PORTFOLIO_EXPECTED_RETURN_TARGET", "0.0800")
 DEFAULT_INVESTMENT_HORIZON_YEARS = int(os.getenv("DEFAULT_PORTFOLIO_HORIZON_YEARS", "3"))
 DEFAULT_RISK_TOLERANCE = os.getenv("DEFAULT_PORTFOLIO_RISK_TOLERANCE", "moderate")
 DEFAULT_LIQUIDITY_NEEDS = os.getenv("DEFAULT_PORTFOLIO_LIQUIDITY_NEEDS", "standard")
+MAX_TRADE_VALUE = _decimal_from_env("MAX_TRADE_VALUE", "50000")
+MAX_POSITION_VALUE = _decimal_from_env("MAX_POSITION_VALUE", "100000")
 
 
 class PortfolioController:
@@ -56,8 +58,10 @@ class PortfolioController:
         if requester_id and requester_id == str(target_user_id):
             return
 
+        # SECURITY: Only accept validated roles from auth system (admin, staff, viewer)
+        # Removed unvalidated roles: superadmin, portfolio_admin, portfolio_manager
         role = (request_user.get("role") or "").lower()
-        if role in {"admin", "superadmin", "portfolio_admin", "portfolio_manager"}:
+        if role == "admin":
             return
 
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to access this user")
@@ -121,7 +125,7 @@ class PortfolioController:
 
         if portfolio is None:
             defaults = {
-                "investment_amount": DEFAULT_INVESTMENT_AMOUNT,
+                "investment_amount": DEFAULT_PORTFOLIO_CASH,
                 "expected_return_target": DEFAULT_EXPECTED_RETURN_TARGET,
             }
             portfolio = await self.prisma.portfolio.create(
@@ -141,6 +145,8 @@ class PortfolioController:
                         {
                             "auto_created": True,
                             "created_for_user": str(user_id),
+                            "max_trade_value": str(MAX_TRADE_VALUE),
+                            "max_position_value": str(MAX_POSITION_VALUE),
                         }
                     ),
                 }

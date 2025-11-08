@@ -32,3 +32,8 @@ NSE_REFRESH_INTERVAL = int(os.getenv("NSE_REFRESH_INTERVAL", "60"))
 # Environment
 NODE_ENV = os.getenv("NODE_ENV", "development")
 
+# Portfolio Constraints
+DEFAULT_PORTFOLIO_CASH = os.getenv("DEFAULT_PORTFOLIO_CASH", "100000")
+MAX_TRADE_VALUE = os.getenv("MAX_TRADE_VALUE", "50000")
+MAX_POSITION_VALUE = os.getenv("MAX_POSITION_VALUE", "100000")
+

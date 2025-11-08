@@ -165,3 +165,24 @@ h1, h2, h3 { font-family: 'Playfair Display', serif; }
   -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 60%, rgba(0,0,0,0) 96%);
   mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 60%, rgba(0,0,0,0) 96%);
 }
+
+/* Neon hover effect for buttons and interactive elements */
+.neon-hover {
+  position: relative;
+  transition: all 0.3s ease;
+}
+
+.neon-hover::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  background: radial-gradient(circle at center, rgba(99,102,241,0.15), transparent 70%);
+  pointer-events: none;
+}
+
+.neon-hover:hover::after {
+  opacity: 1;
+}
