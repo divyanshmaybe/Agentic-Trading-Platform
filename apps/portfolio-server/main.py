@@ -30,6 +30,7 @@ from routes.pipeline_routes import create_pipeline_routes, create_health_routes
 from routes.market_routes import router as market_router
 from routes.portfolio_routes import router as portfolio_router
 from routes.trade_routes import router as trade_router
+from routes.regime_routes import router as regime_router
 from utils.pipeline_utils import get_pipeline_status
 from workers.pipeline_tasks import start_nse_pipeline, run_news_sentiment_pipeline
 
@@ -96,6 +97,19 @@ def create_lifespan(base_app_instance, pipeline_service_instance):
                 "Failed to dispatch news sentiment pipeline task: %s", exc
             )
         
+        # Initialize Regime Classification Service
+        try:
+            base_app_instance.logger.info("🚀 Initializing Regime Classification Service...")
+            from services.regime_service import RegimeService
+            regime_service = RegimeService.get_instance()
+            app.state.regime_service = regime_service
+            base_app_instance.logger.info("✅ Regime Classification Service initialized")
+        except Exception as exc:  # pragma: no cover - defensive
+            base_app_instance.logger.warning(
+                "⚠️ Failed to initialize Regime Service: %s (service will not be available)", exc
+            )
+            app.state.regime_service = None
+        
         yield
         
         # Shutdown
@@ -131,6 +145,7 @@ base_app.add_routes("/api/pipeline", create_pipeline_routes(pipeline_service, se
 base_app.add_routes("/api", trade_router)
 base_app.add_routes("/api", market_router)
 base_app.add_routes("/api", portfolio_router)
+base_app.add_routes("/api", regime_router)
 base_app.add_routes("", create_health_routes(pipeline_service, server_dir))
 
 # Override root endpoint
