@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+#  FOR NEWS PIPELINE STOCK RECOMMENDATIONS
+# subscriber.sh --channel news_pipeline_stock_recomendations --from-beginning --broker localhost:9092
+
+#  FOR NSE FILINGS SENTIMENT AGENT
+# subscriber.sh --channel nse_filings_trading_signal --from-beginning --broker localhost:9092
 
 set -euo pipefail
 

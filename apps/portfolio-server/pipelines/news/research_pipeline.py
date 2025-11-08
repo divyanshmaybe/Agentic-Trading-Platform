@@ -8,6 +8,7 @@ directory being present.
 from __future__ import annotations
 
 import json
+import os
 import re
 import threading
 from typing import Any, Dict, List, Optional
@@ -369,6 +370,16 @@ def compute_technical_indicators(symbol: str) -> Optional[Dict[str, Optional[flo
     return indicators
 
 
+@pw.udf
+def get_technical_indicators(symbol: str) -> str:
+    try:
+        indicators = compute_technical_indicators(symbol)
+        return json.dumps(indicators)
+    except Exception as exc:  # pragma: no cover - defensive logging
+        print(f"[ERROR] get_technical_indicators({symbol}): {exc}")
+        return json.dumps(None)
+
+
 def stock_recommender_llm(sector_analysis: str, tech_json: str, api_key: str) -> Any:
     try:
         from langchain_google_genai import ChatGoogleGenerativeAI
@@ -490,12 +501,88 @@ def stock_recommender(sector_analysis: str, tech_json: str, *, gemini_api_key: O
         return raw
 
 
+# ---------------------------------------------------------------------------
+# High-level helpers (parity with research notebook/demo)
+# ---------------------------------------------------------------------------
+
+
+def news_retriever(top_k: int = 3, api_key: Optional[str] = None) -> Dict[str, List[Dict[str, str]]]:
+    api_key_val = api_key or os.getenv("NEWS_ORG_API_KEY", "")
+    results: Dict[str, List[Dict[str, str]]] = {}
+
+    for stream, query in NEWS_STREAMS.items():
+        articles = _fetch_news_api(stream, query, top_k, api_key_val)
+        results[stream] = [
+            {
+                "title": title,
+                "content": content,
+                "url": url,
+            }
+            for title, content, url in articles
+        ]
+
+    return results
+
+
+def sentiment_analyzer(news_by_stream: Dict[str, List[Dict[str, str]]]) -> Dict[str, List[Dict[str, str]]]:
+    import torch
+    import torch.nn.functional as F
+
+    _ensure_finbert_loaded()
+    assert _finbert_tok is not None and _finbert_model is not None and _finbert_device is not None
+
+    analysed: Dict[str, List[Dict[str, str]]] = {}
+    for stream, articles in news_by_stream.items():
+        print(f"\nAnalysing sentiment for stream: {stream} ({len(articles)} articles)")
+        enriched = []
+        for article in articles:
+            text = f"{article.get('title', '')} {article.get('content', '')}"
+            inputs = _finbert_tok(
+                text,
+                return_tensors="pt",
+                truncation=True,
+                padding=True,
+                max_length=256,
+            ).to(_finbert_device)
+
+            with torch.no_grad():
+                outputs = _finbert_model(**inputs)
+                logits = outputs.logits if hasattr(outputs, "logits") else outputs
+                probs = F.softmax(logits, dim=-1)
+                pred = torch.argmax(probs, dim=1).item()
+
+            label_map = {0: "neutral", 1: "positive", 2: "negative"}
+            enriched.append({**article, "sentiment": label_map.get(pred, "neutral")})
+
+        analysed[stream] = enriched
+
+    return analysed
+
+
+def trading_agent(
+    top_k: int = 3,
+    *,
+    news_api_key: Optional[str] = None,
+    gemini_api_key: Optional[str] = None,
+) -> str:
+    news_data = news_retriever(top_k=top_k, api_key=news_api_key)
+    sentiment_data = sentiment_analyzer(news_data)
+    return trading_agent_llm(
+        json.dumps(sentiment_data),
+        gemini_api_key or os.getenv("GEMINI_API_KEY", ""),
+    )
+
+
 __all__ = [
     "NEWS_STREAMS",
     "StreamSchema",
     "StockSchema",
     "build_news_sentiment_pipeline",
     "compute_technical_indicators",
+    "get_technical_indicators",
+    "news_retriever",
+    "sentiment_analyzer",
+    "trading_agent",
     "stock_recommender",
     "stock_recommender_llm",
     "trading_agent_llm",

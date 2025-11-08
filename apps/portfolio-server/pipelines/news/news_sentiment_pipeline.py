@@ -29,6 +29,13 @@ import pandas as pd
 import pathway as pw
 from dotenv import load_dotenv
 
+from kafka_service import (  # type: ignore  # noqa: E402
+    KafkaPublisher,
+    PublisherAlreadyRegistered,
+    default_kafka_bus,
+)
+from pydantic import BaseModel
+
 from .research_pipeline import (
     NEWS_STREAMS,
     StreamSchema,
@@ -122,6 +129,110 @@ SAMPLE_STOCKS: List[tuple[str, str]] = [
     ("KOTAKBANK", "Financial Services"),
     ("LT", "Construction"),
 ]
+
+
+# ---------------------------------------------------------------------------
+# Kafka integration for stock recommendations
+# ---------------------------------------------------------------------------
+
+NEWS_RECO_TOPIC = os.getenv("NEWS_STOCK_RECOMMENDATIONS_TOPIC", "news_pipeline_stock_recomendations")
+NEWS_RECO_PUBLISHER_NAME = "news_stock_recommendations_publisher"
+
+
+class NewsStockRecommendationEvent(BaseModel):
+    sector: Optional[str] = None
+    stock_name: Optional[str] = None
+    trade_signal: Optional[str] = None
+    detailed_analysis: Optional[str] = None
+    time_window_investment: Optional[str] = None
+    news_source: Optional[str] = None
+    news_source_url: Optional[str] = None
+    provider: str
+    generated_at: str
+
+
+_news_reco_publisher: Optional[KafkaPublisher] = None
+
+
+def _get_news_reco_publisher() -> KafkaPublisher:
+    global _news_reco_publisher
+
+    if _news_reco_publisher is not None:
+        return _news_reco_publisher
+
+    bus = default_kafka_bus
+    try:
+        _news_reco_publisher = bus.register_publisher(
+            NEWS_RECO_PUBLISHER_NAME,
+            topic=NEWS_RECO_TOPIC,
+            value_model=NewsStockRecommendationEvent,
+            default_headers={"source": "news_pipeline"},
+        )
+    except PublisherAlreadyRegistered:
+        _news_reco_publisher = bus.get_publisher(NEWS_RECO_PUBLISHER_NAME)
+
+    return _news_reco_publisher
+
+
+def _publish_stock_recommendations_to_kafka(
+    recommendations: List[Dict[str, Any]],
+    *,
+    provider: str,
+    generated_at: str,
+    logger: logging.Logger,
+) -> None:
+    if not recommendations:
+        logger.info("No stock recommendations produced; skipping Kafka publication")
+        return
+
+    try:
+        publisher = _get_news_reco_publisher()
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.warning("Unable to initialise news stock recommendation publisher: %s", exc)
+        return
+
+    published = 0
+    for item in recommendations:
+        try:
+            event = NewsStockRecommendationEvent(
+                sector=item.get("sector"),
+                stock_name=item.get("stock_name"),
+                trade_signal=item.get("trade_signal"),
+                detailed_analysis=item.get("detailed_analysis"),
+                time_window_investment=item.get("time_window_investment"),
+                news_source=item.get("news_source"),
+                news_source_url=item.get("news_source_url"),
+                provider=provider,
+                generated_at=generated_at,
+            )
+            publisher.publish(event.model_dump(), key=event.stock_name or event.sector)
+            published += 1
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning(
+                "Failed to publish stock recommendation for %s: %s",
+                item.get("stock_name", "<unknown>"),
+                exc,
+            )
+
+    logger.info(
+        "Published %s news stock recommendation(s) to Kafka topic %s",
+        published,
+        NEWS_RECO_TOPIC,
+    )
+
+
+# Eagerly initialise the publisher so the topic exists before subscribers attach.
+try:
+    _get_news_reco_publisher()
+    logging.getLogger(__name__).info(
+        "[KAFKA] News stock recommendation publisher initialised; topic '%s' ready.",
+        NEWS_RECO_TOPIC,
+    )
+except Exception as exc:  # pragma: no cover - defensive logging
+    logging.getLogger(__name__).warning(
+        "[KAFKA] Unable to initialise news stock recommendation publisher: %s",
+        exc,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -338,6 +449,12 @@ def execute_news_sentiment_pipeline(
         stock_recommendations = _build_placeholder_recommendations()
 
     _write_json(recommendations_path, stock_recommendations)
+    _publish_stock_recommendations_to_kafka(
+        stock_recommendations,
+        provider=recommendation_provider,
+        generated_at=run_started_at,
+        logger=log,
+    )
 
     # ------------------------------------------------------------------
     # Stage 4: Summary metadata

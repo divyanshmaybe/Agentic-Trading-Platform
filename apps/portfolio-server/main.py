@@ -83,18 +83,18 @@ def create_lifespan(base_app_instance, pipeline_service_instance):
             )
 
         # Dispatch news sentiment pipeline once at startup (Celery beat handles subsequent runs)
-        # try:
-        #     base_app_instance.logger.info("Dispatching news sentiment pipeline task to Celery...")
-        #     news_task = run_news_sentiment_pipeline.delay()
-        #     app.state.news_pipeline_job_id = news_task.id
-        #     base_app_instance.logger.info(
-        #         "✓ News sentiment pipeline task dispatched (task_id=%s)", news_task.id
-        #     )
-        # except Exception as exc:  # pragma: no cover - defensive
-        #     app.state.news_pipeline_job_id = None
-        #     base_app_instance.logger.exception(
-        #         "Failed to dispatch news sentiment pipeline task: %s", exc
-        #     )
+        try:
+            base_app_instance.logger.info("Dispatching news sentiment pipeline task to Celery...")
+            news_task = run_news_sentiment_pipeline.delay()
+            app.state.news_pipeline_job_id = news_task.id
+            base_app_instance.logger.info(
+                "✓ News sentiment pipeline task dispatched (task_id=%s)", news_task.id
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            app.state.news_pipeline_job_id = None
+            base_app_instance.logger.exception(
+                "Failed to dispatch news sentiment pipeline task: %s", exc
+            )
         
         yield
         
