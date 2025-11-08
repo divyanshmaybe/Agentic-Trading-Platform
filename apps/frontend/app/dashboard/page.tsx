@@ -3,11 +3,11 @@
 import { useEffect, useState } from "react"
 import { Playfair_Display } from "next/font/google"
 
+import { DashboardHeader } from "@/components/dashboard/DashboardHeader"
 import { NotificationCard } from "@/components/dashboard/NotificationCard"
 import { NewsFeedCard } from "@/components/dashboard/NewsFeedCard"
 import { PortfolioOverviewCard } from "@/components/dashboard/PortfolioOverviewCard"
 import { StocksWatchlistCard } from "@/components/dashboard/StocksWatchlistCard"
-import { Button } from "@/components/ui/button"
 import { Container } from "@/components/shared/Container"
 import { useRotatingList } from "@/hooks/useRotatingItem"
 import { cn } from "@/lib/utils"
@@ -125,11 +125,11 @@ export default function DashboardPage() {
     for (let i = 0; i < points; i++) {
       const progress = i / (points - 1)
       const basePrice = startPrice + totalChange * progress
-      
+
       // Add some realistic volatility (±1.5% random variation)
       const variation = basePrice * (Math.random() * 0.03 - 0.015)
       const price = basePrice + variation
-      
+
       prices.push(parseFloat(price.toFixed(2)))
     }
     
@@ -141,23 +141,9 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-[#0c0c0c] text-[#fafafa]">
+      <DashboardHeader userName="Aayush" />
+      
       <Container className="max-w-10xl space-y-6 py-8">
-        <section className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="space-y-2">
-            <span className={cn("text-3xl font-semibold", playfair.className)}>Hello Aayush</span>
-            <p className="max-w-xl text-sm text-white/60">
-              Your unified desk view: positions, signals, desk notifications, and macro feeds in one dark lane.
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <Button
-              variant="outline"
-              className="neon-hover rounded-lg border border-white/15 bg-black/40 px-6 py-2 text-sm font-semibold text-[#fafafa] transition hover:-translate-y-0.5 hover:border-white/30 hover:bg-black/60"
-            >
-              Logout
-            </Button>
-          </div>
-        </section>
 
         {error && (
           <div className="rounded-lg border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-400">
