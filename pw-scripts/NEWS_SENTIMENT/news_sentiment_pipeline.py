@@ -332,7 +332,7 @@ def stock_recommender_llm(sector_analysis: str, tech_json: str, api_key: str) ->
     try:
         from langchain_google_genai import ChatGoogleGenerativeAI
         
-        prompts = [SystemMessage("""
+        prompt= SystemMessage("""
 You are a stock recommendation AI agent responsible for providing top stock investment recommendations by integrating sector-wise insights from a news sentiment agent and detailed technical indicators for each stock.
 
 You should take as input sector-wise sentiment scores, time windows for investing, and explanations from the news sentiment agent detailing why and when to invest in each sector.
@@ -371,18 +371,18 @@ You must return a structured json output in the following format:
  You must strictly adhere to this output format and must return a valid array of json objects.
  Do not return anything apart from this, such as here's the summary or here's the answer.
  Return only an array of json strings and nothing else
-""")]
+""").content
 
-        prompts.append(HumanMessage(f"""Here is the sector based analysis: {sector_analysis}.
+        prompt=prompt+ "\n"+ HumanMessage(f"""Here is the sector based analysis: {sector_analysis}.
                                     Here is the json for the technical indicators for nifty 500
-                                    stocks: {tech_json}"""))
+                                    stocks: {tech_json}""").content
         
         model = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash",
             temperature=0.7,
             api_key=api_key
         )
-        decision = model.invoke(prompts)
+        decision = model.invoke(prompt)
         text = getattr(decision, "content", str(decision)).strip()
 
         if text.startswith("```"):
