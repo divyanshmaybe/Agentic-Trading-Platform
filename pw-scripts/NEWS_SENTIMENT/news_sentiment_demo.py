@@ -225,7 +225,13 @@ def main():
         print("\n[Step 6] Calling Gemini stock recommender...")
         final_recommendations = stock_recommender_llm(sector_analysis, tech_json_str, gemini_api_key)
         print("✓ Stock recommendations complete")
-        
+
+        # Handle list of JSON objects
+        if isinstance(final_recommendations, list):
+            final_recommendations_str = json.dumps(final_recommendations, indent=2)
+        else:
+            final_recommendations_str = str(final_recommendations)
+
         # Write recommendations to file
         output_file = "stock_recommendations.txt"
         print(f"\n[Step 7] Writing recommendations to {output_file}...")
@@ -239,20 +245,20 @@ def main():
             f.write("\n\n" + "=" * 60 + "\n")
             f.write("STOCK RECOMMENDATIONS:\n")
             f.write("-" * 60 + "\n")
-            f.write(final_recommendations)
+            f.write(final_recommendations_str)
             f.write("\n")
-        
+
         print(f"✓ Recommendations written to {output_file}")
         print(f"   File location: {os.path.abspath(output_file)}")
-        
+
         # Print preview
         print("\n" + "=" * 60)
         print("Pipeline Complete!")
         print("=" * 60)
         print("\nRecommendations Preview:")
         print("-" * 60)
-        print(final_recommendations[:1000] + "..." if len(final_recommendations) > 1000 else final_recommendations)
-        
+        print(final_recommendations_str[:1000] + "..." if len(final_recommendations_str) > 1000 else final_recommendations_str)
+                
     except Exception as e:
         print(f"Error processing data: {e}")
         import traceback
