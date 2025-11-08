@@ -15,6 +15,7 @@ celery_app = Celery(
         "workers.trade_tasks",
         "workers.pipeline_tasks",
         "workers.market_data_tasks",  # API-based tasks only
+        "workers.angelone_token_task",  # Angel One token map generation
     ],
 )
 

@@ -10,7 +10,7 @@ from typing import Dict, List, Optional
 
 from prisma import Prisma
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 PORTFOLIO_SERVER_ROOT = Path(__file__).resolve().parents[1]
 SHARED_PY_PATH = PROJECT_ROOT / "shared" / "py"
 if str(SHARED_PY_PATH) not in sys.path:
@@ -132,6 +132,7 @@ class TradeEngine:
                 },
             )
         else:
+            import json
             trade = await self.prisma.trade.create(
                 data={
                     "organization_id": payload.organization_id,
@@ -144,6 +145,7 @@ class TradeEngine:
                     "side": payload.side,
                     "order_type": payload.order_type,
                     "quantity": payload.quantity,
+                    "limit_price": payload.limit_price,
                     "status": "executed",
                     "price": execution_price,
                     "executed_price": execution_price,
@@ -153,7 +155,7 @@ class TradeEngine:
                     "taxes": taxes,
                     "net_amount": net_amount,
                     "source": payload.source,
-                    "metadata": payload.metadata,
+                    "metadata": json.dumps(payload.metadata) if payload.metadata else "{}",
                 }
             )
 
@@ -165,6 +167,7 @@ class TradeEngine:
         return trade.dict()
 
     async def _create_pending_trade(self, payload: TradeCreate) -> Dict:
+        import json
         if payload.order_type == "limit" and payload.limit_price is None:
             raise ValueError("limit_price required for limit orders")
         if payload.order_type in {"stop", "stop_loss", "take_profit"} and payload.trigger_price is None:
@@ -183,10 +186,11 @@ class TradeEngine:
                 "order_type": payload.order_type,
                 "quantity": payload.quantity,
                 "limit_price": payload.limit_price,
+                "price": payload.limit_price,
                 "trigger_price": payload.trigger_price,
                 "status": "pending",
                 "source": payload.source,
-                "metadata": payload.metadata,
+                "metadata": json.dumps(payload.metadata) if payload.metadata else "{}",
             }
         )
 
