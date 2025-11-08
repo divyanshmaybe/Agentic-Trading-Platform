@@ -7,7 +7,8 @@
 		"setup": "python -m venv .venv && .venv/bin/pip install -r requirements.txt && PATH=.venv/bin:$PATH .venv/bin/prisma generate",
 		"prisma:generate": "PATH=.venv/bin:$PATH .venv/bin/prisma generate",
 		"dev": ".venv/bin/python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000",
-		"celery": "PYTHONPATH=../../shared/py:../../middleware/py .venv/bin/celery -A celery_app:celery_app worker --loglevel=info"
+		"celery": "PYTHONPATH=../../shared/py:../../middleware/py .venv/bin/celery -A celery_app:celery_app worker --loglevel=info",
+		"test": "PYTHONPATH=../../shared/py:../../middleware/py .venv/bin/pytest"
 	},
 	"dependencies": {},
 	"devDependencies": {}

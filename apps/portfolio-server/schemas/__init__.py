@@ -7,6 +7,17 @@ from .portfolio import (
 )
 from .market import CandleData, MarketQuote, MarketQuoteResponse
 from .trade import PortfolioSnapshot, TradeCreate, TradeRequest, TradeResponse, TradeSummary
+from .regime import (
+    CurrentRegimeResponse,
+    RegimeDataPoint,
+    RegimeHistoryResponse,
+    RegimeStatistics,
+    RegimeStatisticsResponse,
+    TrainModelRequest,
+    TrainModelResponse,
+    UpdateSensitivityRequest,
+    UpdateSensitivityResponse,
+)
 
 __all__ = [
     "PortfolioResponse",
@@ -22,4 +33,13 @@ __all__ = [
     "TradeRequest",
     "TradeResponse",
     "TradeSummary",
+    "CurrentRegimeResponse",
+    "RegimeDataPoint",
+    "RegimeHistoryResponse",
+    "RegimeStatistics",
+    "RegimeStatisticsResponse",
+    "TrainModelRequest",
+    "TrainModelResponse",
+    "UpdateSensitivityRequest",
+    "UpdateSensitivityResponse",
 ]
