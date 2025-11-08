@@ -14,6 +14,7 @@ from typing import List
 from dotenv import load_dotenv
 import pathway as pw
 from langchain_core.messages import SystemMessage, HumanMessage
+import re
 
 # Load env vars
 load_dotenv()
@@ -369,6 +370,7 @@ You must return a structured json output in the following format:
  Use valid JSON syntax (double quotes, commas, brackets).
  You must strictly adhere to this output format and must return a valid array of json objects.
  Do not return anything apart from this, such as here's the summary or here's the answer.
+ Return only an array of json strings and nothing else
 """)]
 
         prompts.append(HumanMessage(f"""Here is the sector based analysis: {sector_analysis}.
@@ -381,17 +383,40 @@ You must return a structured json output in the following format:
             api_key=api_key
         )
         decision = model.invoke(prompts)
+        text = getattr(decision, "content", str(decision)).strip()
+
+        if text.startswith("```"):
+            text = re.sub(r"^```[a-zA-Z0-9]*\n?", "", text)
+            text = re.sub(r"\n?```$", "", text)
+            text = text.strip()
+        first_bracket, last_bracket = text.find("["), text.rfind("]")
+        if first_bracket == -1 or last_bracket == -1:
+            return {"error": "No JSON array found in LLM output", "raw_text": text[:1000]}
+
+        json_text = text[first_bracket:last_bracket + 1]
+        json_text = re.sub(
+            r'("news_source"\s*:\s*)(https?://[^\s,}\]]+)',
+            lambda m: f'{m.group(1)}"{m.group(2)}"',
+            json_text
+        )
+        json_text = re.sub(r",\s*([\]}])", r"\1", json_text)
         try:
-            json_array = json.loads(decision.content)
-            return json_array
+            parsed = json.loads(json_text)
+            if not isinstance(parsed, list):
+                return {"error": "Parsed JSON is not an array", "parsed_type": type(parsed).__name__, "parsed_value": parsed}
+            return parsed
         except Exception as e:
-            print(f"[WARN] Failed to parse JSON output: {e}")
-            return []
+            return {
+                "error": f"JSON parse failed: {e}",
+                "cleaned_json_snippet": json_text[:1000],
+                "raw_text_snippet": text[:1000]
+            }
+
     except Exception as e:
         import traceback
         error_msg = f"Error generating stock recommendations: {str(e)}\n{traceback.format_exc()}"
         print(f"[ERROR] stock_recommender_llm: {error_msg}")
-        return f"Error generating stock recommendations: {str(e)}"
+        return {"error": str(e)}
 
 
 def main():
