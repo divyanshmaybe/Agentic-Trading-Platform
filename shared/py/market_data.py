@@ -593,6 +593,120 @@ class AngelOneAdapter(WebsocketAdapter):
                     return alias.removesuffix("-EQ")
                 return alias
         return None
+    
+    def get_historical_candles(
+        self,
+        symbol: str,
+        interval: str,
+        fromdate: str,
+        todate: str,
+        exchange: str = "NSE"
+    ) -> Optional[List[Dict[str, Any]]]:
+        """
+        Fetch historical candle data from Angel One Historical API.
+        
+        Args:
+            symbol: Stock symbol (e.g., "RELIANCE", "TCS")
+            interval: Candle interval - ONE_MINUTE, THREE_MINUTE, FIVE_MINUTE, 
+                     TEN_MINUTE, FIFTEEN_MINUTE, THIRTY_MINUTE, ONE_HOUR, ONE_DAY
+            fromdate: Start datetime in format "YYYY-MM-DD HH:MM"
+            todate: End datetime in format "YYYY-MM-DD HH:MM"
+            exchange: Exchange name (default: "NSE")
+        
+        Returns:
+            List of candle dictionaries with keys: timestamp, open, high, low, close, volume
+            Returns None if request fails or symbol not found
+        """
+        import httpx
+        
+        # Normalize symbol and get token
+        normalized = self.normalize_symbol(symbol)
+        token_info = self._token_map.get(normalized)
+        
+        if not token_info:
+            logger.warning(f"Symbol {symbol} (normalized: {normalized}) not found in token map")
+            return None
+        
+        symbol_token = token_info.get("token")
+        if not symbol_token:
+            logger.warning(f"No token found for symbol {normalized}")
+            return None
+        
+        # Validate interval
+        valid_intervals = {
+            "ONE_MINUTE", "THREE_MINUTE", "FIVE_MINUTE", 
+            "TEN_MINUTE", "FIFTEEN_MINUTE", "THIRTY_MINUTE",
+            "ONE_HOUR", "ONE_DAY"
+        }
+        if interval not in valid_intervals:
+            logger.error(f"Invalid interval: {interval}. Must be one of {valid_intervals}")
+            return None
+        
+        # Prepare API request
+        url = "https://apiconnect.angelone.in/rest/secure/angelbroking/historical/v1/getCandleData"
+        
+        headers = {
+            "Authorization": f"Bearer {self.jwt_token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "X-UserType": "USER",
+            "X-SourceID": "WEB",
+            "X-ClientLocalIP": "127.0.0.1",
+            "X-ClientPublicIP": "127.0.0.1",
+            "X-MACAddress": "00:00:00:00:00:00",
+            "X-PrivateKey": self.api_key
+        }
+        
+        payload = {
+            "exchange": exchange,
+            "symboltoken": symbol_token,
+            "interval": interval,
+            "fromdate": fromdate,
+            "todate": todate
+        }
+        
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                response = client.post(url, json=payload, headers=headers)
+                response.raise_for_status()
+                
+                data = response.json()
+                
+                if not data.get("status"):
+                    error_msg = data.get("message", "Unknown error")
+                    logger.error(f"Angel One candle API failed: {error_msg}")
+                    return None
+                
+                # Extract candle data
+                candles_raw = data.get("data", [])
+                
+                if not candles_raw:
+                    logger.warning(f"No candle data returned for {symbol}")
+                    return None
+                
+                # Transform to standard format
+                # Angel One format: [timestamp, open, high, low, close, volume]
+                candles = []
+                for candle in candles_raw:
+                    if len(candle) >= 6:
+                        candles.append({
+                            "timestamp": candle[0],  # ISO format timestamp
+                            "open": float(candle[1]),
+                            "high": float(candle[2]),
+                            "low": float(candle[3]),
+                            "close": float(candle[4]),
+                            "volume": int(candle[5])
+                        })
+                
+                logger.info(f"✅ Fetched {len(candles)} candles for {symbol} ({interval})")
+                return candles
+                
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error fetching candles for {symbol}: {e.response.status_code} - {e.response.text}")
+            return None
+        except Exception as e:
+            logger.error(f"Error fetching candles for {symbol}: {e}")
+            return None
 
 
 class FivePaisaAdapter(WebsocketAdapter):

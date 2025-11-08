@@ -10,7 +10,8 @@ This pipeline:
 
 import os
 import json
-from typing import List
+import threading
+from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 import pathway as pw
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -65,11 +66,12 @@ class StockSchema(pw.Schema):
 # UDFs: NewsAPI Retrieval & FinBERT Sentiment
 # ===========================
 
-@pw.udf
-def fetch_articles(stream: str, query: str, top_k: int, api_key: str) -> List[tuple]:
-    """Fetch top-k articles from NewsAPI for a query. Returns list of (title, content)."""
+def _fetch_news_api(stream: str, query: str, top_k: int, api_key: str) -> List[tuple]:
+    """Shared helper for NewsAPI retrieval used by both Pathway UDFs and direct calls."""
+
     try:
         import requests
+
         base = "https://newsapi.org/v2/everything"
         params = {
             "q": f"({query}) AND India",
@@ -78,54 +80,105 @@ def fetch_articles(stream: str, query: str, top_k: int, api_key: str) -> List[tu
             "apiKey": api_key,
             "sortBy": "publishedAt",
         }
-        r = requests.get(base, params=params, timeout=15)
-        data = r.json()
+        response = requests.get(base, params=params, timeout=15)
+        data = response.json()
         if data.get("status") != "ok":
+            message = data.get("message")
+            print(f"[WARN] API error for {stream}: {message}")
             return []
-        articles = []
-        for a in data.get("articles", []):
-            title = a.get("title") or ""
-            content = a.get("content") or a.get("description") or title
-            url = a.get("url") or ""
+
+        articles: List[tuple] = []
+        for article in data.get("articles", []):
+            title = article.get("title") or ""
+            content = article.get("content") or article.get("description") or title
+            url = article.get("url") or ""
             if "[" in content and content.strip().endswith("]"):
                 content = content.rsplit("[", 1)[0].strip()
             articles.append((title, content, url))
+        print(f"[INFO] {stream}: fetched {len(articles)} articles, totalResults={data.get('totalResults')}")
         return articles
-    except Exception as e:
-        print(f"[WARN] fetch_articles({stream}) failed: {e}")
+    except Exception as exc:
+        print(f"[WARN] Failed to fetch {stream}: {exc}")
         return []
+
+
+@pw.udf
+def fetch_articles(stream: str, query: str, top_k: int, api_key: str) -> List[tuple]:
+    """Fetch top-k articles from NewsAPI for a query. Returns list of (title, content)."""
+
+    return _fetch_news_api(stream, query, top_k, api_key)
+
+_finbert_lock = threading.Lock()
+_finbert_loaded = False
+_finbert_tok = None
+_finbert_model = None
+_finbert_device = None
+
+
+def _ensure_finbert_loaded() -> None:
+    """Load FinBERT lazily with GPU/DataParallel support when available."""
+
+    global _finbert_loaded, _finbert_tok, _finbert_model, _finbert_device
+    if _finbert_loaded:
+        return
+
+    with _finbert_lock:
+        if _finbert_loaded:
+            return
+
+        from transformers import AutoTokenizer, AutoModelForSequenceClassification
+        import torch
+
+        tokenizer = AutoTokenizer.from_pretrained("yiyanghkust/finbert-tone")
+        model = AutoModelForSequenceClassification.from_pretrained("yiyanghkust/finbert-tone")
+
+        if torch.cuda.is_available():
+            if torch.cuda.device_count() > 1:
+                print(f"Using {torch.cuda.device_count()} GPUs for FinBERT")
+                model = torch.nn.DataParallel(model)
+            device = torch.device("cuda")
+        else:
+            device = torch.device("cpu")
+
+        model.to(device)
+        model.eval()
+
+        _finbert_tok = tokenizer
+        _finbert_model = model
+        _finbert_device = device
+        _finbert_loaded = True
 
 
 @pw.udf
 def finbert_sentiment(title: str, content: str) -> str:
     """Run FinBERT Tone classification and return label: positive|neutral|negative."""
-    try:
-        from transformers import AutoTokenizer, AutoModelForSequenceClassification
-        import torch
-        import torch.nn.functional as F
 
-        # Lazy init with simple cache on globals
-        global _finbert_tok, _finbert_model, _finbert_device
-        if '_finbert_tok' not in globals():
-            _finbert_tok = AutoTokenizer.from_pretrained("yiyanghkust/finbert-tone")
-        if '_finbert_model' not in globals():
-            model = AutoModelForSequenceClassification.from_pretrained("yiyanghkust/finbert-tone")
-            device = 'cuda' if torch.cuda.is_available() else 'cpu'
-            model.to(device)
-            model.eval()
-            _finbert_model = model
-            _finbert_device = device
+    import torch
+    import torch.nn.functional as F
+
+    try:
+        _ensure_finbert_loaded()
+        assert _finbert_tok is not None and _finbert_model is not None and _finbert_device is not None
 
         text = f"{title} {content}".strip()
-        inputs = _finbert_tok(text, return_tensors='pt', truncation=True, padding=True, max_length=256).to(_finbert_device)
+        inputs = _finbert_tok(
+            text,
+            return_tensors="pt",
+            truncation=True,
+            padding=True,
+            max_length=256,
+        ).to(_finbert_device)
+
         with torch.no_grad():
             outputs = _finbert_model(**inputs)
-            probs = F.softmax(outputs.logits, dim=-1)
+            logits = outputs.logits if hasattr(outputs, "logits") else outputs
+            probs = F.softmax(logits, dim=-1)
             pred = torch.argmax(probs, dim=1).item()
+
         label_map = {0: "neutral", 1: "positive", 2: "negative"}
         return label_map.get(pred, "neutral")
-    except Exception as e:
-        print(f"[WARN] finbert_sentiment failed: {e}")
+    except Exception as exc:
+        print(f"[WARN] finbert_sentiment failed: {exc}")
         return "neutral"
 
 
@@ -251,75 +304,98 @@ to the user for making the final recommendations.
 # UDFs: Technical Indicators
 # ===========================
 
+def compute_technical_indicators(symbol: str) -> Optional[Dict[str, Optional[float]]]:
+    """Compute technical indicators for a NSE symbol. Returns dict or None."""
+
+    import yfinance as yf
+    import pandas as pd
+
+    ticker = f"{symbol}.NS"
+    ticker_obj = yf.Ticker(ticker)
+
+    daily = ticker_obj.history(period="3mo", interval="1d", auto_adjust=True)
+    hourly = ticker_obj.history(period="2d", interval="1h", auto_adjust=True)
+
+    if not hourly.empty:
+        hourly["Date"] = hourly.index.date
+        today = pd.Timestamp.today().date()
+        hourly_today = hourly[hourly["Date"] == today].drop(columns=["Date"])
+        data = pd.concat([daily, hourly_today])
+    else:
+        data = daily
+
+    if data is None or data.empty or len(data) < 20:
+        return None
+
+    def calculate_sma(series: pd.Series, period: int) -> Optional[float]:
+        if series is None or len(series) < period:
+            return None
+        return float(series.rolling(window=period).mean().iloc[-1])
+
+    def calculate_ema(series: pd.Series, period: int) -> Optional[float]:
+        if series is None or len(series) < period:
+            return None
+        return float(series.ewm(span=period, adjust=False).mean().iloc[-1])
+
+    def calculate_rsi(series: pd.Series, period: int = 14) -> Optional[float]:
+        if series is None or len(series) < period + 1:
+            return None
+        delta = series.diff()
+        gain = delta.clip(lower=0).rolling(window=period).mean()
+        loss = (-delta.clip(upper=0)).rolling(window=period).mean()
+        if loss.iloc[-1] == 0:
+            return 100.0
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+        value = rsi.iloc[-1]
+        return float(value) if pd.notna(value) else None
+
+    def calculate_bollinger_bands(series: pd.Series, period: int = 20, std_dev: int = 2) -> tuple[Optional[float], Optional[float]]:
+        if series is None or len(series) < period:
+            return (None, None)
+        sma = series.rolling(window=period).mean()
+        std = series.rolling(window=period).std()
+        upper = sma + (std * std_dev)
+        lower = sma - (std * std_dev)
+        return (
+            float(upper.iloc[-1]) if pd.notna(upper.iloc[-1]) else None,
+            float(lower.iloc[-1]) if pd.notna(lower.iloc[-1]) else None,
+        )
+
+    def calculate_stochastic(high: pd.Series, low: pd.Series, close: pd.Series, k_period: int = 14) -> Optional[float]:
+        if any(series is None or len(series) < k_period for series in (high, low, close)):
+            return None
+        lowest_low = low.rolling(window=k_period).min()
+        highest_high = high.rolling(window=k_period).max()
+        denominator = highest_high - lowest_low
+        if denominator.iloc[-1] == 0:
+            return None
+        stoch_k = 100 * ((close - lowest_low) / denominator)
+        value = stoch_k.iloc[-1]
+        return float(value) if pd.notna(value) else None
+
+    indicators: Dict[str, Optional[float]] = {"Symbol": symbol}
+    indicators["SMA20"] = calculate_sma(data["Close"], 20)
+    indicators["EMA20"] = calculate_ema(data["Close"], 20)
+    indicators["RSI14"] = calculate_rsi(data["Close"], 14)
+    indicators["ADX14"] = None
+
+    bb_upper, bb_lower = calculate_bollinger_bands(data["Close"], 20, 2)
+    indicators["BB_UPPER"] = bb_upper
+    indicators["BB_LOWER"] = bb_lower
+
+    indicators["STOCHK"] = calculate_stochastic(data["High"], data["Low"], data["Close"], 14)
+
+    return indicators
+
+
 @pw.udf
 def get_technical_indicators(symbol: str) -> str:
-    """Fetch technical indicators for a stock symbol. Returns JSON string."""
     try:
-        import yfinance as yf
-        import pandas as pd
-        import numpy as np
-        
-        # Manual technical indicator calculations (since pandas_ta requires Python 3.12+)
-        def calculate_sma(data, period):
-            return data.rolling(window=period).mean()
-        
-        def calculate_ema(data, period):
-            return data.ewm(span=period, adjust=False).mean()
-        
-        def calculate_rsi(data, period=14):
-            delta = data.diff()
-            gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-            rs = gain / loss
-            rsi = 100 - (100 / (1 + rs))
-            return rsi
-        
-        def calculate_bollinger_bands(data, period=20, std_dev=2):
-            sma = calculate_sma(data, period)
-            std = data.rolling(window=period).std()
-            upper = sma + (std * std_dev)
-            lower = sma - (std * std_dev)
-            return upper, lower
-        
-        def calculate_stochastic(high, low, close, k_period=14):
-            lowest_low = low.rolling(window=k_period).min()
-            highest_high = high.rolling(window=k_period).max()
-            k_percent = 100 * ((close - lowest_low) / (highest_high - lowest_low))
-            return k_percent
-        
-        ticker = f"{symbol}.NS"
-        t = yf.Ticker(ticker)
-        
-        daily = t.history(period="3mo", interval="1d", auto_adjust=True)
-        hourly = t.history(period="2d", interval="1h", auto_adjust=True)
-        
-        if not hourly.empty:
-            hourly['Date'] = hourly.index.date
-            today = pd.Timestamp.today().date()
-            hourly_today = hourly[hourly['Date'] == today].drop(columns=['Date'])
-            data = pd.concat([daily, hourly_today])
-        else:
-            data = daily
-        
-        if data is None or data.empty or len(data) < 20:
-            return json.dumps(None)
-        
-        out = {}
-        out['Symbol'] = symbol
-        out['SMA20'] = float(calculate_sma(data['Close'], 20).iloc[-1])
-        out['EMA20'] = float(calculate_ema(data['Close'], 20).iloc[-1])
-        out['RSI14'] = float(calculate_rsi(data['Close'], 14).iloc[-1])
-        out['ADX14'] = None  # ADX is complex, skipping for now
-        
-        bb_upper, bb_lower = calculate_bollinger_bands(data['Close'], 20, 2)
-        out['BB_UPPER'] = float(bb_upper.iloc[-1])
-        out['BB_LOWER'] = float(bb_lower.iloc[-1])
-        
-        out['STOCHK'] = float(calculate_stochastic(data['High'], data['Low'], data['Close'], 14).iloc[-1])
-        
-        return json.dumps(out)
-    except Exception as e:
-        print(f"[ERROR] get_technical_indicators({symbol}): {e}")
+        indicators = compute_technical_indicators(symbol)
+        return json.dumps(indicators)
+    except Exception as exc:
+        print(f"[ERROR] get_technical_indicators({symbol}): {exc}")
         return json.dumps(None)
 
 
@@ -431,3 +507,91 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# ===========================
+# High-level helpers (Notebook parity)
+# ===========================
+
+
+def news_retriever(top_k: int = 3, api_key: Optional[str] = None) -> Dict[str, List[Dict[str, str]]]:
+    """Replicates the original notebook's news_retriever using shared logic."""
+
+    api_key_val = api_key or os.getenv("NEWS_ORG_API_KEY", "")
+    results: Dict[str, List[Dict[str, str]]] = {}
+
+    for stream, query in NEWS_STREAMS.items():
+        articles = _fetch_news_api(stream, query, top_k, api_key_val)
+        results[stream] = [
+            {
+                "title": title,
+                "content": content,
+                "url": url,
+            }
+            for title, content, url in articles
+        ]
+
+    return results
+
+
+def sentiment_analyzer(news_by_stream: Dict[str, List[Dict[str, str]]]) -> Dict[str, List[Dict[str, str]]]:
+    """Match the notebook's FinBERT sentiment analyzer, reusing the shared model."""
+
+    import torch.nn.functional as F
+    import torch
+
+    _ensure_finbert_loaded()
+    assert _finbert_tok is not None and _finbert_model is not None and _finbert_device is not None
+
+    analysed: Dict[str, List[Dict[str, str]]] = {}
+    for stream, articles in news_by_stream.items():
+        print(f"\nAnalysing sentiment for stream: {stream} ({len(articles)} articles)")
+        enriched = []
+        for article in articles:
+            text = f"{article.get('title', '')} {article.get('content', '')}"
+            inputs = _finbert_tok(
+                text,
+                return_tensors="pt",
+                truncation=True,
+                padding=True,
+                max_length=256,
+            ).to(_finbert_device)
+
+            with torch.no_grad():
+                outputs = _finbert_model(**inputs)
+                logits = outputs.logits if hasattr(outputs, "logits") else outputs
+                probs = F.softmax(logits, dim=-1)
+                pred = torch.argmax(probs, dim=1).item()
+
+            label_map = {0: "neutral", 1: "positive", 2: "negative"}
+            enriched.append({**article, "sentiment": label_map.get(pred, "neutral")})
+
+        analysed[stream] = enriched
+
+    return analysed
+
+
+def trading_agent(top_k: int = 3, *, news_api_key: Optional[str] = None, gemini_api_key: Optional[str] = None) -> str:
+    """High-level helper mirroring the notebook's trading_agent function."""
+
+    news_data = news_retriever(top_k=top_k, api_key=news_api_key)
+    sentiment_data = sentiment_analyzer(news_data)
+    return trading_agent_llm(json.dumps(sentiment_data), gemini_api_key or os.getenv("GEMINI_API_KEY", ""))
+
+
+def stock_recommender(
+    sector_analysis: str,
+    tech_json: str,
+    *,
+    gemini_api_key: Optional[str] = None,
+) -> Any:
+    """Wrap stock_recommender_llm so callers receive parsed JSON like the notebook."""
+
+    raw = stock_recommender_llm(sector_analysis, tech_json, gemini_api_key or os.getenv("GEMINI_API_KEY", ""))
+
+    if isinstance(raw, (dict, list)):
+        return raw
+    try:
+        return json.loads(raw)
+    except Exception:
+        return raw

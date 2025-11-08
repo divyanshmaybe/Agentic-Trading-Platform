@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import List
+from datetime import datetime
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query
 
@@ -20,9 +21,12 @@ def get_market_controller() -> MarketController:
 @router.get("/quotes", response_model=MarketQuoteResponse)
 async def get_market_quotes(
     symbols: List[str] = Query(..., alias="symbols"),
+    candle: Optional[str] = Query(None, description="Candle interval: 1h, 1d, 5d, 7d, 1y"),
+    start: Optional[datetime] = Query(None, description="Start datetime for candle range"),
+    end: Optional[datetime] = Query(None, description="End datetime for candle range"),
     _: dict = Depends(get_authenticated_user),
     controller: MarketController = Depends(get_market_controller),
 ) -> MarketQuoteResponse:
     """Get live market quotes for the given symbols."""
-    return await controller.get_quotes(symbols)
+    return await controller.get_quotes(symbols, candle=candle, start=start, end=end)
 

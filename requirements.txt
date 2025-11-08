@@ -10,4 +10,9 @@ celery[redis]>=5.4.0
 websockets>=11.0.0
 pathway>=0.10.0
 confluent-kafka>=2.4.0
+transformers>=4.40.0
+torch>=2.2.0
+langchain-google-genai>=0.1.0
+langchain-core>=0.2.0
+yfinance>=0.2.40
 
