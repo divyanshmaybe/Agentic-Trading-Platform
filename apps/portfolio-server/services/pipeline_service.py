@@ -128,7 +128,8 @@ class PipelineService:
                         explanation,
                     )
 
-            def on_new_backtest(_key, row, _time, is_addition):
+            def on_new_backtest(key, row, time, is_addition, **_):
+                del key, time
                 if is_addition:
                     symbol = row.get("symbol", "N/A")
                     pnl = row.get("pnl", 0)
