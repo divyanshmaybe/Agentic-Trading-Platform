@@ -33,6 +33,8 @@ from kafka_service import (  # type: ignore  # noqa: E402
     PublisherAlreadyRegistered,
     default_kafka_bus,
 )
+from market_data import get_market_data_service  # type: ignore  # noqa: E402
+from utils.backtesting import resolve_intraday_window  # type: ignore  # noqa: E402
 
 # LLM imports
 from pathway.xpacks.llm import llms
@@ -59,6 +61,7 @@ STOPLOSS = 0.01  # -1% stoploss
 HOLDING_HOURS = 1  # maximum hold time (1 hour)
 MARKET_OPEN = (9, 15)
 MARKET_CLOSE = (15, 30)
+
 
 # API Keys
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
@@ -134,6 +137,7 @@ class NSESignalEvent(BaseModel):
     filing_time: str
     signal: int
     explanation: str
+    confidence: float
     generated_at: str
     source: str = "nse_filings_pipeline"
 
@@ -187,7 +191,13 @@ except Exception as exc:
 
 
 @pw.udf
-def publish_signal_to_kafka(symbol: str, filing_time: str, signal: int, explanation: str) -> str:
+def publish_signal_to_kafka(
+    symbol: str,
+    filing_time: str,
+    signal: int,
+    explanation: str,
+    confidence: float,
+) -> str:
     """Publish the generated trading signal to Kafka and return a status string."""
 
     try:
@@ -195,11 +205,13 @@ def publish_signal_to_kafka(symbol: str, filing_time: str, signal: int, explanat
     except (TypeError, ValueError):  # pragma: no cover - defensive fallback
         signal_value = 0
 
+    safe_confidence = float(confidence or 0.0)
     event = NSESignalEvent(
         symbol=symbol,
         filing_time=filing_time,
         signal=signal_value,
         explanation=explanation or "",
+        confidence=safe_confidence,
         generated_at=datetime.utcnow().isoformat() + "Z",
     )
 
@@ -313,36 +325,69 @@ def download_and_parse_pdf(url: str, filename: str) -> str:
 def fetch_stock_data(symbol: str, filing_time: str) -> str:
     """Fetch stock technical data for the past hour"""
     try:
-        import yfinance as yf
         import pandas as pd
-        
-        end_time = datetime.strptime(filing_time, "%Y-%m-%d %H:%M:%S")
+    except Exception:
+        pd = None  # type: ignore
+
+    try:
+        filing_dt = datetime.strptime(filing_time, "%Y-%m-%d %H:%M:%S")
+    except Exception:
+        filing_dt = datetime.utcnow()
+
+    # Attempt to leverage centralised market service first
+    try:
+        service = get_market_data_service()
+        adapter = getattr(service, "adapter", None)
+        if adapter and hasattr(adapter, "get_historical_candles"):
+            start_dt, end_dt = resolve_intraday_window(
+                filing_dt,
+                holding_hours=HOLDING_HOURS,
+                market_open=MARKET_OPEN,
+                market_close=MARKET_CLOSE,
+                lookback_minutes=60,
+            )
+            candles = adapter.get_historical_candles(
+                symbol=symbol,
+                interval="FIFTEEN_MINUTE",
+                fromdate=start_dt.strftime("%Y-%m-%d %H:%M"),
+                todate=end_dt.strftime("%Y-%m-%d %H:%M"),
+                exchange="NSE",
+            )
+            if candles and pd is not None:
+                df = pd.DataFrame(candles)
+                if not df.empty:
+                    df["timestamp"] = pd.to_datetime(df["timestamp"]).astype(str)
+                    return df.to_json(orient="records")
+            elif candles:
+                return str(candles)
+    except Exception as exc:
+        print(f"[WARN] Central market service candle fetch failed for {symbol}: {exc}")
+
+    # Fallback to yfinance if central service unavailable
+    try:
+        import yfinance as yf
+        if pd is None:
+            import pandas as pd  # type: ignore
+
+        end_time = filing_dt
         start_time = end_time - timedelta(hours=1)
         ticker = f"{symbol}.NS"
-        
-        try:
-            stock_data = yf.download(
-                ticker,
-                start=start_time,
-                end=end_time,
-                interval="15m",
-                progress=False,
-                raise_errors=False  # Don't raise errors on missing data
-            )
-            
-            if stock_data.empty or stock_data is None:
-                return "No data available"
-            
-            # Convert to string representation
-            return stock_data.to_string()
-        except Exception as download_error:
-            # Handle specific yfinance errors
-            error_str = str(download_error)
-            if "delisted" in error_str.lower() or "no price data" in error_str.lower():
-                return "Stock delisted or no data available"
-            return f"Error fetching data: {error_str}"
-    except Exception as e:
-        return f"Error: {str(e)}"
+        stock_data = yf.download(
+            ticker,
+            start=start_time,
+            end=end_time,
+            interval="15m",
+            progress=False,
+            raise_errors=False,
+        )
+        if stock_data is None or stock_data.empty:
+            return "No data available"
+        return stock_data.to_json(orient="records")
+    except Exception as fallback_error:
+        error_str = str(fallback_error)
+        if "delisted" in error_str.lower() or "no price data" in error_str.lower():
+            return "Stock delisted or no data available"
+        return f"Error fetching data: {error_str}"
 
 
 # ============================================================================
@@ -413,60 +458,44 @@ def generate_trading_signal(
     if not api_key or api_key.strip() == "":
         api_key = os.getenv("GEMINI_API_KEY", "")
     user_prompt = f"""
-    You are a financial analysis model capable of making real-time trading decisions based on corporate filings, announcements, and financial news.
+You are a financial analysis model capable of making real-time trading decisions based on corporate filings, announcements, and financial news.
 
-    Below is a company's filing report and related information. You must analyze it and decide whether the news is a strong BUY (1), strong SELL (-1), or HOLD (0) signal.
+Below is a company's filing report, related sentiment references, and technical market context. You must analyse all inputs and decide whether the development is a strong BUY (1), strong SELL (-1), or HOLD (0) signal to be acted upon on the current trading day.
 
-    Be cautious:
+You must also provide a confidence_score between 0 and 1 representing your conviction. Higher confidence implies larger permissible allocation for the trade.
 
-    - Also check if the news came in market hours; if it was during market hours, follow sentiment accordingly.
+Be cautious and account for the following:
+- Verify whether the filing arrived during market hours. If it was outside market hours and the opening move already reflects a 5–6% jump, consider contrarian positioning (short if the price gaps up, or long if it gaps down) only when fundamentals justify it.
+- Only issue BUY or SELL when the event is materially impactful for valuation or near-term price trajectory and the move is not already priced in beyond 2–3%.
+- Filings such as "Outcome of Board Meeting" often carry noise. Treat them as BUY only when the outcome is genuinely transformational (e.g. surprise earnings beat with guidance upgrade, large buyback, merger). Otherwise, default to HOLD or SELL if the tone is negative.
+- Markets trade expectations, not absolute numbers. Strong reported figures can result in declines if guidance softens, margins contract, cash flow weakens, inventory builds up, or management sounds cautious. Consider sector sentiment and expectations drift carefully.
 
-    - If it was filed out of market hours, and when the market opens the price has already risen by a significant amount (5–6%), consider taking a short position.
+Reference data for this filing type:
+- Technical data (past hour / relevant window): {stocktechdata}
+- Positive impact playbook: {pos_impact}
+- Negative impact playbook: {neg_impact}
 
-    - Only make a BUY or SELL recommendation if the event is highly impactful for the company's valuation or future prospects, and whether the price has already been impacted by more than 2–3%.
+Filings data and narrative context:
+- NSE filings data: {text}
 
-    - If the news is ordinary or has limited effect, choose HOLD (0).
+Instructions:
+1. Read every piece of information carefully.
+2. Combine the qualitative sentiment from the filing, referenced playbooks, sector backdrop, and the provided technical data snapshot to evaluate near-term price action.
+3. If the news creates a highly positive, near-term catalyst with limited prior pricing-in, output 1 (BUY). If it materially deteriorates fundamentals/outlook, output -1 (SELL). Otherwise output 0 (HOLD).
+4. When assigning 1/-1 ensure the catalyst is powerful, time-sensitive, and not fully reflected in price. Err on the side of HOLD if doubt remains.
+5. Provide a concise two-sentence explanation covering the driver and how it ties to the trading action.
+6. Output a confidence_score between 0 and 1 reflecting conviction:
+   - 0.0–0.3 : very low confidence / noise
+   - 0.4–0.6 : moderate clarity
+   - 0.7–0.9 : high conviction
+   - 1.0     : extremely rare, only when the outcome is unequivocal.
 
-    General reference for this filing type:
+Strictly adhere to this output format:
+trading_signal: <1, 0, or -1>
+confidence_score: <float between 0 and 1>
+concise_explanation: <brief reasoning for the decision>
 
-    - technical data of past hour: {stocktechdata}
-
-    - Positive impact scenarios: {pos_impact}
-
-    - Negative impact scenarios: {neg_impact}
-
-    Additional information provided:
-
-    - NSE stock/fiscal data: {text}
-
-    Instructions:
-
-    1. Read all information carefully.
-
-    2. Consider the news sentiment, running summary, and stock/fiscal data together to assess the impact on the company's short-term stock price.
-
-    3. If the news clearly strengthens the company's fundamentals, growth outlook, or order book in a meaningful way, output 1 (BUY) if it is really impactful.
-
-    4. If the news weakens the company's fundamentals, output -1 (SELL).
-
-    5. Otherwise, output 0 (HOLD).
-
-    6. Along with the numeric signal, provide a concise explanation (1–2 sentences) for your trading decision.
-
-    Be extremely cautious with buy (1) and sell (-1) signals, especially in short-term or volatile markets.
-
-    If unsure whether a signal should be -1 or 1, it's safer to generate a 0 (hold) instead.
-
-    Similarly, if uncertain about a 0 signal, do not upgrade it to -1 or 1 unless you are fully confident.
-
-    Prioritize caution to avoid risky trades and reduce potential losses.
-
-    Strictly adhere to this output format:
-
-    trading_signal: <1, 0, or -1>
-    concise_explanation: <brief reasoning for the decision>
-
-    RETURN EXACTLY THIS STRUCTURED OUTPUT AND NOTHING ELSE.
+RETURN EXACTLY THIS STRUCTURED OUTPUT AND NOTHING ELSE.
 """
     
     try:
@@ -486,7 +515,7 @@ def generate_trading_signal(
         try:
             # Create model - it will use GOOGLE_API_KEY from environment
             trading_model = ChatGoogleGenerativeAI(
-                model="gemini-2.0-flash-exp",
+                model="gemini-2.5-flash",
                 temperature=0.7,
                 api_key=api_key  # Explicitly pass as well (original notebook format)
             )
@@ -619,6 +648,41 @@ def parse_trading_signal_explanation(response: str) -> str:
         return f"Error: {str(e)}"
 
 
+@pw.udf
+def parse_trading_signal_confidence(response: str) -> float:
+    """Parse confidence score (0-1) from LLM response."""
+    try:
+        if not response:
+            return 0.0
+        if "error" in response.lower() or "rate limit" in response.lower():
+            return 0.0
+
+        match = re.search(r"confidence_score:\s*([0-9]*\.?[0-9]+)", response, re.IGNORECASE)
+        if match:
+            try:
+                value = float(match.group(1))
+            except ValueError:
+                return 0.0
+            if value < 0.0:
+                return 0.0
+            if value > 1.0:
+                return 1.0
+            return value
+
+        # Fallback: look for JSON style "confidence"
+        match_json = re.search(r'"confidence(?:_score)?"\s*:\s*([0-9]*\.?[0-9]+)', response, re.IGNORECASE)
+        if match_json:
+            try:
+                value = float(match_json.group(1))
+            except ValueError:
+                return 0.0
+            return max(0.0, min(1.0, value))
+
+    except Exception as exc:  # pragma: no cover - defensive logging
+        print(f"[ERROR] Error parsing confidence score: {exc}")
+    return 0.0
+
+
 # ============================================================================
 # MAIN PIPELINE
 # ============================================================================
@@ -684,7 +748,8 @@ def create_nse_filings_pipeline(
         symbol=pw.this.symbol,
         filing_time=pw.this.sort_date,
         signal=parse_trading_signal_value(pw.this.llm_response),
-        explanation=parse_trading_signal_explanation(pw.this.llm_response)
+        explanation=parse_trading_signal_explanation(pw.this.llm_response),
+        confidence=parse_trading_signal_confidence(pw.this.llm_response),
     )
  
     # Step 6: Publish to Kafka and output results
@@ -694,11 +759,13 @@ def create_nse_filings_pipeline(
         filing_time=pw.this.filing_time,
         signal=pw.this.signal,
         explanation=pw.this.explanation,
+        confidence=pw.this.confidence,
         kafka_status=publish_signal_to_kafka(
             pw.this.symbol,
             pw.this.filing_time,
             pw.this.signal,
             pw.this.explanation,
+            pw.this.confidence,
         ),
     )
 
@@ -708,6 +775,7 @@ def create_nse_filings_pipeline(
             filing_time=pw.this.filing_time,
             signal=pw.this.signal,
             explanation=pw.this.explanation,
+            confidence=pw.this.confidence,
         ),
         output_path,
     )

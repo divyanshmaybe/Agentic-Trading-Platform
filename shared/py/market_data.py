@@ -18,6 +18,9 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 
+import fcntl
+import tempfile
+
 import pathway as pw
 from pathway.io.python import ConnectorSubject
 from urllib.parse import urlencode, urlparse, parse_qs, urlunparse
@@ -241,6 +244,7 @@ class AngelOneAdapter(WebsocketAdapter):
         self.jwt_token = None
         self.feed_token = None
         self.refresh_token = None
+        self._token_expiry: Optional[float] = None
         
         # Token cache file path
         self.token_cache_file = os.path.join(
@@ -257,6 +261,11 @@ class AngelOneAdapter(WebsocketAdapter):
         # Load or generate token map
         self._load_or_generate_token_map()
         
+        # File-based lock to serialize logins across processes
+        lock_dir = Path(tempfile.gettempdir()) / "angelone_locks"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        self._login_lock_path = lock_dir / "login.lock"
+
         # Perform login to get tokens
         self._login()
         
@@ -337,61 +346,80 @@ class AngelOneAdapter(WebsocketAdapter):
         """Login to Angel One API to get JWT and feed tokens."""
         import pyotp
         import httpx
-        
-        try:
-            # Generate TOTP
-            totp = pyotp.TOTP(self.totp_secret).now()
-            logger.info(f"Generated TOTP: {totp}")
-            
-            # Login API endpoint
-            login_url = "https://apiconnect.angelone.in/rest/auth/angelbroking/user/v1/loginByPassword"
-            
-            # Prepare headers and payload
-            headers = {
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-                "X-UserType": "USER",
-                "X-SourceID": "WEB",
-                "X-ClientLocalIP": "127.0.0.1",
-                "X-ClientPublicIP": "127.0.0.1",
-                "X-MACAddress": "00:00:00:00:00:00",
-                "X-PrivateKey": self.api_key
-            }
-            
-            payload = {
-                "clientcode": self.client_code,
-                "password": self.password,
-                "totp": totp
-            }
-            
-            # Make login request
-            with httpx.Client(timeout=30.0) as client:
-                response = client.post(login_url, json=payload, headers=headers)
-                response.raise_for_status()
-                
-                data = response.json()
-                
-                if not data.get("status"):
-                    error_msg = data.get("message", "Unknown error")
-                    raise RuntimeError(f"Angel One login failed: {error_msg}")
-                
-                # Extract tokens
-                response_data = data.get("data", {})
-                self.jwt_token = response_data.get("jwtToken")
-                self.feed_token = response_data.get("feedToken")
-                self.refresh_token = response_data.get("refreshToken")
-                
-                if not all([self.jwt_token, self.feed_token]):
-                    raise RuntimeError("Failed to get tokens from Angel One login response")
-                
-                logger.info(f"✅ Angel One login successful! Feed token: {self.feed_token[:10]}...")
-                
-        except ImportError:
-            logger.error("pyotp package not installed. Install: pip install pyotp")
-            raise RuntimeError("pyotp required for Angel One TOTP")
-        except Exception as e:
-            logger.error(f"Angel One login failed: {e}")
-            raise
+
+        # Serialize logins across processes to avoid reusing the same TOTP
+        with open(self._login_lock_path, "w") as lock_file:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+            try:
+                # Reuse existing session if still valid
+                if self.jwt_token and self.feed_token and self._token_expiry and time.time() < self._token_expiry - 5:
+                    logger.debug("Reusing cached Angel One session tokens")
+                    return
+
+                login_url = "https://apiconnect.angelone.in/rest/auth/angelbroking/user/v1/loginByPassword"
+                headers = {
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "X-UserType": "USER",
+                    "X-SourceID": "WEB",
+                    "X-ClientLocalIP": "127.0.0.1",
+                    "X-ClientPublicIP": "127.0.0.1",
+                    "X-MACAddress": "00:00:00:00:00:00",
+                    "X-PrivateKey": self.api_key,
+                }
+
+                attempts = int(os.getenv("ANGELONE_LOGIN_RETRIES", "3"))
+                for attempt in range(attempts):
+                    totp = pyotp.TOTP(self.totp_secret).now()
+                    logger.info(f"Generated TOTP: {totp}")
+                    payload = {
+                        "clientcode": self.client_code,
+                        "password": self.password,
+                        "totp": totp,
+                    }
+
+                    try:
+                        with httpx.Client(timeout=30.0) as client:
+                            response = client.post(login_url, json=payload, headers=headers)
+                            response.raise_for_status()
+
+                        data = response.json()
+                        if not data.get("status"):
+                            raise RuntimeError(data.get("message", "Unknown error"))
+
+                        response_data = data.get("data", {})
+                        self.jwt_token = response_data.get("jwtToken")
+                        self.feed_token = response_data.get("feedToken")
+                        self.refresh_token = response_data.get("refreshToken")
+
+                        if not all([self.jwt_token, self.feed_token]):
+                            raise RuntimeError("Login response missing tokens")
+
+                        ttl = int(os.getenv("ANGELONE_SESSION_TTL_SECONDS", "300"))
+                        self._token_expiry = time.time() + ttl
+                        logger.info("✅ Angel One login successful! Feed token: %s...", self.feed_token[:10])
+                        break
+                    except httpx.HTTPStatusError as exc:
+                        status = exc.response.status_code
+                        logger.error("Angel One login failed with status %s: %s", status, exc)
+                        if status == 403 and attempt < attempts - 1:
+                            wait_for = max(2.0, 30.0 - (time.time() % 30.0))
+                            logger.warning(
+                                "Angel One rejected TOTP (attempt %s/%s); waiting %.1fs for next window",
+                                attempt + 1,
+                                attempts,
+                                wait_for,
+                            )
+                            time.sleep(wait_for)
+                            continue
+                        raise
+                else:
+                    raise RuntimeError("Angel One login failed after retries")
+            except ImportError:
+                logger.error("pyotp package not installed. Install: pip install pyotp")
+                raise RuntimeError("pyotp required for Angel One TOTP")
+            finally:
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
         
     def _load_token_map(self) -> None:
         """Load token mapping from environment or file."""
