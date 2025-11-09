@@ -2,15 +2,15 @@
 
 import { useMemo } from "react"
 import { Line } from "react-chartjs-2"
-import { motion } from "framer-motion"
+import { motion, type Variants } from "framer-motion"
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Chart } from "@/lib/chart"
 import { alphaSeries } from "@/mock/alphaData"
 
-const animation = {
+const animation: Variants = {
 	hidden: { opacity: 0, y: 20 },
-	show: { opacity: 1, y: 0, transition: { duration: 0.5, ease: "easeOut" } },
+	show: { opacity: 1, y: 0, transition: { duration: 0.5, ease: [0.37, 0, 0.63, 1] } },
 }
 
 export function AlphaGraph() {

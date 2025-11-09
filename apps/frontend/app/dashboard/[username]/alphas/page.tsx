@@ -6,11 +6,7 @@ import { AnimatePresence, motion } from "framer-motion"
 import { Plus, X } from "lucide-react"
 import { useParams } from "next/navigation"
 
-import { AlphaChat } from "@/components/alpha/AlphaChat"
-import { AlphaGraph } from "@/components/alpha/AlphaGraph"
-import { AlphaStats } from "@/components/alpha/AlphaStats"
-import { TopAlphas } from "@/components/alpha/TopAlphas"
-import { TradeTable } from "@/components/alpha/TradeTable"
+import { AlphaChat, AlphaGraph, AlphaStats, TopAlphas, TradeTable } from "@/components/alpha"
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader"
 import { Container } from "@/components/shared/Container"
 import { Button } from "@/components/ui/button"
@@ -185,24 +181,24 @@ export default function AlphasPage() {
     <div className="min-h-screen bg-[#0c0c0c] text-[#fafafa]">
       <DashboardHeader userName={authUser.firstName} username={username} userRole={authUser.role} />
 
-      <Container className="max-w-10xl space-y-6 py-8">
-        <header className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <h1 className="text-3xl font-semibold text-white">Alpha Command Center</h1>
-            <p className="text-sm text-white/60">
-              Monitor performance, iterate ideas, and deploy your next winning alpha.
-            </p>
-          </div>
-          <Button
-            onClick={() => setModalOpen(true)}
-            className="border border-emerald-500/40 bg-emerald-500/20 text-emerald-100 hover:bg-emerald-500/30"
-          >
-            <Plus className="mr-2 size-4" />
-            Add Your Own Alpha
-          </Button>
-        </header>
+      <main className="lg:pr-96">
+        <Container className="max-w-10xl space-y-6 py-8 lg:max-h-[calc(100vh-4rem)] lg:overflow-y-auto">
+          <header className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h1 className="text-3xl font-semibold text-white">Alpha Command Center</h1>
+              <p className="text-sm text-white/60">
+                Monitor performance, iterate ideas, and deploy your next winning alpha.
+              </p>
+            </div>
+            <Button
+              onClick={() => setModalOpen(true)}
+              className="border border-emerald-500/40 bg-emerald-500/20 text-emerald-100 hover:bg-emerald-500/30"
+            >
+              <Plus className="mr-2 size-4" />
+              Add Your Own Alpha
+            </Button>
+          </header>
 
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,3.7fr)_minmax(280px,1fr)]">
           <div className="flex flex-col gap-6">
             <div className="grid gap-6 lg:grid-cols-2">
               <AlphaStats />
@@ -210,15 +206,34 @@ export default function AlphasPage() {
             </div>
             <AlphaGraph />
             <TradeTable />
-          </div>
 
-          <div className="flex h-full flex-col gap-6">
-            <div className="flex min-h-[540px] flex-1">
-              <AlphaChat />
+            <div className="lg:hidden">
+              <div className="rounded-2xl border border-white/10 bg-black/40 p-6 shadow-lg">
+                <h2 className="text-base font-semibold text-white">Add Your Own Alpha</h2>
+                <p className="mt-2 text-sm text-white/60">
+                  Launch the builder to submit a new strategy for backtesting and approvals.
+                </p>
+                <Button
+                  onClick={() => setModalOpen(true)}
+                  className="mt-4 w-full border border-emerald-500/40 bg-emerald-500/20 text-emerald-100 hover:bg-emerald-500/30"
+                >
+                  <Plus className="mr-2 size-4" />
+                  Launch Builder
+                </Button>
+              </div>
+              <div className="mt-6">
+                <AlphaChat />
+              </div>
             </div>
           </div>
+        </Container>
+      </main>
+
+      <aside className="fixed right-0 top-16 hidden h-[calc(100vh-4rem)] w-[24rem] flex-col border-l border-white/10 bg-[#070707]/95 px-6 py-8 shadow-2xl backdrop-blur-lg lg:flex">
+        <div className="mt-6 flex flex-1 flex-col overflow-hidden">
+          <AlphaChat />
         </div>
-      </Container>
+      </aside>
 
       <AddAlphaModal open={modalOpen} onOpenChange={setModalOpen} />
     </div>
