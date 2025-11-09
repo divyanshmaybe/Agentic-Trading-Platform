@@ -212,19 +212,6 @@ export default function AlphasPage() {
             <TradeTable />
 
             <div className="lg:hidden">
-              <div className="rounded-2xl border border-white/10 bg-black/40 p-6 shadow-lg">
-                <h2 className="text-base font-semibold text-white">Add Your Own Alpha</h2>
-                <p className="mt-2 text-sm text-white/60">
-                  Launch the builder to submit a new strategy for backtesting and approvals.
-                </p>
-                <Button
-                  onClick={() => setModalOpen(true)}
-                  className="mt-4 w-full border border-emerald-500/40 bg-emerald-500/20 text-emerald-100 hover:bg-emerald-500/30"
-                >
-                  <Plus className="mr-2 size-4" />
-                  Launch Builder
-                </Button>
-              </div>
               <div className="mt-6">
                 <AlphaChat />
               </div>

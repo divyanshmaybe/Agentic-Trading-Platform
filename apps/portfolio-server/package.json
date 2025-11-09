@@ -4,10 +4,10 @@
 	"private": true,
 	"description": "Portfolio Server - FastAPI server with NSE pipeline integration",
 	"scripts": {
-		"setup": "PYENV_BIN=${PYENV_BIN:-$HOME/.pyenv/versions/myenv/bin} && \"$PYENV_BIN/pip\" install -r requirements.txt && PATH=\"$PYENV_BIN:$PATH\" \"$PYENV_BIN/prisma\" generate",
-		"prisma:generate": "PYENV_BIN=${PYENV_BIN:-$HOME/.pyenv/versions/myenv/bin} && PATH=\"$PYENV_BIN:$PATH\" \"$PYENV_BIN/prisma\" generate",
-		"dev": "PYTHONPATH=../../shared/py ~/.pyenv/versions/myenv/bin/python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000",
-		"celery": "PYTHONPATH=../../shared/py:../../middleware/py ~/.pyenv/versions/myenv/bin/celery -A celery_app:celery_app worker --loglevel=info"
+		"setup": "VENV_BIN=${VENV_BIN:-$(pwd)/.venv/bin} && \"$VENV_BIN/pip\" install -r requirements.txt && PATH=\"$VENV_BIN:$PATH\" \"$VENV_BIN/prisma\" generate",
+		"prisma:generate": "VENV_BIN=${VENV_BIN:-$(pwd)/.venv/bin} && PATH=\"$VENV_BIN:$PATH\" \"$VENV_BIN/prisma\" generate",
+		"dev": "PYTHONPATH=../../shared/py ./.venv/bin/python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000",
+		"celery": "PYTHONPATH=../../shared/py:../../middleware/py ./.venv/bin/celery -A celery_app:celery_app worker --loglevel=info"
 	},
 	"dependencies": {},
 	"devDependencies": {}

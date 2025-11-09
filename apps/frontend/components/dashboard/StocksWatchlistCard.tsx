@@ -15,7 +15,7 @@ type StocksWatchlistCardProps = {
 
 export function StocksWatchlistCard({ stocks, loading = false }: StocksWatchlistCardProps) {
 	return (
-		<Card className="card-glass min-h-[50vh] flex flex-col rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_32px_70px_-45px_rgba(0,0,0,0.95)] backdrop-blur">
+		<Card className="card-glass flex flex-col rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_32px_70px_-45px_rgba(0,0,0,0.95)] backdrop-blur md:min-h-[50vh]">
 			<CardHeader className="gap-2">
 				<CardDescription className="text-xs uppercase tracking-[0.3em] text-white/45">
 					Your Holdings
@@ -53,9 +53,9 @@ function StockSparklineRow({ stock }: StockSparklineRowProps) {
 	const positive = stock.changePct >= 0
 
 	return (
-		<div className="grid grid-cols-[1.2fr_auto] items-center gap-4 rounded-xl border border-white/10 bg-white/7 px-4 py-3 text-white/70 transition hover:border-white/20 hover:bg-white/10">
-			<div className="flex flex-col">
-				<div className="flex items-center gap-2 text-[#fafafa]">
+		<div className="grid grid-cols-1 items-center gap-4 rounded-xl border border-white/10 bg-white/7 px-4 py-3 text-white/70 transition hover:border-white/20 hover:bg-white/10 sm:grid-cols-[1fr_auto]">
+			<div className="flex flex-col gap-1">
+				<div className="flex flex-wrap items-center gap-2 text-[#fafafa]">
 					<span className="text-sm font-semibold text-[#fafafa]">{stock.name}</span>
 					<span className="rounded-md bg-black/60 px-2 py-0.5 text-xs uppercase tracking-wide text-white/50">
 						{stock.symbol}
@@ -69,7 +69,7 @@ function StockSparklineRow({ stock }: StockSparklineRowProps) {
 					{stock.changePct.toFixed(2)}%
 				</span>
 			</div>
-			<div className="h-16">
+			<div className="h-16 min-w-[120px] sm:h-16">
 				<Line data={data} options={options} plugins={plugins} />
 			</div>
 		</div>

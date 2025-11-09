@@ -1,4 +1,6 @@
-import type { ComponentPropsWithoutRef, FormEventHandler } from "react";
+'use client';
+
+import { type ComponentPropsWithoutRef, type FormEventHandler } from "react";
 import type { UseFormRegister } from "react-hook-form";
 
 import { Button } from "@/components/ui/button";
@@ -58,7 +60,9 @@ export function CompanySettingsCard({
               >
                 <div className="min-w-0">
                   <div className="truncate text-sm font-medium">{user.name}</div>
-                  <div className="text-xs text-white/60">{user.email}</div>
+                  <div className="hidden text-sm text-white/60 md:block" title={user.email}>
+                    <span className="block wrap-break-word">{user.email}</span>
+                  </div>
                 </div>
                 <div className="flex items-center gap-3">
                   <select

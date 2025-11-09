@@ -31,6 +31,9 @@ export function Header() {
 			</Button>		
         </div>
         <div className="flex items-center gap-2 md:hidden">
+          <Button asChild size="sm" className="bg-(--brand-navy) text-white hover:opacity-90">
+            <Link href="/signup">Get Started</Link>
+          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="icon" aria-label="Open menu" className="text-primary-foreground border-white/40">

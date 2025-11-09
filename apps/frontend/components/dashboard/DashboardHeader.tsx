@@ -1,8 +1,11 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { Playfair_Display } from "next/font/google"
+import { Menu, X } from "lucide-react"
+
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
@@ -17,6 +20,7 @@ type DashboardHeaderProps = {
 
 export function DashboardHeader({ userName = "User", username, userRole, onLogout }: DashboardHeaderProps) {
   const pathname = usePathname()
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
 
   const portfolioTypes = [
     { name: "Dashboard", href: `/dashboard/${username}` },
@@ -24,93 +28,119 @@ export function DashboardHeader({ userName = "User", username, userRole, onLogou
     { name: "High-Risk", href: `/dashboard/${username}/high-risk` },
     { name: "Low-Risk", href: `/dashboard/${username}/low-risk` },
   ]
-  
+
   const isAdmin = userRole === "admin"
 
   const handleLogout = () => {
     if (onLogout) {
       onLogout()
     } else {
-      // Clear localStorage
       if (typeof window !== "undefined") {
         localStorage.clear()
-        // Clear cookies
         document.cookie = "access_token=; path=/; max-age=0"
         document.cookie = "refreshToken=; path=/; max-age=0"
       }
-      // Redirect to login
       window.location.href = "/login"
     }
   }
 
+  useEffect(() => {
+    setMobileNavOpen(false)
+  }, [pathname])
+
   return (
     <>
-      <header className="fixed inset-x-0 top-0 z-50 h-16 border-b border-white/10 bg-background/80 backdrop-blur-md shadow-sm">
-      <div className="flex h-full items-center justify-between px-4 sm:px-8">
-        {/* Left: Greeting + Admin Link (if admin) + Navigation */}
-        <div className="flex items-center gap-8">
-          {/* Greeting */}
-          <div className="flex flex-col">
-            <span className={cn("text-2xl font-semibold text-[#fafafa]", playfair.className)}>
+      <header className="fixed inset-x-0 top-0 z-50 border-b border-white/10 bg-background/90 backdrop-blur-md">
+        <div className="mx-auto flex max-w-screen-2xl items-center justify-between gap-2 px-4 py-3 sm:px-6 sm:py-4 lg:px-10">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              aria-expanded={mobileNavOpen}
+              aria-label="Toggle navigation"
+              onClick={() => setMobileNavOpen((prev) => !prev)}
+              className="inline-flex items-center justify-center rounded-md border border-white/15 bg-black/40 p-2 text-white transition hover:border-white/30 hover:bg-black/55 sm:hidden"
+            >
+              {mobileNavOpen ? <X size={18} /> : <Menu size={18} />}
+            </button>
+            <span className={cn("text-base font-semibold text-[#fafafa] sm:text-lg", playfair.className)}>
               Hello, {userName}
             </span>
-            <span className="text-xs text-white/50">Welcome to your trading desk</span>
           </div>
 
-          {/* Admin Link - After Greeting */}
-          {isAdmin && (
-            <>
-              <div className="h-8 w-px bg-white/10" />
-              <Link
-                href="/admin"
-                className={cn(
-                  "relative px-5 py-2 text-sm font-medium transition-all duration-200",
-                  "rounded-lg",
-                  pathname === "/admin"
-                    ? "text-[#fafafa] bg-white/10"
-                    : "text-white/60 hover:text-white/90 hover:bg-white/5"
-                )}
-              >
-                Admin
-              </Link>
-            </>
-          )}
-
-          {/* Navigation Tabs */}
-          <nav className="hidden md:flex items-center gap-2">
+          <nav className="hidden items-center gap-2 sm:flex">
             {portfolioTypes.map((type) => {
               const isActive = pathname === type.href
-              
               return (
                 <Link
                   key={type.name}
                   href={type.href}
                   className={cn(
-                    "relative px-5 py-2 text-sm font-medium transition-all duration-200",
-                    "rounded-lg",
-                    isActive
-                      ? "text-[#fafafa] bg-white/10"
-                      : "text-white/60 hover:text-white/90 hover:bg-white/5"
+                    "rounded-md px-3 py-2 text-base font-medium transition",
+                    isActive ? "bg-white/10 text-[#fafafa]" : "text-white/60 hover:text-white/90 hover:bg-white/5"
                   )}
                 >
                   {type.name}
                 </Link>
               )
             })}
+            {isAdmin && (
+              <Link
+                href="/admin"
+                className={cn(
+                  "rounded-md px-3 py-2 text-base font-medium transition",
+                  pathname === "/admin"
+                    ? "bg-white/10 text-[#fafafa]"
+                    : "text-white/60 hover:text-white/90 hover:bg-white/5"
+                )}
+              >
+                Admin
+              </Link>
+            )}
           </nav>
+
+          <Button
+            onClick={handleLogout}
+            variant="outline"
+          className="rounded-md border border-white/15 bg-black/35 px-4 py-2 text-base font-semibold text-[#fafafa] transition hover:-translate-y-0.5 hover:border-white/30 hover:bg-black/60"
+          >
+            Logout
+          </Button>
         </div>
 
-        {/* Right: Logout */}
-        <Button
-          onClick={handleLogout}
-          variant="outline"
-          className="rounded-lg border border-white/15 bg-black/40 px-6 py-2 text-sm font-semibold text-[#fafafa] transition hover:-translate-y-0.5 hover:border-white/30 hover:bg-black/60"
-        >
-          Logout
-        </Button>
-      </div>
-    </header>
-    <div className="h-16" />
+        {mobileNavOpen ? (
+          <div className="border-t border-white/10 bg-background/95 shadow-lg sm:hidden">
+            <nav className="flex flex-col gap-1 px-4 py-4">
+              {portfolioTypes.map((type) => {
+                const isActive = pathname === type.href
+                return (
+                  <Link
+                    key={type.name}
+                    href={type.href}
+                    className={cn(
+                      "rounded-lg px-3 py-2 text-base font-medium",
+                      isActive ? "bg-white/15 text-[#fafafa]" : "text-white/70 hover:bg-white/10"
+                    )}
+                  >
+                    {type.name}
+                  </Link>
+                )
+              })}
+              {isAdmin && (
+                <Link
+                  href="/admin"
+                className={cn(
+                  "rounded-lg px-3 py-2 text-base font-medium",
+                  pathname === "/admin" ? "bg-white/15 text-[#fafafa]" : "text-white/70 hover:bg-white/10"
+                )}
+                >
+                  Admin
+                </Link>
+              )}
+            </nav>
+          </div>
+        ) : null}
+      </header>
+      <div className="h-16 sm:h-[76px]" />
     </>
   )
 }
