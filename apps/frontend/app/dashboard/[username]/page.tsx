@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
 import { Playfair_Display } from "next/font/google"
-
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader"
 import { NotificationCard } from "@/components/dashboard/NotificationCard"
 import { NewsFeedCard } from "@/components/dashboard/NewsFeedCard"
@@ -12,15 +11,11 @@ import { StocksWatchlistCard } from "@/components/dashboard/StocksWatchlistCard"
 import { Container } from "@/components/shared/Container"
 import { useRotatingList } from "@/hooks/useRotatingItem"
 import { useAuth } from "@/hooks/useAuth"
-import { cn } from "@/lib/utils"
 import "@/lib/chart"
-
 import { notificationItems, newsFeedItems, portfolioSummary as mockPortfolioSummary, stocks as mockStocks } from "../data"
 import type { PortfolioSummary, StockItem } from "@/lib/dashboardTypes"
-import { getPortfolio, getPositions, fetchQuotes, fetchMarketCandles } from "@/lib/portfolio"
-import type { Portfolio, Position } from "@/lib/portfolio"
-
-const playfair = Playfair_Display({ subsets: ["latin"], weight: ["400", "500", "600", "700"] })
+import { getPortfolio, getPositions, fetchMarketCandles } from "@/lib/portfolio"
+import type { Portfolio } from "@/lib/portfolio"
 
 export default function DashboardPage() {
   const params = useParams()
@@ -205,8 +200,8 @@ export default function DashboardPage() {
   return (
     <div className="min-h-screen bg-[#0c0c0c] text-[#fafafa]">
       <DashboardHeader userName={authUser.firstName} username={username} userRole={authUser.role} />
-      
-      <Container className="max-w-10xl space-y-6 py-8">
+
+      <Container className="max-w-none space-y-6 px-4 py-8 sm:px-6 lg:px-12 xl:px-16">
 
         {error && (
           <div className="rounded-lg border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-400">
@@ -215,15 +210,19 @@ export default function DashboardPage() {
           </div>
         )}
 
-        <main className="grid h-[calc(40vh-12rem)] gap-6 lg:grid-cols-[1fr_1.6fr_1fr]">
-          <NotificationCard notifications={activeNotifications} />
+        <main className="grid gap-6 lg:grid-cols-4 xl:grid-cols-5">
+          <div className="flex">
+            <NotificationCard notifications={activeNotifications} />
+          </div>
 
-          <div className="flex flex-col gap-6">
+          <div className="flex flex-col gap-6 lg:col-span-2 xl:col-span-3">
             <PortfolioOverviewCard summary={portfolioSummary} loading={loading} />
             <StocksWatchlistCard stocks={stocks} loading={loading} />
           </div>
 
-          <NewsFeedCard news={activeNews} />
+          <div className="flex">
+            <NewsFeedCard news={activeNews} />
+          </div>
         </main>
       </Container>
     </div>

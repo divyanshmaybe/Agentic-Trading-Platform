@@ -28,9 +28,9 @@ function MarqueeRow({ reverse = false }: { reverse?: boolean }) {
   });
 
   return (
-    <div className="relative overflow-hidden">
+    <div className="relative overflow-x-auto no-scrollbar md:overflow-hidden">
       <motion.div
-        className="flex min-w-max gap-6"
+        className="flex min-w-max gap-6 px-1 md:px-0"
         style={{ x: baseX.current % 400 }}
       >
         {[...TESTIMONIALS, ...TESTIMONIALS].map((t, i) => (

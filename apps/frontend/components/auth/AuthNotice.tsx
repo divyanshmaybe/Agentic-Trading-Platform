@@ -11,5 +11,3 @@ const styles = {
 export function AuthNotice({ variant, message }: AuthNoticeProps) {
 	return <div className={`mb-4 rounded-xl border px-4 py-3 text-sm ${styles[variant]}`}>{message}</div>
 }
-
-
