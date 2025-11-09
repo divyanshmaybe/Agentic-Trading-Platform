@@ -51,7 +51,7 @@ export function DashboardHeader({ userName = "User", username, userRole, onLogou
   return (
     <>
       <header className="fixed inset-x-0 top-0 z-50 border-b border-white/10 bg-background/90 backdrop-blur-md">
-        <div className="mx-auto flex max-w-screen-2xl items-center justify-between gap-2 px-4 py-2 sm:px-6 lg:px-10">
+        <div className="mx-auto flex max-w-screen-2xl items-center justify-between gap-2 px-4 py-3 sm:px-6 sm:py-4 lg:px-10">
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -62,7 +62,7 @@ export function DashboardHeader({ userName = "User", username, userRole, onLogou
             >
               {mobileNavOpen ? <X size={18} /> : <Menu size={18} />}
             </button>
-            <span className={cn("text-sm font-semibold text-[#fafafa] sm:text-base", playfair.className)}>
+            <span className={cn("text-base font-semibold text-[#fafafa] sm:text-lg", playfair.className)}>
               Hello, {userName}
             </span>
           </div>
@@ -75,7 +75,7 @@ export function DashboardHeader({ userName = "User", username, userRole, onLogou
                   key={type.name}
                   href={type.href}
                   className={cn(
-                    "rounded-md px-3 py-1.5 text-sm font-medium transition",
+                    "rounded-md px-3 py-2 text-base font-medium transition",
                     isActive ? "bg-white/10 text-[#fafafa]" : "text-white/60 hover:text-white/90 hover:bg-white/5"
                   )}
                 >
@@ -87,7 +87,7 @@ export function DashboardHeader({ userName = "User", username, userRole, onLogou
               <Link
                 href="/admin"
                 className={cn(
-                  "rounded-md px-3 py-1.5 text-sm font-medium transition",
+                  "rounded-md px-3 py-2 text-base font-medium transition",
                   pathname === "/admin"
                     ? "bg-white/10 text-[#fafafa]"
                     : "text-white/60 hover:text-white/90 hover:bg-white/5"
@@ -101,7 +101,7 @@ export function DashboardHeader({ userName = "User", username, userRole, onLogou
           <Button
             onClick={handleLogout}
             variant="outline"
-            className="rounded-md border border-white/15 bg-black/35 px-3 py-1.5 text-sm font-semibold text-[#fafafa] transition hover:-translate-y-0.5 hover:border-white/30 hover:bg-black/60"
+          className="rounded-md border border-white/15 bg-black/35 px-4 py-2 text-base font-semibold text-[#fafafa] transition hover:-translate-y-0.5 hover:border-white/30 hover:bg-black/60"
           >
             Logout
           </Button>
@@ -109,7 +109,7 @@ export function DashboardHeader({ userName = "User", username, userRole, onLogou
 
         {mobileNavOpen ? (
           <div className="border-t border-white/10 bg-background/95 shadow-lg sm:hidden">
-            <nav className="flex flex-col gap-1 px-4 py-3">
+            <nav className="flex flex-col gap-1 px-4 py-4">
               {portfolioTypes.map((type) => {
                 const isActive = pathname === type.href
                 return (
@@ -117,7 +117,7 @@ export function DashboardHeader({ userName = "User", username, userRole, onLogou
                     key={type.name}
                     href={type.href}
                     className={cn(
-                      "rounded-lg px-3 py-2 text-sm font-medium",
+                      "rounded-lg px-3 py-2 text-base font-medium",
                       isActive ? "bg-white/15 text-[#fafafa]" : "text-white/70 hover:bg-white/10"
                     )}
                   >
@@ -128,10 +128,10 @@ export function DashboardHeader({ userName = "User", username, userRole, onLogou
               {isAdmin && (
                 <Link
                   href="/admin"
-                  className={cn(
-                    "rounded-lg px-3 py-2 text-sm font-medium",
-                    pathname === "/admin" ? "bg-white/15 text-[#fafafa]" : "text-white/70 hover:bg-white/10"
-                  )}
+                className={cn(
+                  "rounded-lg px-3 py-2 text-base font-medium",
+                  pathname === "/admin" ? "bg-white/15 text-[#fafafa]" : "text-white/70 hover:bg-white/10"
+                )}
                 >
                   Admin
                 </Link>
@@ -140,7 +140,7 @@ export function DashboardHeader({ userName = "User", username, userRole, onLogou
           </div>
         ) : null}
       </header>
-      <div className="h-14 sm:h-[64px]" />
+      <div className="h-16 sm:h-[76px]" />
     </>
   )
 }
