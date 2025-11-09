@@ -21,7 +21,7 @@ export function FinancialStatsCard({ title = "Key Financial Stats", metrics, sav
 
   return (
     <Card
-      className={`card-glass neon-hover rounded-2xl flex h-full flex-col sm:col-span-1 lg:col-span-6 ${className}`}
+      className={`card-glass rounded-2xl flex h-full flex-col sm:col-span-1 lg:col-span-6 ${className}`}
       {...cardProps}
     >
       <CardHeader>

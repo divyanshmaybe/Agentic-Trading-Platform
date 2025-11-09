@@ -30,7 +30,7 @@ export function CreateUserCard({
 }: CreateUserCardProps) {
   return (
     <Card
-      className={`card-glass neon-hover rounded-2xl flex h-full flex-col sm:col-span-2 lg:col-span-4 ${className}`}
+      className={`card-glass rounded-2xl flex h-full flex-col sm:col-span-2 lg:col-span-4 ${className}`}
       role="region"
       aria-label={title}
       {...cardProps}

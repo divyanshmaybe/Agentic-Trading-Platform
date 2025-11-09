@@ -44,8 +44,9 @@ export function DashboardHeader({ userName = "User", username, userRole, onLogou
   }
 
   return (
-    <header className="sticky h-[10vh]  top-0 z-40 w-full border-b border-white/10 bg-black/80 backdrop-blur-xl">
-      <div className="flex h-full items-center justify-between px-8">
+    <>
+      <header className="fixed inset-x-0 top-0 z-50 h-16 border-b border-white/10 bg-background/80 backdrop-blur-md shadow-sm">
+      <div className="flex h-full items-center justify-between px-4 sm:px-8">
         {/* Left: Greeting + Admin Link (if admin) + Navigation */}
         <div className="flex items-center gap-8">
           {/* Greeting */}
@@ -71,9 +72,6 @@ export function DashboardHeader({ userName = "User", username, userRole, onLogou
                 )}
               >
                 Admin
-                {pathname === "/admin" && (
-                  <span className="absolute inset-x-0 -bottom-[1.3rem] h-[2px] bg-gradient-to-r from-blue-500 via-purple-500 to-cyan-500" />
-                )}
               </Link>
             </>
           )}
@@ -96,9 +94,6 @@ export function DashboardHeader({ userName = "User", username, userRole, onLogou
                   )}
                 >
                   {type.name}
-                  {isActive && (
-                    <span className="absolute inset-x-0 -bottom-[1.3rem] h-[2px] bg-gradient-to-r from-blue-500 via-purple-500 to-cyan-500" />
-                  )}
                 </Link>
               )
             })}
@@ -109,12 +104,14 @@ export function DashboardHeader({ userName = "User", username, userRole, onLogou
         <Button
           onClick={handleLogout}
           variant="outline"
-          className="neon-hover rounded-lg border border-white/15 bg-black/40 px-6 py-2 text-sm font-semibold text-[#fafafa] transition hover:-translate-y-0.5 hover:border-white/30 hover:bg-black/60"
+          className="rounded-lg border border-white/15 bg-black/40 px-6 py-2 text-sm font-semibold text-[#fafafa] transition hover:-translate-y-0.5 hover:border-white/30 hover:bg-black/60"
         >
           Logout
         </Button>
       </div>
     </header>
+    <div className="h-16" />
+    </>
   )
 }
 

@@ -91,7 +91,7 @@ export function CreateUserModal({
             exit={{ scale: 0.95, opacity: 0, y: 24 }}
             transition={{ type: "spring", stiffness: 260, damping: 24 }}
           >
-            <Card className="card-glass neon-hover rounded-2xl border border-white/10 bg-black/80 text-white shadow-2xl">
+            <Card className="card-glass rounded-2xl border border-white/10 bg-black/80 text-white shadow-2xl">
               <CardHeader className="flex flex-row items-start justify-between gap-4">
                 <div>
                   <CardTitle className="h-title text-xl">{title}</CardTitle>

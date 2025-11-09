@@ -107,11 +107,26 @@ type ApiError = {
 const PORTFOLIO_BASE_URL =
   process.env.NEXT_PUBLIC_PORTFOLIO_API_URL ?? "http://localhost:8000"
 
+function getClientCookie(name: string): string | null {
+  if (typeof document === "undefined") return null
+  const cookieString = document.cookie
+  if (!cookieString) return null
+  const entry = cookieString
+    .split(";")
+    .map((section) => section.trim())
+    .find((section) => section.startsWith(`${name}=`))
+  if (!entry) return null
+  const [, value] = entry.split("=")
+  return value ? decodeURIComponent(value) : null
+}
+
 function resolveAccessToken(explicitToken?: string): string {
   if (explicitToken) return explicitToken
   if (typeof window !== "undefined") {
-    const token = localStorage.getItem("access_token")
-    if (token) return token
+    const cookieToken = getClientCookie("access_token")
+    if (cookieToken) return cookieToken
+    const stored = localStorage.getItem("access_token")
+    if (stored) return stored
   }
   throw new Error("Missing access token. Please log in again.")
 }

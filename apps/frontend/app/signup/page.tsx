@@ -272,7 +272,7 @@ return (
 							</Button>
 						</div>
 					</form>
-					<div className="mt-4 text-center text-sm text-white/80">
+				<div className="mt-4 text-center text-sm text-white/80 pb-10">
 						Already have an account?{" "}
 						<Link href="/login" className="underline hover:text-white">
 							Login here.
