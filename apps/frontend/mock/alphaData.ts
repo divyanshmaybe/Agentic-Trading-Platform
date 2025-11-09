@@ -61,13 +61,13 @@ export const alphaSeries: AlphaSeriesPoint[] = [
   { time: "10:30", bullish: 1.5, bearish: -0.8 },
   { time: "11:00", bullish: 2.3, bearish: -1.1 },
   { time: "11:30", bullish: 2.9, bearish: -1.4 },
-  { time: "12:00", bullish: 3.5, bearish: -1.6 },
-  { time: "12:30", bullish: 4.2, bearish: -1.8 },
-  { time: "13:00", bullish: 4.8, bearish: -2.2 },
-  { time: "13:30", bullish: 5.1, bearish: -2.4 },
-  { time: "14:00", bullish: 5.6, bearish: -2.6 },
-  { time: "14:30", bullish: 6.2, bearish: -2.9 },
-  { time: "15:00", bullish: 6.7, bearish: -3.1 },
+  { time: "12:00", bullish: 1.6, bearish: -1.6 },
+  { time: "12:30", bullish: 0.8, bearish: -1.6 },
+  { time: "13:00", bullish: 0.4, bearish: -1.8 },
+  { time: "13:30", bullish: 0.2, bearish: -2.1 },
+  { time: "14:00", bullish: 0.1, bearish: -2.5 },
+  { time: "14:30", bullish: 0.05, bearish: -2.9 },
+  { time: "15:00", bullish: 0.02, bearish: -3.3 },
 ]
 
 export const tradeHistory: TradeHistoryItem[] = [

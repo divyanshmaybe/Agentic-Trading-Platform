@@ -70,7 +70,7 @@ export function UserManagementCard({
 
   return (
     <Card
-      className={`card-glass neon-hover rounded-2xl flex h-full flex-col lg:col-span-12 ${className}`}
+      className={`card-glass rounded-2xl flex h-full flex-col lg:col-span-12 ${className}`}
       {...cardProps}
     >
       <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">

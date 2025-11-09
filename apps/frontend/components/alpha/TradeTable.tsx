@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from "framer-motion"
 import { ChevronLeft, ChevronRight } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { alphaPagination, tradeHistory } from "@/mock/alphaData"
 
 const rowVariants = {
@@ -38,15 +38,18 @@ export function TradeTable() {
   const handleNext = () => canNext && setPage((prev) => prev + 1)
 
   return (
-    <Card className="card-glass neon-hover rounded-2xl border border-white/10 bg-black/40 shadow-xl">
+    <Card className="card-glass flex h-full flex-col rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_28px_65px_-38px_rgba(0,0,0,0.9)] backdrop-blur">
       <CardHeader>
-        <CardTitle className="h-title text-xl text-white">Trade History</CardTitle>
+        <CardTitle className="h-title text-xl text-[#fafafa]">Trade History</CardTitle>
+        <CardDescription className="text-xs uppercase tracking-[0.3em] text-white/45">
+          Recent executions
+        </CardDescription>
       </CardHeader>
       <CardContent className="overflow-hidden">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-white/10">
             <thead>
-              <tr className="text-left text-xs uppercase tracking-wider text-white/60">
+              <tr className="text-left text-xs uppercase tracking-wider text-white/45">
                 <th className="px-4 py-3">Time</th>
                 <th className="px-4 py-3">Alpha Name</th>
                 <th className="px-4 py-3">Entry Price</th>
@@ -66,17 +69,17 @@ export function TradeTable() {
                       initial="hidden"
                       animate="show"
                       exit="exit"
-                      className="text-sm text-white/90"
+                      className="text-sm text-white/80"
                     >
                       <td className="px-4 py-3">{trade.time}</td>
                       <td className="px-4 py-3">{trade.alphaName}</td>
-                      <td className="px-4 py-3 text-emerald-200">
+                      <td className="px-4 py-3 text-emerald-300">
                         {currencyFormatter.format(trade.entryPrice)}
                       </td>
-                      <td className="px-4 py-3 text-emerald-200">
+                      <td className="px-4 py-3 text-emerald-300">
                         {currencyFormatter.format(trade.exitPrice)}
                       </td>
-                      <td className={`px-4 py-3 font-semibold ${isProfit ? "text-emerald-400" : "text-rose-400"}`}>
+                      <td className={`px-4 py-3 font-semibold ${isProfit ? "text-emerald-300" : "text-rose-300"}`}>
                         {isProfit ? "+" : ""}
                         {trade.profitLossPct.toFixed(2)}%
                       </td>
@@ -84,8 +87,8 @@ export function TradeTable() {
                         <span
                           className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${
                             trade.tradeType === "Long"
-                              ? "bg-emerald-500/15 text-emerald-300"
-                              : "bg-sky-500/15 text-sky-300"
+                              ? "bg-emerald-500/15 text-emerald-200"
+                              : "bg-sky-500/15 text-sky-200"
                           }`}
                         >
                           {trade.tradeType}
@@ -99,8 +102,8 @@ export function TradeTable() {
           </table>
         </div>
       </CardContent>
-      <CardFooter className="flex items-center justify-between border-t border-white/10 bg-black/30 px-6 py-4">
-        <p className="text-xs text-white/60">
+      <CardFooter className="flex items-center justify-between border-t border-white/10 bg-black/25 px-6 py-4 text-white/60">
+        <p className="text-xs">
           Showing {page * pageSize + 1}-
           {Math.min(page * pageSize + pageSize, tradeHistory.length)} of {tradeHistory.length} trades
         </p>

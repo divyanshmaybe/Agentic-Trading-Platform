@@ -72,9 +72,6 @@ export function DashboardHeader({ userName = "User", username, userRole, onLogou
                 )}
               >
                 Admin
-                {pathname === "/admin" && (
-                  <span className="absolute inset-x-0 -bottom-[1.3rem] h-[2px] bg-linear-to-r from-blue-500 via-purple-500 to-cyan-500" />
-                )}
               </Link>
             </>
           )}
@@ -107,7 +104,7 @@ export function DashboardHeader({ userName = "User", username, userRole, onLogou
         <Button
           onClick={handleLogout}
           variant="outline"
-          className="neon-hover rounded-lg border border-white/15 bg-black/40 px-6 py-2 text-sm font-semibold text-[#fafafa] transition hover:-translate-y-0.5 hover:border-white/30 hover:bg-black/60"
+          className="rounded-lg border border-white/15 bg-black/40 px-6 py-2 text-sm font-semibold text-[#fafafa] transition hover:-translate-y-0.5 hover:border-white/30 hover:bg-black/60"
         >
           Logout
         </Button>

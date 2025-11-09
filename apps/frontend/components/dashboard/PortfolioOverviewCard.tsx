@@ -30,7 +30,7 @@ export function PortfolioOverviewCard({ summary, loading = false }: PortfolioOve
   }, [summary])
 
   return (
-    <Card className="card-glass neon-hover rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_32px_70px_-45px_rgba(0,0,0,0.95)] backdrop-blur">
+    <Card className="card-glass rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_32px_70px_-45px_rgba(0,0,0,0.95)] backdrop-blur">
       <CardHeader className="gap-2">
         <CardDescription className="text-xs uppercase tracking-[0.3em] text-white/45">
           Portfolio Overview

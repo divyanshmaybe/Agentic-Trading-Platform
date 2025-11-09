@@ -14,7 +14,7 @@ export function NewsFeedCard({ news }: NewsFeedCardProps) {
   }
 
   return (
-    <Card className="card-glass neon-hover flex h-full flex-col rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_28px_65px_-38px_rgba(0,0,0,0.9)] backdrop-blur">
+    <Card className="card-glass flex h-full flex-col rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_28px_65px_-38px_rgba(0,0,0,0.9)] backdrop-blur">
       <CardHeader className="gap-1">
         <CardDescription className="text-xs uppercase tracking-[0.3em] text-white/45">
           Live Macro Feed

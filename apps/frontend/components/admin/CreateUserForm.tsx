@@ -116,7 +116,7 @@ export function CreateUserForm({
       <Button
         type="submit"
         disabled={isSubmitting}
-        className="mt-auto neon-hover w-full border border-white/10 bg-white/10 text-white hover:bg-white/20"
+        className="mt-auto w-full border border-white/10 bg-white/10 text-white hover:bg-white/20"
       >
         {isSubmitting ? "Creating..." : submitLabel}
       </Button>

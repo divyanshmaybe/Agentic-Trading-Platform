@@ -11,7 +11,7 @@ import { PerformanceCard } from "@/components/admin/PerformanceCard"
 import { UserManagementCard } from "@/components/admin/UserManagementCard"
 import type { AdminSettingsForm, AdminSettingsUserField, CreateUserFormValues, DirectoryUser } from "@/components/admin/types"
 import { Container } from "@/components/shared/Container"
-import { AdminHeader } from "@/components/admin/AdminHeader"
+import { DashboardHeader } from "@/components/dashboard/DashboardHeader"
 import { createUser, getUsers, type AuthUserSummary, type UserRole, updateUser } from "@/lib/auth"
 import { useAuth } from "@/hooks/useAuth"
 import "@/lib/chart"
@@ -459,14 +459,15 @@ export default function AdminDashboardPage() {
   }
 
   return (
-    <>
-      <AdminHeader 
-        userName={authUser.firstName} 
+    <div className="min-h-screen bg-[#0c0c0c] text-[#fafafa]">
+      <DashboardHeader
+        userName={authUser.firstName}
         username={authUser.username}
-        onLogout={handleLogout} 
+        userRole={authUser.role}
+        onLogout={handleLogout}
       />
-      <main className="py-6 bg-[#0c0c0c] min-h-screen">
-        <Container className="space-y-6 max-w-7xl">
+      <main className="py-8">
+        <Container className="space-y-6">
           <div className="space-y-6">
             <PerformanceCard chart={chart} />
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
@@ -501,7 +502,7 @@ export default function AdminDashboardPage() {
           successMessage={createUserSuccess}
         />
       </main>
-    </>
+    </div>
   )
 }
 

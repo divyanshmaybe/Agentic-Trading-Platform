@@ -12,7 +12,7 @@ type UserDirectoryCardProps = {
 
 export function UserDirectoryCard({ title, description, users, className = "", ...cardProps }: UserDirectoryCardProps) {
   return (
-    <Card className={`card-glass neon-hover rounded-2xl flex h-full flex-col ${className}`} {...cardProps}>
+    <Card className={`card-glass rounded-2xl flex h-full flex-col ${className}`} {...cardProps}>
       <CardHeader>
         <CardTitle className="h-title text-xl">{title}</CardTitle>
         <p className="text-sm text-white/60">{description}</p>

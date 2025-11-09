@@ -77,14 +77,19 @@ export function AlphaChat({ className }: AlphaChatProps) {
   }
 
   return (
-    <Card className={cn("card-glass neon-hover flex h-full flex-col border border-white/10 bg-black/50 shadow-xl", className)}>
+    <Card
+      className={cn(
+        "card-glass flex h-full flex-col rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_28px_65px_-38px_rgba(0,0,0,0.9)] backdrop-blur",
+        className,
+      )}
+    >
       <CardHeader>
-        <CardTitle className="h-title text-2xl text-white font-playfair">Generate Alpha Ideas</CardTitle>
+        <CardTitle className="h-title text-2xl font-playfair text-[#fafafa]">Generate Alpha Ideas</CardTitle>
       </CardHeader>
       <CardContent className="flex flex-1 flex-col overflow-hidden">
         <div
           ref={scrollRef}
-          className="no-scrollbar flex-1 space-y-3 overflow-y-auto rounded-xl border border-white/10 bg-black/40 p-4"
+          className="no-scrollbar flex-1 space-y-3 overflow-y-auto rounded-xl border border-white/10 bg-black/25 p-4"
         >
           <AnimatePresence initial={false}>
             {messages.map((message: ChatMessage) => {
@@ -124,7 +129,7 @@ export function AlphaChat({ className }: AlphaChatProps) {
           />
           <Button
             type="submit"
-            className="flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/20 text-emerald-100 hover:bg-emerald-500/30"
+            className="flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/20 text-emerald-100 hover:border-emerald-400/50 hover:bg-emerald-500/30"
           >
             <Send className="size-4" />
           </Button>

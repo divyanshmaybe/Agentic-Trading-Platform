@@ -30,7 +30,7 @@ export function CompanySettingsCard({
 }: CompanySettingsCardProps) {
   return (
     <Card
-      className={`card-glass neon-hover rounded-2xl flex h-full flex-col sm:col-span-1 lg:col-span-6 ${className}`}
+      className={`card-glass rounded-2xl flex h-full flex-col sm:col-span-1 lg:col-span-6 ${className}`}
       role="region"
       aria-label={title}
       {...cardProps}
@@ -54,7 +54,7 @@ export function CompanySettingsCard({
             {users.map((user) => (
               <div
                 key={user.id}
-                className="neon-hover flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/5 p-3"
+                className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/5 p-3"
               >
                 <div className="min-w-0">
                   <div className="truncate text-sm font-medium">{user.name}</div>
@@ -87,7 +87,7 @@ export function CompanySettingsCard({
             <Button
               type="submit"
               disabled={saving}
-              className="neon-hover border border-white/10 bg-white/10 text-white hover:bg-white/20"
+              className="border border-white/10 bg-white/10 text-white hover:bg-white/20"
               aria-busy={saving}
             >
               {saving ? "Saving..." : "Save changes"}

@@ -185,10 +185,14 @@ export default function AlphasPage() {
         <Container className="no-scrollbar max-w-10xl space-y-6 py-8 lg:max-h-[calc(100vh-4rem)] lg:overflow-y-auto">
           <header className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <h1 className="text-3xl font-semibold text-white">Alpha Command Center</h1>
-              <p className="text-sm text-white/60">
-                Monitor performance, iterate ideas, and deploy your next winning alpha.
-              </p>
+              <div>
+				<p className="text-xs uppercase tracking-[0.3em] text-white/45">                  
+					Monitor performance, iterate ideas, and deploy your next winning alpha.
+				</p>
+                <h1 className="mt-2 text-4xl font-semibold text-[#fafafa]">Alpha Command Center</h1>
+                <p className="mt-2 text-sm text-white/60">
+                </p>
+              </div>
             </div>
             <Button
               onClick={() => setModalOpen(true)}

@@ -14,7 +14,7 @@ type PerformanceCardProps = {
 export function PerformanceCard({ title = "Performance", chart, className = "", ...cardProps }: PerformanceCardProps) {
   return (
     <Card
-      className={`card-glass neon-hover rounded-2xl flex h-full flex-col sm:col-span-2 lg:col-span-12 ${className}`}
+      className={`card-glass rounded-2xl flex h-full flex-col sm:col-span-2 lg:col-span-12 ${className}`}
       {...cardProps}
     >
       <CardHeader>
