@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, type ComponentPropsWithoutRef, type FormEventHandler } from "react";
+import { type ComponentPropsWithoutRef, type FormEventHandler } from "react";
 import type { UseFormRegister } from "react-hook-form";
 
 import { Button } from "@/components/ui/button";
@@ -30,15 +30,6 @@ export function CompanySettingsCard({
   className = "",
   ...cardProps
 }: CompanySettingsCardProps) {
-  const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
-
-  const handleToggleEmail = (id: string) => {
-    if (typeof window !== "undefined" && window.matchMedia("(min-width: 768px)").matches) {
-      return;
-    }
-    setExpandedUserId((current) => (current === id ? null : id));
-  };
-
   return (
     <Card
       className={`card-glass rounded-2xl flex h-full flex-col sm:col-span-1 lg:col-span-6 ${className}`}
@@ -69,22 +60,9 @@ export function CompanySettingsCard({
               >
                 <div className="min-w-0">
                   <div className="truncate text-sm font-medium">{user.name}</div>
-                  <button
-                    type="button"
-                    onClick={() => handleToggleEmail(user.id)}
-                    className="block text-left text-xs text-white/60 md:pointer-events-none md:text-sm"
-                    aria-label={`Email for ${user.name}`}
-                  >
-                    <span
-                      className={`block md:max-w-none md:whitespace-normal ${
-                        expandedUserId === user.id
-                          ? "max-w-none whitespace-normal break-all"
-                          : "max-w-40 truncate"
-                      }`}
-                    >
-                      {user.email}
-                    </span>
-                  </button>
+                  <div className="hidden text-sm text-white/60 md:block" title={user.email}>
+                    <span className="block wrap-break-word">{user.email}</span>
+                  </div>
                 </div>
                 <div className="flex items-center gap-3">
                   <select

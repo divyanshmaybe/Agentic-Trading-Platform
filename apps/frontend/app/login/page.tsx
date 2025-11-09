@@ -74,7 +74,7 @@ export default function LoginPage() {
 			}
 		>
 			{apiError ? <AuthNotice variant="error" message={apiError} /> : null}
-			<form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
+			<form onSubmit={handleSubmit(onSubmit)} className="space-y-5 no-scrollbar">
 				<AuthField label="Email" error={errors.email?.message}>
 					<input
 						{...register("email", { required: "Email is required" })}
