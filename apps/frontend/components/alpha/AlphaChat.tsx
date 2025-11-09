@@ -6,6 +6,7 @@ import { Send } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { cn } from "@/lib/utils"
 import type { ChatMessage } from "@/mock/alphaData"
 import { chatMessages } from "@/mock/alphaData"
 
@@ -21,7 +22,11 @@ const assistantReplies = [
   "Would you like to simulate this against the last 3 months of market regimes?",
 ]
 
-export function AlphaChat() {
+type AlphaChatProps = {
+  className?: string
+}
+
+export function AlphaChat({ className }: AlphaChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>(chatMessages)
   const [input, setInput] = useState("")
   const scrollRef = useRef<HTMLDivElement | null>(null)
@@ -72,14 +77,14 @@ export function AlphaChat() {
   }
 
   return (
-    <Card className="card-glass neon-hover flex h-full flex-col rounded-2xl border border-white/10 bg-black/50 shadow-xl">
+    <Card className={cn("card-glass neon-hover flex h-full flex-col border border-white/10 bg-black/50 shadow-xl", className)}>
       <CardHeader>
-        <CardTitle className="h-title text-lg text-white">Chat for generating alphas on your idea</CardTitle>
+        <CardTitle className="h-title text-2xl text-white font-playfair">Generate Alpha Ideas</CardTitle>
       </CardHeader>
       <CardContent className="flex flex-1 flex-col overflow-hidden">
         <div
           ref={scrollRef}
-          className="flex-1 space-y-3 overflow-y-auto rounded-xl border border-white/10 bg-black/40 p-4"
+          className="no-scrollbar flex-1 space-y-3 overflow-y-auto rounded-xl border border-white/10 bg-black/40 p-4"
         >
           <AnimatePresence initial={false}>
             {messages.map((message: ChatMessage) => {
@@ -115,14 +120,13 @@ export function AlphaChat() {
             value={input}
             onChange={(event) => setInput(event.target.value)}
             placeholder="Draft an alpha idea..."
-            className="flex-1 rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-emerald-400/60"
+            className="flex-1 rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white placeholder:text-white/40 focus:outline-none focus:ring-white/50"
           />
           <Button
             type="submit"
             className="flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/20 text-emerald-100 hover:bg-emerald-500/30"
           >
             <Send className="size-4" />
-            Send
           </Button>
         </form>
       </CardContent>

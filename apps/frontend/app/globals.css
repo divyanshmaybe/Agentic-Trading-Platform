@@ -186,3 +186,12 @@ h1, h2, h3 { font-family: 'Playfair Display', serif; }
 .neon-hover:hover::after {
   opacity: 1;
 }
+
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}

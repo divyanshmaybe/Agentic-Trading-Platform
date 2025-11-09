@@ -182,7 +182,7 @@ export default function AlphasPage() {
       <DashboardHeader userName={authUser.firstName} username={username} userRole={authUser.role} />
 
       <main className="lg:pr-96">
-        <Container className="max-w-10xl space-y-6 py-8 lg:max-h-[calc(100vh-4rem)] lg:overflow-y-auto">
+        <Container className="no-scrollbar max-w-10xl space-y-6 py-8 lg:max-h-[calc(100vh-4rem)] lg:overflow-y-auto">
           <header className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <h1 className="text-3xl font-semibold text-white">Alpha Command Center</h1>
@@ -229,10 +229,8 @@ export default function AlphasPage() {
         </Container>
       </main>
 
-      <aside className="fixed right-0 top-16 hidden h-[calc(100vh-4rem)] w-[24rem] flex-col border-l border-white/10 bg-[#070707]/95 px-6 py-8 shadow-2xl backdrop-blur-lg lg:flex">
-        <div className="mt-6 flex flex-1 flex-col overflow-hidden">
-          <AlphaChat />
-        </div>
+      <aside className="fixed right-0 top-16 hidden h-[calc(100vh-4rem)] w-[24rem] flex-col border-l border-white/10 bg-[#070707]/95 shadow-2xl backdrop-blur-lg lg:flex">
+        <AlphaChat className="flex-1 overflow-hidden" />
       </aside>
 
       <AddAlphaModal open={modalOpen} onOpenChange={setModalOpen} />

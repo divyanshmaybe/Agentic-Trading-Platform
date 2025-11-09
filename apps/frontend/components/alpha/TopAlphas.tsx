@@ -41,7 +41,7 @@ export function TopAlphas() {
             variants={listVariants}
             initial="hidden"
             animate="show"
-            className="space-y-3 overflow-y-auto pr-2"
+            className="no-scrollbar space-y-3 overflow-y-auto pr-2"
             style={{ maxHeight: "320px" }}
           >
             {topAlphas.map((alpha) => {
