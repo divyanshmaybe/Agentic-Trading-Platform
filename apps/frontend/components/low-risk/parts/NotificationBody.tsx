@@ -53,8 +53,7 @@ const notificationRenderers: Record<string, NotificationRenderer> = {
         <DetailRow label="Trade Signal" value={String(data.tradeSignal ?? "N/A")} />
         <DetailRow label="Sector" value={String(data.sector ?? "N/A")} />
         <DetailRow label="Window" value={String(data.timeWindowInvestment ?? "N/A")} />
-        <DetailRow label="Provider" value={String(data.provider ?? "N/A")} />
-        <DetailRow label="Generated" value={formatTemporal(data.generatedAt)} />
+        <DetailRow label="Date" value={formatTemporal(data.generatedAt)} />
       </NotificationBodySection>
     )
   },
@@ -67,10 +66,7 @@ const notificationRenderers: Record<string, NotificationRenderer> = {
     return (
       <NotificationBodySection>
         {renderIfPresent(data.content)}
-        <DetailRow label="Stream" value={String(data.stream ?? "N/A")} />
         <DetailRow label="Sentiment" value={sentiment || "N/A"} />
-        <DetailRow label="Provider" value={String(data.provider ?? "N/A")} />
-        <DetailRow label="Generated" value={formatTemporal(data.generatedAt)} />
       </NotificationBodySection>
     )
   },
@@ -81,9 +77,7 @@ const notificationRenderers: Record<string, NotificationRenderer> = {
     return (
       <NotificationBodySection>
         {renderIfPresent(data.analysis, true)}
-        <DetailRow label="Streams" value={normalizeNumber(data.streamCount)?.toString() ?? "N/A"} />
-        <DetailRow label="Provider" value={String(data.provider ?? "N/A")} />
-        <DetailRow label="Generated" value={formatTemporal(data.generatedAt)} />
+        <DetailRow label="Date" value={formatTemporal(data.generatedAt)} />
       </NotificationBodySection>
     )
   },
@@ -102,7 +96,6 @@ const notificationRenderers: Record<string, NotificationRenderer> = {
         <DetailRow label="Daily Change" value={currentChange ?? "N/A"} />
         <DetailRow label="Price" value={currentPrice ?? "N/A"} />
         <DetailRow label="Source" value={String(data.source ?? "risk_agent_pipeline")} />
-        <DetailRow label="Generated" value={formatTemporal(data.generatedAt)} />
       </NotificationBodySection>
     )
   },
