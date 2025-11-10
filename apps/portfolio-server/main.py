@@ -29,6 +29,7 @@ from services.pipeline_service import PipelineService
 from routes.pipeline_routes import create_pipeline_routes, create_health_routes
 from routes.market_routes import router as market_router
 from routes.portfolio_routes import router as portfolio_router
+from routes.objective_routes import create_objective_routes
 from routes.trade_routes import router as trade_router
 from routes.regime_routes import router as regime_router
 from utils.pipeline_utils import get_pipeline_status
@@ -145,6 +146,7 @@ base_app.add_routes("/api/pipeline", create_pipeline_routes(pipeline_service, se
 base_app.add_routes("/api", trade_router)
 base_app.add_routes("/api", market_router)
 base_app.add_routes("/api", portfolio_router)
+base_app.add_routes("/api", create_objective_routes(pipeline_service))
 base_app.add_routes("/api", regime_router)
 base_app.add_routes("", create_health_routes(pipeline_service, server_dir))
 

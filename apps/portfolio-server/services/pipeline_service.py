@@ -107,6 +107,91 @@ class PipelineService:
                 asyncio.set_event_loop(None)
                 loop.close()
 
+    async def rebalance_portfolio(
+        self,
+        *,
+        portfolio_id: str,
+        triggered_by: str = "manual",
+        regime_override: Optional[str] = None,
+        audit_path: Optional[str] = None,
+        trigger_reason: Optional[str] = None,
+        as_of: Optional[datetime] = None,
+    ) -> Dict[str, Any]:
+        """
+        Execute an immediate rebalance for a single portfolio.
+
+        Args:
+            portfolio_id: Target portfolio identifier.
+            triggered_by: Source of the rebalance (objective_create, manual, etc.).
+            regime_override: Optional regime label to enforce for the optimisation input.
+            audit_path: Optional JSONL path for audit trail persistence.
+            trigger_reason: Human-readable reason for audit metadata.
+            as_of: Optional timestamp indicating the rebalance reference time.
+        """
+
+        self._load_environment()
+        reference_time = as_of or datetime.utcnow()
+        trigger_reason = trigger_reason or triggered_by
+
+        manager = get_db_manager()
+        if not manager.is_connected():
+            await manager.connect()
+        client = manager.get_client()
+
+        portfolio = await client.portfolio.find_unique(
+            where={"id": portfolio_id},
+            include={
+                "objective": True,
+                "allocations": True,
+            },
+        )
+        if portfolio is None:
+            self.logger.warning("Portfolio %s not found for immediate rebalance", portfolio_id)
+            return {"processed": 0, "requested": 1, "portfolio_id": portfolio_id}
+
+        request = self._prepare_allocation_request(
+            portfolio,
+            default_regime=regime_override or "sideways",
+        )
+        if regime_override:
+            request["current_regime"] = regime_override
+
+        results = allocate_portfolios([request], logger=self.logger, audit_path=audit_path)
+        if not results:
+            self.logger.warning(
+                "Allocation pipeline returned no results for portfolio %s during immediate rebalance",
+                portfolio_id,
+            )
+            return {"processed": 0, "requested": 1, "portfolio_id": portfolio_id}
+
+        result = results[0]
+
+        await self._persist_allocation_result(
+            client,
+            portfolio,
+            result,
+            as_of=reference_time,
+            triggered_by=triggered_by,
+            trigger_reason=trigger_reason,
+        )
+
+        updated_portfolio = await client.portfolio.find_unique(
+            where={"id": portfolio_id},
+        )
+
+        return {
+            "processed": 1,
+            "requested": 1,
+            "portfolio_id": portfolio_id,
+            "allocation": result,
+            "last_rebalanced_at": getattr(updated_portfolio, "last_rebalanced_at", reference_time)
+            if updated_portfolio
+            else reference_time,
+            "next_rebalance_at": getattr(updated_portfolio, "next_rebalance_at", None)
+            if updated_portfolio
+            else None,
+        }
+
     # Backwards compatibility hook (no longer threaded)
     def start_nse_pipeline(self) -> None:  # pragma: no cover - legacy entrypoint
         self.logger.warning(
@@ -184,6 +269,8 @@ class PipelineService:
                     portfolio,
                     result,
                     as_of=as_of,
+                    triggered_by="schedule",
+                    trigger_reason="scheduled_rebalance",
                 )
             except Exception as exc:  # pragma: no cover - defensive logging
                 self.logger.exception(
@@ -329,6 +416,8 @@ class PipelineService:
         result: Mapping[str, Any],
         *,
         as_of: datetime,
+        triggered_by: str = "schedule",
+        trigger_reason: Optional[str] = None,
     ) -> None:
         weights_raw = result.get("weights") or {}
         if not isinstance(weights_raw, Mapping):
@@ -351,6 +440,9 @@ class PipelineService:
         drift_values = result.get("drift") or {}
 
         metadata_payload = self._clean_json(dict(portfolio.metadata or {}))
+        regime_value = result.get("regime") or metadata_payload.get("current_regime")
+        if regime_value:
+            metadata_payload["current_regime"] = regime_value
 
         allocations = getattr(portfolio, "allocations", []) or []
         allocation_lookup = {alloc.allocation_type: alloc for alloc in allocations}
@@ -371,6 +463,8 @@ class PipelineService:
                     "triggered_at": as_of.isoformat() + "Z",
                     "regime": result.get("regime"),
                     "progress_ratio": result.get("progress_ratio"),
+                    "triggered_by": triggered_by,
+                    "trigger_reason": trigger_reason,
                 }
                 await client.portfolioallocation.update(
                     where={"id": allocation.id},
@@ -395,7 +489,8 @@ class PipelineService:
                         "current_value": current_value_dec,
                         "metadata": {
                             "created_at": as_of.isoformat() + "Z",
-                            "created_by": "scheduled_rebalance",
+                            "created_by": triggered_by,
+                            "trigger_reason": trigger_reason,
                         },
                     }
                 )
@@ -407,7 +502,8 @@ class PipelineService:
             "regime": result.get("regime"),
             "progress_ratio": result.get("progress_ratio"),
             "message": result.get("message"),
-            "source": "scheduled",
+            "triggered_by": triggered_by,
+            "trigger_reason": trigger_reason,
         }
 
         next_rebalance_at = self._compute_next_rebalance_at(portfolio, as_of)
@@ -447,12 +543,14 @@ class PipelineService:
             "expected_risk": result.get("expected_risk"),
             "objective_value": result.get("objective_value"),
             "message": result.get("message"),
+            "triggered_by": triggered_by,
+            "trigger_reason": trigger_reason,
         }
 
         rebalance_run = await client.rebalancerun.create(
             data={
                 "portfolio_id": portfolio.id,
-                "triggered_by": "schedule",
+                "triggered_by": triggered_by,
                 "triggered_at": as_of,
                 "snapshot_portfolio_value": snapshot_value_dec,
                 "snapshot_cash": self._to_decimal(0.0, places=4),

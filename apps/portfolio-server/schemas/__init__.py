@@ -18,6 +18,12 @@ from .regime import (
     UpdateSensitivityRequest,
     UpdateSensitivityResponse,
 )
+from .objective import (
+    ObjectiveCreateRequest,
+    ObjectiveResponse,
+    ObjectiveCreateResponse,
+    AllocationResultSummary,
+)
 
 __all__ = [
     "PortfolioResponse",
@@ -42,4 +48,8 @@ __all__ = [
     "TrainModelResponse",
     "UpdateSensitivityRequest",
     "UpdateSensitivityResponse",
+    "ObjectiveCreateRequest",
+    "ObjectiveResponse",
+    "ObjectiveCreateResponse",
+    "AllocationResultSummary",
 ]
