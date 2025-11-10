@@ -155,8 +155,7 @@ class CandleFetcherTransformer(pw.AsyncTransformer, output_schema=CandleSchema):
                     self.symbol, 
                     period="2d", 
                     interval="1m", 
-                    progress=False,
-                    show_errors=False
+                    progress=False
                 )
             )
             
