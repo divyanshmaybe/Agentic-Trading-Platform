@@ -1,0 +1,243 @@
+# Deployment & Backend Architecture
+
+We built our platform around a **centralised Pathway runtime** that handles all our streaming data needs. Instead of juggling separate Kafka consumers, cron jobs, and REST pollers across different services, we funnel everything through Pathway's incremental computation engine. This keeps things manageable for our small team—when we need to add a new data source or signal generator, we just write one Pathway pipeline instead of wiring together multiple frameworks.
+
+---
+
+## How Everything Fits Together
+
+We've organised the codebase into three main services that can be deployed and scaled independently:
+
+1. **Auth Server** ([`apps/auth_server`](../apps/auth_server)) – Handles user registration, login, and session management using Node.js/TypeScript.
+2. **Portfolio Server** ([`apps/portfolio-server`](../apps/portfolio-server)) – Python FastAPI app that serves REST/GraphQL/WebSocket endpoints for portfolio analytics, trade execution, and pipeline orchestration.
+3. **Frontend** ([`apps/frontend`](../apps/frontend)) – React SPA that polls the portfolio API every 10 seconds for price updates and listens to Kafka topics for real-time trading signals, news updates, and stock recommendations.
+
+A reverse proxy (nginx in production) routes requests to the right service. All three share a **centralised Kafka event bus** managed by our custom Kafka service ([`shared/py/kafka_service.py`](../shared/py/kafka_service.py)), which keeps all publishers in one place to maintain modularity across the codebase.
+
+---
+
+## Auth Server (Node.js)
+
+Built with Express and TypeScript ([`apps/auth_server/server.ts`](../apps/auth_server/server.ts)), this service takes care of:
+
+- **User authentication**: Registration, email verification, password recovery flows.
+- **BullMQ email queues**: We queue transactional emails (OTPs, welcome messages, password resets) in Redis-backed BullMQ workers ([`apps/auth_server/workers/emailWorker.ts`](../apps/auth_server/workers/emailWorker.ts)) and send them through SendGrid via our centralised email service ([`shared/js/emailService.ts`](../shared/js/emailService.ts)). This keeps API responses fast while handling retries and rate limiting in the background.
+- **Internal API**: Other services validate tokens and fetch user info through internal routes ([`apps/auth_server/routes/internal.routes.ts`](../apps/auth_server/routes/internal.routes.ts)) without duplicating session logic.
+
+We chose BullMQ because it gives us retry strategies, scheduled jobs, and monitoring hooks out of the box—really helpful when users expect instant OTPs during traffic spikes.
+
+---
+
+## Portfolio Server (Python/FastAPI)
+
+The portfolio server ([`apps/portfolio-server/main.py`](../apps/portfolio-server/main.py)) handles all the finance-specific work:
+
+### Core Services
+
+- **REST APIs** ([`apps/portfolio-server/routes/`](../apps/portfolio-server/routes)): Serve portfolio positions, trade history, and analytics to the frontend.
+- **WebSocket feeds** ([`apps/portfolio-server/routes/market_routes.py`](../apps/portfolio-server/routes/market_routes.py)): Stream live price ticks. We maintain persistent WebSocket connections to 5paisa / AngelOne brokers through a dedicated market service component, which feeds real-time data into Pathway's market cache. Historical candles come through REST APIs.
+- **Trade Engine** ([`apps/portfolio-server/services/trade_engine.py`](../apps/portfolio-server/services/trade_engine.py)): Supports market, limit, stop-loss, and take-profit orders. Market orders use prices from Pathway's live cache; limit and stop orders wait in Celery until their trigger conditions are met.
+
+### Background Workers (Celery)
+
+We use Celery ([`apps/portfolio-server/celery_app.py`](../apps/portfolio-server/celery_app.py)) to handle:
+
+- **Pipeline triggers** ([`apps/portfolio-server/workers/pipeline_tasks.py`](../apps/portfolio-server/workers/pipeline_tasks.py)): Running NSE scraping, news fetching, and portfolio rebalancing on schedule or on-demand.
+- **Heavy LLM tasks** ([`apps/portfolio-server/workers/market_data_tasks.py`](../apps/portfolio-server/workers/market_data_tasks.py)): Calling Gemini/Groq for sentiment analysis and signal generation without blocking the API.
+- **AngelOne token mapping** ([`apps/portfolio-server/workers/angelone_token_task.py`](../apps/portfolio-server/workers/angelone_token_task.py)): Refreshing the symbol↔token map periodically for broker API calls.
+
+Celery's retry policies, task routing, and beat scheduler help us manage scheduled pipelines (like hourly news fetches) alongside user-triggered jobs.
+
+---
+
+## Pathway Pipelines: Where the Magic Happens
+
+Every data transformation runs through a **Pathway pipeline**. This centralisation keeps our connectors synchronized and ensures stateful operations like joins and aggregations stay consistent.
+
+### 1. NSE Filings Sentiment Pipeline
+
+**Location**: [`apps/portfolio-server/pipelines/nse/nse_filings_sentiment.py`](../apps/portfolio-server/pipelines/nse/nse_filings_sentiment.py)
+
+**How it works**:
+
+- A Celery worker polls NSE/MCA filing endpoints through [`nse_live_scraper.py`](../apps/portfolio-server/pipelines/nse/nse_live_scraper.py) and pushes the raw data into a Kafka topic.
+- The Pathway pipeline picks up these filings using our **custom Pathway Kafka connector**, joins them with pre-computed impact tables (stored as CSV files), and runs each filing through Gemini/Groq to score sentiment.
+- Trading signals (symbol, action, confidence, reasoning) get written to:
+  - **Kafka topic** `nse_filings_trading_signal` via our **centralised Kafka service** ([`shared/py/kafka_service.py`](../shared/py/kafka_service.py)). The frontend subscribes here for instant alerts.
+  - **JSONL files** ([`trading_signals.jsonl`](../apps/portfolio-server/pipelines/nse/trading_signals.jsonl)) for backtesting and audit logs.
+
+**Pathway components**:
+
+- `pw.io.kafka.read()` to ingest filing events
+- `pw.join()` to add impact metadata
+- `pw.io.kafka.write()` to publish signals via our centralised Kafka service
+- `pw.io.jsonlines.write()` for archival
+
+**Results**: We're seeing 5–10% average profit on days we paper-traded these signals. The plan is to let the trade engine consume this Kafka feed automatically once users enable auto-trading.
+
+### 2. News Sentiment Pipeline
+
+**Location**: [`apps/portfolio-server/pipelines/news/news_sentiment_pipeline.py`](../apps/portfolio-server/pipelines/news/news_sentiment_pipeline.py)
+
+**How it works**:
+
+- Celery beat scheduler kicks this off every hour (configurable).
+- Pathway fetches sector news from **NewsAPI.org**, processes articles through FinBERT embeddings and Gemini summaries, then calculates sentiment scores per stock.
+- Results (`stock_recommendations.json`, `sentiment_articles.jsonl`) are saved via Pathway's JSONL writer and pushed to Kafka topics through our centralised Kafka service for the frontend to consume.
+
+**Pathway components**:
+
+- Custom Python connector to fetch NewsAPI responses
+- `pw.select()` and `pw.apply()` for sentiment tagging and stock extraction
+- `pw.io.kafka.write()` to stream to the `news_recommendations` topic via centralised Kafka service
+- `pw.io.jsonlines.write()` for persistent storage
+
+**Frontend integration**: The dashboard subscribes to the Kafka topic and updates the "Stocks to Watch" widget in real-time without needing to poll.
+
+### 3. Risk Agent Pipeline
+
+**Location**: [`apps/portfolio-server/pipelines/risk/risk_agent_pipeline.py`](../apps/portfolio-server/pipelines/risk/risk_agent_pipeline.py)
+
+**How it works**:
+
+- Pathway continuously monitors portfolio PnL (from our database) against current market regime classifications.
+- When a position drops beyond expected volatility thresholds, it generates a warning with the symbol, drop percentage, and an LLM-generated explanation.
+- Warnings are:
+  - **Published to Kafka** topic `portfolio_risk_alerts` through our centralised Kafka service so the frontend shows instant notifications.
+  - **Emailed to users** through our centralised email service ([`shared/py/emailService.py`](../shared/py/emailService.py)) which queues SendGrid jobs in BullMQ (same infrastructure as auth emails).
+
+**Pathway components**:
+
+- `pw.io.postgres.read()` to pull portfolio state
+- `pw.join()` with regime labels and benchmark data
+- `pw.io.kafka.write()` via centralised Kafka service for alerts
+- Custom output to trigger email queue
+
+**Why Pathway here**: The join between live portfolio data and regime classifications needs to stay synchronized. Pathway's incremental engine only recomputes when inputs change, preventing stale or duplicate alerts.
+
+### 4. Regime Classification Stream
+
+**Location**: [`apps/portfolio-server/services/regime_stream.py`](../apps/portfolio-server/services/regime_stream.py)
+
+**How it works**:
+
+- A Hidden Markov Model in [`services/regime_model/classifier.py`](../apps/portfolio-server/services/regime_model/classifier.py) trains on historical Nifty data and labels each day as Bull/Bear/High Volatility/Sideways.
+- Daily candle data (OHLCV) flows into a **Pathway table** through the regime feature pipeline ([`services/regime_features_pathway.py`](../apps/portfolio-server/services/regime_features_pathway.py)), which calculates technical indicators (RSI, ATR, Bollinger Bands, MACD, etc.) on the fly.
+- HMM inference runs inside a Pathway `pw.apply()` call, keeping the latest regime label always available to downstream pipelines (risk agent, allocator) without polling or cron delays.
+
+**Pathway components**:
+
+- Market data connector to stream candles
+- `pw.select()` + `pw.apply()` for rolling window calculations
+- `pw.apply()` to run HMM predictions on scaled features
+- Output table shared with other Pathway pipelines via in-memory join
+
+**Integration**: The regime result feeds both the risk agent (for setting thresholds) and the portfolio allocator (to adjust strategy allocations based on market conditions).
+
+### 5. Portfolio Allocation Pipeline
+
+**Location**: [`apps/portfolio-server/pipelines/portfolio/allocation_pipeline.py`](../apps/portfolio-server/pipelines/portfolio/allocation_pipeline.py)
+
+**How it works**:
+
+- Runs when a user creates an account or every 3 months (rebalancing period) via Celery.
+- Pathway ingests:
+  - Current regime label from the regime stream
+  - Historical signal quality from NSE and news pipelines (from JSONL files)
+  - User risk preferences from the database
+- Calculates capital splits across:
+  1. **Alpha Agent** (trades managed by our separate quant server)
+  2. **High-Risk Sleeve** (executes NSE filing signals)
+  3. **Low-Risk Sleeve** (planned for post-mid-eval; will hold index ETFs or low-beta stocks)
+- Allocation decisions get saved to Postgres and published to Kafka through our centralised service for audit logging.
+
+**Pathway components**:
+
+- `pw.io.jsonlines.read()` for signal history
+- `pw.join()` with regime and user preferences
+- `pw.apply()` for allocation calculations
+- `pw.io.postgres.write()` to save decisions
+- `pw.io.kafka.write()` via centralised Kafka service to log events
+
+**Execution**: The trade engine reads the allocation table and places orders (requires manual approval unless user enables auto-trading).
+
+---
+
+## Centralised Services
+
+### Kafka Event Bus
+
+**Location**: [`shared/py/kafka_service.py`](../shared/py/kafka_service.py)
+
+All Python services use the `KafkaEventBus` singleton, which:
+
+- Manages **Pathway-backed publishers** through our **custom Pathway Kafka connector**: Each registered publisher runs a dedicated Pathway pipeline that reads from an in-memory queue and writes to Kafka.
+- Validates payloads against Pydantic schemas before sending.
+- Auto-creates topics on startup if needed.
+
+**Key publishers** (all managed centrally to keep code modular):
+
+- `nse_filings_trading_signal`: NSE pipeline → frontend alerts
+- `news_recommendations`: News pipeline → "Stocks to Watch" widget
+- `portfolio_risk_alerts`: Risk agent → notifications + email triggers
+
+**Why Pathway inside Kafka service**: We needed reliable, validated streaming to Kafka without manually handling producers, retries, or backpressure. Wrapping Pathway pipelines in a singleton gives us a clean API while letting Pathway manage the connector details.
+
+### Email Service
+
+**Location**: [`shared/py/emailService.py`](../shared/py/emailService.py)
+
+Centralised email delivery through SendGrid for both auth (OTPs, welcome messages) and portfolio (risk alerts) services. Uses BullMQ for reliable queuing and retry logic.
+
+### Market Data Service
+
+Live price feeds come through persistent WebSocket connections to 5paisa and AngelOne brokers, maintained by a dedicated market service component. Incoming ticks are:
+
+- Written to a Redis pub/sub channel for low-latency distribution
+- Ingested by a **Pathway market data pipeline** ([`shared/py/market_data.py`](../shared/py/market_data.py)) that maintains a live OHLCV cache
+
+Historical candle data comes through REST APIs. The portfolio server polls the live cache (or subscribes to Redis) so frontend requests always get the latest prices without opening new connections.
+
+### LLM Strategy
+
+We use **Gemini** for quick summaries and **Groq** for longer prompts. Workers implement fallback logic: if one hits quota limits, the task automatically retries with the other model. This dual-provider approach kept costs manageable during our backtesting work.
+
+---
+
+## Why We Built It This Way
+
+1. **Single runtime for all pipelines**: Pathway eliminates the need to manage separate Kafka consumers, pandas scripts, and cron jobs. Adding a new signal source just means writing one pipeline file.
+2. **Kafka as the backbone**: Frontend, analytics, and backtesting all consume the same Kafka topics published by Pathway through our centralised service. No data gets siloed in service-specific databases.
+3. **Clean separation**: Auth handles identity, portfolio handles finance, Celery handles scheduling, Pathway handles streaming. Each can be scaled or updated independently.
+4. **Async where it counts**: BullMQ (auth) and Celery (portfolio) keep slow operations like email delivery and LLM calls off the request path. Users get instant responses while background jobs retry on failure.
+5. **Smart real-time updates**: The frontend polls for prices every 10 seconds (hitting Pathway's cached table), but critical events like trade signals and risk alerts push through Kafka subscriptions. This balances simplicity with low latency.
+
+---
+
+## What We've Built & What's Next
+
+### Currently deployed
+
+- NSE filing pipeline generating daily signals (5–10% profit in paper trading)
+- News sentiment pipeline recommending stocks hourly
+- Risk agent monitoring portfolios and sending email/Kafka warnings through centralised services
+- Regime classifier streaming daily market labels
+- Portfolio allocator dividing capital across alpha/high-risk sleeves
+
+### Before mid-eval
+
+- Improve NSE pipeline edge cases and LLM prompts
+- Add the low-risk sleeve to the allocator
+- Connect news sentiment signals to the trade engine for automated execution
+
+### Before end-eval
+
+- Full auto-trading mode (user opt-in) consuming both NSE and news signals
+- Permission-based trading (agent asks before each trade unless fully autonomous mode enabled)
+- Enhanced backtesting dashboard pulling from Pathway's JSONL outputs
+
+---
+
+## Summary
+
+Our backend centers around **Pathway pipelines**: every data transformation is a Pathway pipeline, every event flows through our **custom Pathway Kafka connector** managed by the centralised Kafka service, and every stateful operation happens inside Pathway's incremental engine. This keeps our codebase maintainable, data lineage clear, and our small team productive. Splitting into auth (Node.js/BullMQ), portfolio (Python/Celery), and market service (WebSocket bridges) lets us evolve each part independently. Centralised services for Kafka publishing and email delivery (via SendGrid) maintain modularity across the entire stack.
