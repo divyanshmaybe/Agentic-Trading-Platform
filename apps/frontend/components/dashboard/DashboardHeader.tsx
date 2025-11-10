@@ -24,9 +24,9 @@ export function DashboardHeader({ userName = "User", username, userRole, onLogou
 
   const portfolioTypes = [
     { name: "Dashboard", href: `/dashboard/${username}` },
-    { name: "Alphas", href: `/dashboard/${username}/alphas` },
-    { name: "High-Risk", href: `/dashboard/${username}/high-risk` },
-    { name: "Low-Risk", href: `/dashboard/${username}/low-risk` },
+    { name: "Algorithmic Strategies", href: `/dashboard/${username}/alphas` },
+    { name: "Long-Term Strategies", href: `/dashboard/${username}/longterm` },
+    { name: "Intraday Strategies", href: `/dashboard/${username}/intraday` },
   ]
 
   const isAdmin = userRole === "admin"

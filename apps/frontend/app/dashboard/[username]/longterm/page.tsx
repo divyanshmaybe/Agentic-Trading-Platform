@@ -27,7 +27,7 @@ export default function HighRiskPage() {
       
       <Container className="max-w-10xl space-y-6 py-8">
         <section className="space-y-4">
-          <h1 className="text-3xl font-bold">High-Risk Portfolio</h1>
+          <h1 className="text-3xl font-bold">Long-Term Trading Strategies</h1>
           <p className="text-sm text-white/60">
             Monitor your high-risk positions and aggressive strategies.
           </p>
