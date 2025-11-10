@@ -28,10 +28,10 @@ export function LowRiskNotificationPanel() {
   )
 
   return (
-    <Card className="card-glass flex h-full flex-col rounded-2xl border border-white/10 bg-[#0d0d0d]/70 text-white/70 shadow-[0_28px_65px_-38px_rgba(0,0,0,0.9)] backdrop-blur">
+    <Card className="card-glass flex h-full flex-col rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_28px_65px_-38px_rgba(0,0,0,0.9)] backdrop-blur">
       <NotificationPanelHeader activeTopics={activeTopics} />
-      <CardContent className="flex-1 overflow-y-auto">
-        <div className="space-y-3 pr-1">
+      <CardContent className="flex-1 overflow-y-auto px-6 pb-6 pt-0">
+        <div className="space-y-4">
           <NotificationIntro message={introMessage} />
           <NotificationList notifications={notifications} />
         </div>

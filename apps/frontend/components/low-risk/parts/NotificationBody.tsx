@@ -40,7 +40,6 @@ const notificationRenderers: Record<string, NotificationRenderer> = {
         <DetailRow label="Positioning" value={signalLabel ?? "Not provided"} />
         <DetailRow label="Confidence" value={confidence ?? "Not provided"} />
         <DetailRow label="Filing Time" value={formatTemporal(data.filingTime)} />
-        <DetailRow label="Source" value={String(data.source ?? "nse_filings_pipeline")} />
       </NotificationBodySection>
     )
   },

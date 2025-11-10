@@ -26,11 +26,13 @@ export default function LowRiskPage() {
     <div className="min-h-screen bg-[#0c0c0c] text-[#fafafa]">
       <DashboardHeader userName={authUser.firstName} username={username} userRole={authUser.role} />
 
-      <Container className="max-w-10xl space-y-6 py-8">
-        <section className="space-y-4">
-          <h1 className="text-3xl font-bold">Intraday Trading Strategies</h1>
-          <p className="text-sm text-white/60">
-            Track your conservative investments and stable returns.
+      <Container className="max-w-10xl space-y-8 px-4 py-8 sm:px-6 lg:px-12 xl:px-16">
+        <section className="space-y-3">
+          <p className="text-xs uppercase tracking-[0.3em] text-white/45">Intraday Strategy Console</p>
+          <h1 className="text-4xl font-semibold text-[#fafafa]">Intraday Trading Strategies</h1>
+          <p className="max-w-2xl text-sm text-white/60">
+            Monitor fast-moving positions, react to live signals, and keep your intraday book aligned with
+            algorithmic alerts.
           </p>
         </section>
 

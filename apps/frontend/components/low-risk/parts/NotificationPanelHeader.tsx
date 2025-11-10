@@ -7,11 +7,6 @@ export function NotificationPanelHeader({ activeTopics }: { activeTopics: string
         Low-Risk Streams
       </CardDescription>
       <CardTitle className="h-title text-xl text-[#fafafa]">Live Portfolio Notifications</CardTitle>
-      {activeTopics.length ? (
-        <p className="text-[11px] text-white/50">
-          Tracking: <NotificationActiveTopics topics={activeTopics} />
-        </p>
-      ) : null}
     </CardHeader>
   )
 }
