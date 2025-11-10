@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 
-import type { NotificationItem } from "@/lib/dashboardTypes"
+import type { NotificationStreamItem } from "@/lib/notificationStreamTypes"
 
 type ConnectionStatus = "connecting" | "open" | "closed" | "error"
 
@@ -10,7 +10,7 @@ type UseNotificationStreamOptions = {
 }
 
 type NotificationStreamState = {
-  notifications: NotificationItem[]
+  notifications: NotificationStreamItem[]
   status: ConnectionStatus
   error: string | null
   activeTopics: string[]
@@ -21,7 +21,7 @@ const DEFAULT_MAX_ITEMS = 50
 
 export function useNotificationStream(options: UseNotificationStreamOptions = {}): NotificationStreamState {
   const { topics = [], maxItems = DEFAULT_MAX_ITEMS } = options
-  const [notifications, setNotifications] = useState<NotificationItem[]>([])
+  const [notifications, setNotifications] = useState<NotificationStreamItem[]>([])
   const [status, setStatus] = useState<ConnectionStatus>("connecting")
   const [error, setError] = useState<string | null>(null)
   const [activeTopics, setActiveTopics] = useState<string[]>([])
@@ -65,7 +65,7 @@ export function useNotificationStream(options: UseNotificationStreamOptions = {}
 
     const handleNotification = (event: MessageEvent<string>) => {
       try {
-        const payload = JSON.parse(event.data) as NotificationItem
+        const payload = JSON.parse(event.data) as NotificationStreamItem
         if (payload?.id && seenIdsRef.current.has(payload.id)) {
           return
         }
