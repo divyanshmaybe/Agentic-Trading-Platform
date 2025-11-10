@@ -42,3 +42,21 @@ def run_news_sentiment_pipeline(self, top_k: int | None = None) -> dict:
     metadata = service.run_news_sentiment_pipeline(top_k=top_k_value)
     task_logger.info("News sentiment pipeline completed: %s", metadata)
     return metadata
+
+
+@celery_app.task(
+    bind=True,
+    name="pipeline.rebalance.scheduled",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_kwargs={"max_retries": 3},
+)
+def run_scheduled_rebalance(self) -> dict:
+    """Celery task that performs the scheduled portfolio rebalancing sweep."""
+
+    server_dir = Path(__file__).resolve().parents[1]
+    service = PipelineService(str(server_dir), logger=task_logger)
+    audit_path = os.getenv("PORTFOLIO_REBALANCE_AUDIT_PATH")
+    summary = service.run_scheduled_rebalance(audit_path=audit_path)
+    task_logger.info("Scheduled portfolio rebalance completed: %s", summary)
+    return summary

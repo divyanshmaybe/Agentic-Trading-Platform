@@ -4,16 +4,30 @@ Pipeline Service - Business logic for pipeline operations
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
 import sys
 from datetime import datetime
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-
+from dateutil.relativedelta import relativedelta
 from dotenv import load_dotenv
+
+SERVER_ROOT = Path(__file__).resolve().parents[1]
+if str(SERVER_ROOT) not in sys.path:
+    sys.path.insert(0, str(SERVER_ROOT))
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from db import get_db_manager  # type: ignore  # noqa: E402
+from pipelines.portfolio.portfolio_manager import DEFAULT_SEGMENTS  # type: ignore  # noqa: E402
+from utils import allocate_portfolios  # type: ignore  # noqa: E402
 
 class PipelineService:
     """Service for managing pipeline operations."""
@@ -54,12 +68,524 @@ class PipelineService:
             self._update_news_status("failed", error=str(exc))
             raise
 
+    def run_scheduled_rebalance(
+        self,
+        *,
+        as_of: Optional[datetime] = None,
+        max_batch: Optional[int] = None,
+        audit_path: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Execute the scheduled portfolio rebalancing sweep.
+
+        Args:
+            as_of: Optional reference timestamp (defaults to ``datetime.utcnow()``).
+            max_batch: Maximum number of portfolios to rebalance in one run.
+            audit_path: Optional JSONL path for allocation audit trails.
+        """
+
+        self._load_environment()
+        reference_time = as_of or datetime.utcnow()
+        batch_size = max_batch or int(os.getenv("PORTFOLIO_REBALANCE_BATCH_SIZE", "25"))
+        audit_path = audit_path or os.getenv("PORTFOLIO_REBALANCE_AUDIT_PATH")
+
+        coroutine = self._run_scheduled_rebalance_async(
+            as_of=reference_time,
+            max_batch=batch_size,
+            audit_path=audit_path,
+        )
+
+        try:
+            return asyncio.run(coroutine)
+        except RuntimeError:
+            # Fallback for environments where an event loop is already active.
+            loop = asyncio.new_event_loop()
+            try:
+                asyncio.set_event_loop(loop)
+                return loop.run_until_complete(coroutine)
+            finally:
+                asyncio.set_event_loop(None)
+                loop.close()
+
     # Backwards compatibility hook (no longer threaded)
     def start_nse_pipeline(self) -> None:  # pragma: no cover - legacy entrypoint
         self.logger.warning(
             "start_nse_pipeline() now runs synchronously; scheduling should be handled by Celery"
         )
         self.run_nse_pipeline_forever()
+
+    async def _run_scheduled_rebalance_async(
+        self,
+        *,
+        as_of: datetime,
+        max_batch: int,
+        audit_path: Optional[str],
+    ) -> Dict[str, Any]:
+        manager = get_db_manager()
+        if not manager.is_connected():
+            await manager.connect()
+        client = manager.get_client()
+
+        where_clause: Dict[str, Any] = {
+            "status": "active",
+            "OR": [
+                {"next_rebalance_at": {"equals": None}},
+                {"next_rebalance_at": {"lte": as_of}},
+                {"allocations": {"some": {"requires_rebalancing": True}}},
+            ],
+        }
+
+        portfolios = await client.portfolio.find_many(
+            where=where_clause,
+            include={
+                "objective": True,
+                "allocations": True,
+            },
+            take=max_batch,
+        )
+
+        if not portfolios:
+            self.logger.info("No portfolios due for scheduled rebalancing at %s", as_of.isoformat())
+            return {"processed": 0, "requested": 0, "portfolio_ids": []}
+
+        requests, portfolio_map = self._build_allocation_requests(portfolios)
+        if not requests:
+            self.logger.info("No valid allocation requests constructed for scheduled rebalancing")
+            return {"processed": 0, "requested": 0, "portfolio_ids": []}
+
+        self.logger.info(
+            "Executing allocation pipeline for %s portfolio(s) (batch size=%s)",
+            len(requests),
+            max_batch,
+        )
+
+        results = allocate_portfolios(requests, logger=self.logger, audit_path=audit_path)
+        if not results:
+            self.logger.warning(
+                "Allocation pipeline returned no results for %s scheduled request(s)", len(requests)
+            )
+            return {"processed": 0, "requested": len(requests), "portfolio_ids": []}
+
+        results_map = {str(item.get("request_id")): item for item in results}
+
+        processed = 0
+        processed_ids: List[str] = []
+
+        for portfolio in portfolios:
+            portfolio_id = str(portfolio.id)
+            result = results_map.get(portfolio_id)
+            if not result:
+                self.logger.warning("Missing allocation result for portfolio %s", portfolio_id)
+                continue
+
+            try:
+                await self._persist_allocation_result(
+                    client,
+                    portfolio,
+                    result,
+                    as_of=as_of,
+                )
+            except Exception as exc:  # pragma: no cover - defensive logging
+                self.logger.exception(
+                    "Failed to persist allocation result for portfolio %s: %s",
+                    portfolio_id,
+                    exc,
+                )
+                continue
+
+            processed += 1
+            processed_ids.append(portfolio_id)
+
+        self.logger.info(
+            "Scheduled rebalance completed: %s/%s portfolios updated",
+            processed,
+            len(requests),
+        )
+
+        return {"processed": processed, "requested": len(requests), "portfolio_ids": processed_ids}
+
+    def _build_allocation_requests(
+        self,
+        portfolios: Sequence[Any],
+        *,
+        default_regime: str = "sideways",
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        requests: List[Dict[str, Any]] = []
+        portfolio_map: Dict[str, Any] = {}
+
+        for portfolio in portfolios:
+            try:
+                request = self._prepare_allocation_request(portfolio, default_regime=default_regime)
+            except Exception as exc:  # pragma: no cover - defensive logging
+                self.logger.warning(
+                    "Skipping portfolio %s during scheduled rebalance preparation: %s",
+                    getattr(portfolio, "id", "<unknown>"),
+                    exc,
+                )
+                continue
+            requests.append(request)
+            portfolio_map[request["request_id"]] = portfolio
+
+        return requests, portfolio_map
+
+    def _prepare_allocation_request(self, portfolio: Any, *, default_regime: str) -> Dict[str, Any]:
+        metadata_obj: Mapping[str, Any] = (
+            portfolio.metadata if isinstance(portfolio.metadata, Mapping) else {}
+        )
+        regime = (
+            metadata_obj.get("current_regime")
+            or metadata_obj.get("regime")
+            or default_regime
+        )
+
+        objective = getattr(portfolio, "objective", None)
+        constraints = self._clean_json(portfolio.constraints) if portfolio.constraints else {}
+        if (not constraints) and objective and getattr(objective, "constraints", None):
+            constraints = self._clean_json(objective.constraints)
+
+        allocation_strategy = self._extract_weights_from_allocation_strategy(
+            portfolio.allocation_strategy
+        )
+
+        allocations = getattr(portfolio, "allocations", []) or []
+        if not allocation_strategy and allocations:
+            allocation_strategy = {
+                alloc.allocation_type: self._safe_float(alloc.target_weight)
+                for alloc in allocations
+            }
+
+        if not allocation_strategy:
+            equal_weight = 1.0 / len(DEFAULT_SEGMENTS)
+            allocation_strategy = {segment: equal_weight for segment in DEFAULT_SEGMENTS}
+
+        user_inputs = {
+            "risk_tolerance": portfolio.risk_tolerance,
+            "expected_return_target": self._safe_float(portfolio.expected_return_target),
+            "investment_horizon_years": int(getattr(portfolio, "investment_horizon_years", 1) or 1),
+            "liquidity_needs": portfolio.liquidity_needs,
+            "constraints": constraints,
+            "allocation_strategy": allocation_strategy,
+        }
+
+        initial_value = self._safe_float(
+            portfolio.initial_investment,
+            default=self._safe_float(
+                portfolio.investment_amount,
+                default=self._safe_float(portfolio.current_value),
+            ),
+        )
+        current_value = self._safe_float(portfolio.current_value, default=initial_value)
+
+        value_history = metadata_obj.get("value_history")
+        if not isinstance(value_history, list) or not value_history:
+            value_history = [initial_value, current_value]
+
+        segment_history = metadata_obj.get("segment_history")
+        lookback_quarters = int(metadata_obj.get("lookback_quarters", 4))
+
+        user_identifier = getattr(portfolio, "user_id", None) or portfolio.customer_id or portfolio.organization_id
+        if not user_identifier:
+            raise ValueError("portfolio missing associated user identifier")
+
+        request = {
+            "request_id": str(portfolio.id),
+            "user_id": str(user_identifier),
+            "current_regime": str(regime),
+            "user_inputs": user_inputs,
+            "initial_value": initial_value,
+            "current_value": current_value,
+            "value_history": value_history,
+            "segment_history": segment_history,
+            "lookback_quarters": lookback_quarters,
+            "metadata": {
+                "portfolio_id": str(portfolio.id),
+                "organization_id": portfolio.organization_id,
+                "customer_id": portfolio.customer_id,
+            },
+        }
+
+        return request
+
+    def _extract_weights_from_allocation_strategy(self, strategy: Any) -> Dict[str, float]:
+        if not strategy:
+            return {}
+
+        if isinstance(strategy, Mapping):
+            weights = strategy.get("weights")
+            if isinstance(weights, Mapping):
+                return {str(key): self._safe_float(value) for key, value in weights.items()}
+            return {
+                str(key): self._safe_float(value)
+                for key, value in strategy.items()
+                if isinstance(value, (int, float, Decimal))
+            }
+
+        return {}
+
+    async def _persist_allocation_result(
+        self,
+        client: Any,
+        portfolio: Any,
+        result: Mapping[str, Any],
+        *,
+        as_of: datetime,
+    ) -> None:
+        weights_raw = result.get("weights") or {}
+        if not isinstance(weights_raw, Mapping):
+            self.logger.warning("Invalid weights payload for portfolio %s", portfolio.id)
+            return
+
+        weights = {str(key): self._safe_float(value) for key, value in weights_raw.items()}
+        if not weights:
+            self.logger.warning("Empty weight vector returned for portfolio %s", portfolio.id)
+            return
+
+        total_investable = self._safe_float(
+            portfolio.investment_amount,
+            default=self._safe_float(
+                portfolio.initial_investment,
+                default=self._safe_float(portfolio.current_value),
+            ),
+        )
+        current_value = self._safe_float(portfolio.current_value, default=total_investable)
+        drift_values = result.get("drift") or {}
+
+        metadata_payload = self._clean_json(dict(portfolio.metadata or {}))
+
+        allocations = getattr(portfolio, "allocations", []) or []
+        allocation_lookup = {alloc.allocation_type: alloc for alloc in allocations}
+        segments = set(allocation_lookup.keys()) | set(weights.keys())
+
+        for segment in sorted(segments):
+            weight = weights.get(segment, 0.0)
+            drift = self._safe_float(drift_values.get(segment, 0.0))
+            target_weight_dec = self._to_decimal(weight, places=6)
+            allocated_amount_dec = self._to_decimal(total_investable * weight, places=4)
+            current_value_dec = self._to_decimal(current_value * weight, places=4)
+            drift_dec = self._to_decimal(drift, places=6)
+
+            allocation = allocation_lookup.get(segment)
+            if allocation:
+                allocation_metadata = self._clean_json(dict(allocation.metadata or {}))
+                allocation_metadata["last_rebalance"] = {
+                    "triggered_at": as_of.isoformat() + "Z",
+                    "regime": result.get("regime"),
+                    "progress_ratio": result.get("progress_ratio"),
+                }
+                await client.portfolioallocation.update(
+                    where={"id": allocation.id},
+                    data={
+                        "target_weight": target_weight_dec,
+                        "current_weight": target_weight_dec,
+                        "allocated_amount": allocated_amount_dec,
+                        "current_value": current_value_dec,
+                        "drift_percentage": drift_dec,
+                        "requires_rebalancing": False,
+                        "metadata": allocation_metadata,
+                    },
+                )
+            elif weight > 0:
+                created = await client.portfolioallocation.create(
+                    data={
+                        "portfolio_id": portfolio.id,
+                        "allocation_type": segment,
+                        "target_weight": target_weight_dec,
+                        "current_weight": target_weight_dec,
+                        "allocated_amount": allocated_amount_dec,
+                        "current_value": current_value_dec,
+                        "metadata": {
+                            "created_at": as_of.isoformat() + "Z",
+                            "created_by": "scheduled_rebalance",
+                        },
+                    }
+                )
+                allocations.append(created)
+                allocation_lookup[segment] = created
+
+        metadata_payload["last_rebalance"] = {
+            "triggered_at": as_of.isoformat() + "Z",
+            "regime": result.get("regime"),
+            "progress_ratio": result.get("progress_ratio"),
+            "message": result.get("message"),
+            "source": "scheduled",
+        }
+
+        next_rebalance_at = self._compute_next_rebalance_at(portfolio, as_of)
+
+        allocation_strategy_payload = {
+            "weights": weights,
+            "expected_return": result.get("expected_return"),
+            "expected_risk": result.get("expected_risk"),
+            "objective_value": result.get("objective_value"),
+            "regime": result.get("regime"),
+            "message": result.get("message"),
+            "progress_ratio": result.get("progress_ratio"),
+            "updated_at": as_of.isoformat() + "Z",
+        }
+
+        await client.portfolio.update(
+            where={"id": portfolio.id},
+            data={
+                "allocation_strategy": allocation_strategy_payload,
+                "last_rebalanced_at": as_of,
+                "next_rebalance_at": next_rebalance_at,
+                "metadata": metadata_payload,
+            },
+        )
+
+        snapshot_value_dec = self._to_decimal(current_value, places=4)
+        time_elapsed_days = (
+            (as_of - portfolio.last_rebalanced_at).days
+            if getattr(portfolio, "last_rebalanced_at", None)
+            else None
+        )
+
+        rebalance_metadata = {
+            "weights": weights,
+            "regime": result.get("regime"),
+            "expected_return": result.get("expected_return"),
+            "expected_risk": result.get("expected_risk"),
+            "objective_value": result.get("objective_value"),
+            "message": result.get("message"),
+        }
+
+        rebalance_run = await client.rebalancerun.create(
+            data={
+                "portfolio_id": portfolio.id,
+                "triggered_by": "schedule",
+                "triggered_at": as_of,
+                "snapshot_portfolio_value": snapshot_value_dec,
+                "snapshot_cash": self._to_decimal(0.0, places=4),
+                "snapshot_invested": snapshot_value_dec,
+                "time_elapsed_days": time_elapsed_days,
+                "expected_progress": {"progress_ratio": result.get("progress_ratio")},
+                "metadata": rebalance_metadata,
+            }
+        )
+
+        for segment, weight in weights.items():
+            allocation = allocation_lookup.get(segment)
+            if allocation is None:
+                allocation = next(
+                    (alloc for alloc in allocations if alloc.allocation_type == segment),
+                    None,
+                )
+            if allocation is None:
+                continue
+
+            snapshot_amount = self._to_decimal(total_investable * weight, places=4)
+            snapshot_current_value = self._to_decimal(current_value * weight, places=4)
+
+            await client.allocationsnapshot.create(
+                data={
+                    "rebalance_run_id": rebalance_run.id,
+                    "portfolio_allocation_id": allocation.id,
+                    "snapshot_weight": self._to_decimal(weight, places=6),
+                    "snapshot_amount": snapshot_amount,
+                    "snapshot_current_value": snapshot_current_value,
+                    "snapshot_pnl": self._to_decimal(0.0, places=4),
+                    "metadata": {
+                        "regime": result.get("regime"),
+                        "generated_at": as_of.isoformat() + "Z",
+                    },
+                }
+            )
+
+            await client.segmentsnapshot.create(
+                data={
+                    "rebalance_run_id": rebalance_run.id,
+                    "segment_key": segment,
+                    "allocated_amount": snapshot_amount,
+                    "liquid_amount": self._to_decimal(0.0, places=4),
+                    "invested_amount": snapshot_current_value,
+                    "return_pct": self._to_decimal(0.0, places=6),
+                    "volatility": self._to_decimal(0.0, places=6),
+                    "max_drawdown": self._to_decimal(0.0, places=6),
+                    "sharpe_ratio": None,
+                    "metrics": {
+                        "expected_return": result.get("expected_return"),
+                        "expected_risk": result.get("expected_risk"),
+                    },
+                }
+            )
+
+    def _compute_next_rebalance_at(self, portfolio: Any, reference: datetime) -> datetime:
+        frequency = getattr(portfolio, "rebalancing_frequency", None)
+        if not frequency:
+            objective = getattr(portfolio, "objective", None)
+            frequency = getattr(objective, "rebalancing_frequency", None)
+
+        delta = self._resolve_frequency_delta(frequency)
+        if delta is None:
+            default_months = int(os.getenv("PORTFOLIO_REBALANCE_DEFAULT_MONTHS", "3"))
+            delta = relativedelta(months=default_months)
+
+        return reference + delta
+
+    def _resolve_frequency_delta(self, frequency: Any) -> Optional[relativedelta]:
+        if frequency is None:
+            return None
+
+        if isinstance(frequency, str):
+            freq = frequency.strip().lower()
+            if freq in {"daily", "day"}:
+                return relativedelta(days=1)
+            if freq in {"weekly", "week"}:
+                return relativedelta(weeks=1)
+            if freq in {"monthly", "month"}:
+                return relativedelta(months=1)
+            if freq in {"bi-monthly", "bimonthly"}:
+                return relativedelta(months=2)
+            if freq in {"quarterly", "quarter"}:
+                return relativedelta(months=3)
+            if freq in {"semiannual", "semi-annual", "half-year"}:
+                return relativedelta(months=6)
+            if freq in {"annual", "yearly", "year"}:
+                return relativedelta(years=1)
+
+        if isinstance(frequency, Mapping):
+            unit = str(frequency.get("unit", "month")).lower()
+            value = frequency.get("value") or frequency.get("months") or frequency.get("interval")
+            if isinstance(value, (int, float)):
+                value_int = int(value)
+                if unit.startswith("day"):
+                    return relativedelta(days=value_int)
+                if unit.startswith("week"):
+                    return relativedelta(weeks=value_int)
+                if unit.startswith("year"):
+                    return relativedelta(years=value_int)
+                return relativedelta(months=value_int)
+
+        if isinstance(frequency, (int, float)):
+            return relativedelta(months=int(frequency))
+
+        return None
+
+    def _to_decimal(self, value: Any, *, places: int = 4) -> Decimal:
+        numeric = self._safe_float(value)
+        quant = Decimal(f"1e-{places}") if places > 0 else Decimal("1")
+        return Decimal(str(numeric)).quantize(quant, rounding=ROUND_HALF_UP)
+
+    def _safe_float(self, value: Any, *, default: float = 0.0) -> float:
+        if value is None:
+            return default
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, Decimal):
+            return float(value)
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _clean_json(self, value: Any) -> Any:
+        if isinstance(value, Decimal):
+            return float(value)
+        if isinstance(value, Mapping):
+            return {key: self._clean_json(val) for key, val in value.items()}
+        if isinstance(value, list):
+            return [self._clean_json(item) for item in value]
+        return value
 
     # ------------------------------------------------------------------
     # Internal helpers
