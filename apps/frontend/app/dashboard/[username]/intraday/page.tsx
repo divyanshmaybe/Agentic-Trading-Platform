@@ -27,7 +27,7 @@ export default function IntradayCommandCenterPage() {
     <div className="min-h-screen bg-[#0c0c0c] text-[#fafafa]">
       <DashboardHeader userName={authUser.firstName} username={username} userRole={authUser.role} />
 
-      <Container className="max-w-7xl space-y-8 py-10">
+      <Container className="max-w-10xl space-y-8 px-4 py-10 sm:px-6 lg:px-12 xl:px-16">
         <header className="space-y-3">
           <p className="text-xs uppercase tracking-[0.3em] text-white/45">Intraday Strategy Console</p>
           <h1 className="text-4xl font-semibold text-[#fafafa]">Intraday Command Center</h1>

@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo } from "react"
+import { useMemo, useState, useCallback } from "react"
 import { AnimatePresence, motion } from "framer-motion"
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -14,6 +14,7 @@ import {
 import type { KafkaNotification } from "@/components/low-risk/types"
 import { NotificationBody } from "@/components/low-risk/parts/NotificationBody"
 import { NotificationActions } from "@/components/low-risk/parts/NotificationActions"
+import { X } from "lucide-react"
 
 function resolveBody(notification: KafkaNotification): string {
   if (typeof notification.body === "string" && notification.body.trim().length) {
@@ -89,16 +90,26 @@ function useIntradayNotifications(): {
 
 export function IntradayNotifications() {
   const { notifications, statusMessage } = useIntradayNotifications()
-  const enrichedNotifications = useMemo(
-    () =>
-      notifications.map((notification) => ({
+  const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set())
+
+  const handleDismiss = useCallback((id: string) => {
+    setDismissedIds((prev) => {
+      const next = new Set(prev)
+      next.add(id)
+      return next
+    })
+  }, [])
+
+  const enrichedNotifications = useMemo(() => {
+    return notifications
+      .filter((notification) => !dismissedIds.has(notification.id))
+      .map((notification) => ({
         notification,
         title: resolveHeadline(notification),
         body: resolveBody(notification),
         timestamp: resolveTimestamp(notification),
-      })),
-    [notifications],
-  )
+      }))
+  }, [notifications, dismissedIds])
 
   return (
     <Card className="card-glass flex h-full flex-col rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_28px_65px_-38px_rgba(0,0,0,0.9)] backdrop-blur">
@@ -139,6 +150,14 @@ export function IntradayNotifications() {
                     <span className="rounded-md bg-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white/50">
                       Alert
                     </span>
+                    <button
+                      type="button"
+                      onClick={() => handleDismiss(notification.id)}
+                      className="rounded-full border border-white/10 bg-white/5 p-1 text-white/60 transition hover:border-white/20 hover:bg-white/15 hover:text-white"
+                      aria-label="Dismiss notification"
+                    >
+                      <X className="size-3.5" />
+                    </button>
                   </div>
                   <h3 className="mb-1.5 text-base font-semibold text-[#fafafa]">{title}</h3>
                   <p className="text-sm leading-relaxed text-white/70">{body}</p>
