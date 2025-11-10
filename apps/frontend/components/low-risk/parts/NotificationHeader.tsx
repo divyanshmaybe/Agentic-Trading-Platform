@@ -32,7 +32,7 @@ export function NotificationHeader({
           </span>
           <span className={cn("text-white/55", badgeClass)}>{title}</span>
         </div>
-        <h3 className="mt-3 text-lg font-semibold text-[#fafafa]">{resolveHeadline(notification)}</h3>
+        <h3 className="mt-3 text-2xl font-semibold text-[#fafafa]">{resolveHeadline(notification)}</h3>
       </div>
       <NotificationMeta notification={notification} />
     </header>

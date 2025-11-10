@@ -53,7 +53,6 @@ const notificationRenderers: Record<string, NotificationRenderer> = {
         <DetailRow label="Trade Signal" value={String(data.tradeSignal ?? "N/A")} />
         <DetailRow label="Sector" value={String(data.sector ?? "N/A")} />
         <DetailRow label="Window" value={String(data.timeWindowInvestment ?? "N/A")} />
-        <DetailRow label="Date" value={formatTemporal(data.generatedAt)} />
       </NotificationBodySection>
     )
   },
@@ -77,7 +76,6 @@ const notificationRenderers: Record<string, NotificationRenderer> = {
     return (
       <NotificationBodySection>
         {renderIfPresent(data.analysis, true)}
-        <DetailRow label="Date" value={formatTemporal(data.generatedAt)} />
       </NotificationBodySection>
     )
   },
