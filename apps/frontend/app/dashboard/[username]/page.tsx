@@ -12,16 +12,17 @@ import { Container } from "@/components/shared/Container"
 import { useRotatingList } from "@/hooks/useRotatingItem"
 import { useAuth } from "@/hooks/useAuth"
 import "@/lib/chart"
-import { notificationItems, newsFeedItems, portfolioSummary as mockPortfolioSummary, stocks as mockStocks } from "../data"
+import { notificationItems, portfolioSummary as mockPortfolioSummary, stocks as mockStocks } from "../data"
 import type { PortfolioSummary, StockItem } from "@/lib/dashboardTypes"
 import { getPortfolio, getPositions, fetchMarketCandles } from "@/lib/portfolio"
 import type { Portfolio } from "@/lib/portfolio"
+import { useLiveNewsFeed } from "@/hooks/useLiveNewsFeed"
 
 export default function DashboardPage() {
   const params = useParams()
   const username = params.username as string
   const activeNotifications = useRotatingList(notificationItems, 5500, 3)
-  const activeNews = useRotatingList(newsFeedItems, 6000, 3)
+  const { news: liveNews, statusMessage: newsStatusMessage } = useLiveNewsFeed()
 
   // SECURE: Get user data from server-validated token, NOT localStorage
   const { user: authUser, loading: authLoading } = useAuth()
@@ -221,7 +222,7 @@ export default function DashboardPage() {
           </div>
 
           <div className="flex">
-            <NewsFeedCard news={activeNews} />
+            <NewsFeedCard news={liveNews} statusMessage={newsStatusMessage} />
           </div>
         </main>
       </Container>
