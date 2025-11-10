@@ -62,9 +62,9 @@ export default function DashboardPage() {
         
         // Keep the mock allocation for the pie chart as requested
         const allocation = [
-          { label: "Alpha", value: 45 },
-          { label: "Low-Risk", value: 32 },
-          { label: "High-Risk", value: 23 },
+          { label: "Algorithmic Strategies", value: 45 },
+          { label: "Long-Term Strategies", value: 32 },
+          { label: "Intraday Strategies", value: 23 },
         ]
 
         setPortfolioSummary({

@@ -80,7 +80,7 @@ export function LowRiskNotificationPanel() {
       return "Connecting to live notification stream..."
     }
     if (status === "open" && !notifications.length) {
-      return "Listening for live signals from all low-risk pipelines."
+      return "Listening for live signals from all high-risk pipelines."
     }
     if (status === "error") {
       return "Attempting to reconnect to the notification stream."

@@ -5,19 +5,19 @@ import type { PortfolioSummary, StockItem } from "@/lib/dashboardTypes"
 type LineDatasetWithShadow = ChartData<"line">["datasets"][number] & { shadowColor: string }
 
 const PIE_COLOR_MAP = {
-  Alpha: {
+  "Algorithmic Strategies": {
     fill: "#22c55e",
     border: "#14532d",
     hover: "#16a34a",
     glow: "rgba(34,197,94,0.22)",
   },
-  "Low-Risk": {
+  "Long-Term Strategies": {
     fill: "#3b82f6",
     border: "#1e3a8a",
     hover: "#2563eb",
     glow: "rgba(59,130,246,0.18)",
   },
-  "High-Risk": {
+  "Intraday Strategies": {
     fill: "#f59e0b",
     border: "#92400e",
     hover: "#d97706",

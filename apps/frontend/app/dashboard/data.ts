@@ -79,8 +79,8 @@ export const portfolioSummary: PortfolioSummary = {
   investmentHorizon: 3,
   liquidityNeeds: "standard",
   allocation: [
-    { label: "Alpha", value: 45 },
-    { label: "Low-Risk", value: 32 },
+    { label: "Long-Term Strategies", value: 45 },
+    { label: "Intraday Strategies", value: 32 },
     { label: "High-Risk", value: 23 },
   ],
 }
