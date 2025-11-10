@@ -10,10 +10,10 @@ import {
   formatTemporal,
   resolveHeadline,
   toRecord,
-} from "@/components/low-risk/notification-utils"
-import type { KafkaNotification } from "@/components/low-risk/types"
-import { NotificationBody } from "@/components/low-risk/parts/NotificationBody"
-import { NotificationActions } from "@/components/low-risk/parts/NotificationActions"
+} from "@/components/intraday/notification-utils"
+import type { KafkaNotification } from "@/components/intraday/types"
+import { NotificationBody } from "@/components/intraday/parts/NotificationBody"
+import { NotificationActions } from "@/components/intraday/parts/NotificationActions"
 import { X } from "lucide-react"
 
 function resolveBody(notification: KafkaNotification): string {
