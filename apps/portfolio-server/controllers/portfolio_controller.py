@@ -126,6 +126,7 @@ class PortfolioController:
         if portfolio is None:
             defaults = {
                 "investment_amount": DEFAULT_PORTFOLIO_CASH,
+                "initial_investment": DEFAULT_PORTFOLIO_CASH,
                 "expected_return_target": DEFAULT_EXPECTED_RETURN_TARGET,
             }
             portfolio = await self.prisma.portfolio.create(
@@ -135,6 +136,7 @@ class PortfolioController:
                     "portfolio_name": f"{user.get('name') or user.get('firstName') or 'User'}'s Portfolio"
                     if user.get("name") or user.get("firstName")
                     else DEFAULT_PORTFOLIO_NAME,
+                    "initial_investment": defaults["initial_investment"],
                     "investment_amount": defaults["investment_amount"],
                     "current_value": defaults["investment_amount"],
                     "investment_horizon_years": DEFAULT_INVESTMENT_HORIZON_YEARS,
