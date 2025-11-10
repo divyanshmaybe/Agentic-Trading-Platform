@@ -12,11 +12,19 @@ os.environ["PATHWAY_LOG_LEVEL"] = "warning"
 import asyncio
 import time
 import logging
-from typing import Dict, Any
+from datetime import datetime, timedelta
+from typing import Any, Dict, Optional
+
 import pathway as pw
 from pathway.io.python import ConnectorSubject
 
 logger = logging.getLogger(__name__)
+
+try:
+    from market_data import AngelOneAdapter, get_market_data_service  # type: ignore
+except ImportError:  # pragma: no cover - defensive
+    AngelOneAdapter = None  # type: ignore
+    get_market_data_service = None  # type: ignore
 
 
 # ==================== Pathway Schemas ====================
@@ -122,10 +130,25 @@ class CandleFetcherTransformer(pw.AsyncTransformer, output_schema=CandleSchema):
     Processes each trigger asynchronously and non-blocking.
     """
 
-    def __init__(self, input_table, symbol: str = "^NSEI", **kwargs):
+    def __init__(
+        self,
+        input_table,
+        symbol: str = "^NSEI",
+        *,
+        provider_symbol: Optional[str] = None,
+        interval: str = "ONE_MINUTE",
+        **kwargs,
+    ):
         super().__init__(input_table=input_table, instance=pw.this.trigger_time, **kwargs)
         self.symbol = symbol
-        logger.info(f"CandleFetcherTransformer initialized for {symbol}")
+        self.provider_symbol = provider_symbol or symbol
+        self.interval = interval
+        logger.info(
+            "CandleFetcherTransformer initialized for %s (provider=%s, interval=%s)",
+            symbol,
+            self.provider_symbol,
+            interval,
+        )
     
     async def invoke(self, trigger_time: float) -> Dict:
         """
@@ -140,60 +163,135 @@ class CandleFetcherTransformer(pw.AsyncTransformer, output_schema=CandleSchema):
         Raises:
             ValueError: If no candle data is available
         """
-        import yfinance as yf
-        
-        logger.debug(f"Fetching candle for {self.symbol} at trigger {trigger_time}")
-        
-        # Non-blocking fetch using executor
-        loop = asyncio.get_event_loop()
-        
+        logger.debug("Fetching candle for %s at trigger %s", self.symbol, trigger_time)
+
+        candle = await self._try_market_service(trigger_time)
+        if candle:
+            return candle
+
+        # Fallback to yfinance for symbols not supported by the market adapter (e.g. indices)
+        return await self._fetch_via_yfinance(trigger_time)
+
+    async def _try_market_service(self, trigger_time: float) -> Optional[Dict[str, Any]]:
+        if get_market_data_service is None:
+            return None
+
         try:
-            # Fetch last 2 days of 1-minute candles to ensure we have latest data
+            service = get_market_data_service()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Market data service unavailable for regime pipeline: %s", exc)
+            return None
+
+        adapter = getattr(service, "adapter", None)
+        if adapter is None or not hasattr(adapter, "get_historical_candles"):
+            return None
+
+        if AngelOneAdapter is not None and isinstance(adapter, AngelOneAdapter):
+            now = datetime.utcnow()
+            start = now - timedelta(days=2)
+            fromdate = start.strftime("%Y-%m-%d 09:15")
+            todate = now.strftime("%Y-%m-%d %H:%M")
+
+            normalized = adapter.normalize_symbol(self.provider_symbol)
+            candles = adapter.get_historical_candles(
+                symbol=normalized,
+                interval=self.interval,
+                fromdate=fromdate,
+                todate=todate,
+                exchange="NSE",
+            )
+
+            if not candles:
+                return None
+
+            latest = sorted(candles, key=lambda item: item.get("timestamp", ""))[-1]
+            candle_timestamp = self._parse_timestamp(latest.get("timestamp"), default=trigger_time)
+
+            result = {
+                "timestamp": candle_timestamp,
+                "open": float(latest.get("open", 0.0)),
+                "high": float(latest.get("high", 0.0)),
+                "low": float(latest.get("low", 0.0)),
+                "close": float(latest.get("close", 0.0)),
+                "volume": float(latest.get("volume", 0.0)),
+                "symbol": self.symbol,
+            }
+
+            logger.debug(
+                "Fetched candle for %s via market service: close=%s volume=%s",
+                self.symbol,
+                result["close"],
+                result["volume"],
+            )
+
+            return result
+
+        return None
+
+    async def _fetch_via_yfinance(self, trigger_time: float) -> Dict[str, Any]:
+        import yfinance as yf
+
+        loop = asyncio.get_event_loop()
+
+        try:
             data = await loop.run_in_executor(
                 None,
                 lambda: yf.download(
-                    self.symbol, 
-                    period="2d", 
-                    interval="1m", 
-                    progress=False
-                )
+                    self.symbol,
+                    period="2d",
+                    interval="1m",
+                    progress=False,
+                    show_errors=False,
+                ),
             )
-            
-            if data.empty:
-                raise ValueError(f"No candle data available for {self.symbol}")
-            
-            # Flatten MultiIndex columns if present (yfinance sometimes returns MultiIndex)
-            if hasattr(data.columns, 'levels'):  # Check for MultiIndex without importing pandas
-                # Get column names - yfinance returns ('Open', ticker) for MultiIndex
-                data.columns = [col[0] if isinstance(col, tuple) else col for col in data.columns]
-            
-            # Get the latest candle - use dict to avoid pandas operations
-            latest_idx = len(data) - 1
-            latest_timestamp = data.index[latest_idx]
-            
-            # Extract values using column access (works with both pandas and dict-like structures)
-            candle_timestamp = latest_timestamp.timestamp() if hasattr(latest_timestamp, 'timestamp') else trigger_time
-            
-            result = {
-                "timestamp": candle_timestamp,
-                "open": float(data['Open'].iloc[latest_idx]),
-                "high": float(data['High'].iloc[latest_idx]),
-                "low": float(data['Low'].iloc[latest_idx]),
-                "close": float(data['Close'].iloc[latest_idx]),
-                "volume": float(data['Volume'].iloc[latest_idx]),
-                "symbol": self.symbol
-            }
-            
-            logger.info(
-                f"📊 Fetched candle for {self.symbol}: "
-                f"Close={result['close']:.2f}, Volume={result['volume']:.0f}"
-            )
-            
-            return result
-            
-        except Exception as exc:
-            logger.error(f"Error fetching candle for {self.symbol}: {exc}")
-            raise ValueError(f"Failed to fetch candle: {exc}")
+        except Exception as exc:  # pragma: no cover - network failures
+            logger.error("YFinance download failed for %s: %s", self.symbol, exc)
+            raise ValueError(f"Failed to fetch candle: {exc}") from exc
+
+        if data.empty:
+            raise ValueError(f"No candle data available for {self.symbol}")
+
+        if hasattr(data.columns, "levels"):
+            data.columns = [col[0] if isinstance(col, tuple) else col for col in data.columns]
+
+        latest_idx = len(data) - 1
+        latest_timestamp = data.index[latest_idx]
+        candle_timestamp = latest_timestamp.timestamp() if hasattr(latest_timestamp, "timestamp") else trigger_time
+
+        result = {
+            "timestamp": candle_timestamp,
+            "open": float(data["Open"].iloc[latest_idx]),
+            "high": float(data["High"].iloc[latest_idx]),
+            "low": float(data["Low"].iloc[latest_idx]),
+            "close": float(data["Close"].iloc[latest_idx]),
+            "volume": float(data["Volume"].iloc[latest_idx]),
+            "symbol": self.symbol,
+        }
+
+        logger.debug(
+            "Fetched candle for %s via yfinance fallback: close=%s volume=%s",
+            self.symbol,
+            result["close"],
+            result["volume"],
+        )
+
+        return result
+
+    @staticmethod
+    def _parse_timestamp(value: Any, *, default: float) -> float:
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+                try:
+                    return datetime.strptime(value, fmt).timestamp()
+                except ValueError:
+                    continue
+            try:
+                return datetime.fromisoformat(value).timestamp()
+            except ValueError:
+                pass
+        return default
 
 
 # Import pandas for MultiIndex handling

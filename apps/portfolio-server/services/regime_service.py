@@ -51,8 +51,19 @@ class RegimeService:
         """Initialize regime service with model training and Pathway pipeline"""
         self.logger = logging.getLogger(__name__)
         
+        # Configure symbols for training and streaming
+        self.training_symbol = os.getenv("REGIME_TRAINING_SYMBOL", "^NSEI")
+        provider_default = os.getenv("REGIME_PROVIDER_SYMBOL") or self.training_symbol.lstrip("^")
+        self.provider_symbol = provider_default
+
+        self.streaming_symbol = os.getenv("REGIME_STREAM_SYMBOL", self.training_symbol)
+        self.streaming_provider_symbol = (
+            os.getenv("REGIME_STREAM_PROVIDER_SYMBOL") or self.provider_symbol
+        )
+        self.streaming_interval = os.getenv("REGIME_STREAM_INTERVAL", "ONE_MINUTE")
+
         # Train HMM model on historical data
-        self.logger.info("🚀 Training HMM model on historical ^NSEI data...")
+        self.logger.info("🚀 Training HMM model using symbol %s (provider: %s)...", self.training_symbol, self.provider_symbol)
         self.classifier = self._train_model()
         self.logger.info(f"✅ Model trained with {self.classifier.n_regimes} regimes")
         
@@ -89,12 +100,22 @@ class RegimeService:
         try:
             # Fetch 2+ years of historical data for ^NSEI (Nifty 50)
             self.logger.info("📊 Fetching historical data for ^NSEI...")
-            data = fetch_nse_data(ticker="^NSEI", start_date="2020-01-01", end_date=None)
+            data = fetch_nse_data(
+                ticker=self.training_symbol,
+                start_date="2020-01-01",
+                end_date=None,
+                provider_symbol=self.provider_symbol,
+            )
             
             if data is None or data.empty:
                 self.logger.error("Failed to fetch historical data, using fallback training")
                 # Fallback: fetch shorter period
-                data = fetch_nse_data(ticker="^NSEI", start_date="2023-01-01", end_date=None)
+                data = fetch_nse_data(
+                    ticker=self.training_symbol,
+                    start_date="2023-01-01",
+                    end_date=None,
+                    provider_symbol=self.provider_symbol,
+                )
             
             self.logger.info(f"📈 Training on {len(data)} days of data")
             
@@ -164,7 +185,9 @@ class RegimeService:
             # 2. AsyncTransformer: Fetch candles
             candle_fetcher = CandleFetcherTransformer(
                 input_table=trigger_table,
-                symbol="^NSEI"
+                symbol=self.streaming_symbol,
+                provider_symbol=self.streaming_provider_symbol,
+                interval=self.streaming_interval,
             ).with_options(capacity=5)  # Limit concurrent fetches
             
             candles = candle_fetcher.successful
@@ -362,7 +385,12 @@ class RegimeService:
             self.logger.info(f"🔄 Retraining model from {start_date} with {n_regimes} regimes...")
             
             # Fetch data
-            data = fetch_nse_data(ticker="^NSEI", start_date=start_date, end_date=end_date)
+            data = fetch_nse_data(
+                ticker=self.training_symbol,
+                start_date=start_date,
+                end_date=end_date,
+                provider_symbol=self.provider_symbol,
+            )
             
             if data is None or data.empty:
                 raise ValueError("Failed to fetch training data")
