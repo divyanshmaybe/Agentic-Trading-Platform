@@ -23,7 +23,7 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 import pandas as pd
 import pathway as pw
@@ -138,6 +138,12 @@ SAMPLE_STOCKS: List[tuple[str, str]] = [
 NEWS_RECO_TOPIC = os.getenv("NEWS_STOCK_RECOMMENDATIONS_TOPIC", "news_pipeline_stock_recomendations")
 NEWS_RECO_PUBLISHER_NAME = "news_stock_recommendations_publisher"
 
+NEWS_SENTIMENT_TOPIC = os.getenv("NEWS_SENTIMENT_ARTICLES_TOPIC", "news_pipeline_sentiment_articles")
+NEWS_SENTIMENT_PUBLISHER_NAME = "news_sentiment_articles_publisher"
+
+NEWS_SECTOR_TOPIC = os.getenv("NEWS_SECTOR_ANALYSIS_TOPIC", "news_pipeline_sector_analysis")
+NEWS_SECTOR_PUBLISHER_NAME = "news_sector_analysis_publisher"
+
 
 class NewsStockRecommendationEvent(BaseModel):
     sector: Optional[str] = None
@@ -151,7 +157,26 @@ class NewsStockRecommendationEvent(BaseModel):
     generated_at: str
 
 
+class NewsSentimentArticleEvent(BaseModel):
+    stream: Optional[str] = None
+    title: Optional[str] = None
+    content: Optional[str] = None
+    sentiment: Optional[str] = None
+    url: Optional[str] = None
+    provider: str
+    generated_at: str
+
+
+class NewsSectorAnalysisEvent(BaseModel):
+    stream_count: int
+    analysis: str
+    provider: str
+    generated_at: str
+
+
 _news_reco_publisher: Optional[KafkaPublisher] = None
+_news_sentiment_publisher: Optional[KafkaPublisher] = None
+_news_sector_publisher: Optional[KafkaPublisher] = None
 
 
 def _get_news_reco_publisher() -> KafkaPublisher:
@@ -172,6 +197,46 @@ def _get_news_reco_publisher() -> KafkaPublisher:
         _news_reco_publisher = bus.get_publisher(NEWS_RECO_PUBLISHER_NAME)
 
     return _news_reco_publisher
+
+
+def _get_news_sentiment_publisher() -> KafkaPublisher:
+    global _news_sentiment_publisher
+
+    if _news_sentiment_publisher is not None:
+        return _news_sentiment_publisher
+
+    bus = default_kafka_bus
+    try:
+        _news_sentiment_publisher = bus.register_publisher(
+            NEWS_SENTIMENT_PUBLISHER_NAME,
+            topic=NEWS_SENTIMENT_TOPIC,
+            value_model=NewsSentimentArticleEvent,
+            default_headers={"source": "news_pipeline"},
+        )
+    except PublisherAlreadyRegistered:
+        _news_sentiment_publisher = bus.get_publisher(NEWS_SENTIMENT_PUBLISHER_NAME)
+
+    return _news_sentiment_publisher
+
+
+def _get_news_sector_publisher() -> KafkaPublisher:
+    global _news_sector_publisher
+
+    if _news_sector_publisher is not None:
+        return _news_sector_publisher
+
+    bus = default_kafka_bus
+    try:
+        _news_sector_publisher = bus.register_publisher(
+            NEWS_SECTOR_PUBLISHER_NAME,
+            topic=NEWS_SECTOR_TOPIC,
+            value_model=NewsSectorAnalysisEvent,
+            default_headers={"source": "news_pipeline"},
+        )
+    except PublisherAlreadyRegistered:
+        _news_sector_publisher = bus.get_publisher(NEWS_SECTOR_PUBLISHER_NAME)
+
+    return _news_sector_publisher
 
 
 def _publish_stock_recommendations_to_kafka(
@@ -221,6 +286,95 @@ def _publish_stock_recommendations_to_kafka(
     )
 
 
+def _publish_sentiment_articles_to_kafka(
+    sentiment_by_stream: Mapping[str, Sequence[Mapping[str, Any]]],
+    *,
+    provider: str,
+    generated_at: str,
+    logger: logging.Logger,
+) -> None:
+    articles = [
+        (stream, article)
+        for stream, items in sentiment_by_stream.items()
+        for article in items
+    ]
+    if not articles:
+        logger.info("No sentiment articles to publish; skipping Kafka publication")
+        return
+
+    try:
+        publisher = _get_news_sentiment_publisher()
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.warning("Unable to initialise news sentiment publisher: %s", exc)
+        return
+
+    published = 0
+    for stream, article in articles:
+        try:
+            event = NewsSentimentArticleEvent(
+                stream=stream,
+                title=article.get("title"),
+                content=article.get("content"),
+                sentiment=article.get("sentiment"),
+                url=article.get("url"),
+                provider=provider,
+                generated_at=generated_at,
+            )
+            publisher.publish(event.model_dump(), key=stream)
+            published += 1
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning(
+                "Failed to publish sentiment article for stream %s: %s",
+                stream,
+                exc,
+            )
+
+    logger.info(
+        "Published %s sentiment article(s) to Kafka topic %s",
+        published,
+        NEWS_SENTIMENT_TOPIC,
+    )
+
+
+def _publish_sector_analysis_to_kafka(
+    payload: Mapping[str, Any],
+    *,
+    provider: str,
+    generated_at: str,
+    logger: logging.Logger,
+) -> None:
+    analysis = str(payload.get("analysis") or "").strip()
+    stream_count = int(payload.get("stream_count") or 0)
+    if not analysis:
+        logger.info("No sector analysis content to publish; skipping Kafka publication")
+        return
+
+    try:
+        publisher = _get_news_sector_publisher()
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.warning("Unable to initialise sector analysis publisher: %s", exc)
+        return
+
+    try:
+        event = NewsSectorAnalysisEvent(
+            stream_count=stream_count,
+            analysis=analysis,
+            provider=provider,
+            generated_at=generated_at,
+        )
+        publisher.publish(event.model_dump(), key=provider or "sector_analysis")
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.warning("Failed to publish sector analysis event: %s", exc)
+        return
+
+    logger.info(
+        "Published sector analysis update to Kafka topic %s (streams=%s, provider=%s)",
+        NEWS_SECTOR_TOPIC,
+        stream_count,
+        provider,
+    )
+
+
 # Eagerly initialise the publisher so the topic exists before subscribers attach.
 try:
     _get_news_reco_publisher()
@@ -231,6 +385,30 @@ try:
 except Exception as exc:  # pragma: no cover - defensive logging
     logging.getLogger(__name__).warning(
         "[KAFKA] Unable to initialise news stock recommendation publisher: %s",
+        exc,
+    )
+
+try:
+    _get_news_sentiment_publisher()
+    logging.getLogger(__name__).info(
+        "[KAFKA] News sentiment publisher initialised; topic '%s' ready.",
+        NEWS_SENTIMENT_TOPIC,
+    )
+except Exception as exc:  # pragma: no cover - defensive logging
+    logging.getLogger(__name__).warning(
+        "[KAFKA] Unable to initialise news sentiment publisher: %s",
+        exc,
+    )
+
+try:
+    _get_news_sector_publisher()
+    logging.getLogger(__name__).info(
+        "[KAFKA] Sector analysis publisher initialised; topic '%s' ready.",
+        NEWS_SECTOR_TOPIC,
+    )
+except Exception as exc:  # pragma: no cover - defensive logging
+    logging.getLogger(__name__).warning(
+        "[KAFKA] Unable to initialise sector analysis publisher: %s",
         exc,
     )
 
@@ -385,6 +563,13 @@ def execute_news_sentiment_pipeline(
     article_count = sum(len(v) for v in sentiment_by_stream.values())
     log.info("Aggregated %s analysed articles across %s streams", article_count, len(sentiment_by_stream))
 
+    _publish_sentiment_articles_to_kafka(
+        sentiment_by_stream,
+        provider=sentiment_source,
+        generated_at=run_started_at,
+        logger=log,
+    )
+
     # ------------------------------------------------------------------
     # Stage 2: Gemini trading agent (optional)
     # ------------------------------------------------------------------
@@ -416,6 +601,12 @@ def execute_news_sentiment_pipeline(
         "analysis": sector_analysis,
     }
     _write_json(sector_analysis_path, sector_analysis_payload)
+    _publish_sector_analysis_to_kafka(
+        sector_analysis_payload,
+        provider=sector_agent_source,
+        generated_at=run_started_at,
+        logger=log,
+    )
 
     # ------------------------------------------------------------------
     # Stage 3: Stock recommendations (optional Gemini call)
