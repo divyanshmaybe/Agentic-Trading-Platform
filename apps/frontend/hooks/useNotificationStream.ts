@@ -81,6 +81,7 @@ export function useNotificationStream(options: UseNotificationStreamOptions = {}
           }
           return next
         })
+		console.log("[Notifications] Notification received:", payload)
         setLastEventAt(Date.now())
       } catch (err) {
         console.warn("[Notifications] Failed to parse notification event:", err, event.data)

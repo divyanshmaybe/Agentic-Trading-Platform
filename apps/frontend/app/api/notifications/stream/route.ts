@@ -47,6 +47,7 @@ function enqueueSseEvent(
   try {
     const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
     controller.enqueue(textEncoder.encode(payload))
+    console.log("[SSE] Event enqueued:", event, data)
   } catch (error) {
     console.warn("[SSE] Failed to enqueue event:", error)
   }
@@ -135,6 +136,46 @@ function parseStringArray(value: unknown): string[] | undefined {
   }
 
   return undefined
+}
+
+function normalizeKafkaPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  const candidateKeys = ["value", "payload", "data"]
+  const visited = new Set<Record<string, unknown>>()
+
+  let current: Record<string, unknown> | undefined = payload
+
+  while (current && !visited.has(current)) {
+    visited.add(current)
+    let advanced = false
+
+    for (const key of candidateKeys) {
+      if (!(key in current)) {
+        continue
+      }
+
+      const nextLayer = current[key]
+
+      if (typeof nextLayer === "string") {
+        try {
+          current = JSON.parse(nextLayer) as Record<string, unknown>
+          advanced = true
+          break
+        } catch {
+          // Not JSON; move on to other keys.
+        }
+      } else if (nextLayer && typeof nextLayer === "object" && !Array.isArray(nextLayer)) {
+        current = nextLayer as Record<string, unknown>
+        advanced = true
+        break
+      }
+    }
+
+    if (!advanced) {
+      break
+    }
+  }
+
+  return current ?? {}
 }
 
 function getHeaderString(headers: KafkaMessage["headers"], key: string): string | undefined {
@@ -422,8 +463,36 @@ export async function GET(request: NextRequest) {
             }
 
             try {
-              const payload = JSON.parse(message.value.toString("utf8")) as Record<string, unknown>
-              const notification = mapKafkaMessageToNotification(topic, partition, payload, message)
+              const rawMessage = message.value.toString("utf8")
+              let payload: Record<string, unknown>
+              try {
+                payload = JSON.parse(rawMessage) as Record<string, unknown>
+              } catch (parseError) {
+                console.error("[Kafka] Failed to parse message value as JSON:", {
+                  topic,
+                  partition,
+                  offset: message.offset,
+                  rawMessage,
+                  error: parseError,
+                })
+                return
+              }
+
+              const normalizedPayload = normalizeKafkaPayload(payload)
+              console.log("[Kafka] Parsed notification payload:", {
+                topic,
+                partition,
+                offset: message.offset,
+                originalPayload: payload,
+                normalizedPayload,
+              })
+
+              const notification = mapKafkaMessageToNotification(
+                topic,
+                partition,
+                normalizedPayload,
+                message,
+              )
               emitNotification(notification)
             } catch (error) {
               emitError(
@@ -462,4 +531,3 @@ export async function GET(request: NextRequest) {
     },
   })
 }
-
