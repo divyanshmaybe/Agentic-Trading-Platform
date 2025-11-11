@@ -35,6 +35,7 @@ from pipelines.risk import (  # type: ignore  # noqa: E402
 )
 from utils import allocate_portfolios  # type: ignore  # noqa: E402
 from utils.risk_monitor import prepare_risk_monitor_requests  # type: ignore  # noqa: E402
+from utils.symbol_based_risk_monitor import prepare_symbol_based_risk_requests  # type: ignore  # noqa: E402
 from workers.risk_alert_tasks import send_risk_alert_email_task  # type: ignore  # noqa: E402
 
 class PipelineService:
@@ -340,33 +341,43 @@ class PipelineService:
             await manager.connect()
         client = manager.get_client()
 
-        positions = await client.position.find_many(
-            where={"status": "open"},
-            include={"portfolio": True},
-            take=max_positions,
-        )
-
-        if not positions:
-            self.logger.info("Risk monitor: no open positions found")
-            return {"processed": 0, "alerts": 0, "published": 0, "emails_queued": 0}
-
+        # Get market data service
         market_service = None
         try:
             market_service = get_market_data_service()
         except Exception as exc:  # pragma: no cover - defensive logging
             self.logger.warning("Risk monitor: market data service unavailable (%s)", exc)
+            return {"processed": 0, "alerts": 0, "published": 0, "emails_queued": 0}
 
-        requests = prepare_risk_monitor_requests(
-            positions,
-            market_data_service=market_service,
+        # NEW APPROACH: Symbol-based monitoring (more efficient)
+        # 1. Get unique symbols across all positions
+        # 2. Fetch price ONCE per symbol
+        # 3. Query database for affected users (SQL filtering)
+        requests, monitoring_metadata = await prepare_symbol_based_risk_requests(
+            client,
+            market_service,
             logger=self.logger,
         )
 
         if not requests:
-            self.logger.info("Risk monitor: no evaluable position snapshots constructed")
-            return {"processed": 0, "alerts": 0, "published": 0, "emails_queued": 0}
+            self.logger.info(
+                "Risk monitor: no affected users (symbols=%s, prices=%s)",
+                monitoring_metadata.get("unique_symbols", 0),
+                monitoring_metadata.get("prices_fetched", 0),
+            )
+            return {
+                "processed": 0,
+                "alerts": 0,
+                "published": 0,
+                "emails_queued": 0,
+                "metadata": monitoring_metadata,
+            }
 
-        self.logger.info("Risk monitor: evaluating %s position(s)", len(requests))
+        self.logger.info(
+            "Risk monitor: %s user(s) affected across %s unique symbols",
+            len(requests),
+            monitoring_metadata.get("unique_symbols", 0),
+        )
 
         rows = run_risk_monitor_requests(requests, logger=self.logger)
         generated_at = datetime.utcnow().isoformat() + "Z"

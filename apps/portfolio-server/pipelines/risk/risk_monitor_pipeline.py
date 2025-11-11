@@ -368,7 +368,7 @@ class _RiskCollector:
     def __init__(self) -> None:
         self._rows: List[Dict[str, Any]] = []
 
-    def __call__(self, _key: Any, row: Mapping[str, Any], _time: Any, is_addition: bool) -> None:
+    def __call__(self, key: Any, row: Mapping[str, Any], time: Any, is_addition: bool) -> None:
         if not is_addition:
             return
         self._rows.append(dict(row))
