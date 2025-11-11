@@ -53,7 +53,9 @@ model Portfolio {
   rebalancing_frequency    Json?
   allocation_strategy      Json?
   constraints              Json?
-  status                   String    @default("active")
+  status                   String   @default("active")
+  allocation_status        String   @default("pending") // pending, processing, ready, failed
+  rebalancing_date         DateTime? // Next date when portfolio should be rebalanced
   last_rebalanced_at       DateTime?
   next_rebalance_at        DateTime?
   metadata                 Json?     @default("{}")
@@ -82,14 +84,17 @@ model Portfolio {
 model PortfolioAllocation {
   id                   String   @id @default(uuid())
   portfolio_id         String
-  allocation_type      String
+  allocation_type      String   // "alpha_agent", "high_risk", "low_risk"
   target_weight        Decimal  @db.Decimal(9, 6)
-  current_weight       Decimal  @default(0) @db.Decimal(9, 6)
-  allocated_amount     Decimal  @default(0) @db.Decimal(20, 4)
-  current_value        Decimal  @default(0) @db.Decimal(20, 4)
-  pnl                  Decimal  @default(0) @db.Decimal(20, 4)
-  pnl_percentage       Decimal  @default(0) @db.Decimal(9, 6)
-  drift_percentage     Decimal  @default(0) @db.Decimal(9, 6)
+  current_weight       Decimal  @db.Decimal(9, 6) @default(0)
+  allocated_amount     Decimal  @db.Decimal(20, 4) @default(0)
+  current_value        Decimal  @db.Decimal(20, 4) @default(0)
+  expected_return      Decimal? @db.Decimal(9, 6) // From Pathway allocation pipeline
+  expected_risk        Decimal? @db.Decimal(9, 6) // From Pathway allocation pipeline
+  regime               String?  // Market regime at allocation time
+  pnl                  Decimal  @db.Decimal(20, 4) @default(0)
+  pnl_percentage       Decimal  @db.Decimal(9, 6) @default(0)
+  drift_percentage     Decimal  @db.Decimal(9, 6) @default(0)
   requires_rebalancing Boolean  @default(false)
   metadata             Json?    @default("{}")
   created_at           DateTime @default(now())

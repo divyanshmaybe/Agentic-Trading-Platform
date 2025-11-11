@@ -96,8 +96,9 @@ class MarketRegimeClassifier:
             features["volume_ratio"] = volume_series / volume_mean_20
             volume_mean_5 = volume_series.rolling(window=5, min_periods=1).mean()
             features["volume_trend"] = volume_mean_5 / volume_mean_20
-            features["volume_ratio"].fillna(1.0, inplace=True)
-            features["volume_trend"].fillna(1.0, inplace=True)
+            # Fix pandas FutureWarning by using proper DataFrame method
+            features["volume_ratio"] = features["volume_ratio"].fillna(1.0)
+            features["volume_trend"] = features["volume_trend"].fillna(1.0)
 
         # Price action
         features["price_range"] = (df["High"] - df["Low"]) / df["Close"]

@@ -129,6 +129,8 @@ class PortfolioController:
                 "initial_investment": DEFAULT_PORTFOLIO_CASH,
                 "expected_return_target": DEFAULT_EXPECTED_RETURN_TARGET,
             }
+            
+            # Create portfolio with pending allocation status
             portfolio = await self.prisma.portfolio.create(
                 data={
                     "organization_id": organization_id,
@@ -143,6 +145,7 @@ class PortfolioController:
                     "expected_return_target": defaults["expected_return_target"],
                     "risk_tolerance": DEFAULT_RISK_TOLERANCE,
                     "liquidity_needs": DEFAULT_LIQUIDITY_NEEDS,
+                    "allocation_status": "pending",  # Will be updated by allocation task
                     "metadata": json.dumps(
                         {
                             "auto_created": True,
@@ -153,6 +156,35 @@ class PortfolioController:
                     ),
                 }
             )
+            
+            # Trigger portfolio allocation via Celery
+            try:
+                from workers.allocation_tasks import allocate_new_portfolio_task
+                
+                user_inputs = {
+                    "risk_tolerance": portfolio.risk_tolerance,
+                    "investment_horizon_years": portfolio.investment_horizon_years,
+                    "liquidity_needs": portfolio.liquidity_needs or "medium",
+                    "expected_return_target": float(portfolio.expected_return_target),
+                    "rebalancing_frequency": "quarterly",  # Default frequency
+                }
+                
+                task = allocate_new_portfolio_task.delay(
+                    portfolio_id=portfolio.id,
+                    user_id=str(user_id),
+                    organization_id=organization_id,
+                    user_inputs=user_inputs,
+                    initial_value=float(portfolio.investment_amount),
+                )
+                
+                self.logger.info(
+                    f"✅ Portfolio allocation task dispatched for {portfolio.id} (task_id={task.id})"
+                )
+            except Exception as exc:
+                self.logger.error(
+                    f"❌ Failed to dispatch allocation task for portfolio {portfolio.id}: {exc}",
+                    exc_info=True
+                )
 
         return PortfolioResponse.model_validate(portfolio)
 

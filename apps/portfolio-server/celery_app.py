@@ -18,6 +18,7 @@ celery_app = Celery(
         "workers.pipeline_tasks",
         "workers.market_data_tasks",  # API-based tasks only
         "workers.angelone_token_task",  # Angel One token map generation
+        "workers.allocation_tasks",  # Portfolio allocation and rebalancing
     ],
 )
 
@@ -49,7 +50,7 @@ celery_app.conf.beat_schedule = {
 
 if REBALANCE_ENABLED:
     celery_app.conf.beat_schedule["portfolio-daily-rebalance"] = {
-        "task": "pipeline.rebalance.scheduled",
+        "task": "portfolio.daily_rebalancing_sweep",
         "schedule": crontab(hour=REBALANCE_HOUR, minute=REBALANCE_MINUTE, day_of_week=REBALANCE_DAY_OF_WEEK),
         "options": {"queue": REBALANCE_QUEUE},
     }
