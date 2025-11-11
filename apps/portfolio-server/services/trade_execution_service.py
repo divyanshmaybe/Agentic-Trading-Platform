@@ -1,0 +1,588 @@
+"""
+Trade Execution Service
+
+Provides helpers for persisting auto-trade jobs, publishing events, and delegating
+execution to broker integrations.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import uuid
+from dataclasses import dataclass
+from decimal import Decimal, ROUND_HALF_UP
+from typing import Any, Dict, Iterable, List, Optional
+
+import os
+
+from db import get_db_manager  # type: ignore  # noqa: E402
+from pipelines.nse.trade_execution_pipeline import (  # type: ignore  # noqa: E402
+    TradeExecutionEvent,
+    publish_trade_execution_events,
+)
+
+
+@dataclass
+class TradeExecutionRecord:
+    """Lightweight representation of a persisted trade execution log."""
+
+    id: str
+    request_id: str
+    status: str
+    broker_order_id: Optional[str]
+
+
+class TradeExecutionService:
+    """Coordinates persistence, messaging, and broker handoff for trade jobs."""
+
+    def __init__(self, logger: Optional[logging.Logger] = None) -> None:
+        self.logger = logger or logging.getLogger(__name__)
+        self._manager = get_db_manager()
+
+    async def _ensure_client(self):
+        if not self._manager.is_connected():
+            await self._manager.connect()
+        return self._manager.get_client()
+
+    @staticmethod
+    def _as_decimal(value: Any, precision: str = "0.0001") -> Decimal:
+        try:
+            return Decimal(str(value)).quantize(Decimal(precision), rounding=ROUND_HALF_UP)
+        except Exception:
+            return Decimal("0")
+
+    async def create_trade_log(
+        self,
+        job_row: Dict[str, Any],
+        *,
+        client: Optional[Any] = None,
+    ) -> TradeExecutionRecord:
+        """Persist a trade execution job into the database."""
+
+        client = client or await self._ensure_client()
+
+        metadata = {}
+        metadata_json = job_row.get("metadata_json")
+        if isinstance(metadata_json, str) and metadata_json:
+            try:
+                metadata = json.loads(metadata_json)
+            except json.JSONDecodeError:
+                metadata = {"raw_metadata": metadata_json}
+
+        # Add triggering agent information to metadata
+        if "triggered_by" not in metadata:
+            metadata["triggered_by"] = job_row.get("triggered_by", "high_risk_agent")
+
+        data = {
+            "request_id": job_row["request_id"],
+            "user_id": job_row["user_id"],
+            "symbol": job_row["symbol"],
+            "side": job_row["side"],
+            "quantity": int(job_row["quantity"]),
+            "allocated_capital": self._as_decimal(job_row["allocated_capital"]),
+            "reference_price": self._as_decimal(job_row["reference_price"]),
+            "confidence": self._as_decimal(job_row["confidence"], "0.000001"),
+            "take_profit_pct": self._as_decimal(job_row["take_profit_pct"], "0.000001"),
+            "stop_loss_pct": self._as_decimal(job_row["stop_loss_pct"], "0.000001"),
+            "status": "pending",
+            "signal_id": job_row.get("signal_id"),
+            "metadata": json.dumps(metadata),
+        }
+        
+        # Only add portfolio_id if it exists
+        if job_row.get("portfolio_id"):
+            data["portfolio_id"] = job_row["portfolio_id"]
+
+        record = await client.tradeexecutionlog.create(data=data)
+        self.logger.info(
+            "Logged trade request %s for portfolio %s (%s %s x %s) - triggered by %s",
+            record.id,
+            data["portfolio_id"],
+            data["side"],
+            data["symbol"],
+            data["quantity"],
+            metadata.get("triggered_by", "unknown"),
+        )
+        return TradeExecutionRecord(
+            id=record.id,
+            request_id=data["request_id"],
+            status=record.status,
+            broker_order_id=record.broker_order_id if hasattr(record, "broker_order_id") else None,
+        )
+
+    async def persist_and_publish(
+        self,
+        job_rows: Iterable[Dict[str, Any]],
+        *,
+        publish_kafka: bool = True,
+    ) -> List[TradeExecutionEvent]:
+        """Persist trade jobs and optionally publish them onto Kafka."""
+
+        client = await self._ensure_client()
+        events: List[TradeExecutionEvent] = []
+
+        for row in job_rows:
+            record = await self.create_trade_log(row, client=client)
+            metadata_json = row.get("metadata_json") or "{}"
+            try:
+                metadata = json.loads(metadata_json)
+                if not isinstance(metadata, dict):
+                    metadata = {}
+            except json.JSONDecodeError:
+                metadata = {"raw_metadata": metadata_json}
+
+            event = TradeExecutionEvent(
+                trade_id=record.id,
+                request_id=row["request_id"],
+                signal_id=row.get("signal_id", ""),
+                user_id=row["user_id"],
+                portfolio_id=row["portfolio_id"],
+                symbol=row["symbol"],
+                side=row["side"],
+                quantity=int(row["quantity"]),
+                allocated_capital=float(row["allocated_capital"]),
+                confidence=float(row["confidence"]),
+                reference_price=float(row["reference_price"]),
+                take_profit_pct=float(row["take_profit_pct"]),
+                stop_loss_pct=float(row["stop_loss_pct"]),
+                explanation=row.get("explanation", ""),
+                filing_time=row.get("filing_time", ""),
+                generated_at=row.get("generated_at", ""),
+                metadata=metadata,
+                status="pending",
+            )
+            events.append(event)
+
+        if publish_kafka and events:
+            publish_trade_execution_events(events, logger=self.logger)
+
+        return events
+
+    async def update_status(
+        self,
+        trade_id: str,
+        *,
+        status: str,
+        broker_order_id: Optional[str] = None,
+        error_message: Optional[str] = None,
+        executed_price: Optional[float] = None,
+        executed_quantity: Optional[int] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Update persisted trade log with execution results."""
+
+        client = await self._ensure_client()
+        data: Dict[str, Any] = {
+            "status": status,
+        }
+        if broker_order_id:
+            data["broker_order_id"] = broker_order_id
+        if error_message:
+            data["error_message"] = error_message
+        if executed_price is not None:
+            data["executed_price"] = self._as_decimal(executed_price)
+        if executed_quantity is not None:
+            data["executed_quantity"] = int(executed_quantity)
+        if metadata:
+            data["metadata"] = json.dumps(metadata)
+
+        await client.tradeexecutionlog.update(
+            where={"id": trade_id},
+            data=data,
+        )
+        self.logger.info("Updated trade %s -> status=%s", trade_id, status)
+
+    async def fetch_trade_log(self, trade_id: str) -> Optional[Any]:
+        client = await self._ensure_client()
+        return await client.tradeexecutionlog.find_unique(where={"id": trade_id})
+
+    async def execute_trade(
+        self,
+        trade_id: str,
+        *,
+        simulate: Optional[bool] = None,
+    ) -> Dict[str, Any]:
+        """
+        Execute a trade job using the configured broker integration.
+
+        When simulation mode is enabled (default when ANGELONE_TRADING_ENABLED is false),
+        the trade is marked as executed immediately without contacting the broker.
+        
+        After successful execution:
+        1. Updates the trade log status
+        2. Adds the trade to portfolio's allocation trades array
+        3. Triggers portfolio value recalculation
+        
+        Note: Take-profit and stop-loss orders are NOT automatically created.
+        They should only be created when explicitly specified in the trading strategy.
+        """
+
+        record = await self.fetch_trade_log(trade_id)
+        if record is None:
+            self.logger.warning("Trade %s not found for execution", trade_id)
+            return {"status": "missing", "trade_id": trade_id}
+
+        simulate = simulate if simulate is not None else (
+            os.getenv("ANGELONE_TRADING_ENABLED", "false").lower() not in {"1", "true", "yes"}
+        )
+
+        if simulate:
+            executed_price = float(record.reference_price)
+            executed_quantity = int(record.quantity)
+            
+            # Update trade log status
+            await self.update_status(
+                trade_id,
+                status="simulated_executed",
+                executed_price=executed_price,
+                executed_quantity=executed_quantity,
+                metadata={"simulation": True},
+            )
+            self.logger.info("✅ Simulated execution for trade %s", trade_id)
+            
+            # Create TP/SL orders for NSE pipeline trades
+            await self._create_tp_sl_orders(
+                record,
+                executed_price=executed_price,
+                executed_quantity=executed_quantity,
+            )
+            
+            # Add trade to portfolio allocation and trigger portfolio update
+            await self._update_portfolio_allocation(
+                record,
+                executed_price=executed_price,
+                executed_quantity=executed_quantity,
+            )
+            
+            return {
+                "status": "simulated_executed",
+                "trade_id": trade_id,
+                "executed_price": executed_price,
+                "executed_quantity": executed_quantity,
+            }
+
+        # Placeholder for real broker integration
+        await self.update_status(
+            trade_id,
+            status="failed",
+            error_message="Live broker integration not configured",
+        )
+        self.logger.error("Live execution not configured for trade %s", trade_id)
+        return {
+            "status": "failed",
+            "trade_id": trade_id,
+            "error": "Live broker integration not configured",
+        }
+    
+    async def _create_tp_sl_orders(
+        self,
+        trade_record: Any,
+        *,
+        executed_price: float,
+        executed_quantity: int,
+    ) -> None:
+        """
+        Create take-profit and stop-loss orders for an executed trade.
+        
+        This creates pending orders that will be monitored by the order monitor worker.
+        The TP/SL percentages come from the original trade record.
+        
+        Args:
+            trade_record: The executed trade log record
+            executed_price: Price at which the trade was executed
+            executed_quantity: Quantity that was executed
+        """
+        
+        client = await self._ensure_client()
+        
+        # Extract fields from trade record
+        user_id = str(getattr(trade_record, "user_id", ""))
+        portfolio_id = str(getattr(trade_record, "portfolio_id", ""))
+        symbol = str(getattr(trade_record, "symbol", ""))
+        side = str(getattr(trade_record, "side", "BUY"))
+        tp_pct = float(getattr(trade_record, "take_profit_pct", 0.03))
+        sl_pct = float(getattr(trade_record, "stop_loss_pct", 0.01))
+        
+        if not user_id or not portfolio_id or not symbol:
+            self.logger.warning(
+                "Cannot create TP/SL orders: missing required fields for trade %s",
+                getattr(trade_record, "id", ""),
+            )
+            return
+        
+        try:
+            # Calculate TP/SL prices
+            if side == "BUY":
+                # For long positions
+                tp_price = executed_price * (1 + tp_pct)
+                sl_price = executed_price * (1 - sl_pct)
+                tp_side = "SELL"
+                sl_side = "SELL"
+            else:
+                # For short positions
+                tp_price = executed_price * (1 - tp_pct)
+                sl_price = executed_price * (1 + sl_pct)
+                tp_side = "BUY"
+                sl_side = "BUY"
+            
+            # Create Take-Profit Order
+            tp_metadata = {
+                "order_type": "take_profit",
+                "parent_trade_id": str(getattr(trade_record, "id", "")),
+                "triggered_by": "nse_pipeline_tp",
+                "target_pct": tp_pct,
+            }
+            
+            tp_order = await client.tradeexecutionlog.create(
+                data={
+                    "request_id": f"tp_{uuid.uuid4().hex[:12]}",
+                    "user_id": user_id,
+                    "portfolio_id": portfolio_id,
+                    "symbol": symbol,
+                    "side": tp_side,
+                    "quantity": executed_quantity,
+                    "allocated_capital": self._as_decimal(executed_price * executed_quantity),
+                    "reference_price": self._as_decimal(tp_price),
+                    "confidence": self._as_decimal(0.9, "0.000001"),
+                    "take_profit_pct": self._as_decimal(0, "0.000001"),
+                    "stop_loss_pct": self._as_decimal(0, "0.000001"),
+                    "status": "pending",
+                    "metadata": json.dumps(tp_metadata),
+                }
+            )
+            
+            self.logger.info(
+                "✅ Created TP order %s: %s %s @ ₹%.2f (%.1f%% profit)",
+                tp_order.id,
+                tp_side,
+                symbol,
+                tp_price,
+                tp_pct * 100,
+            )
+            
+            # Create Stop-Loss Order
+            sl_metadata = {
+                "order_type": "stop_loss",
+                "parent_trade_id": str(getattr(trade_record, "id", "")),
+                "triggered_by": "nse_pipeline_sl",
+                "target_pct": sl_pct,
+            }
+            
+            sl_order = await client.tradeexecutionlog.create(
+                data={
+                    "request_id": f"sl_{uuid.uuid4().hex[:12]}",
+                    "user_id": user_id,
+                    "portfolio_id": portfolio_id,
+                    "symbol": symbol,
+                    "side": sl_side,
+                    "quantity": executed_quantity,
+                    "allocated_capital": self._as_decimal(executed_price * executed_quantity),
+                    "reference_price": self._as_decimal(sl_price),
+                    "confidence": self._as_decimal(0.9, "0.000001"),
+                    "take_profit_pct": self._as_decimal(0, "0.000001"),
+                    "stop_loss_pct": self._as_decimal(0, "0.000001"),
+                    "status": "pending",
+                    "metadata": json.dumps(sl_metadata),
+                }
+            )
+            
+            self.logger.info(
+                "✅ Created SL order %s: %s %s @ ₹%.2f (%.1f%% loss)",
+                sl_order.id,
+                sl_side,
+                symbol,
+                sl_price,
+                sl_pct * 100,
+            )
+            
+        except Exception as exc:
+            self.logger.error(
+                "Failed to create TP/SL orders for trade %s: %s",
+                getattr(trade_record, "id", ""),
+                exc,
+                exc_info=True
+            )
+    
+    async def _update_portfolio_allocation(
+        self,
+        trade_record: Any,
+        *,
+        executed_price: float,
+        executed_quantity: int,
+    ) -> None:
+        """
+        Update portfolio allocation and trigger value recalculation after trade execution.
+        
+        This method:
+        1. Adds the trade to the portfolio's allocation trades array
+        2. Triggers portfolio value recalculation
+        
+        Args:
+            trade_record: The executed trade log record
+            executed_price: Price at which the trade was executed
+            executed_quantity: Quantity that was executed
+        """
+        
+        client = await self._ensure_client()
+        
+        portfolio_id = str(getattr(trade_record, "portfolio_id", ""))
+        symbol = str(getattr(trade_record, "symbol", ""))
+        side = str(getattr(trade_record, "side", "BUY"))
+        
+        if not portfolio_id:
+            self.logger.warning(
+                "Cannot update portfolio allocation: missing portfolio_id for trade %s",
+                getattr(trade_record, "id", ""),
+            )
+            return
+        
+        try:
+            # Fetch current portfolio
+            portfolio = await client.portfolio.find_unique(
+                where={"id": portfolio_id},
+                include={"positions": True}
+            )
+            
+            if not portfolio:
+                self.logger.warning("Portfolio %s not found", portfolio_id)
+                return
+            
+            # Get current allocation trades (parse JSON)
+            current_allocations = []
+            if portfolio.allocation_trades:
+                if isinstance(portfolio.allocation_trades, str):
+                    try:
+                        current_allocations = json.loads(portfolio.allocation_trades)
+                    except json.JSONDecodeError:
+                        current_allocations = []
+                elif isinstance(portfolio.allocation_trades, list):
+                    current_allocations = portfolio.allocation_trades
+            
+            # Parse metadata to get triggered_by information
+            metadata = {}
+            if hasattr(trade_record, "metadata"):
+                meta = getattr(trade_record, "metadata")
+                if isinstance(meta, dict):
+                    metadata = meta
+                elif isinstance(meta, str) and meta:
+                    try:
+                        metadata = json.loads(meta)
+                    except json.JSONDecodeError:
+                        pass
+            
+            # Create allocation entry
+            allocation_entry = {
+                "trade_log_id": str(getattr(trade_record, "id", "")),
+                "symbol": symbol,
+                "side": side,
+                "quantity": executed_quantity,
+                "executed_price": executed_price,
+                "allocated_capital": float(getattr(trade_record, "allocated_capital", 0)),
+                "confidence": float(getattr(trade_record, "confidence", 0)),
+                "triggered_by": metadata.get("triggered_by", "high_risk_agent"),
+                "executed_at": str(getattr(trade_record, "created_at", "")),
+            }
+            
+            # Append to allocation trades
+            updated_allocations = [*current_allocations, allocation_entry]
+            
+            # Update portfolio - serialize to JSON string
+            await client.portfolio.update(
+                where={"id": portfolio_id},
+                data={"allocation_trades": json.dumps(updated_allocations)}
+            )
+            
+            self.logger.info(
+                "✅ Added trade to portfolio allocation (triggered by %s): %s %s x %d @ ₹%.2f",
+                allocation_entry["triggered_by"],
+                side,
+                symbol,
+                executed_quantity,
+                executed_price,
+            )
+            
+            # Trigger portfolio value recalculation
+            await self._recalculate_portfolio_value(portfolio_id, client)
+            
+        except Exception as exc:
+            self.logger.error(
+                "Failed to update portfolio allocation for trade %s: %s",
+                getattr(trade_record, "id", ""),
+                exc,
+                exc_info=True
+            )
+    
+    async def _recalculate_portfolio_value(
+        self,
+        portfolio_id: str,
+        client: Any,
+    ) -> None:
+        """
+        Recalculate portfolio value based on current positions.
+        
+        This fetches all positions, gets their current prices from the market data service,
+        and updates the portfolio's current_value field.
+        
+        Args:
+            portfolio_id: Portfolio ID to recalculate
+            client: Prisma client
+        """
+        
+        try:
+            # Fetch all positions for this portfolio
+            positions = await client.position.find_many(
+                where={"portfolio_id": portfolio_id, "status": "open"}
+            )
+            
+            if not positions:
+                self.logger.info("No open positions for portfolio %s", portfolio_id)
+                return
+            
+            # Calculate total value from positions
+            total_value = Decimal("0")
+            
+            for position in positions:
+                # Use current_price from position (updated by market data service)
+                # or average_buy_price as fallback
+                price = getattr(position, "current_price", None) or getattr(position, "average_buy_price", Decimal("0"))
+                quantity = getattr(position, "quantity", 0)
+                
+                position_value = Decimal(str(price)) * Decimal(str(quantity))
+                total_value += position_value
+            
+            # Update portfolio current value
+            await client.portfolio.update(
+                where={"id": portfolio_id},
+                data={"current_value": total_value}
+            )
+            
+            self.logger.info(
+                "✅ Recalculated portfolio %s value: ₹%.2f (%d positions)",
+                portfolio_id,
+                float(total_value),
+                len(positions),
+            )
+            
+        except Exception as exc:
+            self.logger.error(
+                "Failed to recalculate portfolio value for %s: %s",
+                portfolio_id,
+                exc,
+                exc_info=True
+            )
+    
+    @staticmethod
+    def _safe_float(value: Any, default: float = 0.0) -> float:
+        """Convert value to float safely."""
+        if value is None:
+            return default
+        if isinstance(value, Decimal):
+            return float(value)
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+
+__all__ = ["TradeExecutionService", "TradeExecutionRecord"]

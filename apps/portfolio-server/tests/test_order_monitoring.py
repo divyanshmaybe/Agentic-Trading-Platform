@@ -16,9 +16,19 @@ import sys
 from decimal import Decimal
 from datetime import datetime, timedelta
 
+import pytest
+
+if os.getenv("ENABLE_DB_TESTS", "false").lower() not in {"1", "true", "yes"}:
+    pytest.skip(
+        "Order monitor integration test requires live database. Set ENABLE_DB_TESTS=true to run.",
+        allow_module_level=True,
+    )
+
 # Setup paths
-PROJECT_ROOT = os.path.join(os.path.dirname(__file__), "../..")
-SHARED_PY_PATH = os.path.join(PROJECT_ROOT, "shared/py")
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
+SHARED_PY_PATH = os.path.join(REPO_ROOT, "shared/py")
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
 if SHARED_PY_PATH not in sys.path:
     sys.path.insert(0, SHARED_PY_PATH)
 
@@ -33,7 +43,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from dbManager import DBManager
+from shared.py.dbManager import DBManager
 from services.trade_engine import TradeEngine
 from schemas import TradeCreate
 from workers.order_monitor_worker import OrderMonitorWorker

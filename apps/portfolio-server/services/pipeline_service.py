@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import sys
+import uuid
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
@@ -33,10 +34,19 @@ from pipelines.risk import (  # type: ignore  # noqa: E402
     publish_risk_alerts_to_kafka,
     run_risk_monitor_requests,
 )
+from pipelines.nse.trade_execution_pipeline import (  # type: ignore  # noqa: E402
+    run_trade_execution_requests,
+)
 from utils import allocate_portfolios  # type: ignore  # noqa: E402
 from utils.risk_monitor import prepare_risk_monitor_requests  # type: ignore  # noqa: E402
 from utils.symbol_based_risk_monitor import prepare_symbol_based_risk_requests  # type: ignore  # noqa: E402
+from utils.trade_execution import (  # type: ignore  # noqa: E402
+    PortfolioSnapshot,
+    TradeSignal,
+    prepare_trade_execution_payloads,
+)
 from workers.risk_alert_tasks import send_risk_alert_email_task  # type: ignore  # noqa: E402
+from services.trade_execution_service import TradeExecutionService  # type: ignore  # noqa: E402
 
 class PipelineService:
     """Service for managing pipeline operations."""
@@ -132,6 +142,37 @@ class PipelineService:
             emit_kafka=emit_kafka,
             send_email=send_email,
             max_positions=max_positions,
+        )
+
+        try:
+            return asyncio.run(coroutine)
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            try:
+                asyncio.set_event_loop(loop)
+                return loop.run_until_complete(coroutine)
+            finally:
+                asyncio.set_event_loop(None)
+                loop.close()
+
+    def process_nse_trade_signals(
+        self,
+        signals: Sequence[Mapping[str, Any]],
+        *,
+        publish_kafka: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Process NSE filing trading signals and queue automated trade jobs.
+
+        Args:
+            signals: Sequence of trading signal payloads (dict-like).
+            publish_kafka: Whether to forward generated trade jobs to Kafka.
+        """
+
+        self._load_environment()
+        coroutine = self._process_nse_trade_signals_async(
+            signals=signals,
+            publish_kafka=publish_kafka,
         )
 
         try:
@@ -846,6 +887,250 @@ class PipelineService:
         if isinstance(value, list):
             return [self._clean_json(item) for item in value]
         return value
+
+    def _parse_metadata(self, value: Any) -> Mapping[str, Any]:
+        if value is None:
+            return {}
+        if isinstance(value, Mapping):
+            return {str(key): self._clean_json(val) for key, val in value.items()}
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, Mapping):
+                    return {str(key): self._clean_json(val) for key, val in parsed.items()}
+            except json.JSONDecodeError:
+                return {"raw": value}
+        return {}
+
+    def _parse_datetime(self, value: Any) -> datetime:
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, (int, float)):
+            try:
+                return datetime.utcfromtimestamp(float(value))
+            except Exception:
+                return datetime.utcnow()
+        if isinstance(value, str):
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S"):
+                try:
+                    return datetime.strptime(value, fmt)
+                except ValueError:
+                    continue
+            try:
+                return datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except Exception:
+                return datetime.utcnow()
+        return datetime.utcnow()
+
+    async def _fetch_high_risk_user_ids(self, client: Any) -> List[str]:
+        try:
+            rows = await client.query_raw(
+                "SELECT id FROM users WHERE 'high_risk' = ANY(subscriptions)"
+            )
+        except Exception as exc:
+            self.logger.error("Failed to fetch high-risk users: %s", exc)
+            return []
+
+        user_ids: List[str] = []
+        for row in rows or []:
+            if isinstance(row, Mapping):
+                user_id = row.get("id")
+            else:
+                user_id = None
+            if user_id:
+                user_ids.append(str(user_id))
+        return user_ids
+
+    def _build_portfolio_snapshot(self, portfolio: Any) -> Optional[PortfolioSnapshot]:
+        user_id = getattr(portfolio, "user_id", None)
+        if not user_id:
+            return None
+
+        metadata = self._parse_metadata(getattr(portfolio, "metadata", None))
+        cash_available = self._safe_float(metadata.get("cash_available", metadata.get("cash")), default=0.0)
+
+        return PortfolioSnapshot(
+            portfolio_id=str(getattr(portfolio, "id")),
+            portfolio_name=str(getattr(portfolio, "portfolio_name", "Portfolio")),
+            user_id=str(user_id),
+            organization_id=getattr(portfolio, "organization_id", None),
+            customer_id=getattr(portfolio, "customer_id", None),
+            current_value=self._safe_float(getattr(portfolio, "current_value", 0.0)),
+            investment_amount=self._safe_float(getattr(portfolio, "investment_amount", 0.0)),
+            cash_available=cash_available,
+            metadata=metadata,
+        )
+
+    def _build_trade_signal(self, payload: Mapping[str, Any]) -> Optional[TradeSignal]:
+        symbol = payload.get("symbol")
+        if not symbol:
+            return None
+
+        try:
+            signal_value = int(payload.get("signal", 0))
+        except (TypeError, ValueError):
+            return None
+
+        confidence = self._safe_float(payload.get("confidence"), default=0.0)
+        if confidence <= 0:
+            confidence = 0.0
+
+        explanation = str(payload.get("explanation", "") or "")
+        metadata = payload.get("metadata")
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except json.JSONDecodeError:
+                metadata = {"raw_metadata": metadata}
+        if not isinstance(metadata, Mapping):
+            metadata = {}
+
+        signal_id = (
+            str(payload.get("signal_id"))
+            or str(payload.get("request_id", ""))
+            or str(payload.get("seq_id", ""))
+            or str(uuid.uuid4())
+        )
+
+        filing_time = (
+            str(payload.get("filing_time", ""))
+            or str(payload.get("sort_date", ""))
+            or datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        )
+
+        generated_at = self._parse_datetime(payload.get("generated_at"))
+
+        return TradeSignal(
+            signal_id=signal_id,
+            symbol=str(symbol),
+            signal=signal_value,
+            confidence=confidence,
+            explanation=explanation,
+            filing_time=filing_time,
+            generated_at=generated_at,
+            metadata=metadata,
+        )
+
+    async def _process_nse_trade_signals_async(
+        self,
+        *,
+        signals: Sequence[Mapping[str, Any]],
+        publish_kafka: bool,
+    ) -> Dict[str, Any]:
+        processed_signals = list(signals or [])
+        if not processed_signals:
+            return {
+                "processed_signals": 0,
+                "payloads": 0,
+                "jobs": 0,
+                "dispatched": 0,
+            }
+
+        manager = get_db_manager()
+        if not manager.is_connected():
+            await manager.connect()
+        client = manager.get_client()
+
+        trade_service = TradeExecutionService(logger=self.logger)
+
+        high_risk_users = await self._fetch_high_risk_user_ids(client)
+        if not high_risk_users:
+            self.logger.info("No high-risk subscribers available for trade automation")
+            return {
+                "processed_signals": len(processed_signals),
+                "payloads": 0,
+                "jobs": 0,
+                "dispatched": 0,
+            }
+
+        portfolios = await client.portfolio.find_many(
+            where={
+                "user_id": {"in": high_risk_users},
+                "status": "active",
+            },
+        )
+
+        snapshots: List[PortfolioSnapshot] = []
+        for portfolio in portfolios:
+            snapshot = self._build_portfolio_snapshot(portfolio)
+            if snapshot:
+                snapshots.append(snapshot)
+
+        if not snapshots:
+            self.logger.info("No eligible portfolios for automated trade execution")
+            return {
+                "processed_signals": len(processed_signals),
+                "payloads": 0,
+                "jobs": 0,
+                "dispatched": 0,
+            }
+
+        trade_signals: List[TradeSignal] = []
+        for payload in processed_signals:
+            signal = self._build_trade_signal(payload)
+            if signal:
+                trade_signals.append(signal)
+
+        if not trade_signals:
+            self.logger.info("No actionable trading signals to process")
+            return {
+                "processed_signals": len(processed_signals),
+                "payloads": 0,
+                "jobs": 0,
+                "dispatched": 0,
+            }
+
+        payloads = prepare_trade_execution_payloads(
+            trade_signals,
+            snapshots,
+            logger=self.logger,
+        )
+        if not payloads:
+            self.logger.info("Trade execution payload preparation returned no entries")
+            return {
+                "processed_signals": len(processed_signals),
+                "payloads": 0,
+                "jobs": 0,
+                "dispatched": 0,
+            }
+
+        request_events = [payload.to_event() for payload in payloads]
+        job_rows = run_trade_execution_requests(request_events, logger=self.logger)
+        if not job_rows:
+            self.logger.info("Trade execution pipeline produced no actionable jobs")
+            return {
+                "processed_signals": len(processed_signals),
+                "payloads": len(payloads),
+                "jobs": 0,
+                "dispatched": 0,
+            }
+        
+        # Add triggered_by to each job row for tracking
+        for job_row in job_rows:
+            job_row["triggered_by"] = "high_risk_agent"
+
+        events = await trade_service.persist_and_publish(
+            job_rows,
+            publish_kafka=publish_kafka,
+        )
+
+        dispatched = 0
+        if events:
+            try:
+                from workers.trade_execution_tasks import execute_trade_job  # type: ignore
+
+                for event in events:
+                    execute_trade_job.delay(event.trade_id)
+                    dispatched += 1
+            except Exception as exc:  # pragma: no cover - defensive
+                self.logger.error("Failed to enqueue trade execution workers: %s", exc)
+
+        return {
+            "processed_signals": len(processed_signals),
+            "payloads": len(payloads),
+            "jobs": len(job_rows),
+            "dispatched": dispatched,
+        }
 
     # ------------------------------------------------------------------
     # Internal helpers

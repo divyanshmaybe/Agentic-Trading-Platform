@@ -5,6 +5,7 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
 
 model Organization {
@@ -44,6 +45,7 @@ model User {
   two_factor_enabled  Boolean   @default(false)
   two_factor_secret   String?
   metadata            Json?     @default("{}")
+  subscriptions       String[]  @default([])
   created_at          DateTime  @default(now())
   updated_at          DateTime  @updatedAt
   deleted_at          DateTime?

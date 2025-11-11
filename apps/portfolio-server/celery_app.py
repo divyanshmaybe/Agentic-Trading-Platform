@@ -21,6 +21,7 @@ celery_app = Celery(
         "workers.allocation_tasks",  # Portfolio allocation and rebalancing
         "workers.risk_alert_tasks",  # Email notifications for risk monitor
         "workers.order_monitor_worker",  # Continuous order monitoring for limit/stop/TP orders
+        "workers.trade_execution_tasks",  # Automated trade execution
     ],
 )
 

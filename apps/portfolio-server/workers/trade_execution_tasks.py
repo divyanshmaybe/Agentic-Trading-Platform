@@ -1,0 +1,48 @@
+from __future__ import annotations
+
+import asyncio
+import sys
+from pathlib import Path
+from typing import Any, Optional
+
+from celery.utils.log import get_task_logger
+
+from celery_app import celery_app
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from services.trade_execution_service import TradeExecutionService  # type: ignore  # noqa: E402
+
+task_logger = get_task_logger(__name__)
+
+
+async def _execute_trade_job_async(trade_id: str, simulate: Optional[bool]) -> dict[str, Any]:
+    service = TradeExecutionService(logger=task_logger)
+    await service.update_status(trade_id, status="in_progress")
+    result = await service.execute_trade(trade_id, simulate=simulate)
+    return result
+
+
+@celery_app.task(
+    bind=True,
+    name="trading.execute_trade_job",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_kwargs={"max_retries": 3},
+)
+def execute_trade_job(self, trade_id: str, simulate: Optional[bool] = None) -> dict[str, Any]:
+    """Celery task that executes a persisted trade job."""
+
+    try:
+        return asyncio.run(_execute_trade_job_async(trade_id, simulate))
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            return loop.run_until_complete(_execute_trade_job_async(trade_id, simulate))
+        finally:
+            asyncio.set_event_loop(None)
+            loop.close()
+

@@ -33,6 +33,7 @@ from kafka_service import (  # type: ignore  # noqa: E402
     PublisherAlreadyRegistered,
     default_kafka_bus,
 )
+from celery_app import celery_app  # type: ignore  # noqa: E402
 from market_data import get_market_data_service  # type: ignore  # noqa: E402
 from utils.backtesting import resolve_intraday_window  # type: ignore  # noqa: E402
 
@@ -217,6 +218,13 @@ def publish_signal_to_kafka(
 
     try:
         _publish_to_kafka(event)
+        try:
+            celery_app.send_task(
+                "pipeline.trade_execution.process_signal",
+                args=[event.model_dump()],
+            )
+        except Exception as celery_exc:  # pragma: no cover - defensive logging
+            print(f"[CELERY] Failed to enqueue trade execution task: {celery_exc}")
         return "published"
     except TimeoutError:
         print("[KAFKA] Publish timed out for symbol", symbol)

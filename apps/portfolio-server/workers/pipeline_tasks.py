@@ -77,3 +77,20 @@ def run_risk_monitor(self) -> dict:
     summary = service.run_risk_monitoring()
     task_logger.info("Risk monitoring sweep completed: %s", summary)
     return summary
+
+
+@celery_app.task(
+    bind=True,
+    name="pipeline.trade_execution.process_signal",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_kwargs={"max_retries": 3},
+)
+def process_trade_signal(self, signal_payload: dict) -> dict:
+    """Process a single NSE trading signal and enqueue automated trades."""
+
+    server_dir = Path(__file__).resolve().parents[1]
+    service = PipelineService(str(server_dir), logger=task_logger)
+    summary = service.process_nse_trade_signals([signal_payload])
+    task_logger.info("Trade signal processed: %s", summary)
+    return summary
