@@ -12,12 +12,14 @@ import numpy as np
 from datetime import datetime, timedelta
 from typing import Optional
 
+from market_data import get_market_data_service  # type: ignore
+
 
 # Configuration
 TARGET = 0.03  # +3% profit target
 STOPLOSS = 0.01  # -1% stoploss
 HOLDING_HOURS = 1  # maximum hold time (1 hour)
-INTERVAL = "1m"  # data interval
+INTERVAL = "ONE_MINUTE"  # data interval for Angel One
 MARKET_OPEN = (9, 15)
 MARKET_CLOSE = (15, 30)
 
@@ -96,38 +98,54 @@ def get_session_type(filing_time_str: str) -> str:
 def _simulate_trade_helper(symbol: str, signal: int, entry_time_str: str, target: float, stop: float):
     """Helper function to simulate trade - returns dict with results"""
     try:
-        import yfinance as yf
-        
         entry_time = pd.to_datetime(entry_time_str)
         start_time = entry_time - timedelta(minutes=2)
         end_time = entry_time + timedelta(hours=HOLDING_HOURS)
-        
-        ticker = f"{symbol}.NS"
-        try:
-            data = yf.download(
-                ticker,
-                start=start_time,
-                end=end_time,
-                interval=INTERVAL,
-                progress=False
-            )
-        except Exception as e:
-            print(f"[BACKTEST] Error downloading data for {symbol}: {e}")
-            return {"pnl": np.nan, "exit_time": entry_time_str, "exit_reason": f"download_error: {str(e)}"}
-        
-        # Handle empty data or MultiIndex columns
+
+        service = get_market_data_service()
+        adapter = getattr(service, "adapter", None)
+        if not adapter or not hasattr(adapter, "get_historical_candles"):
+            return {
+                "pnl": np.nan,
+                "exit_time": entry_time_str,
+                "exit_reason": "adapter_unavailable",
+            }
+
+        normalized = adapter.normalize_symbol(symbol)
+        candles = adapter.get_historical_candles(
+            symbol=normalized,
+            interval=INTERVAL,
+            fromdate=start_time.strftime("%Y-%m-%d %H:%M"),
+            todate=end_time.strftime("%Y-%m-%d %H:%M"),
+            exchange="NSE",
+        )
+
+        if not candles:
+            return {"pnl": np.nan, "exit_time": entry_time_str, "exit_reason": "no_data"}
+
+        data = pd.DataFrame(candles)
         if data.empty:
             return {"pnl": np.nan, "exit_time": entry_time_str, "exit_reason": "no_data"}
-        
-        # If data has MultiIndex columns, flatten them
-        if isinstance(data.columns, pd.MultiIndex):
-            data.columns = data.columns.get_level_values(0)
-        
-        # Ensure we have Close column
-        if "Close" not in data.columns:
-            return {"pnl": np.nan, "exit_time": entry_time_str, "exit_reason": "no_close_price"}
-        
-        valid_data = data.loc[data.index >= entry_time]
+
+        data.rename(
+            columns={
+                "timestamp": "Timestamp",
+                "open": "Open",
+                "high": "High",
+                "low": "Low",
+                "close": "Close",
+                "volume": "Volume",
+            },
+            inplace=True,
+        )
+        data["Timestamp"] = pd.to_datetime(data["Timestamp"], utc=True, errors="coerce")
+        data.dropna(subset=["Timestamp"], inplace=True)
+        data.set_index("Timestamp", inplace=True)
+        data.sort_index(inplace=True)
+
+        # Convert entry time to UTC for comparison
+        entry_time_utc = entry_time.tz_localize("Asia/Kolkata").tz_convert("UTC") if entry_time.tzinfo is None else entry_time.tz_convert("UTC")
+        valid_data = data.loc[data.index >= entry_time_utc]
         if valid_data.empty:
             return {"pnl": np.nan, "exit_time": entry_time_str, "exit_reason": "no_data"}
         
@@ -135,22 +153,24 @@ def _simulate_trade_helper(symbol: str, signal: int, entry_time_str: str, target
         
         for i, row in valid_data.iterrows():
             price = row["Close"]
-            
+            timestamp_local = i.tz_convert("Asia/Kolkata")
+
             if signal == 1:  # long
                 if price >= entry_price * (1 + target):
-                    return {"pnl": +target, "exit_time": i.strftime("%Y-%m-%d %H:%M:%S"), "exit_reason": "target_hit"}
+                    return {"pnl": +target, "exit_time": timestamp_local.strftime("%Y-%m-%d %H:%M:%S"), "exit_reason": "target_hit"}
                 elif price <= entry_price * (1 - stop):
-                    return {"pnl": -stop, "exit_time": i.strftime("%Y-%m-%d %H:%M:%S"), "exit_reason": "stoploss_hit"}
+                    return {"pnl": -stop, "exit_time": timestamp_local.strftime("%Y-%m-%d %H:%M:%S"), "exit_reason": "stoploss_hit"}
             elif signal == -1:  # short
                 if price <= entry_price * (1 - target):
-                    return {"pnl": +target, "exit_time": i.strftime("%Y-%m-%d %H:%M:%S"), "exit_reason": "target_hit"}
+                    return {"pnl": +target, "exit_time": timestamp_local.strftime("%Y-%m-%d %H:%M:%S"), "exit_reason": "target_hit"}
                 elif price >= entry_price * (1 + stop):
-                    return {"pnl": -stop, "exit_time": i.strftime("%Y-%m-%d %H:%M:%S"), "exit_reason": "stoploss_hit"}
+                    return {"pnl": -stop, "exit_time": timestamp_local.strftime("%Y-%m-%d %H:%M:%S"), "exit_reason": "stoploss_hit"}
         
         # Neither target nor stoploss hit
         exit_price = valid_data.iloc[-1]["Close"]
         pnl = (exit_price - entry_price) / entry_price * signal
-        return {"pnl": pnl, "exit_time": valid_data.index[-1].strftime("%Y-%m-%d %H:%M:%S"), "exit_reason": "time_exit"}
+        exit_time_local = valid_data.index[-1].tz_convert("Asia/Kolkata")
+        return {"pnl": pnl, "exit_time": exit_time_local.strftime("%Y-%m-%d %H:%M:%S"), "exit_reason": "time_exit"}
     
     except Exception as e:
         return {"pnl": np.nan, "exit_time": entry_time_str, "exit_reason": f"error: {str(e)}"}

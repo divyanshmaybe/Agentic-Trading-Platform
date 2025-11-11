@@ -126,7 +126,7 @@ class CandleStreamSubject(ConnectorSubject):
 
 class CandleFetcherTransformer(pw.AsyncTransformer, output_schema=CandleSchema):
     """
-    Async fetch candles from yfinance or market data API.
+    Async fetch candles from the central market data service.
     Processes each trigger asynchronously and non-blocking.
     """
 
@@ -143,6 +143,7 @@ class CandleFetcherTransformer(pw.AsyncTransformer, output_schema=CandleSchema):
         self.symbol = symbol
         self.provider_symbol = provider_symbol or symbol
         self.interval = interval
+        self._last_timestamp: Optional[float] = None
         logger.info(
             "CandleFetcherTransformer initialized for %s (provider=%s, interval=%s)",
             symbol,
@@ -169,27 +170,42 @@ class CandleFetcherTransformer(pw.AsyncTransformer, output_schema=CandleSchema):
         if candle:
             return candle
 
-        # Fallback to yfinance for symbols not supported by the market adapter (e.g. indices)
-        return await self._fetch_via_yfinance(trigger_time)
+        raise ValueError(
+            f"Angel One adapter returned no candle data for {self.symbol}. "
+            "Verify that the market data service is configured correctly."
+        )
 
     async def _try_market_service(self, trigger_time: float) -> Optional[Dict[str, Any]]:
         if get_market_data_service is None:
-            return None
+            raise RuntimeError("Market data service is not available on PYTHONPATH")
 
         try:
             service = get_market_data_service()
         except Exception as exc:  # pragma: no cover - defensive
-            logger.warning("Market data service unavailable for regime pipeline: %s", exc)
-            return None
+            raise RuntimeError(
+                f"Market data service unavailable for regime pipeline: {exc}"
+            ) from exc
 
         adapter = getattr(service, "adapter", None)
         if adapter is None or not hasattr(adapter, "get_historical_candles"):
-            return None
+            raise RuntimeError("Active market data adapter does not support candle fetches")
 
         if AngelOneAdapter is not None and isinstance(adapter, AngelOneAdapter):
             now = datetime.utcnow()
-            start = now - timedelta(days=2)
-            fromdate = start.strftime("%Y-%m-%d 09:15")
+            lookback_map = {
+                "ONE_MINUTE": timedelta(minutes=5),
+                "THREE_MINUTE": timedelta(minutes=15),
+                "FIVE_MINUTE": timedelta(minutes=30),
+                "TEN_MINUTE": timedelta(minutes=60),
+                "FIFTEEN_MINUTE": timedelta(minutes=90),
+                "THIRTY_MINUTE": timedelta(hours=3),
+                "ONE_HOUR": timedelta(hours=6),
+                "ONE_DAY": timedelta(days=7),
+            }
+            lookback = lookback_map.get(self.interval, timedelta(minutes=15))
+            start = now - lookback
+
+            fromdate = start.strftime("%Y-%m-%d %H:%M")
             todate = now.strftime("%Y-%m-%d %H:%M")
 
             normalized = adapter.normalize_symbol(self.provider_symbol)
@@ -204,8 +220,20 @@ class CandleFetcherTransformer(pw.AsyncTransformer, output_schema=CandleSchema):
             if not candles:
                 return None
 
-            latest = sorted(candles, key=lambda item: item.get("timestamp", ""))[-1]
+            latest = max(
+                candles,
+                key=lambda item: self._parse_timestamp(item.get("timestamp"), default=trigger_time),
+            )
             candle_timestamp = self._parse_timestamp(latest.get("timestamp"), default=trigger_time)
+
+            if self._last_timestamp is not None and candle_timestamp <= self._last_timestamp:
+                logger.debug(
+                    "Skipping duplicate candle for %s at %s",
+                    self.symbol,
+                    candle_timestamp,
+                )
+                return None
+            self._last_timestamp = candle_timestamp
 
             result = {
                 "timestamp": candle_timestamp,
@@ -228,55 +256,6 @@ class CandleFetcherTransformer(pw.AsyncTransformer, output_schema=CandleSchema):
 
         return None
 
-    async def _fetch_via_yfinance(self, trigger_time: float) -> Dict[str, Any]:
-        import yfinance as yf
-
-        loop = asyncio.get_event_loop()
-
-        try:
-            data = await loop.run_in_executor(
-                None,
-                lambda: yf.download(
-                    self.symbol,
-                    period="2d",
-                    interval="1m",
-                    progress=False,
-                    show_errors=False,
-                ),
-            )
-        except Exception as exc:  # pragma: no cover - network failures
-            logger.error("YFinance download failed for %s: %s", self.symbol, exc)
-            raise ValueError(f"Failed to fetch candle: {exc}") from exc
-
-        if data.empty:
-            raise ValueError(f"No candle data available for {self.symbol}")
-
-        if hasattr(data.columns, "levels"):
-            data.columns = [col[0] if isinstance(col, tuple) else col for col in data.columns]
-
-        latest_idx = len(data) - 1
-        latest_timestamp = data.index[latest_idx]
-        candle_timestamp = latest_timestamp.timestamp() if hasattr(latest_timestamp, "timestamp") else trigger_time
-
-        result = {
-            "timestamp": candle_timestamp,
-            "open": float(data["Open"].iloc[latest_idx]),
-            "high": float(data["High"].iloc[latest_idx]),
-            "low": float(data["Low"].iloc[latest_idx]),
-            "close": float(data["Close"].iloc[latest_idx]),
-            "volume": float(data["Volume"].iloc[latest_idx]),
-            "symbol": self.symbol,
-        }
-
-        logger.debug(
-            "Fetched candle for %s via yfinance fallback: close=%s volume=%s",
-            self.symbol,
-            result["close"],
-            result["volume"],
-        )
-
-        return result
-
     @staticmethod
     def _parse_timestamp(value: Any, *, default: float) -> float:
         if isinstance(value, (int, float)):
@@ -292,8 +271,3 @@ class CandleFetcherTransformer(pw.AsyncTransformer, output_schema=CandleSchema):
             except ValueError:
                 pass
         return default
-
-
-# Import pandas for MultiIndex handling
-import pandas as pd
-

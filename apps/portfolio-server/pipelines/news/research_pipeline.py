@@ -11,10 +11,17 @@ import json
 import os
 import re
 import threading
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 import pathway as pw
 from langchain_core.messages import HumanMessage, SystemMessage
+import pandas as pd
+
+try:
+    from market_data import get_market_data_service  # type: ignore
+except ImportError:  # pragma: no cover - defensive
+    get_market_data_service = None  # type: ignore
 
 
 # ---------------------------------------------------------------------------
@@ -288,24 +295,60 @@ to the user for making the final recommendations.
 
 
 def compute_technical_indicators(symbol: str) -> Optional[Dict[str, Optional[float]]]:
-    import pandas as pd
-    import yfinance as yf
+    if get_market_data_service is None:
+        raise RuntimeError("Market data service is unavailable")
 
-    ticker = f"{symbol}.NS"
-    ticker_obj = yf.Ticker(ticker)
+    service = get_market_data_service()
+    adapter = getattr(service, "adapter", None)
+    if not adapter or not hasattr(adapter, "get_historical_candles"):
+        raise RuntimeError("Active market data adapter does not support historical candles")
 
-    daily = ticker_obj.history(period="3mo", interval="1d", auto_adjust=True)
-    hourly = ticker_obj.history(period="2d", interval="1h", auto_adjust=True)
+    normalized_symbol = adapter.normalize_symbol(symbol)
+    now = datetime.utcnow()
+    start_daily = (now - timedelta(days=120)).replace(hour=9, minute=15)
+    start_hourly = (now - timedelta(days=2)).replace(hour=9, minute=15)
 
+    def _fetch_range(start_dt: datetime, end_dt: datetime, interval: str) -> pd.DataFrame:
+        candles = adapter.get_historical_candles(
+            symbol=normalized_symbol,
+            interval=interval,
+            fromdate=start_dt.strftime("%Y-%m-%d %H:%M"),
+            todate=end_dt.strftime("%Y-%m-%d %H:%M"),
+            exchange="NSE",
+        )
+        if not candles:
+            return pd.DataFrame()
+        frame = pd.DataFrame(candles)
+        if frame.empty:
+            return frame
+        frame.rename(
+            columns={
+                "open": "Open",
+                "high": "High",
+                "low": "Low",
+                "close": "Close",
+                "volume": "Volume",
+            },
+            inplace=True,
+        )
+        frame["timestamp"] = pd.to_datetime(frame["timestamp"], utc=True, errors="coerce")
+        frame.dropna(subset=["timestamp"], inplace=True)
+        frame.set_index("timestamp", inplace=True)
+        frame.sort_index(inplace=True)
+        return frame
+
+    daily = _fetch_range(start_daily, now, "ONE_DAY")
+    hourly = _fetch_range(start_hourly, now, "ONE_HOUR")
     if not hourly.empty:
-        hourly["Date"] = hourly.index.date
-        today = pd.Timestamp.today().date()
-        hourly_today = hourly[hourly["Date"] == today].drop(columns=["Date"])
-        data = pd.concat([daily, hourly_today])
-    else:
-        data = daily
+        today = now.date()
+        hourly_local = hourly.index.tz_convert("Asia/Kolkata")
+        mask = hourly_local.date == today
+        hourly = hourly.loc[mask]
 
-    if data is None or data.empty or len(data) < 20:
+    data = pd.concat([daily, hourly])
+    data = data[~data.index.duplicated(keep="last")]
+
+    if data.empty or len(data) < 20:
         return None
 
     def calculate_sma(series: pd.Series, period: int) -> Optional[float]:

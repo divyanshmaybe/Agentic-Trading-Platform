@@ -86,10 +86,18 @@ class MarketRegimeClassifier:
         features["bb_width"] = bollinger_band_width(df["Close"], period=20)
 
         # Volume indicators
-        volume_mean_20 = df["Volume"].rolling(window=20).mean()
-        features["volume_ratio"] = df["Volume"] / volume_mean_20
-        volume_mean_5 = df["Volume"].rolling(window=5).mean()
-        features["volume_trend"] = volume_mean_5 / volume_mean_20
+        volume_series = pd.to_numeric(df["Volume"], errors="coerce")
+        volume_series = volume_series.replace(0, np.nan)
+        if volume_series.dropna().empty:
+            features["volume_ratio"] = 1.0
+            features["volume_trend"] = 1.0
+        else:
+            volume_mean_20 = volume_series.rolling(window=20, min_periods=1).mean()
+            features["volume_ratio"] = volume_series / volume_mean_20
+            volume_mean_5 = volume_series.rolling(window=5, min_periods=1).mean()
+            features["volume_trend"] = volume_mean_5 / volume_mean_20
+            features["volume_ratio"].fillna(1.0, inplace=True)
+            features["volume_trend"].fillna(1.0, inplace=True)
 
         # Price action
         features["price_range"] = (df["High"] - df["Low"]) / df["Close"]
@@ -102,7 +110,10 @@ class MarketRegimeClassifier:
         features["macd"] = (ema_12 - ema_26) / df["Close"]
         features["roc"] = (df["Close"] - df["Close"].shift(10)) / df["Close"].shift(10)
 
+        features.replace([np.inf, -np.inf], np.nan, inplace=True)
         self.features = features.dropna()
+        if self.features.empty:
+            raise ValueError("Insufficient clean feature rows for HMM training.")
         self.feature_names = self.features.columns.tolist()
         return self.features
 

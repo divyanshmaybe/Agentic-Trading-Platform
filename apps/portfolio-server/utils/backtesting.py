@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import os
 import sys
+import logging
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -128,61 +129,40 @@ def fetch_intraday_candles(
     interval: str = "ONE_MINUTE",
 ) -> pd.DataFrame:
     """
-    Fetch intraday candles from the central market data service.
-    Falls back to yfinance if the active adapter does not support historical candles.
+    Fetch intraday candles strictly from the central market data service.
     """
     service = get_market_data_service()
     adapter = getattr(service, "adapter", None)
 
-    if adapter and hasattr(adapter, "get_historical_candles"):
-        candles = adapter.get_historical_candles(
-            symbol=symbol,
-            interval=interval,
-            fromdate=start.strftime("%Y-%m-%d %H:%M"),
-            todate=end.strftime("%Y-%m-%d %H:%M"),
-            exchange="NSE",
-        )
-        if candles:
-            df = pd.DataFrame(candles)
-            df["timestamp"] = pd.to_datetime(df["timestamp"])
-            return df.sort_values("timestamp").reset_index(drop=True)
+    if not adapter or not hasattr(adapter, "get_historical_candles"):
+        raise RuntimeError("Active market data adapter must support historical candles.")
 
-    # Fallback to yfinance if necessary
-    try:
-        import yfinance as yf
-
-        data = yf.download(
-            f"{symbol}.NS",
-            start=start,
-            end=end,
-            interval="5m",
-            progress=False,
-            raise_errors=False,
+    normalized_symbol = adapter.normalize_symbol(symbol)
+    candles = adapter.get_historical_candles(
+        symbol=normalized_symbol,
+        interval=interval,
+        fromdate=start.strftime("%Y-%m-%d %H:%M"),
+        todate=end.strftime("%Y-%m-%d %H:%M"),
+        exchange="NSE",
+    )
+    if not candles:
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            "No intraday candles returned for %s between %s and %s",
+            normalized_symbol,
+            start,
+            end,
         )
-        if data is None or data.empty:
-            return pd.DataFrame()
-        data = data.reset_index().rename(
-            columns={
-                "Datetime": "timestamp",
-                "Open": "open",
-                "High": "high",
-                "Low": "low",
-                "Close": "close",
-                "Volume": "volume",
-            }
-        )
-        return data[
-            [
-                "timestamp",
-                "open",
-                "high",
-                "low",
-                "close",
-                "volume",
-            ]
-        ]
-    except Exception:
         return pd.DataFrame()
+
+    df = pd.DataFrame(candles)
+    if df.empty:
+        return df
+
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    df.sort_values("timestamp", inplace=True)
+    df.reset_index(drop=True, inplace=True)
+    return df
 
 
 def simulate_trade(

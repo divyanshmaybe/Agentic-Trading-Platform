@@ -53,34 +53,36 @@ class RegimeService:
         
         # Configure symbols for training and streaming
         self.training_symbol = os.getenv("REGIME_TRAINING_SYMBOL", "^NSEI")
-        provider_default = os.getenv("REGIME_PROVIDER_SYMBOL") or self.training_symbol.lstrip("^")
+        provider_default = os.getenv("REGIME_PROVIDER_SYMBOL") or self._resolve_default_provider_symbol(
+            self.training_symbol
+        )
         self.provider_symbol = provider_default
 
         self.streaming_symbol = os.getenv("REGIME_STREAM_SYMBOL", self.training_symbol)
         self.streaming_provider_symbol = (
-            os.getenv("REGIME_STREAM_PROVIDER_SYMBOL") or self.provider_symbol
+            os.getenv("REGIME_STREAM_PROVIDER_SYMBOL")
+            or self._resolve_default_provider_symbol(self.streaming_symbol, fallback=provider_default)
         )
         self.streaming_interval = os.getenv("REGIME_STREAM_INTERVAL", "ONE_MINUTE")
+
+        # In-memory cache
+        self._current_regime: Optional[Dict] = None
+        self._regime_history = deque(maxlen=1000)
+        self._cache_lock = threading.Lock()
 
         # Train HMM model on historical data
         self.logger.info("🚀 Training HMM model using symbol %s (provider: %s)...", self.training_symbol, self.provider_symbol)
         self.classifier = self._train_model()
         self.logger.info(f"✅ Model trained with {self.classifier.n_regimes} regimes")
         
-        # In-memory cache
-        self._current_regime: Optional[Dict] = None
-        self._regime_history = deque(maxlen=1000)
-        self._cache_lock = threading.Lock()
-        
-        # Pathway runtime state
+        # IMPORTANT: Pathway runtime disabled to avoid event loop conflicts with NSE pipeline
+        # The trained model is available for on-demand predictions via API
+        # Future: Move regime streaming to separate Celery worker if real-time updates needed
         self._started = threading.Event()
         self._runner_thread: Optional[threading.Thread] = None
         
-        # Build and start Pathway pipeline
-        self.logger.info("🔧 Building Pathway pipeline...")
-        self._build_and_start_pipeline()
-        
-        self.logger.info("✅ RegimeService fully initialized")
+        self.logger.info("⚠️  Pathway streaming disabled (event loop conflict prevention)")
+        self.logger.info("✅ RegimeService initialized (model-only mode)")
     
     @classmethod
     def get_instance(cls) -> "RegimeService":
@@ -94,34 +96,69 @@ class RegimeService:
         """
         Train HMM model on historical data.
         
+        IMPORTANT: Uses yfinance for training to avoid Angel One rate limits.
+        This is the ONLY place in the codebase where yfinance should be used.
+        
         Returns:
             Trained MarketRegimeClassifier instance
         """
         try:
-            # Fetch 2+ years of historical data for ^NSEI (Nifty 50)
-            self.logger.info("📊 Fetching historical data for ^NSEI...")
+            # Fetch 2+ years of historical data using yfinance (avoids Angel One rate limits)
+            self.logger.info("📊 Fetching historical data for training using yfinance...")
+            from datetime import datetime
+            
             data = fetch_nse_data(
                 ticker=self.training_symbol,
-                start_date="2020-01-01",
-                end_date=None,
+                start_date=datetime(2020, 1, 1),
+                end_date=datetime.now(),
                 provider_symbol=self.provider_symbol,
+                use_yfinance=True,  # CRITICAL: Use yfinance to avoid Angel One rate limits
             )
             
             if data is None or data.empty:
-                self.logger.error("Failed to fetch historical data, using fallback training")
-                # Fallback: fetch shorter period
+                self.logger.error("Failed to fetch historical data from yfinance, using fallback")
+                # Fallback: try shorter period
                 data = fetch_nse_data(
                     ticker=self.training_symbol,
-                    start_date="2023-01-01",
-                    end_date=None,
+                    start_date=datetime(2023, 1, 1),
+                    end_date=datetime.now(),
                     provider_symbol=self.provider_symbol,
+                    use_yfinance=True,
                 )
             
-            self.logger.info(f"📈 Training on {len(data)} days of data")
+            if data is None or data.empty:
+                raise RuntimeError(
+                    "yfinance returned no historical data for regime training. "
+                    "Verify ticker mapping or network connectivity."
+                )
+            
+            self.logger.info(f"📈 Training on {len(data)} days of historical data (fetched via yfinance)")
             
             # Train classifier with 4 regimes
             classifier = MarketRegimeClassifier(n_regimes=4, random_state=42)
             classifier.fit(data)
+            if classifier.features is None or classifier.features.empty:
+                features = classifier.prepare_features(data)
+            else:
+                features = classifier.features
+            features_scaled = classifier.scaler.transform(features)
+            hidden_states = classifier.model.predict(features_scaled)
+            latest_state = int(hidden_states[-1])
+            latest_regime = classifier.regime_names.get(latest_state, f"Regime {latest_state}")
+            latest_ts = data.index[-1]
+            latest_close = data["Close"].iloc[-1]
+            latest_features = features.iloc[-1].to_dict()
+            latest_features = {key: float(value) for key, value in latest_features.items()}
+            regime_record = {
+                "timestamp": latest_ts.timestamp() if hasattr(latest_ts, "timestamp") else time.time(),
+                "regime": latest_regime,
+                "state_id": latest_state,
+                "close": float(latest_close),
+                "symbol": self.training_symbol,
+                "features": latest_features,
+            }
+            self._current_regime = regime_record
+            self._regime_history.append(regime_record)
             
             self.logger.info("✅ Model training completed")
             self.logger.info(f"   Regimes identified: {list(classifier.regime_names.values())}")
@@ -131,6 +168,27 @@ class RegimeService:
         except Exception as exc:
             self.logger.error(f"❌ Model training failed: {exc}", exc_info=True)
             raise RuntimeError(f"Failed to train regime classification model: {exc}")
+    
+    @staticmethod
+    def _resolve_default_provider_symbol(symbol: str, *, fallback: Optional[str] = None) -> str:
+        """
+        Determine the default provider symbol Angel One understands for a given logical ticker.
+        """
+        overrides = {
+            "^NSEI": "NIFTY 50",
+            "NSEI": "NIFTY 50",
+            "^NSEBANK": "NIFTY BANK",
+            "NSEBANK": "NIFTY BANK",
+            "^NIFTY50": "NIFTY 50",
+            "NIFTY50": "NIFTY 50",
+            "^BANKNIFTY": "NIFTY BANK",
+            "BANKNIFTY": "NIFTY BANK",
+        }
+        upper = symbol.upper()
+        if upper in overrides:
+            return overrides[upper]
+        stripped = upper.lstrip("^")
+        return fallback or stripped
     
     def _build_and_start_pipeline(self):
         """Build Pathway pipeline with AsyncTransformers and start runtime"""
@@ -373,8 +431,10 @@ class RegimeService:
         Retrain the HMM model with new parameters.
         Note: This does NOT restart the Pathway pipeline - requires service restart for full effect.
         
+        Uses yfinance to avoid Angel One rate limits during training.
+        
         Args:
-            start_date: Start date for training data
+            start_date: Start date for training data (YYYY-MM-DD format)
             end_date: End date for training data (None = today)
             n_regimes: Number of regimes to classify
             
@@ -382,18 +442,25 @@ class RegimeService:
             Dictionary with training results
         """
         try:
-            self.logger.info(f"🔄 Retraining model from {start_date} with {n_regimes} regimes...")
+            from datetime import datetime
             
-            # Fetch data
+            self.logger.info(f"🔄 Retraining model from {start_date} with {n_regimes} regimes using yfinance...")
+            
+            # Parse dates
+            start_dt = datetime.strptime(start_date, "%Y-%m-%d") if isinstance(start_date, str) else start_date
+            end_dt = datetime.strptime(end_date, "%Y-%m-%d") if end_date and isinstance(end_date, str) else datetime.now()
+            
+            # Fetch data using yfinance to avoid rate limits
             data = fetch_nse_data(
                 ticker=self.training_symbol,
-                start_date=start_date,
-                end_date=end_date,
+                start_date=start_dt,
+                end_date=end_dt,
                 provider_symbol=self.provider_symbol,
+                use_yfinance=True,  # CRITICAL: Use yfinance to avoid Angel One rate limits
             )
             
             if data is None or data.empty:
-                raise ValueError("Failed to fetch training data")
+                raise ValueError("Failed to fetch training data from yfinance")
             
             # Train new classifier
             new_classifier = MarketRegimeClassifier(n_regimes=n_regimes, random_state=42)
@@ -402,7 +469,7 @@ class RegimeService:
             # Update classifier (note: pipeline AsyncTransformers still use old classifier)
             self.classifier = new_classifier
             
-            self.logger.info("✅ Model retrained successfully")
+            self.logger.info("✅ Model retrained successfully using yfinance data")
             
             return {
                 "success": True,

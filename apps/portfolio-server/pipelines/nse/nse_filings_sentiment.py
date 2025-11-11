@@ -334,60 +334,41 @@ def fetch_stock_data(symbol: str, filing_time: str) -> str:
     except Exception:
         filing_dt = datetime.utcnow()
 
-    # Attempt to leverage centralised market service first
     try:
         service = get_market_data_service()
         adapter = getattr(service, "adapter", None)
-        if adapter and hasattr(adapter, "get_historical_candles"):
-            start_dt, end_dt = resolve_intraday_window(
-                filing_dt,
-                holding_hours=HOLDING_HOURS,
-                market_open=MARKET_OPEN,
-                market_close=MARKET_CLOSE,
-                lookback_minutes=60,
-            )
-            candles = adapter.get_historical_candles(
-                symbol=symbol,
-                interval="FIFTEEN_MINUTE",
-                fromdate=start_dt.strftime("%Y-%m-%d %H:%M"),
-                todate=end_dt.strftime("%Y-%m-%d %H:%M"),
-                exchange="NSE",
-            )
-            if candles and pd is not None:
-                df = pd.DataFrame(candles)
-                if not df.empty:
-                    df["timestamp"] = pd.to_datetime(df["timestamp"]).astype(str)
-                    return df.to_json(orient="records")
-            elif candles:
-                return str(candles)
-    except Exception as exc:
-        print(f"[WARN] Central market service candle fetch failed for {symbol}: {exc}")
+        if not adapter or not hasattr(adapter, "get_historical_candles"):
+            raise RuntimeError("Active market adapter does not support historical candles.")
 
-    # Fallback to yfinance if central service unavailable
-    try:
-        import yfinance as yf
+        start_dt, end_dt = resolve_intraday_window(
+            filing_dt,
+            holding_hours=HOLDING_HOURS,
+            market_open=MARKET_OPEN,
+            market_close=MARKET_CLOSE,
+            lookback_minutes=60,
+        )
+        candles = adapter.get_historical_candles(
+            symbol=adapter.normalize_symbol(symbol),
+            interval="FIFTEEN_MINUTE",
+            fromdate=start_dt.strftime("%Y-%m-%d %H:%M"),
+            todate=end_dt.strftime("%Y-%m-%d %H:%M"),
+            exchange="NSE",
+        )
+        if not candles:
+            return "No data available from market service"
+
         if pd is None:
             import pandas as pd  # type: ignore
 
-        end_time = filing_dt
-        start_time = end_time - timedelta(hours=1)
-        ticker = f"{symbol}.NS"
-        stock_data = yf.download(
-            ticker,
-            start=start_time,
-            end=end_time,
-            interval="15m",
-            progress=False,
-            raise_errors=False,
-        )
-        if stock_data is None or stock_data.empty:
-            return "No data available"
-        return stock_data.to_json(orient="records")
-    except Exception as fallback_error:
-        error_str = str(fallback_error)
-        if "delisted" in error_str.lower() or "no price data" in error_str.lower():
-            return "Stock delisted or no data available"
-        return f"Error fetching data: {error_str}"
+        df = pd.DataFrame(candles)
+        if df.empty:
+            return "No data available from market service"
+
+        df["timestamp"] = pd.to_datetime(df["timestamp"]).astype(str)
+        return df.to_json(orient="records")
+    except Exception as exc:
+        print(f"[WARN] Market service candle fetch failed for {symbol}: {exc}")
+        return f"Error fetching data: {exc}"
 
 
 # ============================================================================

@@ -278,6 +278,6 @@ wrapt==2.0.1
 wsproto==1.2.0
 xyzservices==2025.10.0
 yarl==1.22.0
-yfinance==0.2.66
+yfinance==0.2.51
 zipp==3.23.0
 zstandard==0.25.0
