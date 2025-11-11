@@ -26,8 +26,16 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from db import get_db_manager  # type: ignore  # noqa: E402
+from market_data import get_market_data_service  # type: ignore  # noqa: E402
 from pipelines.portfolio.portfolio_manager import DEFAULT_SEGMENTS  # type: ignore  # noqa: E402
+from pipelines.risk import (  # type: ignore  # noqa: E402
+    prepare_risk_alerts,
+    publish_risk_alerts_to_kafka,
+    run_risk_monitor_requests,
+)
 from utils import allocate_portfolios  # type: ignore  # noqa: E402
+from utils.risk_monitor import prepare_risk_monitor_requests  # type: ignore  # noqa: E402
+from workers.risk_alert_tasks import send_risk_alert_email_task  # type: ignore  # noqa: E402
 
 class PipelineService:
     """Service for managing pipeline operations."""
@@ -99,6 +107,35 @@ class PipelineService:
             return asyncio.run(coroutine)
         except RuntimeError:
             # Fallback for environments where an event loop is already active.
+            loop = asyncio.new_event_loop()
+            try:
+                asyncio.set_event_loop(loop)
+                return loop.run_until_complete(coroutine)
+            finally:
+                asyncio.set_event_loop(None)
+                loop.close()
+
+    def run_risk_monitoring(
+        self,
+        *,
+        emit_kafka: bool = True,
+        send_email: bool = True,
+        max_positions: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Execute the risk monitoring sweep across open positions.
+        """
+
+        self._load_environment()
+        coroutine = self._run_risk_monitoring_async(
+            emit_kafka=emit_kafka,
+            send_email=send_email,
+            max_positions=max_positions,
+        )
+
+        try:
+            return asyncio.run(coroutine)
+        except RuntimeError:
             loop = asyncio.new_event_loop()
             try:
                 asyncio.set_event_loop(loop)
@@ -290,6 +327,120 @@ class PipelineService:
         )
 
         return {"processed": processed, "requested": len(requests), "portfolio_ids": processed_ids}
+
+    async def _run_risk_monitoring_async(
+        self,
+        *,
+        emit_kafka: bool,
+        send_email: bool,
+        max_positions: Optional[int],
+    ) -> Dict[str, Any]:
+        manager = get_db_manager()
+        if not manager.is_connected():
+            await manager.connect()
+        client = manager.get_client()
+
+        positions = await client.position.find_many(
+            where={"status": "open"},
+            include={"portfolio": True},
+            take=max_positions,
+        )
+
+        if not positions:
+            self.logger.info("Risk monitor: no open positions found")
+            return {"processed": 0, "alerts": 0, "published": 0, "emails_queued": 0}
+
+        market_service = None
+        try:
+            market_service = get_market_data_service()
+        except Exception as exc:  # pragma: no cover - defensive logging
+            self.logger.warning("Risk monitor: market data service unavailable (%s)", exc)
+
+        requests = prepare_risk_monitor_requests(
+            positions,
+            market_data_service=market_service,
+            logger=self.logger,
+        )
+
+        if not requests:
+            self.logger.info("Risk monitor: no evaluable position snapshots constructed")
+            return {"processed": 0, "alerts": 0, "published": 0, "emails_queued": 0}
+
+        self.logger.info("Risk monitor: evaluating %s position(s)", len(requests))
+
+        rows = run_risk_monitor_requests(requests, logger=self.logger)
+        generated_at = datetime.utcnow().isoformat() + "Z"
+        alerts = prepare_risk_alerts(rows, generated_at=generated_at)
+
+        if not alerts:
+            self.logger.info("Risk monitor: no threshold breaches detected")
+            return {"processed": len(requests), "alerts": 0, "published": 0, "emails_queued": 0}
+
+        published_count = (
+            publish_risk_alerts_to_kafka(alerts, logger=self.logger) if emit_kafka else 0
+        )
+
+        emails_dispatched = 0
+        if send_email:
+            severity_rank = {"worst": 3, "worse": 2, "bad": 1, "info": 0}
+            email_batches: Dict[str, Dict[str, Any]] = {}
+
+            for alert in alerts:
+                if not alert.contact_emails:
+                    continue
+
+                alert_payload = {
+                    "symbol": alert.symbol,
+                    "severity": alert.severity,
+                    "message": alert.message,
+                    "drawdown_pct": alert.drawdown_pct,
+                    "day_change_pct": alert.day_change_pct,
+                    "threshold_pct": alert.threshold_pct,
+                    "current_price": alert.current_price,
+                    "average_price": alert.average_price,
+                    "portfolio_id": alert.portfolio_id,
+                    "portfolio_name": alert.portfolio_name,
+                    "generated_at": alert.generated_at,
+                }
+
+                for recipient in alert.contact_emails:
+                    batch = email_batches.setdefault(
+                        recipient,
+                        {
+                            "alerts": [],
+                            "portfolios": set(),
+                            "severity": "info",
+                        },
+                    )
+                    batch["alerts"].append(alert_payload)
+                    batch["portfolios"].add(alert.portfolio_name)
+                    if severity_rank.get(alert.severity, 0) > severity_rank.get(batch["severity"], 0):
+                        batch["severity"] = alert.severity
+
+            for recipient, data in email_batches.items():
+                alerts_payload = data["alerts"]
+                if not alerts_payload:
+                    continue
+                severity = data["severity"].upper()
+                portfolios_list = ", ".join(sorted(p for p in data["portfolios"] if p))
+                subject = f"[Risk Alert:{severity}] {portfolios_list or 'Portfolio'}"
+                send_risk_alert_email_task.delay(recipient, subject, alerts_payload)
+                emails_dispatched += 1
+
+        self.logger.info(
+            "Risk monitor: alerts=%s published=%s emails=%s",
+            len(alerts),
+            published_count,
+            emails_dispatched,
+        )
+
+        return {
+            "processed": len(requests),
+            "alerts": len(alerts),
+            "published": published_count,
+            "emails_queued": emails_dispatched,
+            "generated_at": generated_at,
+        }
 
     def _build_allocation_requests(
         self,

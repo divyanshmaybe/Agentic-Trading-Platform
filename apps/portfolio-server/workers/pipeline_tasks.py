@@ -60,3 +60,20 @@ def run_scheduled_rebalance(self) -> dict:
     summary = service.run_scheduled_rebalance(audit_path=audit_path)
     task_logger.info("Scheduled portfolio rebalance completed: %s", summary)
     return summary
+
+
+@celery_app.task(
+    bind=True,
+    name="pipeline.risk_monitor.run",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_kwargs={"max_retries": 3},
+)
+def run_risk_monitor(self) -> dict:
+    """Celery task that runs the risk monitoring pipeline once."""
+
+    server_dir = Path(__file__).resolve().parents[1]
+    service = PipelineService(str(server_dir), logger=task_logger)
+    summary = service.run_risk_monitoring()
+    task_logger.info("Risk monitoring sweep completed: %s", summary)
+    return summary

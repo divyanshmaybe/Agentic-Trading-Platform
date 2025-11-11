@@ -19,6 +19,7 @@ celery_app = Celery(
         "workers.market_data_tasks",  # API-based tasks only
         "workers.angelone_token_task",  # Angel One token map generation
         "workers.allocation_tasks",  # Portfolio allocation and rebalancing
+        "workers.risk_alert_tasks",  # Email notifications for risk monitor
     ],
 )
 
@@ -40,6 +41,10 @@ REBALANCE_MINUTE = int(os.getenv("PORTFOLIO_REBALANCE_MINUTE", "0"))
 REBALANCE_DAY_OF_WEEK = os.getenv("PORTFOLIO_REBALANCE_DAY_OF_WEEK", "mon-fri")
 REBALANCE_QUEUE = os.getenv("PORTFOLIO_REBALANCE_QUEUE", "default")
 
+RISK_MONITOR_ENABLED = os.getenv("PORTFOLIO_RISK_MONITOR_ENABLED", "true").lower() in {"1", "true", "yes"}
+RISK_MONITOR_INTERVAL = int(os.getenv("PORTFOLIO_RISK_MONITOR_INTERVAL", "900"))
+RISK_MONITOR_QUEUE = os.getenv("PORTFOLIO_RISK_MONITOR_QUEUE", "default")
+
 celery_app.conf.beat_schedule = {
     "news-sentiment-pipeline": {
         "task": "pipeline.news_sentiment.run",
@@ -53,6 +58,13 @@ if REBALANCE_ENABLED:
         "task": "portfolio.daily_rebalancing_sweep",
         "schedule": crontab(hour=REBALANCE_HOUR, minute=REBALANCE_MINUTE, day_of_week=REBALANCE_DAY_OF_WEEK),
         "options": {"queue": REBALANCE_QUEUE},
+    }
+
+if RISK_MONITOR_ENABLED:
+    celery_app.conf.beat_schedule["portfolio-risk-monitor"] = {
+        "task": "pipeline.risk_monitor.run",
+        "schedule": timedelta(seconds=RISK_MONITOR_INTERVAL),
+        "options": {"queue": RISK_MONITOR_QUEUE},
     }
 
 __all__ = ["celery_app"]
