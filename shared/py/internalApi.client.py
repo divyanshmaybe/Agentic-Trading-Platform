@@ -16,7 +16,7 @@ class InternalApiClient:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
         self.timeout = httpx.Timeout(30.0)  # Longer timeout for internal calls
-        self.internal_secret = os.getenv("INTERNAL_SERVICE_SECRET", "bullreckon-secret")
+        self.internal_secret = os.getenv("INTERNAL_SERVICE_SECRET", "agentinvest-secret")
 
         # Service URLs
         self.services = {

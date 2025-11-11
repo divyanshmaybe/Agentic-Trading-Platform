@@ -138,7 +138,7 @@ export class QueueManager {
     }
 
     const connection = this.redisConnection;
-    const prefix = process.env.REDIS_PREFIX || "bullreckon:";
+    const prefix = process.env.REDIS_PREFIX || "agentinvest:";
 
     if (!connection) {
       throw new Error("Redis connection not available for queue setup");
@@ -174,7 +174,7 @@ export class QueueManager {
     }
 
     const connection = this.redisConnection;
-    const prefix = process.env.REDIS_PREFIX || "bullreckon:";
+    const prefix = process.env.REDIS_PREFIX || "agentinvest:";
 
     if (!connection) {
       throw new Error("Redis connection not available for worker setup");
@@ -216,7 +216,7 @@ export class QueueManager {
     }
 
     const connection = this.redisConnection;
-    const prefix = process.env.REDIS_PREFIX || "bullreckon:";
+    const prefix = process.env.REDIS_PREFIX || "agentinvest:";
 
     if (!connection) {
       throw new Error("Redis connection not available for queue events setup");

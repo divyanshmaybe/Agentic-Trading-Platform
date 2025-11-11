@@ -78,7 +78,7 @@ const sendWelcomeEmail = async (email: string, userName: string) => {
     const emailData: EmailJobData = {
       type: "welcome",
       to: email,
-      subject: "Welcome to BullReckon! 🎉",
+      subject: "Welcome to AgentInvest! 🎉",
       template: "welcome",
       templateData: { userName },
     };
@@ -92,7 +92,7 @@ const sendWelcomeEmail = async (email: string, userName: string) => {
       await emailService(
         email,
         "", // No URL needed for welcome email
-        "Welcome to BullReckon! 🎉",
+        "Welcome to AgentInvest! 🎉",
         () => welcomeEmail(userName)
       );
       console.log(`✅ Welcome email sent directly to ${email}`);

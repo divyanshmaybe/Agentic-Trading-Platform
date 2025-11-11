@@ -6,18 +6,18 @@ export const passwordEmail = (type: PasswordEmailType) => (
 ) => {
     const subject =
         type === 'forgot'
-            ? 'Reset your BullReckon password'
-            : 'Your BullReckon password has been changed';
+            ? 'Reset your AgentInvest password'
+            : 'Your AgentInvest password has been changed';
 
     const actionText =
         type === 'forgot'
             ? 'Reset my password'
-            : 'Go to BullReckon';
+            : 'Go to AgentInvest';
 
     const description =
         type === 'forgot'
-            ? `We received a request to reset the password for your BullReckon account (${to}). Click the button below or use this link <a href="${url}"><strong>${url}</strong></a> to reset your password. This link will expire in <strong>48 hours</strong>.`
-            : `Your password for BullReckon account (${to}) has been successfully changed. If you did not perform this action, please contact our support immediately.`;
+            ? `We received a request to reset the password for your AgentInvest account (${to}). Click the button below or use this link <a href="${url}"><strong>${url}</strong></a> to reset your password. This link will expire in <strong>48 hours</strong>.`
+            : `Your password for AgentInvest account (${to}) has been successfully changed. If you did not perform this action, please contact our support immediately.`;
 
     return `
         <!DOCTYPE html>
@@ -36,7 +36,7 @@ export const passwordEmail = (type: PasswordEmailType) => (
         </head>
         <body>
             <div class="container">
-                <img src="https://ftkwhgb.stripocdn.email/content/guids/CABINET_2663efe83689b9bda1312f85374f56d2/images/10381620386430630.png" alt="BullReckon" width="80" style="display:block;margin:0 auto 24px;">
+                <img src="https://ftkwhgb.stripocdn.email/content/guids/CABINET_2663efe83689b9bda1312f85374f56d2/images/10381620386430630.png" alt="AgentInvest" width="80" style="display:block;margin:0 auto 24px;">
                 <h2 style="color:#333;text-align:center;">${subject}</h2>
                 <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
                 <p style="font-size:16px;color:#333;line-height:1.6;">${description}</p>
@@ -45,10 +45,10 @@ export const passwordEmail = (type: PasswordEmailType) => (
                 </div>
                 <hr style="border:none;border-top:1px solid #eee;margin:32px 0;">
                 <div style="text-align:center;">
-                    <p style="font-size:14px;color:#333;">Need help? <a href="mailto:help@bullReckon.com" style="color:#134F5C;text-decoration:underline;">Contact support</a></p>
+                    <p style="font-size:14px;color:#333;">Need help? <a href="mailto:help@agentinvest.com" style="color:#134F5C;text-decoration:underline;">Contact support</a></p>
                 </div>
                 <div class="footer">
-                    <p>You are receiving this email because you requested a password change for your BullReckon account.<br>
+                    <p>You are receiving this email because you requested a password change for your AgentInvest account.<br>
                     If you did not request this, please ignore this email or contact support.</p>
                 </div>
             </div>

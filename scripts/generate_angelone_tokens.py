@@ -70,7 +70,7 @@ def generate_token_map(scrip_file: str, output_file: str):
 
 if __name__ == "__main__":
     scrip_file = sys.argv[1] if len(sys.argv) > 1 else "/tmp/angel_scrip_master.json"
-    output_file = sys.argv[2] if len(sys.argv) > 2 else "/home/manav/dev_ws/Pathway-Inter-IIT/shared/data/angelone_nse_tokens.json"
+    output_file = sys.argv[2] if len(sys.argv) > 2 else "shared/data/angelone_nse_tokens.json"
     
     # Create data directory if needed
     Path(output_file).parent.mkdir(parents=True, exist_ok=True)

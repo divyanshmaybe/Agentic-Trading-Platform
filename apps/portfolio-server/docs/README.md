@@ -1,6 +1,6 @@
 # Portfolio Server Documentation
 
-This directory contains comprehensive documentation for the Portfolio Server component of the BullReckon trading platform.
+This directory contains comprehensive documentation for the Portfolio Server component of the AgentInvest trading platform.
 
 ---
 
@@ -217,7 +217,7 @@ EOF
 
 ```bash
 # Database
-DATABASE_URL=postgresql://user:pass@localhost:5432/bullreckon
+DATABASE_URL=postgresql://user:pass@localhost:5432/agentinvest
 
 # Redis
 REDIS_URL=redis://localhost:6379/0
@@ -318,4 +318,4 @@ tail -f logs/portfolio-server.log
 ---
 
 **Last Updated**: November 11, 2025  
-**Maintained By**: BullReckon Team
+**Maintained By**: AgentInvest Team

@@ -19,7 +19,7 @@ EMAIL_PORT=587
 EMAIL_USE_TLS=true
 EMAIL_USERNAME=apikey  # Literal string "apikey" for SendGrid
 EMAIL_PASSWORD=SG.xxxxxxxxxxxxxxxxxxxxxxxxxxxxx  # Your SendGrid API key
-EMAIL_FROM=BullReckon Alerts <alerts@yourdomain.com>
+EMAIL_FROM=AgentInvest Alerts <alerts@yourdomain.com>
 ```
 
 ### **SendGrid Setup (Recommended)**
@@ -28,7 +28,7 @@ EMAIL_FROM=BullReckon Alerts <alerts@yourdomain.com>
 2. **Create API Key**:
    - Go to Settings → API Keys
    - Click "Create API Key"
-   - Name it "BullReckon Risk Alerts"
+   - Name it "AgentInvest Risk Alerts"
    - Select "Restricted Access" → Enable "Mail Send"
    - Copy the API key (starts with `SG.`)
 3. **Verify Sender Email**:
@@ -87,7 +87,7 @@ async def test_email():
     success = await service.send_email(
         to="your-test-email@example.com",
         subject="Risk Alert Test",
-        body="This is a test email from BullReckon Risk Monitor.",
+        body="This is a test email from AgentInvest Risk Monitor.",
     )
     
     if success:
@@ -290,7 +290,7 @@ EMAIL_PASSWORD=SG.xxxxx                   # SendGrid API key or Gmail app passwo
 # Optional
 EMAIL_USE_TLS=true                        # Use TLS encryption (recommended)
 EMAIL_FROM=alerts@yourdomain.com          # Sender email address
-APP_NAME=BullReckon                       # App name in email templates
+APP_NAME=AgentInvest                       # App name in email templates
 ```
 
 ---

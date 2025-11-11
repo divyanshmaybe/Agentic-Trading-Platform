@@ -39,7 +39,7 @@ class WebSocketService {
 
       // Emit welcome
       socket.emit("connected", {
-        message: "Connected to BullReckon WebSocket",
+        message: "Connected to AgentInvest WebSocket",
         userId: user.id,
         timestamp: new Date(),
       });

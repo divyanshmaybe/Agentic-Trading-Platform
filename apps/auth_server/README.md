@@ -1,6 +1,6 @@
 # Auth Server
 
-Authentication and authorization microservice for the BullReckon platform.
+Authentication and authorization microservice for the AgentInvest platform.
 
 ## Tech Stack
 

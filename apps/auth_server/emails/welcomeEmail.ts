@@ -9,7 +9,7 @@ export const welcomeEmail = (userName: string) => {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Welcome to BullReckon</title>
+  <title>Welcome to AgentInvest</title>
   <style>
     body {
       margin: 0;
@@ -111,15 +111,15 @@ export const welcomeEmail = (userName: string) => {
 <body>
   <div class="container">
     <div class="header">
-      <h1>🎉 Welcome to BullReckon!</h1>
+      <h1>🎉 Welcome to AgentInvest!</h1>
     </div>
     
     <div class="content">
       <div class="greeting">Hi ${userName}!</div>
       
       <div class="message">
-        <p>Thank you for joining BullReckon! Your account is now active and ready to go.</p>
-        <p>We're excited to have you on board. BullReckon is your all-in-one platform for algorithmic trading, portfolio management, and market analysis.</p>
+        <p>Thank you for joining AgentInvest! Your account is now active and ready to go.</p>
+        <p>We're excited to have you on board. AgentInvest is your all-in-one platform for algorithmic trading, portfolio management, and market analysis.</p>
       </div>
 
       <div class="features">
@@ -175,9 +175,9 @@ export const welcomeEmail = (userName: string) => {
         <a href="#" class="social-link">Discord</a>
         <a href="#" class="social-link">GitHub</a>
       </div>
-      <p>© ${new Date().getFullYear()} BullReckon. All rights reserved.</p>
+      <p>© ${new Date().getFullYear()} AgentInvest. All rights reserved.</p>
       <p style="font-size: 12px; margin-top: 10px;">
-        You're receiving this email because you signed up for BullReckon.
+        You're receiving this email because you signed up for AgentInvest.
       </p>
     </div>
   </div>

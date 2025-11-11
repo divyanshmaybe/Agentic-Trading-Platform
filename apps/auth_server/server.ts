@@ -12,7 +12,7 @@ const queueManager = QueueManager.getInstance();
 
 // Initialize app with auth-specific configuration
 const app = new BaseApp({
-  serviceName: "BullReckon Auth Service",
+  serviceName: "AgentInvest Auth Service",
   config: authConfig,
   enableSessions: true,
   enableFileUpload: false,

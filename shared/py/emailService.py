@@ -116,7 +116,7 @@ class EmailService:
         subject = "Verify your email address"
         context = {
             "verification_url": verification_url,
-            "app_name": os.getenv("APP_NAME", "BullReckon"),
+            "app_name": os.getenv("APP_NAME", "AgentInvest"),
         }
 
         return await self.send_template_email(
@@ -128,17 +128,17 @@ class EmailService:
         subject = "Reset your password"
         context = {
             "reset_url": reset_url,
-            "app_name": os.getenv("APP_NAME", "BullReckon"),
+            "app_name": os.getenv("APP_NAME", "AgentInvest"),
         }
 
         return await self.send_template_email(to, "password_reset", context, subject)
 
     async def send_welcome_email(self, to: str, username: str) -> bool:
         """Send welcome email"""
-        subject = "Welcome to BullReckon!"
+        subject = "Welcome to AgentInvest!"
         context = {
             "username": username,
-            "app_name": os.getenv("APP_NAME", "BullReckon"),
+            "app_name": os.getenv("APP_NAME", "AgentInvest"),
         }
 
         return await self.send_template_email(to, "welcome", context, subject)

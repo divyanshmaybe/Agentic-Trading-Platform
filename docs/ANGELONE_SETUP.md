@@ -142,7 +142,7 @@ Here are tokens for popular NSE stocks:
 2. **Restart the portfolio server**:
    ```bash
    cd apps/portfolio-server
-   PYTHONPATH=/home/manav/dev_ws/Pathway-Inter-IIT:$PYTHONPATH python -m uvicorn main:app --reload
+   PYTHONPATH=.:$PYTHONPATH python -m uvicorn main:app --reload
    ```
 
 3. **Test with market quotes endpoint**:

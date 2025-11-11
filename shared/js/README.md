@@ -1,6 +1,6 @@
 # Shared Utilities
 
-This directory contains shared utilities and base classes for both Python (FastAPI) and JavaScript (Express) applications in the BullReckon microservices architecture.
+This directory contains shared utilities and base classes for both Python (FastAPI) and JavaScript (Express) applications in the AgentInvest microservices architecture.
 
 ## Structure
 
@@ -247,6 +247,6 @@ All utilities respect the following environment variables:
 
 ## Usage
 
-These utilities provide a consistent interface across all BullReckon services, whether built with FastAPI (Python) or Express (JavaScript). Each service can import the appropriate utilities based on its technology stack.
+These utilities provide a consistent interface across all AgentInvest services, whether built with FastAPI (Python) or Express (JavaScript). Each service can import the appropriate utilities based on its technology stack.
 
 ```

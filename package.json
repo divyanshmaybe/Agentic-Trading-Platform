@@ -1,5 +1,5 @@
 {
-  "name": "Pathway-Inter-IIT",
+  "name": "AgentInvest",
   "private": true,
   "scripts": {
     "build": "turbo run build",

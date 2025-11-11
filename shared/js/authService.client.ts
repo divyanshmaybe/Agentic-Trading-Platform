@@ -43,7 +43,7 @@ class AuthClient {
           headers: {
             "X-Internal-Service": "true",
             "X-Service-Secret":
-              process.env.INTERNAL_SERVICE_SECRET || "bullreckon-secret",
+              process.env.INTERNAL_SERVICE_SECRET || "agentinvest-secret",
           },
           timeout: 5000,
         }
