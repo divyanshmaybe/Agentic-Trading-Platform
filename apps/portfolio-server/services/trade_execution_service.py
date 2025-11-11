@@ -301,8 +301,17 @@ class TradeExecutionService:
         portfolio_id = str(getattr(trade_record, "portfolio_id", ""))
         symbol = str(getattr(trade_record, "symbol", ""))
         side = str(getattr(trade_record, "side", "BUY"))
-        tp_pct = float(getattr(trade_record, "take_profit_pct", 0.03))
-        sl_pct = float(getattr(trade_record, "stop_loss_pct", 0.01))
+        
+        # Get TP/SL percentages (they are stored as decimals like 0.03 for 3%)
+        tp_pct_raw = getattr(trade_record, "take_profit_pct", Decimal("0.03"))
+        sl_pct_raw = getattr(trade_record, "stop_loss_pct", Decimal("0.01"))
+        tp_pct = float(tp_pct_raw)
+        sl_pct = float(sl_pct_raw)
+        
+        self.logger.debug(
+            "TP/SL percentages for %s: TP=%.4f (%.1f%%), SL=%.4f (%.1f%%)",
+            symbol, tp_pct, tp_pct * 100, sl_pct, sl_pct * 100
+        )
         
         if not user_id or not portfolio_id or not symbol:
             self.logger.warning(

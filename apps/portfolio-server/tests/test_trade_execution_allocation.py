@@ -68,8 +68,8 @@ async def test_trade_execution_flow():
         "triggered_by": "high_risk_agent",  # This should be tracked
         "signal_metadata": {
             "strategy": "nse_pipeline",
-            "take_profit_pct": 3.0,  # Metadata only, no orders created
-            "stop_loss_pct": 1.0,
+            "take_profit_pct": 0.03,  # 3%
+            "stop_loss_pct": 0.01,  # 1%
         }
     }
     
@@ -86,8 +86,8 @@ async def test_trade_execution_flow():
             "reference_price": test_trade["reference_price"],
             "allocated_capital": test_trade["allocated_capital"],
             "confidence": test_trade["confidence"],
-            "take_profit_pct": test_trade["signal_metadata"]["take_profit_pct"],
-            "stop_loss_pct": test_trade["signal_metadata"]["stop_loss_pct"],
+            "take_profit_pct": 0.03,  # 3%
+            "stop_loss_pct": 0.01,  # 1%
             "triggered_by": test_trade["triggered_by"],
             "metadata_json": None,
         }

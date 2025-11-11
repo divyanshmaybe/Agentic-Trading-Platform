@@ -140,16 +140,40 @@ class OrderMonitorWorker:
                 backoff_delay = min(backoff_delay * 2, 60)  # Max 60s backoff
     
     async def _fetch_pending_orders(self) -> List[Dict]:
-        """Fetch all pending orders from database."""
+        """Fetch all pending orders from both Trade and TradeExecutionLog models."""
         prisma = self.db.get_client()
         
-        orders = await prisma.trade.find_many(
+        # Fetch from Trade model (manual API trades)
+        trade_orders = await prisma.trade.find_many(
             where={"status": "pending"},
             order_by={"created_at": "asc"},
             take=BATCH_SIZE
         )
         
-        return [order.dict() for order in orders]
+        # Fetch from TradeExecutionLog model (NSE pipeline TP/SL orders)
+        execution_log_orders = await prisma.tradeexecutionlog.find_many(
+            where={"status": "pending"},
+            order_by={"created_at": "asc"},
+            take=BATCH_SIZE
+        )
+        
+        # Combine and mark the source
+        orders = []
+        for order in trade_orders:
+            order_dict = order.dict()
+            order_dict["_source_model"] = "trade"
+            orders.append(order_dict)
+        
+        for order in execution_log_orders:
+            order_dict = order.dict()
+            order_dict["_source_model"] = "trade_execution_log"
+            orders.append(order_dict)
+        
+        logger.debug(
+            f"📦 Fetched {len(trade_orders)} Trade orders + {len(execution_log_orders)} TradeExecutionLog orders"
+        )
+        
+        return orders
     
     async def _ensure_symbol_subscriptions(self, orders: List[Dict]):
         """Ensure market data service is subscribed to all symbols with pending orders."""
@@ -193,8 +217,7 @@ class OrderMonitorWorker:
             True if order was executed, False otherwise
         """
         symbol = order["symbol"]
-        order_type = order["order_type"]
-        side = order["side"]
+        source_model = order.get("_source_model", "trade")
         
         # Get current market price from cache (instant lookup)
         current_price = self.market_data.get_latest_price(symbol)
@@ -205,36 +228,83 @@ class OrderMonitorWorker:
         
         current_price = Decimal(str(current_price))
         
-        # Check if order should execute
-        should_execute = False
-        condition_met = None
-        
-        if order_type == "limit":
-            limit_price = Decimal(str(order["limit_price"]))
+        # Determine order type and trigger conditions based on source model
+        if source_model == "trade_execution_log":
+            # For TradeExecutionLog: check metadata for order_type
+            metadata = order.get("metadata", {})
+            if isinstance(metadata, str):
+                import json
+                try:
+                    metadata = json.loads(metadata)
+                except:
+                    metadata = {}
             
-            if side == "BUY" and current_price <= limit_price:
-                should_execute = True
-                condition_met = f"BUY limit: {current_price} <= {limit_price}"
-            elif side == "SELL" and current_price >= limit_price:
-                should_execute = True
-                condition_met = f"SELL limit: {current_price} >= {limit_price}"
-        
-        elif order_type in {"stop", "stop_loss"}:
-            trigger_price = Decimal(str(order["trigger_price"]))
+            order_type = metadata.get("order_type", "limit")
+            side = order["side"]
+            reference_price = Decimal(str(order.get("reference_price", 0)))
             
-            if side == "BUY" and current_price >= trigger_price:
-                should_execute = True
-                condition_met = f"BUY stop: {current_price} >= {trigger_price}"
-            elif side == "SELL" and current_price <= trigger_price:
-                should_execute = True
-                condition_met = f"SELL stop: {current_price} <= {trigger_price}"
-        
-        elif order_type == "take_profit":
-            trigger_price = Decimal(str(order["trigger_price"]))
+            should_execute = False
+            condition_met = None
             
-            if current_price >= trigger_price:
-                should_execute = True
-                condition_met = f"Take profit: {current_price} >= {trigger_price}"
+            if order_type == "take_profit":
+                # Take profit: execute when price reaches or exceeds target
+                if side == "SELL" and current_price >= reference_price:
+                    should_execute = True
+                    condition_met = f"TP SELL: {current_price} >= {reference_price}"
+                elif side == "BUY" and current_price <= reference_price:
+                    should_execute = True
+                    condition_met = f"TP BUY: {current_price} <= {reference_price}"
+            
+            elif order_type == "stop_loss":
+                # Stop loss: execute when price falls to or below target
+                if side == "SELL" and current_price <= reference_price:
+                    should_execute = True
+                    condition_met = f"SL SELL: {current_price} <= {reference_price}"
+                elif side == "BUY" and current_price >= reference_price:
+                    should_execute = True
+                    condition_met = f"SL BUY: {current_price} >= {reference_price}"
+            
+            else:  # limit order
+                if side == "BUY" and current_price <= reference_price:
+                    should_execute = True
+                    condition_met = f"LIMIT BUY: {current_price} <= {reference_price}"
+                elif side == "SELL" and current_price >= reference_price:
+                    should_execute = True
+                    condition_met = f"LIMIT SELL: {current_price} >= {reference_price}"
+        
+        else:  # Trade model
+            order_type = order["order_type"]
+            side = order["side"]
+            
+            should_execute = False
+            condition_met = None
+            
+            if order_type == "limit":
+                limit_price = Decimal(str(order["limit_price"]))
+                
+                if side == "BUY" and current_price <= limit_price:
+                    should_execute = True
+                    condition_met = f"BUY limit: {current_price} <= {limit_price}"
+                elif side == "SELL" and current_price >= limit_price:
+                    should_execute = True
+                    condition_met = f"SELL limit: {current_price} >= {limit_price}"
+            
+            elif order_type in {"stop", "stop_loss"}:
+                trigger_price = Decimal(str(order["trigger_price"]))
+                
+                if side == "BUY" and current_price >= trigger_price:
+                    should_execute = True
+                    condition_met = f"BUY stop: {current_price} >= {trigger_price}"
+                elif side == "SELL" and current_price <= trigger_price:
+                    should_execute = True
+                    condition_met = f"SELL stop: {current_price} <= {trigger_price}"
+            
+            elif order_type == "take_profit":
+                trigger_price = Decimal(str(order["trigger_price"]))
+                
+                if current_price >= trigger_price:
+                    should_execute = True
+                    condition_met = f"Take profit: {current_price} >= {trigger_price}"
         
         if not should_execute:
             return False
@@ -243,41 +313,61 @@ class OrderMonitorWorker:
         logger.info(f"🎯 Executing order {order['id']} ({symbol}): {condition_met}")
         
         try:
-            prisma = self.db.get_client()
-            engine = TradeEngine(prisma)
+            source_model = order.get("_source_model", "trade")
             
-            executed = await engine.process_pending_trade(order["id"])
+            if source_model == "trade":
+                # Use TradeEngine for Trade model orders
+                prisma = self.db.get_client()
+                engine = TradeEngine(prisma)
+                executed = await engine.process_pending_trade(order["id"])
+                
+                if executed:
+                    logger.info(f"✅ Successfully executed Trade order {order['id']} ({symbol}) at {current_price}")
+                    return True
+                else:
+                    logger.warning(f"⚠️  Trade order {order['id']} execution failed")
+                    return False
             
-            if executed:
-                logger.info(f"✅ Successfully executed order {order['id']} ({symbol}) at {current_price}")
-                return True
-            else:
-                logger.warning(f"⚠️  Order {order['id']} execution failed (engine returned False)")
-                return False
+            else:  # trade_execution_log
+                # Use TradeExecutionService for NSE pipeline TP/SL orders
+                from services.trade_execution_service import TradeExecutionService
+                
+                trade_service = TradeExecutionService()
+                result = await trade_service.execute_trade(order["id"], simulate=False)
+                
+                if result.get("status") in {"executed", "simulated_executed"}:
+                    logger.info(
+                        f"✅ Successfully executed TradeExecutionLog order {order['id']} ({symbol}) at {current_price}"
+                    )
+                    return True
+                else:
+                    logger.warning(f"⚠️  TradeExecutionLog order {order['id']} execution failed: {result}")
+                    return False
                 
         except Exception as e:
             logger.error(f"❌ Failed to execute order {order['id']}: {e}", exc_info=True)
             return False
     
     async def _cleanup_stale_orders(self):
-        """Cancel orders that have been pending for too long."""
+        """Cancel orders that have been pending for too long in both Trade and TradeExecutionLog."""
         from datetime import datetime, timedelta
         
         prisma = self.db.get_client()
         
         cutoff_time = datetime.utcnow() - timedelta(hours=STALE_ORDER_TIMEOUT)
         
-        stale_orders = await prisma.trade.find_many(
+        # Cleanup Trade model
+        stale_trades = await prisma.trade.find_many(
             where={
                 "status": "pending",
                 "created_at": {"lt": cutoff_time}
             }
         )
         
-        if stale_orders:
-            logger.info(f"🧹 Cleaning up {len(stale_orders)} stale orders (older than {STALE_ORDER_TIMEOUT}h)")
+        if stale_trades:
+            logger.info(f"🧹 Cleaning up {len(stale_trades)} stale Trade orders (older than {STALE_ORDER_TIMEOUT}h)")
             
-            for order in stale_orders:
+            for order in stale_trades:
                 await prisma.trade.update(
                     where={"id": order.id},
                     data={
@@ -286,7 +376,34 @@ class OrderMonitorWorker:
                     }
                 )
             
-            logger.info(f"✅ Cancelled {len(stale_orders)} stale orders")
+            logger.info(f"✅ Cancelled {len(stale_trades)} stale Trade orders")
+        
+        # Cleanup TradeExecutionLog model
+        stale_execution_logs = await prisma.tradeexecutionlog.find_many(
+            where={
+                "status": "pending",
+                "created_at": {"lt": cutoff_time}
+            }
+        )
+        
+        if stale_execution_logs:
+            logger.info(
+                f"🧹 Cleaning up {len(stale_execution_logs)} stale TradeExecutionLog orders "
+                f"(older than {STALE_ORDER_TIMEOUT}h)"
+            )
+            
+            for order in stale_execution_logs:
+                import json
+                await prisma.tradeexecutionlog.update(
+                    where={"id": order.id},
+                    data={
+                        "status": "cancelled",
+                        "error_message": "Order expired - exceeded max pending time",
+                        "metadata": json.dumps({"cancelled_reason": "Order expired - exceeded max pending time"})
+                    }
+                )
+            
+            logger.info(f"✅ Cancelled {len(stale_execution_logs)} stale TradeExecutionLog orders")
     
     def stop(self):
         """Gracefully stop the worker."""
