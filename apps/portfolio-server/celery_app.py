@@ -20,6 +20,7 @@ celery_app = Celery(
         "workers.angelone_token_task",  # Angel One token map generation
         "workers.allocation_tasks",  # Portfolio allocation and rebalancing
         "workers.risk_alert_tasks",  # Email notifications for risk monitor
+        "workers.order_monitor_worker",  # Continuous order monitoring for limit/stop/TP orders
     ],
 )
 
@@ -45,6 +46,11 @@ RISK_MONITOR_ENABLED = os.getenv("PORTFOLIO_RISK_MONITOR_ENABLED", "true").lower
 RISK_MONITOR_INTERVAL = int(os.getenv("PORTFOLIO_RISK_MONITOR_INTERVAL", "900"))
 RISK_MONITOR_QUEUE = os.getenv("PORTFOLIO_RISK_MONITOR_QUEUE", "default")
 
+# Order Monitor Configuration (for limit/stop/take-profit orders)
+ORDER_MONITOR_ENABLED = os.getenv("ORDER_MONITOR_ENABLED", "true").lower() in {"1", "true", "yes"}
+ORDER_MONITOR_INTERVAL = int(os.getenv("ORDER_MONITOR_INTERVAL", "5"))  # Check every 5 seconds
+ORDER_MONITOR_QUEUE = os.getenv("ORDER_MONITOR_QUEUE", "default")
+
 celery_app.conf.beat_schedule = {
     "news-sentiment-pipeline": {
         "task": "pipeline.news_sentiment.run",
@@ -65,6 +71,14 @@ if RISK_MONITOR_ENABLED:
         "task": "pipeline.risk_monitor.run",
         "schedule": timedelta(seconds=RISK_MONITOR_INTERVAL),
         "options": {"queue": RISK_MONITOR_QUEUE},
+    }
+
+# Order Monitor - Continuous checking of pending limit/stop/take-profit orders
+if ORDER_MONITOR_ENABLED:
+    celery_app.conf.beat_schedule["order-monitor-check"] = {
+        "task": "order_monitor.check_pending_orders_once",
+        "schedule": timedelta(seconds=ORDER_MONITOR_INTERVAL),
+        "options": {"queue": ORDER_MONITOR_QUEUE},
     }
 
 __all__ = ["celery_app"]

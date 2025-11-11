@@ -20,6 +20,7 @@ if str(PORTFOLIO_SERVER_ROOT) not in sys.path:
 
 from market_data import await_live_price, get_market_data_service  # type: ignore  # noqa: E402
 from schemas import TradeCreate
+from services.trade_email_service import send_trade_execution_email  # noqa: E402
 
 FEE_RATE = Decimal(os.getenv("TRADE_FEE_RATE", "0.0005"))
 TAX_RATE = Decimal(os.getenv("TRADE_TAX_RATE", "0.00025"))
@@ -163,6 +164,9 @@ class TradeEngine:
             await self._apply_buy_execution(payload, execution_price)
         else:
             await self._apply_sell_execution(payload, execution_price)
+
+        # Send email notification asynchronously
+        await self._send_execution_email(trade.dict(), payload)
 
         return trade.dict()
 
@@ -310,3 +314,42 @@ class TradeEngine:
             import logging
 
             logging.getLogger(__name__).exception("Failed to enqueue pending trade %s", trade_id)
+
+    async def _send_execution_email(self, trade_dict: Dict, payload: TradeCreate) -> None:
+        """Send email notification for trade execution."""
+        try:
+            # Get user/customer email
+            customer = await self.prisma.customer.find_unique(
+                where={"id": payload.customer_id},
+                include={"user": True}
+            )
+            
+            if not customer or not customer.user:
+                import logging
+                logging.getLogger(__name__).warning(
+                    f"No user found for customer {payload.customer_id}, skipping email"
+                )
+                return
+            
+            user_email = customer.user.email
+            user_name = customer.user.name or customer.user.email.split('@')[0]
+            
+            # Get portfolio name
+            portfolio = await self.prisma.portfolio.find_unique(
+                where={"id": payload.portfolio_id}
+            )
+            portfolio_name = portfolio.name if portfolio else "Portfolio"
+            
+            # Send email (fire and forget, don't block on failure)
+            await send_trade_execution_email(
+                user_email=user_email,
+                user_name=user_name,
+                trade_data=trade_dict,
+                portfolio_name=portfolio_name
+            )
+            
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                f"Failed to send trade execution email: {e}"
+            )
