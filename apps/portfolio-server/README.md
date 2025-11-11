@@ -104,9 +104,35 @@ Output files are written to `apps/portfolio-server/pipelines/nse/`:
 
 ## Market Data Service
 
-- Backed by `shared/py/market_data.py` which uses a Pathway websocket connector to stream ticks into a shared cache.
-- All services can call `await await_live_price(symbol)` or `get_live_price(symbol)` to retrieve the latest price without managing sockets individually.
-- Configure provider behaviour via `MARKET_DATA_*` environment variables (defaults target the generic websocket connector).
-- To use Finnhub real-time trades set `MARKET_DATA_PROVIDER=finnhub` and ensure `MARKET_DATA_WS_URL` includes your API token query string (Finnhub allows only one connection per key).
-- To use 5paisa set `MARKET_DATA_PROVIDER=5paisa`, point `MARKET_DATA_WS_URL` at the 5paisa websocket endpoint, and optionally configure `FIVEPAISA_AUTH_MESSAGE`, `FIVEPAISA_SUBSCRIBE_TEMPLATE`, and `FIVEPAISA_PRICE_KEYS` to match your stream configuration.
+**Real-time price streaming with intelligent Nifty-500 pre-fetching**
+
+- Backed by `shared/py/market_data.py` using Pathway WebSocket connector for real-time price streams
+- **Pre-fetches all Nifty-500 symbols in a single batch** on startup for instant price lookups
+- All services call `await await_live_price(symbol)` or `get_live_price(symbol)` for latest prices
+- **Zero rate limit concerns**: Single WebSocket subscription message for all 500 symbols
+- Configure via environment variables (see `shared/py/MARKET_DATA_CONFIG.md`)
+
+### Quick Start
+```bash
+# Enable Nifty-500 pre-fetch (recommended)
+ENABLE_NIFTY500_PREFETCH=true
+
+# Angel One credentials
+ANGELONE_CLIENT_CODE=your_client_code
+ANGELONE_API_KEY=your_api_key
+ANGELONE_PASSWORD=your_password
+ANGELONE_TOTP_SECRET=your_totp_secret
+```
+
+### Performance
+- **Startup**: ~1-2 seconds (single batch subscription)
+- **Price lookups**: <1ms (all 500 stocks cached)
+- **API quota**: 1 WebSocket message total (100% HTTP quota available for historical data)
+
+### Provider Support
+- **Angel One** (default): `MARKET_DATA_PROVIDER=angelone` - Supports Nifty-500 pre-fetch
+- **Finnhub**: `MARKET_DATA_PROVIDER=finnhub` - Real-time trades (token required)
+- **5Paisa**: `MARKET_DATA_PROVIDER=5paisa` - Custom stream configuration
+
+📖 **Full documentation**: `shared/py/MARKET_DATA_CONFIG.md`
 

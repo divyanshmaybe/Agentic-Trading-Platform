@@ -236,6 +236,9 @@ class AngelOneAdapter(WebsocketAdapter):
         self.password = os.getenv("ANGELONE_PASSWORD")
         self.totp_secret = os.getenv("ANGELONE_TOTP_SECRET")
         
+        # Pre-fetch configuration
+        self.enable_nifty500_prefetch = os.getenv("ENABLE_NIFTY500_PREFETCH", "true").lower() in ("true", "1", "yes")
+        
         if not all([self.client_code, self.api_key, self.password, self.totp_secret]):
             raise RuntimeError(
                 "Angel One requires: ANGELONE_CLIENT_CODE, ANGELONE_API_KEY, ANGELONE_PASSWORD, ANGELONE_TOTP_SECRET"
@@ -297,9 +300,39 @@ class AngelOneAdapter(WebsocketAdapter):
             logger.error(f"Failed to load token map: {e}")
             logger.info("📋 Using fallback token map")
             self._token_map = FALLBACK_TOKEN_MAP.copy()
+        
+        # Validate Nifty-500 list availability (for pre-fetch optimization)
+        self._validate_nifty500_availability()
 
         self._inject_index_tokens()
         self._build_aliases()
+    
+    def _validate_nifty500_availability(self) -> None:
+        """
+        Validate Nifty-500 symbol list is available for pre-fetching.
+        Logs helpful messages if missing, but doesn't block startup.
+        """
+        if not self.enable_nifty500_prefetch:
+            logger.info("ℹ️  Nifty-500 pre-fetch is disabled (ENABLE_NIFTY500_PREFETCH=false)")
+            return
+        
+        try:
+            from nifty500_symbols import get_nifty500_symbols, get_nifty500_count
+            
+            count = get_nifty500_count()
+            logger.info(f"✅ Nifty-500 list ready for pre-fetch ({count} symbols)")
+            
+        except ImportError:
+            logger.warning(
+                "⚠️  nifty500_symbols.py not found! Nifty-500 pre-fetch will be disabled.\n"
+                "   To enable pre-fetching:\n"
+                "   1. Run: generate_angelone_tokens_task Celery worker\n"
+                "   2. Or manually run: python -c 'from angelone_token_generator import generate_nifty500_symbols; generate_nifty500_symbols()'\n"
+                "   Pre-fetch benefits: Instant price lookups, no rate limits for Nifty-500 stocks"
+            )
+        except Exception as e:
+            logger.warning(f"⚠️  Failed to validate Nifty-500 list: {e}")
+
 
     def _inject_index_tokens(self) -> None:
         """Ensure important index symbols are present in the token map."""
@@ -502,8 +535,44 @@ class AngelOneAdapter(WebsocketAdapter):
     
     async def on_connect(self, ws, symbols: Iterable[str]) -> None:
         """Subscribe to initial symbols on connection."""
+        # Pre-fetch Nifty 500 symbols if enabled
+        if self.enable_nifty500_prefetch:
+            await self._prefetch_nifty500(ws)
+        
+        # Subscribe to any additional requested symbols
         if symbols:
             await self._batch_subscribe(ws, list(symbols), subscribe=True)
+    
+    async def _prefetch_nifty500(self, ws) -> None:
+        """
+        Pre-fetch all Nifty 500 symbols in a SINGLE batch request.
+        
+        Angel One WebSocket supports subscribing to multiple symbols in one request
+        by grouping them by exchange type. This is the most efficient approach:
+        - Single API request for all 500 symbols
+        - Instant subscription
+        - No rate limit concerns
+        - All prices streaming immediately
+        """
+        try:
+            from nifty500_symbols import get_nifty500_symbols
+            
+            nifty500 = get_nifty500_symbols()
+            logger.info(f"📊 Pre-fetching ALL {len(nifty500)} Nifty-500 symbols in single batch...")
+            
+            # Subscribe to all symbols in ONE batch request
+            # The _batch_subscribe method groups by exchange type automatically
+            await self._batch_subscribe(ws, nifty500, subscribe=True)
+            
+            logger.info(f"✅ Nifty-500 pre-fetch complete! All {len(nifty500)} symbols subscribed and streaming.")
+            
+        except ImportError:
+            logger.warning(
+                "⚠️  nifty500_symbols module not found. "
+                "Nifty-500 pre-fetch disabled. Only on-demand symbol subscriptions will work."
+            )
+        except Exception as e:
+            logger.error(f"❌ Failed to pre-fetch Nifty-500 symbols: {e}", exc_info=True)
     
     async def subscribe_symbol(self, ws, symbol: str) -> None:
         """Subscribe to a single symbol."""
