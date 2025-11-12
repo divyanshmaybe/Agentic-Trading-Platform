@@ -8,11 +8,15 @@ These tasks trigger the Pathway allocation pipeline when:
 
 import json
 import logging
+import math
 import sys
+from datetime import date, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
-from datetime import datetime, date, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
+
 from dateutil.relativedelta import relativedelta
+from fastapi.encoders import jsonable_encoder
 
 # Ensure portfolio-server root is in path
 server_root = Path(__file__).resolve().parents[1]
@@ -20,9 +24,54 @@ if str(server_root) not in sys.path:
     sys.path.insert(0, str(server_root))
 
 from celery_app import celery_app
+from prisma import fields
 from utils import allocate_portfolios
 
 logger = logging.getLogger(__name__)
+
+_JSON_ENCODERS = {
+    datetime: lambda value: value.isoformat(),
+    date: lambda value: value.isoformat(),
+    timedelta: lambda value: value.total_seconds(),
+    Decimal: float,
+}
+
+
+def _encode_json(value: Any) -> Any:
+    """Encode arbitrary data structures into JSON-serialisable Python objects."""
+
+    def _sanitize(val: Any) -> Any:
+        if val is None:
+            return None
+        if isinstance(val, (datetime, date)):
+            return val.isoformat()
+        if isinstance(val, timedelta):
+            return val.total_seconds()
+        if isinstance(val, Decimal):
+            coerced = float(val)
+            if math.isnan(coerced) or math.isinf(coerced):
+                return None
+            return coerced
+        if isinstance(val, float):
+            if math.isnan(val) or math.isinf(val):
+                return None
+            return float(val)
+        if isinstance(val, (int, str, bool)):
+            return val
+        if isinstance(val, Mapping):
+            return {str(key): _sanitize(sub_val) for key, sub_val in val.items()}
+        if isinstance(val, list):
+            return [_sanitize(item) for item in val]
+        try:
+            encoded = jsonable_encoder(val, custom_encoder=_JSON_ENCODERS)
+            return _sanitize(encoded)
+        except Exception:
+            return str(val)
+
+    sanitized = _sanitize(value)
+    if sanitized is None:
+        return None
+    return fields.Json(sanitized)
 
 
 # ==========================================================================
@@ -242,6 +291,13 @@ def allocate_new_portfolio_task(
                 weights = _coerce_to_plain_dict(allocation_result.get("weights_json"))
 
             for allocation_type, weight in weights.items():
+                allocation_metadata = {
+                    "request_id": request["request_id"],
+                    "trigger": "initial_creation",
+                    "objective_value": allocation_result.get("objective_value"),
+                    "message": allocation_result.get("message"),
+                }
+
                 await db.portfolioallocation.create(
                     data={
                         "portfolio_id": portfolio_id,
@@ -251,12 +307,7 @@ def allocate_new_portfolio_task(
                         "expected_return": allocation_result.get("expected_return"),
                         "expected_risk": allocation_result.get("expected_risk"),
                         "regime": current_regime,
-                        "metadata": {
-                            "request_id": request["request_id"],
-                            "trigger": "initial_creation",
-                            "objective_value": allocation_result.get("objective_value"),
-                            "message": allocation_result.get("message"),
-                        }
+                        "metadata": _encode_json(allocation_metadata),
                     }
                 )
             
@@ -266,17 +317,19 @@ def allocate_new_portfolio_task(
             )
             
             # Mark portfolio as ready
+            portfolio_metadata = {
+                "allocated_at": datetime.utcnow(),
+                "allocation_regime": current_regime,
+            }
+
             await db.portfolio.update(
                 where={"id": portfolio_id},
                 data={
                     "allocation_status": "ready",
                     "rebalancing_date": rebalancing_date,
                     "last_rebalanced_at": datetime.utcnow(),
-                    "metadata": {
-                        "allocated_at": datetime.utcnow().isoformat(),
-                        "allocation_regime": current_regime,
-                    }
-                }
+                    "metadata": _encode_json(portfolio_metadata),
+                },
             )
             
             logger.info(
@@ -428,9 +481,19 @@ def allocate_for_objective_task(
             
             # Now do all database operations after the pipeline
             # Save allocation weights to portfolioAllocation table
-            weights = allocation_result.get("weights", {})
-            
+            weights = _coerce_to_plain_dict(allocation_result.get("weights"))
+            if not weights:
+                weights = _coerce_to_plain_dict(allocation_result.get("weights_json"))
+
             for allocation_type, weight in weights.items():
+                allocation_metadata = {
+                    "request_id": request["request_id"],
+                    "objective_id": objective_id,
+                    "trigger": triggered_by,
+                    "objective_value": allocation_result.get("objective_value"),
+                    "message": allocation_result.get("message"),
+                }
+
                 await db.portfolioallocation.create(
                     data={
                         "portfolio_id": portfolio_id,
@@ -440,14 +503,8 @@ def allocate_for_objective_task(
                         "expected_return": allocation_result.get("expected_return"),
                         "expected_risk": allocation_result.get("expected_risk"),
                         "regime": current_regime,
-                        "metadata": {
-                            "request_id": request["request_id"],
-                            "objective_id": objective_id,
-                            "trigger": triggered_by,
-                            "objective_value": allocation_result.get("objective_value"),
-                            "message": allocation_result.get("message"),
-                        }
-                    }
+                        "metadata": _encode_json(allocation_metadata),
+                    },
                 )
             
             # Calculate next rebalancing date
@@ -456,6 +513,13 @@ def allocate_for_objective_task(
             )
             
             # Mark portfolio as ready
+            portfolio_metadata = {
+                "allocated_at": datetime.utcnow(),
+                "allocation_regime": current_regime,
+                "objective_id": objective_id,
+                "triggered_by": triggered_by,
+            }
+
             await db.portfolio.update(
                 where={"id": portfolio_id},
                 data={
@@ -463,13 +527,8 @@ def allocate_for_objective_task(
                     "rebalancing_date": rebalancing_date,
                     "last_rebalanced_at": datetime.utcnow(),
                     "next_rebalance_at": rebalancing_date,
-                    "metadata": {
-                        "allocated_at": datetime.utcnow().isoformat(),
-                        "allocation_regime": current_regime,
-                        "objective_id": objective_id,
-                        "triggered_by": triggered_by,
-                    }
-                }
+                    "metadata": _encode_json(portfolio_metadata),
+                },
             )
             
             logger.info(
@@ -666,9 +725,19 @@ def daily_rebalancing_sweep_task(self) -> Dict[str, Any]:
                 if result.get("success"):
                     try:
                         # Save new allocation weights
-                        weights = result.get("weights", {})
-                        
+                        weights = _coerce_to_plain_dict(result.get("weights"))
+                        if not weights:
+                            weights = _coerce_to_plain_dict(result.get("weights_json"))
+
                         for allocation_type, weight in weights.items():
+                            allocation_metadata = {
+                                "request_id": request["request_id"],
+                                "trigger": "scheduled_rebalancing",
+                                "objective_value": result.get("objective_value"),
+                                "drift": result.get("drift"),
+                                "days_overdue": request["metadata"]["days_overdue"],
+                            }
+
                             await db.portfolioallocation.create(
                                 data={
                                     "portfolio_id": portfolio.id,
@@ -678,14 +747,8 @@ def daily_rebalancing_sweep_task(self) -> Dict[str, Any]:
                                     "expected_return": result.get("expected_return"),
                                     "expected_risk": result.get("expected_risk"),
                                     "regime": current_regime,
-                                    "metadata": {
-                                        "request_id": request["request_id"],
-                                        "trigger": "scheduled_rebalancing",
-                                        "objective_value": result.get("objective_value"),
-                                        "drift": result.get("drift"),
-                                        "days_overdue": request["metadata"]["days_overdue"],
-                                    }
-                                }
+                                    "metadata": _encode_json(allocation_metadata),
+                                },
                             )
                         
                         # Calculate next rebalancing date
@@ -695,18 +758,20 @@ def daily_rebalancing_sweep_task(self) -> Dict[str, Any]:
                         )
                         
                         # Update portfolio
+                        portfolio_metadata = {
+                            "last_rebalanced_at": datetime.utcnow(),
+                            "rebalancing_regime": current_regime,
+                            "next_rebalance_date": next_rebalance.isoformat() if next_rebalance else None,
+                        }
+
                         await db.portfolio.update(
                             where={"id": portfolio.id},
                             data={
                                 "rebalancing_date": next_rebalance,
                                 "last_rebalanced_at": datetime.utcnow(),
                                 "allocation_status": "ready",
-                                "metadata": {
-                                    "last_rebalanced_at": datetime.utcnow().isoformat(),
-                                    "rebalancing_regime": current_regime,
-                                    "next_rebalance_date": next_rebalance.isoformat() if next_rebalance else None,
-                                }
-                            }
+                                "metadata": _encode_json(portfolio_metadata),
+                            },
                         )
                         
                         rebalanced_count += 1

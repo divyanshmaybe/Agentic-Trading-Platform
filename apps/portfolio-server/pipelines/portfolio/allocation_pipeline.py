@@ -432,6 +432,59 @@ def run_portfolio_allocation_requests(
         stop_event.set()
 
     rows = collector.rows
+    normalised_rows: List[Dict[str, Any]] = []
+    for row in rows:
+        normalised = dict(row)
+
+        weights_json = normalised.get("weights_json")
+        if isinstance(weights_json, str):
+            try:
+                normalised["weights"] = json.loads(weights_json)
+            except json.JSONDecodeError:
+                normalised["weights"] = {}
+        else:
+            weights = normalised.get("weights")
+            if isinstance(weights, dict):
+                normalised["weights"] = weights
+            elif hasattr(weights, "items"):
+                normalised["weights"] = dict(weights)
+            else:
+                normalised["weights"] = {}
+
+        drift_json = normalised.get("drift_json")
+        if isinstance(drift_json, str):
+            try:
+                normalised["drift"] = json.loads(drift_json)
+            except json.JSONDecodeError:
+                normalised["drift"] = {}
+        else:
+            drift = normalised.get("drift")
+            if isinstance(drift, dict):
+                normalised["drift"] = drift
+            elif hasattr(drift, "items"):
+                normalised["drift"] = dict(drift)
+            else:
+                normalised["drift"] = {}
+
+        metadata = normalised.get("metadata")
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except json.JSONDecodeError:
+                metadata = {}
+        elif isinstance(metadata, dict):
+            pass
+        elif hasattr(metadata, "items"):
+            metadata = dict(metadata)
+        elif metadata is None:
+            metadata = {}
+        else:
+            metadata = {}
+        normalised["metadata"] = metadata
+
+        normalised_rows.append(normalised)
+
+    rows = normalised_rows
 
     if write_to_path and rows:
         try:

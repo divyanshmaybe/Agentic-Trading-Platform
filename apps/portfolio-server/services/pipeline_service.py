@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import sys
 import uuid
@@ -684,7 +685,7 @@ class PipelineService:
             elif weight > 0:
                 created = await client.portfolioallocation.create(
                     data={
-                        "portfolio_id": portfolio.id,
+                        "portfolio": {"connect": {"id": portfolio.id}},
                         "allocation_type": segment,
                         "target_weight": target_weight_dec,
                         "current_weight": target_weight_dec,
@@ -881,6 +882,13 @@ class PipelineService:
 
     def _clean_json(self, value: Any) -> Any:
         if isinstance(value, Decimal):
+            coerced = float(value)
+            if math.isnan(coerced) or math.isinf(coerced):
+                return None
+            return coerced
+        if isinstance(value, float):
+            if math.isnan(value) or math.isinf(value):
+                return None
             return float(value)
         if isinstance(value, Mapping):
             return {key: self._clean_json(val) for key, val in value.items()}

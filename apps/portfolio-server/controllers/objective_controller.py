@@ -501,10 +501,11 @@ class ObjectiveController:
                 metadata["objective_metadata"] = dict(payload.metadata)
 
         update_data: Dict[str, Any] = {
-            "objective_id": objective_id,  # Set the objective_id foreign key
             "metadata": self._encode_json(metadata),
             "investment_horizon_years": payload.investment_horizon_years,
         }
+
+        update_data["objective"] = {"connect": {"id": objective_id}}
 
         if isinstance(payload.investable_amount, Decimal):
             update_data["investment_amount"] = payload.investable_amount
@@ -521,7 +522,14 @@ class ObjectiveController:
             update_data["liquidity_needs"] = payload.liquidity_needs
 
         if payload.rebalancing_frequency is not None:
-            update_data["rebalancing_frequency"] = payload.rebalancing_frequency
+            if isinstance(payload.rebalancing_frequency, str):
+                update_data["rebalancing_frequency"] = self._encode_json(
+                    {"frequency": payload.rebalancing_frequency}
+                )
+            else:
+                update_data["rebalancing_frequency"] = self._encode_json(
+                    payload.rebalancing_frequency
+                )
 
         if payload.constraints:
             update_data["constraints"] = self._encode_json(payload.constraints)

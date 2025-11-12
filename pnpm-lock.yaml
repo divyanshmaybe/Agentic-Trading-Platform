@@ -9,7 +9,7 @@ importers:
   .:
     dependencies:
       '@prisma/client':
-        specifier: ^5.20.0
+        specifier: 5.22.0
         version: 5.22.0(prisma@5.22.0)
       '@sendgrid/mail':
         specifier: ^8.1.6
@@ -103,7 +103,7 @@ importers:
         specifier: ^3.6.2
         version: 3.6.2
       prisma:
-        specifier: ^5.20.0
+        specifier: 5.22.0
         version: 5.22.0
       turbo:
         specifier: ^2.6.0
@@ -115,7 +115,7 @@ importers:
   apps/auth_server:
     dependencies:
       '@prisma/client':
-        specifier: ^5.20.0
+        specifier: 5.22.0
         version: 5.22.0(prisma@5.22.0)
       bcryptjs:
         specifier: ^3.0.3
@@ -137,7 +137,7 @@ importers:
         specifier: ^9.0.10
         version: 9.0.10
       prisma:
-        specifier: ^5.20.0
+        specifier: 5.22.0
         version: 5.22.0
       tsx:
         specifier: ^4.20.6

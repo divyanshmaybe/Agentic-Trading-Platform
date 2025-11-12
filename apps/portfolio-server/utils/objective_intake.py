@@ -478,7 +478,22 @@ def validate_structured_payload(
         return params, [], []
     except ValidationError as exc:
         missing = identify_missing_fields(data)
-        warnings = [err["msg"] for err in exc.errors()]
+        warnings: List[str] = []
+
+        for err in exc.errors():
+            loc_parts = [str(part) for part in err.get("loc", ())]
+            field_path = ".".join(loc_parts)
+            warnings.append(err.get("msg", ""))
+
+            if field_path == "liquidity_needs" and "liquidity_needs" not in missing:
+                missing.append("liquidity_needs")
+            elif field_path.startswith("risk_tolerance") and "risk_tolerance.category" not in missing:
+                missing.append("risk_tolerance.category")
+
+        # Ensure deterministic ordering for testing/logs
+        missing = list(dict.fromkeys(missing))
+        warnings = [w for w in warnings if w]
+
         return None, missing, warnings
 
 
