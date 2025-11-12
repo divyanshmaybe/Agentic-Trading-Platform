@@ -30,3 +30,12 @@ async def get_market_quotes(
     """Get live market quotes for the given symbols."""
     return await controller.get_quotes(symbols, candle=candle, start=start, end=end)
 
+
+@router.get("/subscribed-symbols")
+async def get_subscribed_symbols(
+    _: dict = Depends(get_authenticated_user),
+    controller: MarketController = Depends(get_market_controller),
+) -> dict:
+    """Get list of all currently subscribed symbols from the WebSocket stream."""
+    return controller.get_subscribed_symbols()
+

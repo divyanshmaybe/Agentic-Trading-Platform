@@ -323,3 +323,23 @@ class MarketController:
             "1y": now - timedelta(days=365),
         }
         return defaults[resolution], now
+
+    def get_subscribed_symbols(self) -> dict:
+        """
+        Get list of all currently subscribed symbols from the WebSocket adapter.
+        Returns count and list of symbols that are actively streaming prices.
+        """
+        adapter = self.service.adapter
+        if hasattr(adapter, 'get_subscribed_symbols'):
+            symbols = adapter.get_subscribed_symbols()
+            return {
+                "subscribed": symbols,
+                "count": len(symbols),
+                "provider": adapter.name,
+            }
+        return {
+            "subscribed": [],
+            "count": 0,
+            "provider": adapter.name if adapter else "unknown",
+            "message": "Adapter does not support subscription tracking"
+        }

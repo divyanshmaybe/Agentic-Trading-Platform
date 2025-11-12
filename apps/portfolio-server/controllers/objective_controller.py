@@ -7,6 +7,7 @@ from decimal import Decimal
 from typing import Any, Dict, Optional
 
 from fastapi import HTTPException, status
+from fastapi.encoders import jsonable_encoder
 from prisma import Prisma
 
 from controllers.portfolio_controller import PortfolioController
@@ -34,6 +35,14 @@ class ObjectiveController:
         self.pipeline_service = pipeline_service
         self.logger = logger or logging.getLogger(__name__)
         self._portfolio_controller = PortfolioController(prisma)
+        self._json_encoder = {
+            Decimal: lambda v: float(v),
+        }
+
+    def _encode_json(self, value: Any) -> Any:
+        if value is None:
+            return None
+        return jsonable_encoder(value, custom_encoder=self._json_encoder)
 
     async def create_objective(
         self,
@@ -101,8 +110,8 @@ class ObjectiveController:
             data={
                 "user_id": user_id,
                 "name": payload.name,
-                "raw": structured_payload,
-                "structured_payload": structured_payload,
+                "raw": self._encode_json(structured_payload),
+                "structured_payload": self._encode_json(structured_payload),
                 "source": "api:create",
                 "investable_amount": payload.investable_amount,
                 "investment_horizon_years": payload.investment_horizon_years,
@@ -119,10 +128,10 @@ class ObjectiveController:
                     if payload.rebalancing_frequency is not None
                     else None
                 ),
-                "preferences": preferences,
-                "constraints": payload.constraints or {},
-                "generic_notes": generic_notes,
-                "missing_fields": [],
+                "preferences": self._encode_json(preferences),
+                "constraints": self._encode_json(payload.constraints or {}),
+                "generic_notes": self._encode_json(generic_notes),
+                "missing_fields": self._encode_json([]),
                 "completion_status": "complete",
                 "status": "active",
             }
@@ -258,8 +267,8 @@ class ObjectiveController:
             where={"id": objective_id},
             data={
                 "name": payload.name,
-                "raw": combined_raw,
-                "structured_payload": structured_payload,
+                "raw": self._encode_json(combined_raw),
+                "structured_payload": self._encode_json(structured_payload),
                 "source": source or objective.source or "intake",
                 "investable_amount": payload.investable_amount,
                 "investment_horizon_years": payload.investment_horizon_years,
@@ -276,10 +285,10 @@ class ObjectiveController:
                     if payload.rebalancing_frequency is not None
                     else None
                 ),
-                "constraints": payload.constraints or {},
-                "preferences": preferences,
-                "generic_notes": generic_notes,
-                "missing_fields": [],
+                "constraints": self._encode_json(payload.constraints or {}),
+                "preferences": self._encode_json(preferences),
+                "generic_notes": self._encode_json(generic_notes),
+                "missing_fields": self._encode_json([]),
                 "completion_status": "complete",
                 "status": "active",
             },

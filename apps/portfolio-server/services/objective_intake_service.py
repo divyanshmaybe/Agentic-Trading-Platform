@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import Any, Dict, Optional
 
 from fastapi import HTTPException, status
+from fastapi.encoders import jsonable_encoder
 from prisma import Prisma
 
 from controllers.objective_controller import ObjectiveController
@@ -129,6 +130,15 @@ class ObjectiveIntakeService:
             prisma, pipeline_service, logger=self.logger
         )
 
+    @staticmethod
+    def _encode_json(value: Any) -> Any:
+        if value is None:
+            return None
+        return jsonable_encoder(
+            value,
+            custom_encoder={Decimal: lambda v: float(v)},
+        )
+
     async def process_intake(
         self,
         user: Dict[str, Any],
@@ -168,10 +178,10 @@ class ObjectiveIntakeService:
                 data={
                     "user_id": user_id,
                     "name": request.name,
-                    "raw": {},
+                    "raw": self._encode_json({}),
                     "source": request.source or "intake",
-                    "structured_payload": {},
-                    "missing_fields": [],
+                    "structured_payload": self._encode_json({}),
+                    "missing_fields": self._encode_json([]),
                     "completion_status": "pending",
                     "status": "draft",
                 }
@@ -216,14 +226,20 @@ class ObjectiveIntakeService:
 
         update_payload: Dict[str, Any] = {
             "name": request.name or objective_record.name,
-            "structured_payload": pipeline_result.structured_payload,
-            "raw": updated_raw,
-            "missing_fields": pipeline_result.missing_fields,
+            "structured_payload": self._encode_json(pipeline_result.structured_payload),
+            "raw": self._encode_json(updated_raw),
+            "missing_fields": self._encode_json(pipeline_result.missing_fields),
             "completion_status": completion_status,
             "source": request.source or objective_record.source or "intake",
-            "preferences": pipeline_result.structured_payload.get("preferences") or {},
-            "constraints": pipeline_result.structured_payload.get("constraints") or {},
-            "generic_notes": pipeline_result.structured_payload.get("generic_notes") or [],
+            "preferences": self._encode_json(
+                pipeline_result.structured_payload.get("preferences") or {}
+            ),
+            "constraints": self._encode_json(
+                pipeline_result.structured_payload.get("constraints") or {}
+            ),
+            "generic_notes": self._encode_json(
+                pipeline_result.structured_payload.get("generic_notes") or []
+            ),
         }
 
         # Update optional scalar fields where data exists
