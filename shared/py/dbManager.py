@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from typing import Optional, Any
@@ -28,8 +29,10 @@ class DBManager:
         # Ensure Prisma can discover the database connection string
         os.environ.setdefault("DATABASE_URL", self.database_url)
 
-        self.client: Prisma = Prisma(auto_register=True, log_queries=log_queries)
+        self._client_options = {"auto_register": True, "log_queries": log_queries}
+        self.client: Prisma = Prisma(**self._client_options)
         self._connected: bool = False
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     @classmethod
     def get_instance(cls, database_url: Optional[str] = None, log_queries: bool = False) -> "DBManager":
@@ -42,12 +45,26 @@ class DBManager:
     async def connect(self) -> None:
         """Establish a connection to the database via Prisma."""
 
+        loop = asyncio.get_running_loop()
+
         if self._connected:
-            return
+            if self._loop is loop:
+                return
+
+            # Recreate the Prisma client for the new event loop
+            try:
+                await self.client.disconnect()
+            except Exception:  # pragma: no cover - best effort cleanup
+                self.logger.debug("Failed to disconnect existing Prisma client during loop switch", exc_info=True)
+
+            self.client = Prisma(**self._client_options)
+            self._connected = False
+            self._loop = None
 
         try:
             await self.client.connect()
             self._connected = True
+            self._loop = loop
             self.logger.info("✅ Connected to database via Prisma")
         except PrismaError as exc:
             self.logger.error("❌ Failed to connect to database via Prisma", exc_info=exc)
@@ -64,6 +81,7 @@ class DBManager:
             self.logger.info("🔌 Disconnected Prisma client")
         finally:
             self._connected = False
+            self._loop = None
 
     def get_client(self) -> Prisma:
         """Return the underlying Prisma client (requires active connection)."""

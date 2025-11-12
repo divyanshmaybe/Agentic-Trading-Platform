@@ -12,6 +12,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import random
 import threading
 import time
 from pathlib import Path
@@ -25,6 +26,7 @@ import tempfile
 import pathway as pw
 from pathway.io.python import ConnectorSubject
 from urllib.parse import urlencode, urlparse, parse_qs, urlunparse
+from websockets.exceptions import ConnectionClosedError, InvalidMessage, InvalidStatus
 
 logger = logging.getLogger(__name__)
 
@@ -269,6 +271,11 @@ class AngelOneAdapter(WebsocketAdapter):
         lock_dir = Path(tempfile.gettempdir()) / "angelone_locks"
         lock_dir.mkdir(parents=True, exist_ok=True)
         self._login_lock_path = lock_dir / "login.lock"
+        self._prefetch_lock_path = lock_dir / "prefetch.lock"
+        self._prefetch_marker_path = lock_dir / "prefetch.marker"
+        self._prefetch_ttl_seconds = float(
+            os.getenv("ANGELONE_PREFETCH_TTL_SECONDS", "900")
+        )
 
         # Perform login to get tokens
         self._login()
@@ -285,6 +292,9 @@ class AngelOneAdapter(WebsocketAdapter):
         self._historical_rate_limit = float(os.getenv("ANGELONE_HISTORICAL_RATE_LIMIT_SECONDS", "0.2"))  # 200ms = 5 req/s
         self._last_historical_request = 0.0
         self._historical_lock = threading.Lock()
+        
+        # Track subscribed symbols for market service filtering
+        self._subscribed_symbols: Set[str] = set()
     
     def _load_or_generate_token_map(self) -> None:
         """Load token map from cache file or use fallback."""
@@ -551,56 +561,133 @@ class AngelOneAdapter(WebsocketAdapter):
     
     async def _prefetch_nifty500(self, ws) -> None:
         """
-        Pre-fetch all Nifty 500 symbols in a SINGLE batch request.
-        
-        Subscribes to symbols in BATCHES with 250ms staggering to avoid rate limits:
-        - Angel One allows ~10-20 symbols per batch
-        - 250ms delay between batches prevents HTTP 429 errors
-        - Total time: ~250ms * 25 batches = ~6-7 seconds for all 500 symbols
-        - All prices will be streaming after this initial setup
+        Pre-fetch all Nifty 500 symbols, guarding against multiple processes
+        hammering the websocket and triggering 429s.
+        """
+        marker_path = self._prefetch_marker_path
+        ttl = self._prefetch_ttl_seconds
+        now = time.time()
+
+        try:
+            if marker_path.exists():
+                age = now - marker_path.stat().st_mtime
+                if age < ttl:
+                    logger.info(
+                        "⏭️  Skipping Nifty-500 pre-fetch; completed %.1fs ago in another worker.",
+                        age,
+                    )
+                    return
+        except FileNotFoundError:
+            pass
+
+        lock_file: Optional[Any] = None
+        try:
+            lock_file = open(self._prefetch_lock_path, "w")
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+
+            # Re-check once we hold the lock to avoid duplicate work
+            now = time.time()
+            try:
+                if marker_path.exists():
+                    age = now - marker_path.stat().st_mtime
+                    if age < ttl:
+                        logger.info(
+                            "⏭️  Another worker completed Nifty-500 pre-fetch %.1fs ago; skipping.",
+                            age,
+                        )
+                        return
+            except FileNotFoundError:
+                pass
+
+            await self._run_nifty500_prefetch(ws)
+            marker_path.write_text(str(int(time.time())))
+        finally:
+            if lock_file:
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
+                lock_file.close()
+
+    async def _run_nifty500_prefetch(self, ws) -> None:
+        """
+        Actual implementation of the Nifty-500 streaming bootstrap.
         """
         try:
             from nifty500_symbols import get_nifty500_symbols
-            
+
             nifty500 = get_nifty500_symbols()
             batch_size = int(os.getenv("ANGELONE_SUBSCRIBE_BATCH_SIZE", "20"))
-            batch_delay = float(os.getenv("ANGELONE_SUBSCRIBE_DELAY_MS", "250")) / 1000  # Convert to seconds
-            
+            batch_delay = (
+                float(os.getenv("ANGELONE_SUBSCRIBE_DELAY_MS", "250")) / 1000
+            )  # Convert to seconds
+
             logger.info(
-                f"📊 Pre-fetching {len(nifty500)} Nifty-500 symbols "
-                f"({batch_size} symbols/batch, {batch_delay*1000:.0f}ms delay)..."
+                "📊 Pre-fetching %s Nifty-500 symbols (%s symbols/batch, %.0fms delay)...",
+                len(nifty500),
+                batch_size,
+                batch_delay * 1000,
             )
-            
+
+            subscribed_symbols: List[str] = []
+
             # Subscribe in batches with staggered delays to avoid rate limiting
             for i in range(0, len(nifty500), batch_size):
-                batch = nifty500[i:i+batch_size]
+                batch = nifty500[i : i + batch_size]
                 await self._batch_subscribe(ws, batch, subscribe=True)
-                
-                # Log progress every 100 symbols
-                if (i + batch_size) % 100 == 0 or (i + batch_size) >= len(nifty500):
-                    logger.info(f"   ↳ Subscribed {min(i+batch_size, len(nifty500))}/{len(nifty500)} symbols")
-                
+                subscribed_symbols.extend(batch)
+
+                progress = min(i + batch_size, len(nifty500))
+                if progress % 100 == 0 or progress >= len(nifty500):
+                    logger.info("   ↳ Subscribed %s/%s symbols", progress, len(nifty500))
+
                 # Sleep between batches (except after last batch)
-                if i + batch_size < len(nifty500):
+                if progress < len(nifty500):
                     await asyncio.sleep(batch_delay)
-            
-            logger.info(f"✅ Nifty-500 pre-fetch complete! All {len(nifty500)} symbols subscribed and streaming.")
-            
+
+            logger.info(
+                "✅ Nifty-500 pre-fetch complete! All %s symbols subscribed and streaming.",
+                len(nifty500),
+            )
+            if subscribed_symbols:
+                preview = ", ".join(subscribed_symbols[:10])
+                logger.info(
+                    "🎯 Subscribed symbols: %s%s",
+                    preview,
+                    f"... (+{len(subscribed_symbols) - 10} more)"
+                    if len(subscribed_symbols) > 10
+                    else "",
+                )
+
+            # Store subscribed symbols for market service to export
+            self._subscribed_symbols = set(subscribed_symbols)
+
         except ImportError:
             logger.warning(
                 "⚠️  nifty500_symbols module not found. "
                 "Nifty-500 pre-fetch disabled. Only on-demand symbol subscriptions will work."
             )
-        except Exception as e:
-            logger.error(f"❌ Failed to pre-fetch Nifty-500 symbols: {e}", exc_info=True)
-    
+        except Exception as exc:
+            logger.error(
+                "❌ Failed to pre-fetch Nifty-500 symbols: %s", exc, exc_info=True
+            )
+
     async def subscribe_symbol(self, ws, symbol: str) -> None:
-        """Subscribe to a single symbol."""
+        """Subscribe to a single symbol and track it."""
         await self._batch_subscribe(ws, [symbol], subscribe=True)
+        self._subscribed_symbols.add(symbol.upper())
+        logger.info(f"➕ Subscribed to {symbol} (total: {len(self._subscribed_symbols)} symbols)")
     
     async def unsubscribe_symbol(self, ws, symbol: str) -> None:
-        """Unsubscribe from a single symbol."""
+        """Unsubscribe from a single symbol and remove from tracking."""
         await self._batch_subscribe(ws, [symbol], subscribe=False)
+        self._subscribed_symbols.discard(symbol.upper())
+        logger.info(f"➖ Unsubscribed from {symbol} (total: {len(self._subscribed_symbols)} symbols)")
+    
+    def is_symbol_subscribed(self, symbol: str) -> bool:
+        """Check if a symbol is currently subscribed."""
+        return symbol.upper() in self._subscribed_symbols
+    
+    def get_subscribed_symbols(self) -> List[str]:
+        """Get list of all currently subscribed symbols."""
+        return sorted(list(self._subscribed_symbols))
     
     async def _batch_subscribe(self, ws, symbols: List[str], subscribe: bool) -> None:
         """
@@ -738,9 +825,15 @@ class AngelOneAdapter(WebsocketAdapter):
                 logger.debug(f"Symbol not found for token {token}, exchange {exchange_type}")
                 return []
             
+            # Filter: Only export prices for subscribed symbols
+            symbol_upper = symbol.upper()
+            if symbol_upper not in self._subscribed_symbols:
+                logger.debug(f"Ignoring price for unsubscribed symbol: {symbol_upper}")
+                return []
+            
             return [
                 WebsocketMessage(
-                    symbol=symbol.upper(),
+                    symbol=symbol_upper,
                     price=price,
                     raw={"token": token, "exchangeType": exchange_type, "mode": subscription_mode}
                 )
@@ -1017,6 +1110,7 @@ class MarketPriceSubject(ConnectorSubject):
         super().__init__()
         self._adapter = adapter
         self._retry_seconds = retry_seconds
+        self._max_backoff = float(os.getenv("MARKET_DATA_MAX_BACKOFF_SECONDS", "90"))
         self._symbols: Set[str] = set()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._symbol_queue: Optional[asyncio.Queue[str]] = None
@@ -1048,14 +1142,56 @@ class MarketPriceSubject(ConnectorSubject):
         asyncio.run(self._run_forever())
 
     async def _run_forever(self) -> None:
+        backoff = self._retry_seconds
         while True:
             try:
                 await self._run_single_connection()
             except asyncio.CancelledError:  # pragma: no cover - shutdown path
                 raise
+            except InvalidStatus as exc:  # pragma: no cover - logging only
+                status_code = getattr(exc, "status_code", None)
+                if status_code == 429:
+                    wait = min(max(backoff, self._retry_seconds) * 2, self._max_backoff)
+                    jitter = random.uniform(0, wait * 0.25)
+                    logger.warning(
+                        "MarketPriceSubject hit Angel One websocket rate-limit (HTTP 429). "
+                        "Backing off for %.1fs before reconnect.",
+                        wait + jitter,
+                    )
+                    await asyncio.sleep(wait + jitter)
+                    backoff = min(wait * 2, self._max_backoff)
+                    continue
+
+                logger.error(
+                    "MarketPriceSubject received unexpected HTTP status %s. Retrying in %.1fs",
+                    status_code,
+                    backoff,
+                )
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, self._max_backoff)
+            except ConnectionClosedError as exc:  # pragma: no cover - logging only
+                logger.warning(
+                    "MarketPriceSubject websocket closed (%s). Retrying in %.1fs",
+                    exc,
+                    backoff,
+                )
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, self._max_backoff)
+            except InvalidMessage as exc:  # pragma: no cover - logging only
+                logger.warning(
+                    "MarketPriceSubject received invalid websocket payload (%s). Retrying in %.1fs",
+                    exc,
+                    backoff,
+                )
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, self._max_backoff)
             except Exception as exc:  # pragma: no cover - logging only
                 logger.exception("MarketPriceSubject reconnect triggered: %s", exc)
-                await asyncio.sleep(self._retry_seconds)
+                jitter = random.uniform(0, backoff * 0.25)
+                await asyncio.sleep(min(backoff + jitter, self._max_backoff))
+                backoff = min(backoff * 2, self._max_backoff)
+            else:
+                backoff = self._retry_seconds
 
     async def _run_single_connection(self) -> None:
         import websockets

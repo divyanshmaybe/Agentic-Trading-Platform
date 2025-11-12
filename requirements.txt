@@ -15,4 +15,4 @@ torch>=2.2.0
 langchain-google-genai>=0.1.0
 langchain-core>=0.2.0
 yfinance>=0.2.40
-
+cvxpy>=1.7.3

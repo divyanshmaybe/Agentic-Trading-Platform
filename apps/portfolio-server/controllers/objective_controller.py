@@ -34,15 +34,32 @@ class ObjectiveController:
         self.prisma = prisma
         self.pipeline_service = pipeline_service
         self.logger = logger or logging.getLogger(__name__)
-        self._portfolio_controller = PortfolioController(prisma)
+        self._portfolio_controller = PortfolioController(prisma, logger=self.logger)
         self._json_encoder = {
             Decimal: lambda v: float(v),
         }
 
-    def _encode_json(self, value: Any) -> Any:
-        if value is None:
-            return None
-        return jsonable_encoder(value, custom_encoder=self._json_encoder)
+    def _encode_json(self, value: Any) -> str:
+        """
+        Recursively prepare a value for Prisma JSON fields by converting nested
+        Decimal values to floats while preserving dict/list structure.
+        Returns a JSON string representation.
+        """
+
+        def _encode_value(val: Any) -> Any:
+            if val is None:
+                return None
+            if isinstance(val, Decimal):
+                return float(val)
+            if isinstance(val, dict):
+                return {k: _encode_value(v) for k, v in val.items()}
+            if isinstance(val, list):
+                return [_encode_value(item) for item in val]
+            if isinstance(val, (str, int, float, bool)):
+                return val
+            return jsonable_encoder(val, custom_encoder=self._json_encoder)
+
+        return json.dumps(_encode_value(value))
 
     async def create_objective(
         self,
@@ -117,7 +134,7 @@ class ObjectiveController:
                 "investment_horizon_years": payload.investment_horizon_years,
                 "investment_horizon_label": payload.investment_horizon_label,
                 "target_return": payload.target_return,
-                "target_returns": payload.target_returns or [],
+                "target_returns": self._encode_json(payload.target_returns or []),
                 "risk_tolerance": payload.risk_tolerance,
                 "risk_aversion_lambda": payload.risk_aversion_lambda,
                 "liquidity_needs": payload.liquidity_needs,
@@ -148,23 +165,60 @@ class ObjectiveController:
 
         allocation_summary = None
         allocation_meta: Dict[str, Any] | None = None
+        
+        # Dispatch allocation to Celery worker instead of running synchronously
         try:
-            allocation_meta = await self.pipeline_service.rebalance_portfolio(
-                portfolio_id=portfolio_id,
-                triggered_by="objective_create",
-                regime_override=regime_label,
-                trigger_reason="objective_created",
+            from workers.allocation_tasks import allocate_for_objective_task
+            
+            # Build user inputs for allocation
+            user_inputs = {
+                "risk_tolerance": payload.risk_tolerance or "medium",
+                "investment_horizon_years": payload.investment_horizon_years or 1,
+                "liquidity_needs": payload.liquidity_needs or "medium",
+                "expected_return_target": float(payload.expected_return_target) if payload.expected_return_target else 0.1,
+                "rebalancing_frequency": payload.rebalancing_frequency or "quarterly",
+            }
+            
+            # Dispatch to Celery worker
+            task = allocate_for_objective_task.apply_async(
+                kwargs={
+                    "portfolio_id": portfolio_id,
+                    "objective_id": objective.id,
+                    "user_id": user_id,
+                    "organization_id": organization_id,
+                    "user_inputs": user_inputs,
+                    "initial_value": float(payload.investable_amount),
+                    "current_value": float(payload.investable_amount),
+                    "triggered_by": "objective_created",
+                },
+                countdown=2,  # Delay by 2 seconds to ensure DB commit
             )
-        except Exception as exc:  # pragma: no cover - defensive logging
+            
+            self.logger.info(
+                f"✅ Dispatched allocation for portfolio {portfolio_id} to Celery "
+                f"(task_id={task.id}, objective={objective.id})"
+            )
+            
+            # Return metadata indicating allocation is pending
+            allocation_meta = {
+                "processed": False,
+                "pending": True,
+                "task_id": task.id,
+                "message": "Portfolio allocation dispatched to background worker",
+            }
+            
+        except Exception as exc:
             self.logger.exception(
-                "Allocation pipeline failed during objective creation for portfolio %s: %s",
-                portfolio_id,
+                "Failed to dispatch allocation task for objective %s: %s",
+                objective.id,
                 exc,
             )
 
         last_rebalanced_at: Optional[datetime] = None
         next_rebalance_at: Optional[datetime] = None
 
+        # Only process allocation summary if it's already been completed
+        # For async allocations, the summary will be None and that's okay
         if allocation_meta and allocation_meta.get("processed"):
             allocation_payload = allocation_meta.get("allocation") or {}
             allocation_summary = AllocationResultSummary(
@@ -179,8 +233,14 @@ class ObjectiveController:
 
             last_rebalanced_at = allocation_meta.get("last_rebalanced_at")
             next_rebalance_at = allocation_meta.get("next_rebalance_at")
+        elif allocation_meta and allocation_meta.get("pending"):
+            # Allocation is pending in background worker
+            self.logger.info(
+                f"Allocation for portfolio {portfolio_id} is pending "
+                f"(task_id={allocation_meta.get('task_id')})"
+            )
 
-        objective_response = ObjectiveResponse.model_validate(objective)
+        objective_response = ObjectiveResponse.model_validate(objective.model_dump())
 
         return ObjectiveCreateResponse(
             objective=objective_response,
@@ -274,7 +334,7 @@ class ObjectiveController:
                 "investment_horizon_years": payload.investment_horizon_years,
                 "investment_horizon_label": payload.investment_horizon_label,
                 "target_return": payload.target_return,
-                "target_returns": payload.target_returns or [],
+                "target_returns": self._encode_json(payload.target_returns or []),
                 "risk_tolerance": payload.risk_tolerance,
                 "risk_aversion_lambda": payload.risk_aversion_lambda,
                 "liquidity_needs": payload.liquidity_needs,
@@ -305,16 +365,50 @@ class ObjectiveController:
             regime_timestamp=regime_timestamp,
         )
 
+        # Dispatch allocation to Celery worker instead of running synchronously
         try:
-            allocation_meta = await self.pipeline_service.rebalance_portfolio(
-                portfolio_id=portfolio_id,
-                triggered_by="objective_intake_complete",
-                regime_override=regime_label,
-                trigger_reason="objective_intake_complete",
+            from workers.allocation_tasks import allocate_for_objective_task
+            
+            # Build user inputs for allocation
+            user_inputs = {
+                "risk_tolerance": payload.risk_tolerance or "medium",
+                "investment_horizon_years": payload.investment_horizon_years or 1,
+                "liquidity_needs": payload.liquidity_needs or "medium",
+                "expected_return_target": float(payload.expected_return_target) if payload.expected_return_target else 0.1,
+                "rebalancing_frequency": payload.rebalancing_frequency or "quarterly",
+            }
+            
+            # Dispatch to Celery worker
+            task = allocate_for_objective_task.apply_async(
+                kwargs={
+                    "portfolio_id": portfolio_id,
+                    "objective_id": objective_id,
+                    "user_id": user_id,
+                    "organization_id": organization_id,
+                    "user_inputs": user_inputs,
+                    "initial_value": float(payload.investable_amount),
+                    "current_value": float(payload.investable_amount),
+                    "triggered_by": "objective_intake_complete",
+                },
+                countdown=2,  # Delay by 2 seconds to ensure DB commit
             )
-        except Exception as exc:  # pragma: no cover
+            
+            self.logger.info(
+                f"✅ Dispatched allocation for portfolio {portfolio_id} to Celery "
+                f"(task_id={task.id}, objective={objective_id})"
+            )
+            
+            # Return metadata indicating allocation is pending
+            allocation_meta = {
+                "processed": False,
+                "pending": True,
+                "task_id": task.id,
+                "message": "Portfolio allocation dispatched to background worker",
+            }
+            
+        except Exception as exc:
             self.logger.exception(
-                "Allocation pipeline failed while finalising objective %s: %s",
+                "Failed to dispatch allocation task for objective %s: %s",
                 objective_id,
                 exc,
             )
@@ -322,6 +416,8 @@ class ObjectiveController:
         last_rebalanced_at: Optional[datetime] = None
         next_rebalance_at: Optional[datetime] = None
 
+        # Only process allocation summary if it's already been completed
+        # For async allocations, the summary will be None and that's okay
         if allocation_meta and allocation_meta.get("processed"):
             allocation_payload = allocation_meta.get("allocation") or {}
             allocation_summary = AllocationResultSummary(
@@ -335,8 +431,14 @@ class ObjectiveController:
             )
             last_rebalanced_at = allocation_meta.get("last_rebalanced_at")
             next_rebalance_at = allocation_meta.get("next_rebalance_at")
+        elif allocation_meta and allocation_meta.get("pending"):
+            # Allocation is pending in background worker
+            self.logger.info(
+                f"Allocation for portfolio {portfolio_id} is pending "
+                f"(task_id={allocation_meta.get('task_id')})"
+            )
 
-        objective_response = ObjectiveResponse.model_validate(updated_objective)
+        objective_response = ObjectiveResponse.model_validate(updated_objective.model_dump())
 
         return ObjectiveCreateResponse(
             objective=objective_response,
@@ -364,9 +466,20 @@ class ObjectiveController:
                 detail=f"Portfolio {portfolio_id} not found while linking objective.",
             )
 
-        metadata = {}
+        metadata: Dict[str, Any] = {}
         if isinstance(portfolio.metadata, dict):
             metadata.update(portfolio.metadata)
+        elif isinstance(portfolio.metadata, str):
+            try:
+                parsed_meta = json.loads(portfolio.metadata)
+                if isinstance(parsed_meta, dict):
+                    metadata.update(parsed_meta)
+            except json.JSONDecodeError:
+                self.logger.debug(
+                    "Portfolio %s metadata is not valid JSON string: %s",
+                    portfolio_id,
+                    portfolio.metadata,
+                )
 
         metadata["current_regime"] = current_regime
         if regime_timestamp:
@@ -388,8 +501,8 @@ class ObjectiveController:
                 metadata["objective_metadata"] = dict(payload.metadata)
 
         update_data: Dict[str, Any] = {
-            "objective_id": objective_id,
-            "metadata": metadata,
+            "objective_id": objective_id,  # Set the objective_id foreign key
+            "metadata": self._encode_json(metadata),
             "investment_horizon_years": payload.investment_horizon_years,
         }
 
@@ -411,7 +524,7 @@ class ObjectiveController:
             update_data["rebalancing_frequency"] = payload.rebalancing_frequency
 
         if payload.constraints:
-            update_data["constraints"] = payload.constraints
+            update_data["constraints"] = self._encode_json(payload.constraints)
 
         await self.prisma.portfolio.update(
             where={"id": portfolio_id},
@@ -419,8 +532,23 @@ class ObjectiveController:
         )
 
     @staticmethod
-    def _coerce_weight_map(weights: Dict[str, Any]) -> Dict[str, float]:
-        return {str(key): float(value) for key, value in weights.items()}
+    def _coerce_weight_map(weights: Any) -> Dict[str, float]:
+        """Coerce weights to a dict of floats, handling Prisma Json objects."""
+        if weights is None:
+            return {}
+        # Handle Prisma Json object
+        if hasattr(weights, '__dict__') and not isinstance(weights, dict):
+            weights = dict(weights)
+        # Handle string JSON
+        if isinstance(weights, str):
+            try:
+                weights = json.loads(weights)
+            except (json.JSONDecodeError, TypeError):
+                return {}
+        # Handle dict
+        if isinstance(weights, dict):
+            return {str(key): float(value) for key, value in weights.items()}
+        return {}
 
     @staticmethod
     def _safe_float(value: Any) -> Optional[float]:
@@ -432,4 +560,126 @@ class ObjectiveController:
             return float(value)
         except (TypeError, ValueError):
             return None
+
+    async def trigger_missing_allocations(
+        self,
+        *,
+        max_batch: int = 50,
+    ) -> Dict[str, Any]:
+        """
+        Find active objectives without portfolio allocations and trigger them.
+        
+        This utility function checks for objectives that:
+        1. Have completion_status = 'complete'
+        2. Have status = 'active'
+        3. Have associated portfolios
+        4. Portfolios have no allocations or need rebalancing
+        
+        Args:
+            max_batch: Maximum number of objectives to process in one run
+            
+        Returns:
+            Summary of triggered allocations
+        """
+        self.logger.info("Checking for active objectives without allocations...")
+        
+        # Find active, completed objectives with portfolios
+        objectives = await self.prisma.objective.find_many(
+            where={
+                "AND": [
+                    {"completion_status": "complete"},
+                    {"status": "active"},
+                    {"portfolios": {"some": {}}},  # Has at least one portfolio
+                ]
+            },
+            include={
+                "portfolios": {
+                    "include": {
+                        "allocations": True,
+                    }
+                }
+            },
+            take=max_batch,
+        )
+        
+        if not objectives:
+            self.logger.info("No active objectives found needing allocation")
+            return {
+                "checked": 0,
+                "triggered": 0,
+                "failed": 0,
+                "portfolio_ids": [],
+            }
+        
+        self.logger.info(f"Found {len(objectives)} active objectives to check")
+        
+        triggered_count = 0
+        failed_count = 0
+        processed_portfolios = []
+        
+        # Get current regime
+        regime_label = "sideways"
+        try:
+            regime_service = RegimeService.get_instance()
+            regime_state = regime_service.get_current_regime()
+            if regime_state and regime_state.get("regime"):
+                regime_label = str(regime_state["regime"]).lower()
+        except Exception as exc:
+            self.logger.warning(f"Regime service unavailable: {exc}")
+        
+        for objective in objectives:
+            for portfolio in objective.portfolios:
+                # Check if portfolio needs allocation
+                needs_allocation = (
+                    not portfolio.allocations or
+                    len(portfolio.allocations) == 0 or
+                    portfolio.last_rebalanced_at is None or
+                    portfolio.allocation_status == "pending"
+                )
+                
+                if not needs_allocation:
+                    continue
+                
+                self.logger.info(
+                    f"Triggering allocation for portfolio {portfolio.id} "
+                    f"(objective: {objective.id})"
+                )
+                
+                try:
+                    # Trigger rebalance for this portfolio
+                    await self.pipeline_service.rebalance_portfolio(
+                        portfolio_id=portfolio.id,
+                        triggered_by="missing_allocation_sweep",
+                        regime_override=regime_label,
+                        trigger_reason="Retroactive allocation for active objective",
+                    )
+                    
+                    triggered_count += 1
+                    processed_portfolios.append(portfolio.id)
+                    
+                    self.logger.info(
+                        f"✅ Successfully triggered allocation for portfolio {portfolio.id}"
+                    )
+                    
+                except Exception as exc:
+                    self.logger.error(
+                        f"❌ Failed to trigger allocation for portfolio {portfolio.id}: {exc}",
+                        exc_info=True,
+                    )
+                    failed_count += 1
+        
+        result = {
+            "checked": len(objectives),
+            "triggered": triggered_count,
+            "failed": failed_count,
+            "portfolio_ids": processed_portfolios,
+            "regime": regime_label,
+        }
+        
+        self.logger.info(
+            f"Missing allocations sweep completed: {result}"
+        )
+        
+        return result
+
 

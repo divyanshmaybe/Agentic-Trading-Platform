@@ -6,6 +6,7 @@ These tasks trigger the Pathway allocation pipeline when:
 2. Rebalancing date is reached (scheduled rebalancing)
 """
 
+import json
 import logging
 import sys
 from pathlib import Path
@@ -22,6 +23,59 @@ from celery_app import celery_app
 from utils import allocate_portfolios
 
 logger = logging.getLogger(__name__)
+
+
+# ==========================================================================
+# Data normalization helpers
+# ==========================================================================
+
+def _coerce_to_plain_dict(value: Any) -> Dict[str, Any]:
+    """Convert Pathway Json wrappers or JSON strings into plain dicts."""
+
+    if isinstance(value, dict):
+        return value
+
+    # Pathway often wraps payloads inside custom Json objects exposing ``value``
+    maybe_value = getattr(value, "value", None)
+    if isinstance(maybe_value, dict):
+        return maybe_value
+    if isinstance(maybe_value, str):
+        try:
+            parsed = json.loads(maybe_value)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            return {}
+    if maybe_value is not None and maybe_value is not value:
+        nested = _coerce_to_plain_dict(maybe_value)
+        if nested:
+            return nested
+
+    # Some objects expose conversion helpers
+    for attr in ("to_dict", "to_builtin"):
+        converter = getattr(value, attr, None)
+        if callable(converter):
+            try:
+                converted = converter()
+            except Exception:
+                converted = None
+            if isinstance(converted, dict):
+                return converted
+            if converted is not None and converted is not value:
+                nested = _coerce_to_plain_dict(converted)
+                if nested:
+                    return nested
+
+    # Finally, attempt to decode JSON strings
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            return {}
+
+    return {}
 
 
 # ============================================================================
@@ -142,8 +196,10 @@ def allocate_new_portfolio_task(
             }
             
             # Update portfolio status to processing
-            from baseApp import get_db_manager
-            db = get_db_manager().prisma
+            from dbManager import DBManager
+            db_manager = DBManager.get_instance()
+            await db_manager.connect()
+            db = db_manager.client
             
             if db is None:
                 raise RuntimeError("Database not available")
@@ -153,12 +209,23 @@ def allocate_new_portfolio_task(
                 data={"allocation_status": "processing"}
             )
             
-            # Execute Pathway allocation pipeline
-            results = allocate_portfolios(
-                [request],
-                logger=logger,
-                audit_path=f"/tmp/portfolio_allocations_{portfolio_id}.jsonl"
-            )
+            # Execute Pathway allocation pipeline in a thread pool to avoid event loop conflicts
+            from concurrent.futures import ThreadPoolExecutor
+            import functools
+            
+            loop = asyncio.get_event_loop()
+            
+            # Run the synchronous pipeline in a thread pool executor
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                results = await loop.run_in_executor(
+                    executor,
+                    functools.partial(
+                        allocate_portfolios,
+                        [request],
+                        logger=logger,
+                        audit_path=f"/tmp/portfolio_allocations_{portfolio_id}.jsonl"
+                    )
+                )
             
             if not results:
                 raise ValueError("Allocation pipeline returned no results")
@@ -169,8 +236,11 @@ def allocate_new_portfolio_task(
                 raise ValueError(f"Allocation failed: {allocation_result.get('message')}")
             
             # Save allocation weights to portfolioAllocation table
-            weights = allocation_result.get("weights", {})
-            
+            weights = _coerce_to_plain_dict(allocation_result.get("weights"))
+
+            if not weights:
+                weights = _coerce_to_plain_dict(allocation_result.get("weights_json"))
+
             for allocation_type, weight in weights.items():
                 await db.portfolioallocation.create(
                     data={
@@ -224,8 +294,10 @@ def allocate_new_portfolio_task(
         except Exception as exc:
             # Mark portfolio as failed
             try:
-                from baseApp import get_db_manager
-                db = get_db_manager().prisma
+                from dbManager import DBManager
+                db_manager = DBManager.get_instance()
+                await db_manager.connect()
+                db = db_manager.client
                 if db:
                     await db.portfolio.update(
                         where={"id": portfolio_id},
@@ -240,11 +312,216 @@ def allocate_new_portfolio_task(
             )
             raise exc
     
+    # Create a fresh event loop for this task execution to avoid loop closure issues
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     try:
-        return asyncio.run(_allocate())
+        return loop.run_until_complete(_allocate())
     except Exception as exc:
         # Retry with exponential backoff
         raise self.retry(exc=exc, countdown=2 ** self.request.retries)
+    finally:
+        # Clean up the loop
+        try:
+            loop.close()
+        except:
+            pass
+
+
+@celery_app.task(name="portfolio.allocate_for_objective", bind=True, max_retries=3)
+def allocate_for_objective_task(
+    self,
+    portfolio_id: str,
+    objective_id: str,
+    user_id: str,
+    organization_id: str,
+    user_inputs: Dict[str, Any],
+    initial_value: float,
+    current_value: Optional[float] = None,
+    triggered_by: str = "objective_created",
+) -> Dict[str, Any]:
+    """
+    Celery task to run portfolio allocation triggered by an objective being created or completed.
+    
+    Args:
+        portfolio_id: Database ID of the portfolio
+        objective_id: Database ID of the objective that triggered this
+        user_id: User who owns the portfolio
+        organization_id: Organization ID
+        user_inputs: Portfolio preferences from objective
+        initial_value: Initial investment amount
+        current_value: Current portfolio value (defaults to initial_value)
+        triggered_by: What triggered this allocation
+        
+    Returns:
+        Allocation result dictionary
+    """
+    import asyncio
+    
+    async def _allocate():
+        try:
+            logger.info(
+                f"Starting allocation for portfolio {portfolio_id} triggered by {triggered_by} "
+                f"(objective={objective_id}, user={user_id})"
+            )
+            
+            # Get current regime from regime service
+            current_regime = await _get_current_regime()
+            
+            # Build allocation request
+            request = {
+                "request_id": f"{triggered_by}_{portfolio_id}_{datetime.utcnow().isoformat()}",
+                "user_id": user_id,
+                "current_regime": current_regime,
+                "user_inputs": user_inputs,
+                "initial_value": initial_value,
+                "current_value": current_value or initial_value,
+                "metadata": {
+                    "portfolio_id": portfolio_id,
+                    "objective_id": objective_id,
+                    "organization_id": organization_id,
+                    "trigger": triggered_by,
+                    "timestamp": datetime.utcnow().isoformat(),
+                }
+            }
+            
+            # Update portfolio status to processing
+            from dbManager import DBManager
+            db_manager = DBManager.get_instance()
+            await db_manager.connect()
+            db = db_manager.client
+            
+            if db is None:
+                raise RuntimeError("Database not available")
+            
+            await db.portfolio.update(
+                where={"id": portfolio_id},
+                data={"allocation_status": "processing"}
+            )
+            
+            # Execute Pathway allocation pipeline in a thread pool to avoid event loop conflicts
+            # Use asyncio.to_thread to run the synchronous pipeline without blocking the event loop
+            from concurrent.futures import ThreadPoolExecutor
+            import functools
+            
+            loop = asyncio.get_event_loop()
+            
+            # Run the synchronous pipeline in a thread pool executor
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                results = await loop.run_in_executor(
+                    executor,
+                    functools.partial(
+                        allocate_portfolios,
+                        [request],
+                        logger=logger,
+                        audit_path=f"/tmp/portfolio_allocations_{portfolio_id}_{objective_id}.jsonl"
+                    )
+                )
+            
+            if not results:
+                raise ValueError("Allocation pipeline returned no results")
+            
+            allocation_result = results[0]
+            
+            if not allocation_result.get("success"):
+                raise ValueError(f"Allocation failed: {allocation_result.get('message')}")
+            
+            # Now do all database operations after the pipeline
+            # Save allocation weights to portfolioAllocation table
+            weights = allocation_result.get("weights", {})
+            
+            for allocation_type, weight in weights.items():
+                await db.portfolioallocation.create(
+                    data={
+                        "portfolio_id": portfolio_id,
+                        "allocation_type": allocation_type,
+                        "target_weight": float(weight),
+                        "current_weight": float(weight),
+                        "expected_return": allocation_result.get("expected_return"),
+                        "expected_risk": allocation_result.get("expected_risk"),
+                        "regime": current_regime,
+                        "metadata": {
+                            "request_id": request["request_id"],
+                            "objective_id": objective_id,
+                            "trigger": triggered_by,
+                            "objective_value": allocation_result.get("objective_value"),
+                            "message": allocation_result.get("message"),
+                        }
+                    }
+                )
+            
+            # Calculate next rebalancing date
+            rebalancing_date = _calculate_next_rebalance_date(
+                user_inputs.get("rebalancing_frequency", "quarterly")
+            )
+            
+            # Mark portfolio as ready
+            await db.portfolio.update(
+                where={"id": portfolio_id},
+                data={
+                    "allocation_status": "ready",
+                    "rebalancing_date": rebalancing_date,
+                    "last_rebalanced_at": datetime.utcnow(),
+                    "next_rebalance_at": rebalancing_date,
+                    "metadata": {
+                        "allocated_at": datetime.utcnow().isoformat(),
+                        "allocation_regime": current_regime,
+                        "objective_id": objective_id,
+                        "triggered_by": triggered_by,
+                    }
+                }
+            )
+            
+            logger.info(
+                f"✅ Successfully allocated portfolio {portfolio_id} for objective {objective_id}: "
+                f"{weights} (next rebalance: {rebalancing_date})"
+            )
+            
+            return {
+                "success": True,
+                "portfolio_id": portfolio_id,
+                "objective_id": objective_id,
+                "allocation": allocation_result,
+                "rebalancing_date": rebalancing_date.isoformat() if rebalancing_date else None,
+                "last_rebalanced_at": datetime.utcnow().isoformat(),
+                "next_rebalance_at": rebalancing_date.isoformat() if rebalancing_date else None,
+            }
+            
+        except Exception as exc:
+            # Mark portfolio as failed
+            try:
+                from dbManager import DBManager
+                db_manager = DBManager.get_instance()
+                await db_manager.connect()
+                db = db_manager.client
+                if db:
+                    await db.portfolio.update(
+                        where={"id": portfolio_id},
+                        data={"allocation_status": "failed"}
+                    )
+            except:
+                pass
+            
+            logger.error(
+                f"❌ Failed to allocate portfolio {portfolio_id} for objective {objective_id}: {exc}",
+                exc_info=True
+            )
+            raise exc
+    
+    # Create a fresh event loop for this task execution to avoid loop closure issues
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(_allocate())
+    except Exception as exc:
+        # Retry with exponential backoff
+        raise self.retry(exc=exc, countdown=2 ** self.request.retries)
+    finally:
+        # Clean up the loop
+        try:
+            loop.close()
+        except:
+            pass
 
 
 @celery_app.task(name="portfolio.daily_rebalancing_sweep", bind=True)
@@ -262,9 +539,11 @@ def daily_rebalancing_sweep_task(self) -> Dict[str, Any]:
     
     async def _sweep():
         try:
-            from baseApp import get_db_manager
+            from dbManager import DBManager
             
-            db = get_db_manager().prisma
+            db_manager = DBManager.get_instance()
+            await db_manager.connect()
+            db = db_manager.client
             if db is None:
                 raise RuntimeError("Database not available")
             
@@ -354,13 +633,25 @@ def daily_rebalancing_sweep_task(self) -> Dict[str, Any]:
                     "rebalancing_freq": rebalancing_freq,
                 }
             
-            # Execute Pathway allocation pipeline for all portfolios
+            # Execute Pathway allocation pipeline for all portfolios in a thread pool
             logger.info(f"Executing Pathway allocation pipeline for {len(requests)} portfolios")
-            results = allocate_portfolios(
-                requests,
-                logger=logger,
-                audit_path=f"/tmp/portfolio_rebalancing_{today.isoformat()}.jsonl"
-            )
+            
+            from concurrent.futures import ThreadPoolExecutor
+            import functools
+            
+            loop = asyncio.get_event_loop()
+            
+            # Run the synchronous pipeline in a thread pool executor
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                results = await loop.run_in_executor(
+                    executor,
+                    functools.partial(
+                        allocate_portfolios,
+                        requests,
+                        logger=logger,
+                        audit_path=f"/tmp/portfolio_rebalancing_{today.isoformat()}.jsonl"
+                    )
+                )
             
             # Save results to database
             rebalanced_count = 0
@@ -452,4 +743,14 @@ def daily_rebalancing_sweep_task(self) -> Dict[str, Any]:
                 "error": str(exc),
             }
     
-    return asyncio.run(_sweep())
+    # Create a fresh event loop for this task execution to avoid loop closure issues
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(_sweep())
+    finally:
+        # Clean up the loop
+        try:
+            loop.close()
+        except:
+            pass

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from decimal import Decimal
 from typing import Dict, Literal, Optional
@@ -43,8 +44,9 @@ MAX_POSITION_VALUE = _decimal_from_env("MAX_POSITION_VALUE", "100000")
 class PortfolioController:
     """Encapsulates portfolio-related queries and transformations."""
 
-    def __init__(self, prisma: Prisma) -> None:
+    def __init__(self, prisma: Prisma, *, logger: Optional[logging.Logger] = None) -> None:
         self.prisma = prisma
+        self.logger = logger or logging.getLogger(__name__)
 
     # ------------------------------------------------------------------
     # Authorization & helpers
@@ -133,6 +135,7 @@ class PortfolioController:
             # Create portfolio with pending allocation status
             portfolio = await self.prisma.portfolio.create(
                 data={
+                    "user_id": user_id,  # Set the authenticated user ID
                     "organization_id": organization_id,
                     "customer_id": customer_id,
                     "portfolio_name": f"{user.get('name') or user.get('firstName') or 'User'}'s Portfolio"

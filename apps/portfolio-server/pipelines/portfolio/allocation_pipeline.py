@@ -94,21 +94,11 @@ class AllocationRequestSchema(pw.Schema):
     payload: str
 
 
-class AllocationResultSchema(pw.Schema):
+class WithAllocationSchema(pw.Schema):
     request_id: str
     user_id: str
-    weights_json: str
-    weights: dict
-    expected_return: float
-    expected_risk: float
-    objective_value: float
-    drift_json: str
-    drift: dict
-    success: bool
-    message: str
-    regime: str
-    progress_ratio: float
-    metadata: dict
+    payload: str
+    allocation_json: str
 
 
 # --------------------------------------------------------------------------- #
@@ -209,10 +199,104 @@ def _optimise_allocation(payload_json: str) -> Dict[str, Any]:
 
 
 @pw.udf
-def compute_allocation(payload_json: str) -> Dict[str, Any]:
-    """Pathway UDF wrapper around the optimisation compute step."""
+def compute_allocation_json(payload_json: str) -> str:
+    """Pathway UDF that returns allocation result as JSON string."""
+    try:
+        result = _optimise_allocation(payload_json)
+        return json.dumps(result)
+    except Exception as e:
+        # Return a failure result as JSON
+        error_result = {
+            "weights": {},
+            "weights_json": "{}",
+            "expected_return": 0.0,
+            "expected_risk": 0.0,
+            "objective_value": 0.0,
+            "drift": {},
+            "drift_json": "{}",
+            "success": False,
+            "message": f"Allocation failed: {str(e)}",
+            "regime": "unknown",
+            "progress_ratio": 0.0,
+        }
+        return json.dumps(error_result)
 
-    return _optimise_allocation(payload_json)
+
+@pw.udf
+def extract_weights_json(result_json: str) -> str:
+    """Extract weights_json from allocation result JSON."""
+    result = json.loads(result_json)
+    return result["weights_json"]
+
+
+@pw.udf
+def extract_weights(result_json: str) -> dict:
+    """Extract weights from allocation result JSON."""
+    result = json.loads(result_json)
+    return result["weights"]
+
+
+@pw.udf
+def extract_expected_return(result_json: str) -> float:
+    """Extract expected_return from allocation result JSON."""
+    result = json.loads(result_json)
+    return result["expected_return"]
+
+
+@pw.udf
+def extract_expected_risk(result_json: str) -> float:
+    """Extract expected_risk from allocation result JSON."""
+    result = json.loads(result_json)
+    return result["expected_risk"]
+
+
+@pw.udf
+def extract_objective_value(result_json: str) -> float:
+    """Extract objective_value from allocation result JSON."""
+    result = json.loads(result_json)
+    return result["objective_value"]
+
+
+@pw.udf
+def extract_drift_json(result_json: str) -> str:
+    """Extract drift_json from allocation result JSON."""
+    result = json.loads(result_json)
+    return result["drift_json"]
+
+
+@pw.udf
+def extract_drift(result_json: str) -> dict:
+    """Extract drift from allocation result JSON."""
+    result = json.loads(result_json)
+    return result["drift"]
+
+
+@pw.udf
+def extract_success(result_json: str) -> bool:
+    """Extract success from allocation result JSON."""
+    result = json.loads(result_json)
+    return result["success"]
+
+
+@pw.udf
+def extract_message(result_json: str) -> str:
+    """Extract message from allocation result JSON."""
+    result = json.loads(result_json)
+    return result["message"]
+
+
+@pw.udf
+def extract_regime(result_json: str) -> str:
+    """Extract regime from allocation result JSON."""
+    result = json.loads(result_json)
+    return result["regime"]
+
+
+@pw.udf
+def extract_progress_ratio(result_json: str) -> float:
+    """Extract progress_ratio from allocation result JSON."""
+    result = json.loads(result_json)
+    return result["progress_ratio"]
 
 
 # --------------------------------------------------------------------------- #
@@ -248,27 +332,29 @@ def build_portfolio_allocation_pipeline(
         name=name,
     )
 
-    enriched = requests.select(
+    # First compute allocation and store as JSON string
+    with_allocation = requests.select(
         request_id=pw.this.request_id,
         user_id=pw.this.user_id,
         payload=pw.this.payload,
-        allocation=pw.apply(compute_allocation, pw.this.payload),
+        allocation_json=compute_allocation_json(pw.this.payload),
     )
 
-    results = enriched.select(
+    # Then extract fields from the JSON string
+    results = with_allocation.select(
         request_id=pw.this.request_id,
         user_id=pw.this.user_id,
-        weights_json=pw.apply(lambda res: res["weights_json"], pw.this.allocation),
-        weights=pw.apply(lambda res: res["weights"], pw.this.allocation),
-        expected_return=pw.apply(lambda res: res["expected_return"], pw.this.allocation),
-        expected_risk=pw.apply(lambda res: res["expected_risk"], pw.this.allocation),
-        objective_value=pw.apply(lambda res: res["objective_value"], pw.this.allocation),
-        drift_json=pw.apply(lambda res: res["drift_json"], pw.this.allocation),
-        drift=pw.apply(lambda res: res["drift"], pw.this.allocation),
-        success=pw.apply(lambda res: res["success"], pw.this.allocation),
-        message=pw.apply(lambda res: res["message"], pw.this.allocation),
-        regime=pw.apply(lambda res: res["regime"], pw.this.allocation),
-        progress_ratio=pw.apply(lambda res: res["progress_ratio"], pw.this.allocation),
+        weights_json=extract_weights_json(pw.this.allocation_json),
+        weights=extract_weights(pw.this.allocation_json),
+        expected_return=extract_expected_return(pw.this.allocation_json),
+        expected_risk=extract_expected_risk(pw.this.allocation_json),
+        objective_value=extract_objective_value(pw.this.allocation_json),
+        drift_json=extract_drift_json(pw.this.allocation_json),
+        drift=extract_drift(pw.this.allocation_json),
+        success=extract_success(pw.this.allocation_json),
+        message=extract_message(pw.this.allocation_json),
+        regime=extract_regime(pw.this.allocation_json),
+        progress_ratio=extract_progress_ratio(pw.this.allocation_json),
         metadata=pw.apply(
             lambda payload_json: json.loads(payload_json).get("metadata", {}),
             pw.this.payload,
@@ -289,7 +375,7 @@ class _AllocationCollector:
     def __init__(self) -> None:
         self._rows: List[Dict[str, Any]] = []
 
-    def __call__(self, _key: Any, row: Mapping[str, Any], _time: Any, is_addition: bool) -> None:
+    def __call__(self, key: Any, row: Mapping[str, Any], time: Any, is_addition: bool) -> None:
         if not is_addition:
             return
         self._rows.append(dict(row))
@@ -329,13 +415,6 @@ def run_portfolio_allocation_requests(
 
     results_table = build_portfolio_allocation_pipeline(subject)
 
-    if write_to_path:
-        pw.io.jsonlines.write(
-            results_table,
-            output_path=write_to_path,
-            mode="append",
-        )
-
     collector = _AllocationCollector()
     pw.io.subscribe(results_table, collector)
 
@@ -352,5 +431,16 @@ def run_portfolio_allocation_requests(
     finally:
         stop_event.set()
 
-    return collector.rows
+    rows = collector.rows
+
+    if write_to_path and rows:
+        try:
+            with open(write_to_path, "a", encoding="utf-8") as handle:
+                for row in rows:
+                    handle.write(json.dumps(row, default=str))
+                    handle.write("\n")
+        except Exception:
+            logger.exception("Failed to append allocation audit trail to %s", write_to_path)
+
+    return rows
 

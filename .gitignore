@@ -51,3 +51,7 @@ apps/portfolio-server/docs/angelone_tokens.json
 *tfvars
 .terraform*
 kubeconfig
+os
+os.lock
+.python-version 
+torch

@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import os
 from datetime import timedelta
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 from celery import Celery
 from celery.schedules import crontab
@@ -14,9 +18,9 @@ celery_app = Celery(
     broker=BROKER_URL,
     backend=RESULT_BACKEND,
     include=[
-        "workers.trade_tasks",
+        # "workers.trade_tasks",
         "workers.pipeline_tasks",
-        "workers.market_data_tasks",  # API-based tasks only
+        "workers.market_data_tasks",  # REST-based market data helpers
         "workers.angelone_token_task",  # Angel One token map generation
         "workers.allocation_tasks",  # Portfolio allocation and rebalancing
         "workers.risk_alert_tasks",  # Email notifications for risk monitor
@@ -33,6 +37,7 @@ celery_app.conf.update(
     enable_utc=True,
     task_acks_late=True,
     worker_max_tasks_per_child=100,
+    worker_redirect_stdouts=False,
 )
 
 NEWS_FETCH_RATE = int(os.getenv("NEWS_FETCH_RATE", "3600"))

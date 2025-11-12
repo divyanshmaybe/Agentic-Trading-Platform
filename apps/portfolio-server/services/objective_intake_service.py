@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime
 from decimal import Decimal
@@ -131,13 +132,28 @@ class ObjectiveIntakeService:
         )
 
     @staticmethod
-    def _encode_json(value: Any) -> Any:
-        if value is None:
-            return None
-        return jsonable_encoder(
-            value,
-            custom_encoder={Decimal: lambda v: float(v)},
-        )
+    def _prepare_json_field(value: Any) -> str:
+        """
+        Prepare a value for Prisma JSON field by converting to JSON string.
+        Converts Decimals to floats while preserving dict/list structure.
+        Returns a JSON string representation.
+        """
+        def _encode_value(val: Any) -> Any:
+            if val is None:
+                return None
+            if isinstance(val, Decimal):
+                return float(val)
+            if isinstance(val, dict):
+                return {k: _encode_value(v) for k, v in val.items()}
+            if isinstance(val, list):
+                return [_encode_value(item) for item in val]
+            if isinstance(val, (str, int, float, bool)):
+                return val
+            # For other types, try jsonable_encoder
+            return jsonable_encoder(val)
+        
+        prepared = _encode_value(value)
+        return json.dumps(prepared)
 
     async def process_intake(
         self,
@@ -174,21 +190,19 @@ class ObjectiveIntakeService:
                     detail="Objective does not belong to the authenticated user.",
                 )
         else:
+            # Create new objective - omit JSON fields with defaults to avoid Prisma type errors
             objective_record = await self.prisma.objective.create(
                 data={
                     "user_id": user_id,
                     "name": request.name,
-                    "raw": self._encode_json({}),
                     "source": request.source or "intake",
-                    "structured_payload": self._encode_json({}),
-                    "missing_fields": self._encode_json([]),
                     "completion_status": "pending",
                     "status": "draft",
                 }
             )
             created = True
 
-        existing_payload = objective_record.structured_payload or {}
+        existing_payload = getattr(objective_record, "structured_payload", None) or {}
         overlay_payload = request.structured_payload or {}
 
         pipeline_result = run_objective_intake_pipeline(
@@ -205,8 +219,14 @@ class ObjectiveIntakeService:
             "complete" if not pipeline_result.missing_fields else "pending"
         )
 
+        base_raw = getattr(objective_record, "raw", None) or {}
+        if isinstance(base_raw, str):
+            try:
+                base_raw = json.loads(base_raw)
+            except json.JSONDecodeError:
+                base_raw = {}
         updated_raw = merge_structured_payload(
-            objective_record.raw or {},
+            base_raw,
             {"structured": pipeline_result.structured_payload},
         )
         if request.transcript:
@@ -225,21 +245,21 @@ class ObjectiveIntakeService:
             )
 
         update_payload: Dict[str, Any] = {
-            "name": request.name or objective_record.name,
-            "structured_payload": self._encode_json(pipeline_result.structured_payload),
-            "raw": self._encode_json(updated_raw),
-            "missing_fields": self._encode_json(pipeline_result.missing_fields),
+            "name": request.name or getattr(objective_record, "name", None),
+            "structured_payload": self._prepare_json_field(pipeline_result.structured_payload),
+            "raw": self._prepare_json_field(updated_raw),
+            "missing_fields": self._prepare_json_field(pipeline_result.missing_fields),  # Already a list of strings
             "completion_status": completion_status,
-            "source": request.source or objective_record.source or "intake",
-            "preferences": self._encode_json(
+            "source": request.source
+            or getattr(objective_record, "source", None)
+            or "intake",
+            "preferences": self._prepare_json_field(
                 pipeline_result.structured_payload.get("preferences") or {}
             ),
-            "constraints": self._encode_json(
+            "constraints": self._prepare_json_field(
                 pipeline_result.structured_payload.get("constraints") or {}
             ),
-            "generic_notes": self._encode_json(
-                pipeline_result.structured_payload.get("generic_notes") or []
-            ),
+            "generic_notes": self._prepare_json_field(pipeline_result.structured_payload.get("generic_notes") or []),
         }
 
         # Update optional scalar fields where data exists

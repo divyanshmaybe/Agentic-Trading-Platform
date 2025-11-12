@@ -326,11 +326,11 @@ class KafkaPublisher:
             max_backlog_size=self._queue.maxsize,
             name=f"{self.name}_subject",
         )
-        # Pathway requires Kafka keys to be either bytes or strings (BYTES, STR, ANY types).
-        # We enforce type safety by casting keys to pure str, replacing None with empty string.
+    # Pathway requires Kafka keys to be either bytes or strings (BYTES, STR, ANY types).
+    # We enforce type safety by normalising keys to pure str, replacing None with empty string.
         # This prevents Pathway rejection errors while maintaining partition semantics.
         table = source.select(
-            key=pw.apply(lambda maybe_key: str(maybe_key) if maybe_key is not None else "", pw.this.key).cast(str),
+            key=pw.apply(lambda maybe_key: "" if maybe_key is None else str(maybe_key), pw.this.key),
             value=pw.this.value,
             headers=pw.this.headers,
         )
