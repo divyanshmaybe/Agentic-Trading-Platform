@@ -93,13 +93,24 @@ class ObjectiveController:
         )
 
         # Persist the objective record.
+        structured_payload = payload.raw or {}
+        preferences = payload.preferences or {}
+        generic_notes = payload.generic_notes or []
+
         objective = await self.prisma.objective.create(
             data={
                 "user_id": user_id,
                 "name": payload.name,
-                "raw": payload.raw or {},
+                "raw": structured_payload,
+                "structured_payload": structured_payload,
+                "source": "api:create",
                 "investable_amount": payload.investable_amount,
                 "investment_horizon_years": payload.investment_horizon_years,
+                "investment_horizon_label": payload.investment_horizon_label,
+                "target_return": payload.target_return,
+                "target_returns": payload.target_returns or [],
+                "risk_tolerance": payload.risk_tolerance,
+                "risk_aversion_lambda": payload.risk_aversion_lambda,
                 "liquidity_needs": payload.liquidity_needs,
                 "rebalancing_frequency": (
                     payload.rebalancing_frequency
@@ -108,8 +119,11 @@ class ObjectiveController:
                     if payload.rebalancing_frequency is not None
                     else None
                 ),
+                "preferences": preferences,
                 "constraints": payload.constraints or {},
-                "target_returns": payload.target_returns or [],
+                "generic_notes": generic_notes,
+                "missing_fields": [],
+                "completion_status": "complete",
                 "status": "active",
             }
         )
@@ -158,6 +172,162 @@ class ObjectiveController:
             next_rebalance_at = allocation_meta.get("next_rebalance_at")
 
         objective_response = ObjectiveResponse.model_validate(objective)
+
+        return ObjectiveCreateResponse(
+            objective=objective_response,
+            portfolio_id=portfolio_id,
+            allocation=allocation_summary,
+            last_rebalanced_at=last_rebalanced_at,
+            next_rebalance_at=next_rebalance_at,
+        )
+
+    async def finalize_intake_objective(
+        self,
+        *,
+        user: Dict[str, Any],
+        objective_id: str,
+        payload: ObjectiveCreateRequest,
+        structured_payload: Dict[str, Any],
+        source: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> ObjectiveCreateResponse:
+        """Finalize an intake objective after collecting all mandatory fields."""
+
+        user_id = user.get("id")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Authenticated user id is required to finalise objectives.",
+            )
+
+        objective = await self.prisma.objective.find_unique(where={"id": objective_id})
+        if not objective:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Objective {objective_id} not found.",
+            )
+
+        if objective.user_id != user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Objective does not belong to the authenticated user.",
+            )
+
+        organization_id = user.get("organization_id")
+        if not organization_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User is not associated with an organization; cannot finalise objective.",
+            )
+
+        customer_id = user.get("customer_id") or user_id
+
+        portfolio_response = await self._portfolio_controller.get_or_create_portfolio(
+            {
+                "id": user_id,
+                "organization_id": organization_id,
+                "customer_id": customer_id,
+                "role": user.get("role"),
+            }
+        )
+        portfolio_id = portfolio_response.id
+
+        regime_label = "sideways"
+        regime_timestamp = None
+        try:
+            regime_service = RegimeService.get_instance()
+            regime_state = regime_service.get_current_regime()
+            if regime_state and regime_state.get("regime"):
+                regime_label = str(regime_state["regime"]).lower()
+                regime_timestamp = regime_state.get("timestamp")
+        except Exception as exc:  # pragma: no cover
+            self.logger.warning(
+                "Regime service unavailable while finalising objective %s: %s",
+                objective_id,
+                exc,
+            )
+
+        preferences = payload.preferences or {}
+        generic_notes = payload.generic_notes or []
+
+        combined_raw = dict(structured_payload)
+        if metadata:
+            combined_raw = {**combined_raw, "metadata": metadata}
+
+        updated_objective = await self.prisma.objective.update(
+            where={"id": objective_id},
+            data={
+                "name": payload.name,
+                "raw": combined_raw,
+                "structured_payload": structured_payload,
+                "source": source or objective.source or "intake",
+                "investable_amount": payload.investable_amount,
+                "investment_horizon_years": payload.investment_horizon_years,
+                "investment_horizon_label": payload.investment_horizon_label,
+                "target_return": payload.target_return,
+                "target_returns": payload.target_returns or [],
+                "risk_tolerance": payload.risk_tolerance,
+                "risk_aversion_lambda": payload.risk_aversion_lambda,
+                "liquidity_needs": payload.liquidity_needs,
+                "rebalancing_frequency": (
+                    payload.rebalancing_frequency
+                    if isinstance(payload.rebalancing_frequency, str)
+                    else json.dumps(payload.rebalancing_frequency)
+                    if payload.rebalancing_frequency is not None
+                    else None
+                ),
+                "constraints": payload.constraints or {},
+                "preferences": preferences,
+                "generic_notes": generic_notes,
+                "missing_fields": [],
+                "completion_status": "complete",
+                "status": "active",
+            },
+        )
+
+        allocation_summary = None
+        allocation_meta: Dict[str, Any] | None = None
+
+        await self._apply_objective_to_portfolio(
+            portfolio_id=portfolio_id,
+            objective_id=objective_id,
+            payload=payload,
+            current_regime=regime_label,
+            regime_timestamp=regime_timestamp,
+        )
+
+        try:
+            allocation_meta = await self.pipeline_service.rebalance_portfolio(
+                portfolio_id=portfolio_id,
+                triggered_by="objective_intake_complete",
+                regime_override=regime_label,
+                trigger_reason="objective_intake_complete",
+            )
+        except Exception as exc:  # pragma: no cover
+            self.logger.exception(
+                "Allocation pipeline failed while finalising objective %s: %s",
+                objective_id,
+                exc,
+            )
+
+        last_rebalanced_at: Optional[datetime] = None
+        next_rebalance_at: Optional[datetime] = None
+
+        if allocation_meta and allocation_meta.get("processed"):
+            allocation_payload = allocation_meta.get("allocation") or {}
+            allocation_summary = AllocationResultSummary(
+                weights=self._coerce_weight_map(allocation_payload.get("weights", {})),
+                expected_return=self._safe_float(allocation_payload.get("expected_return")),
+                expected_risk=self._safe_float(allocation_payload.get("expected_risk")),
+                objective_value=self._safe_float(allocation_payload.get("objective_value")),
+                message=allocation_payload.get("message"),
+                regime=allocation_payload.get("regime") or regime_label,
+                progress_ratio=self._safe_float(allocation_payload.get("progress_ratio")),
+            )
+            last_rebalanced_at = allocation_meta.get("last_rebalanced_at")
+            next_rebalance_at = allocation_meta.get("next_rebalance_at")
+
+        objective_response = ObjectiveResponse.model_validate(updated_objective)
 
         return ObjectiveCreateResponse(
             objective=objective_response,

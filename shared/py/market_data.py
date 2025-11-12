@@ -279,6 +279,12 @@ class AngelOneAdapter(WebsocketAdapter):
         # Heartbeat tracking
         self._last_heartbeat = time.time()
         self._heartbeat_interval = 30
+        
+        # Rate limiter for historical candle API
+        # Angel One allows ~5 requests/second for historical data
+        self._historical_rate_limit = float(os.getenv("ANGELONE_HISTORICAL_RATE_LIMIT_SECONDS", "0.2"))  # 200ms = 5 req/s
+        self._last_historical_request = 0.0
+        self._historical_lock = threading.Lock()
     
     def _load_or_generate_token_map(self) -> None:
         """Load token map from cache file or use fallback."""
@@ -547,22 +553,36 @@ class AngelOneAdapter(WebsocketAdapter):
         """
         Pre-fetch all Nifty 500 symbols in a SINGLE batch request.
         
-        Angel One WebSocket supports subscribing to multiple symbols in one request
-        by grouping them by exchange type. This is the most efficient approach:
-        - Single API request for all 500 symbols
-        - Instant subscription
-        - No rate limit concerns
-        - All prices streaming immediately
+        Subscribes to symbols in BATCHES with 250ms staggering to avoid rate limits:
+        - Angel One allows ~10-20 symbols per batch
+        - 250ms delay between batches prevents HTTP 429 errors
+        - Total time: ~250ms * 25 batches = ~6-7 seconds for all 500 symbols
+        - All prices will be streaming after this initial setup
         """
         try:
             from nifty500_symbols import get_nifty500_symbols
             
             nifty500 = get_nifty500_symbols()
-            logger.info(f"📊 Pre-fetching ALL {len(nifty500)} Nifty-500 symbols in single batch...")
+            batch_size = int(os.getenv("ANGELONE_SUBSCRIBE_BATCH_SIZE", "20"))
+            batch_delay = float(os.getenv("ANGELONE_SUBSCRIBE_DELAY_MS", "250")) / 1000  # Convert to seconds
             
-            # Subscribe to all symbols in ONE batch request
-            # The _batch_subscribe method groups by exchange type automatically
-            await self._batch_subscribe(ws, nifty500, subscribe=True)
+            logger.info(
+                f"📊 Pre-fetching {len(nifty500)} Nifty-500 symbols "
+                f"({batch_size} symbols/batch, {batch_delay*1000:.0f}ms delay)..."
+            )
+            
+            # Subscribe in batches with staggered delays to avoid rate limiting
+            for i in range(0, len(nifty500), batch_size):
+                batch = nifty500[i:i+batch_size]
+                await self._batch_subscribe(ws, batch, subscribe=True)
+                
+                # Log progress every 100 symbols
+                if (i + batch_size) % 100 == 0 or (i + batch_size) >= len(nifty500):
+                    logger.info(f"   ↳ Subscribed {min(i+batch_size, len(nifty500))}/{len(nifty500)} symbols")
+                
+                # Sleep between batches (except after last batch)
+                if i + batch_size < len(nifty500):
+                    await asyncio.sleep(batch_delay)
             
             logger.info(f"✅ Nifty-500 pre-fetch complete! All {len(nifty500)} symbols subscribed and streaming.")
             
@@ -752,6 +772,9 @@ class AngelOneAdapter(WebsocketAdapter):
         """
         Fetch historical candle data from Angel One Historical API.
         
+        Rate-limited to prevent HTTP 429/403 errors when multiple concurrent requests occur.
+        Uses thread-safe lock with configurable delay between requests.
+        
         Args:
             symbol: Stock symbol (e.g., "RELIANCE", "TCS")
             interval: Candle interval - ONE_MINUTE, THREE_MINUTE, FIVE_MINUTE, 
@@ -765,6 +788,15 @@ class AngelOneAdapter(WebsocketAdapter):
             Returns None if request fails or symbol not found
         """
         import httpx
+        
+        # Rate limiting: enforce minimum delay between requests
+        with self._historical_lock:
+            elapsed = time.time() - self._last_historical_request
+            if elapsed < self._historical_rate_limit:
+                sleep_time = self._historical_rate_limit - elapsed
+                logger.debug(f"Rate limiting: sleeping {sleep_time:.3f}s before fetching {symbol}")
+                time.sleep(sleep_time)
+            self._last_historical_request = time.time()
         
         # Normalize symbol and get token
         normalized = self.normalize_symbol(symbol)

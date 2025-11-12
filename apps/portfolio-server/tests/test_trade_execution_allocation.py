@@ -14,14 +14,19 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from services.trade_execution_service import TradeExecutionService
 from decimal import Decimal
 
+if os.getenv("ENABLE_DB_TESTS", "false").lower() != "true":
+    pytest.skip("DB-backed trade execution test disabled", allow_module_level=True)
 
-async def test_trade_execution_flow():
+
+async def _run_trade_execution_flow():
     """Test the complete trade execution flow with allocation tracking."""
     
     print("=" * 80)
@@ -251,9 +256,9 @@ async def test_trade_execution_flow():
         print("\n🧹 Cleanup: Deleting test portfolio...")
         await client.portfolio.delete(where={"id": test_portfolio.id})
         print("✅ Cleanup complete")
-        
+
         return True
-        
+
     except Exception as e:
         print(f"\n❌ Test failed with error: {e}")
         import traceback
@@ -261,6 +266,11 @@ async def test_trade_execution_flow():
         return False
 
 
+def test_trade_execution_flow():
+    """Sync wrapper to execute the async trade execution test."""
+    asyncio.run(_run_trade_execution_flow())
+
+
 if __name__ == "__main__":
-    success = asyncio.run(test_trade_execution_flow())
+    success = asyncio.run(_run_trade_execution_flow())
     sys.exit(0 if success else 1)

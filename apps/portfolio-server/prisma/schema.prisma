@@ -17,13 +17,23 @@ model Objective {
   id                       String   @id @default(uuid())
   user_id                  String
   name                     String?
-  raw                      Json     @default("{}")
-  investable_amount        Decimal  @db.Decimal(20, 4)
-  investment_horizon_years Int
+  raw                      Json?    @default("{}")
+  source                   String?
+  structured_payload       Json?    @default("{}")
+  investable_amount        Decimal? @db.Decimal(20, 4)
+  investment_horizon_years Int?
+  investment_horizon_label String?
+  target_return            Decimal? @db.Decimal(9, 6)
+  target_returns           Json?    @default("[]")
+  risk_tolerance           String?
+  risk_aversion_lambda     Decimal? @db.Decimal(9, 6)
   liquidity_needs          String?
   rebalancing_frequency    String?
   constraints              Json?    @default("{}")
-  target_returns           Json?    @default("[]")
+  preferences              Json?    @default("{}")
+  generic_notes            Json?    @default("[]")
+  missing_fields           Json?    @default("[]")
+  completion_status        String   @default("pending")
   status                   String   @default("active")
   created_at               DateTime @default(now())
   updated_at               DateTime @updatedAt

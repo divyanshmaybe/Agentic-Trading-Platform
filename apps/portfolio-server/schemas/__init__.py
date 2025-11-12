@@ -23,6 +23,8 @@ from .objective import (
     ObjectiveResponse,
     ObjectiveCreateResponse,
     AllocationResultSummary,
+    ObjectiveIntakeRequest,
+    ObjectiveIntakeResponse,
 )
 
 __all__ = [
@@ -52,4 +54,6 @@ __all__ = [
     "ObjectiveResponse",
     "ObjectiveCreateResponse",
     "AllocationResultSummary",
+    "ObjectiveIntakeRequest",
+    "ObjectiveIntakeResponse",
 ]
