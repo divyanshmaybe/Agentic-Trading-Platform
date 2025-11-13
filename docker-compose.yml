@@ -40,6 +40,47 @@ services:
     networks:
       - agentInvest
 
+  # Portfolio PostgreSQL Database
+  portfolio_postgres:
+    image: postgres:16-alpine
+    container_name: portfolio_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: portfolio_user
+      POSTGRES_PASSWORD: portfolio_password
+      POSTGRES_DB: portfolio_db
+      POSTGRES_INITDB_ARGS: "-E UTF8"
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5434:5432"
+    volumes:
+      - portfolio_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U portfolio_user -d portfolio_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - agentInvest
+
+  # Portfolio Redis Cache & Queue
+  portfolio_redis:
+    image: redis:7-alpine
+    container_name: portfolio_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6381:6379"
+    volumes:
+      - portfolio_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - agentInvest
+
   # Auth Server Application
   auth_server:
     image: auth_server:latest
@@ -59,6 +100,11 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
+    working_dir: /app/apps/auth_server
+    command: >
+      sh -c "pnpm prisma generate &&
+             pnpm prisma db push &&
+             pnpm run start"
     ports:
       - "4000:4000"
     depends_on:
@@ -88,21 +134,21 @@ services:
       - apps/portfolio-server/docker.env
     environment:
       PORT: 8000
-      DATABASE_URL: postgresql://auth_user:auth_password@postgres:5432/auth_db
-      SHADOW_DATABASE_URL: postgresql://auth_user:auth_password@postgres:5432/auth_db
+      DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
+      SHADOW_DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
       AUTH_SERVER_URL: http://auth_server:4000
       PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
-      REDIS_HOST: redis
+      REDIS_HOST: portfolio_redis
       REDIS_PORT: 6379
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      CELERY_BROKER_URL: redis://portfolio_redis:6379/0
+      CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/1
       INTERNAL_SERVICE_SECRET: agentinvest-secret
       GEMINI_API_KEY: dummy
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "python -m prisma generate &&
-               until python -m prisma db push; do
+               until python -m prisma db push --accept-data-loss; do
                  echo 'Waiting for Postgres...';
                  sleep 2;
                done &&
@@ -114,9 +160,9 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      postgres:
+      portfolio_postgres:
         condition: service_healthy
-      redis:
+      portfolio_redis:
         condition: service_healthy
     networks:
       - agentInvest
@@ -131,20 +177,20 @@ services:
       - apps/portfolio-server/docker.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
-      DATABASE_URL: postgresql://auth_user:auth_password@postgres:5432/auth_db
-      SHADOW_DATABASE_URL: postgresql://auth_user:auth_password@postgres:5432/auth_db
+      DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
+      SHADOW_DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
       AUTH_SERVER_URL: http://auth_server:4000
       PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
-      REDIS_HOST: redis
+      REDIS_HOST: portfolio_redis
       REDIS_PORT: 6379
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      CELERY_BROKER_URL: redis://portfolio_redis:6379/0
+      CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/1
       INTERNAL_SERVICE_SECRET: agentinvest-secret
       GEMINI_API_KEY: dummy
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "python -m prisma generate &&
-               until python -m prisma db push; do
+               until python -m prisma db push --accept-data-loss; do
                  echo 'Waiting for Postgres...';
                  sleep 2;
                done &&
@@ -154,9 +200,9 @@ services:
       - ./shared:/app/shared
       - ./middleware:/app/middleware
     depends_on:
-      postgres:
+      portfolio_postgres:
         condition: service_healthy
-      redis:
+      portfolio_redis:
         condition: service_healthy
     networks:
       - agentInvest
@@ -263,6 +309,10 @@ volumes:
   postgres_data:
     driver: local
   redis_data:
+    driver: local
+  portfolio_postgres_data:
+    driver: local
+  portfolio_redis_data:
     driver: local
   pgadmin_data:
     driver: local
