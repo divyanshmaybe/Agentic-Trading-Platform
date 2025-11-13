@@ -163,6 +163,35 @@ services:
     networks:
       - auth_network
 
+  # Frontend (Next.js)
+  frontend:
+    image: frontend_web:latest
+    container_name: frontend_web
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: apps/frontend/Dockerfile
+    env_file:
+      - .env
+    environment:
+      PORT: 3000
+      NEXT_TELEMETRY_DISABLED: "1"
+    working_dir: /app/apps/frontend
+    command: >
+      bash -c "pnpm --filter frontend run start -- --hostname 0.0.0.0 --port 3000"
+    volumes:
+      - ./apps/frontend:/app/apps/frontend
+      - ./packages:/app/packages
+      - ./shared:/app/shared
+      - ./types:/app/types
+    ports:
+      - "3000:3000"
+    depends_on:
+      auth_server:
+        condition: service_started
+    networks:
+      - auth_network
+
   # Optional: Redis Commander (Redis GUI)
   redis-commander:
     image: rediscommander/redis-commander:latest
