@@ -700,6 +700,85 @@ export const updateUserProfile = async (
   }
 };
 
+const VALID_SUBSCRIPTION_AGENTS = ["high_risk", "low_risk", "alpha"] as const;
+type SubscriptionAgent = (typeof VALID_SUBSCRIPTION_AGENTS)[number];
+
+export const updateUserSubscriptions = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const userId = req.user?._id;
+    const { action, agent } = req.body ?? {};
+
+    if (!userId) {
+      return next(new ErrorHandling("User not authenticated", 401));
+    }
+
+    const normalizedAction =
+      typeof action === "string" ? action.trim().toLowerCase() : "";
+    const normalizedAgent =
+      typeof agent === "string" ? (agent.trim().toLowerCase() as SubscriptionAgent) : "";
+
+    if (!normalizedAction || !normalizedAgent) {
+      return next(
+        new ErrorHandling("Both 'action' and 'agent' fields are required", 400)
+      );
+    }
+
+    if (!["subscribe", "unsubscribe"].includes(normalizedAction)) {
+      return next(
+        new ErrorHandling("Action must be either 'subscribe' or 'unsubscribe'", 400)
+      );
+    }
+
+    if (!VALID_SUBSCRIPTION_AGENTS.includes(normalizedAgent)) {
+      return next(
+        new ErrorHandling(
+          `Agent must be one of ${VALID_SUBSCRIPTION_AGENTS.join(", ")}`,
+          400
+        )
+      );
+    }
+
+    const userRecord = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, subscriptions: true },
+    });
+
+    if (!userRecord) {
+      return next(new ErrorHandling("User not found", 404));
+    }
+
+    const currentSubscriptions = new Set(userRecord.subscriptions ?? []);
+
+    if (normalizedAction === "subscribe") {
+      currentSubscriptions.add(normalizedAgent);
+    } else {
+      currentSubscriptions.delete(normalizedAgent);
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: { subscriptions: Array.from(currentSubscriptions) },
+      select: { id: true, subscriptions: true },
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        user_id: updatedUser.id,
+        subscriptions: updatedUser.subscriptions,
+        action: normalizedAction,
+        agent: normalizedAgent,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
 export const googleLogin = async (
   req: Request,
   res: Response,

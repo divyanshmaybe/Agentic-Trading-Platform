@@ -95,6 +95,11 @@ class PortfolioSnapshot:
     investment_amount: float
     cash_available: float
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    agent_id: Optional[str] = None
+    agent_type: Optional[str] = None
+    agent_status: Optional[str] = None
+    agent_metadata: Mapping[str, Any] = field(default_factory=dict)
+    agent_config: Mapping[str, Any] = field(default_factory=dict)
 
     @property
     def capital_base(self) -> float:
@@ -132,6 +137,11 @@ class TradeExecutionPayload:
     take_profit_pct: float = DEFAULT_TAKE_PROFIT_PCT
     stop_loss_pct: float = DEFAULT_STOP_LOSS_PCT
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    agent_id: Optional[str] = None
+    agent_type: Optional[str] = None
+    agent_status: Optional[str] = None
+    agent_config: Mapping[str, Any] = field(default_factory=dict)
+    agent_metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def to_event(self) -> Mapping[str, Any]:
         """Serialise payload for queue-backed Pathway subject."""
@@ -158,6 +168,10 @@ class TradeExecutionPayload:
                     "stop_loss_pct": float(self.stop_loss_pct),
                     "generated_at": self.generated_at.isoformat() + "Z",
                     "metadata": dict(self.metadata),
+                    "agent_id": self.agent_id,
+                    "agent_type": self.agent_type,
+                    "agent_status": self.agent_status,
+                    "agent_config": dict(self.agent_config or {}),
                 },
                 default=str,
             ),
@@ -211,6 +225,31 @@ def prepare_trade_execution_payloads(
             continue
 
         for portfolio in eligible_portfolios:
+            if not portfolio.agent_id:
+                logger.debug(
+                    "Skipping portfolio %s: no trading agent registered",
+                    portfolio.portfolio_id,
+                )
+                continue
+
+            if portfolio.agent_status and str(portfolio.agent_status).lower() != "active":
+                logger.debug(
+                    "Skipping portfolio %s: trading agent %s inactive",
+                    portfolio.portfolio_id,
+                    portfolio.agent_id,
+                )
+                continue
+
+            agent_config = dict(portfolio.agent_config or {})
+            auto_trade_enabled = agent_config.get("auto_trade", True)
+            if not auto_trade_enabled:
+                logger.debug(
+                    "Skipping portfolio %s: trading agent %s auto-trade disabled",
+                    portfolio.portfolio_id,
+                    portfolio.agent_id,
+                )
+                continue
+
             capital = portfolio.capital_base
             if capital <= 0:
                 logger.debug(
@@ -239,7 +278,19 @@ def prepare_trade_execution_payloads(
                     metadata={
                         **dict(signal.metadata),
                         **dict(portfolio.metadata),
+                        "trading_agent": {
+                            "id": portfolio.agent_id,
+                            "type": portfolio.agent_type,
+                            "status": portfolio.agent_status,
+                            "config": agent_config,
+                            "metadata": dict(portfolio.agent_metadata or {}),
+                        },
                     },
+                    agent_id=portfolio.agent_id,
+                    agent_type=portfolio.agent_type,
+                    agent_status=portfolio.agent_status,
+                    agent_config=agent_config,
+                    agent_metadata=portfolio.agent_metadata,
                 )
             )
 

@@ -18,6 +18,7 @@ import {
   updateUser,
   updateUserProfile,
   verifyEmail,
+  updateUserSubscriptions,
 } from "../controllers/auth.controllers";
 
 const authRoutes: Router = Router();
@@ -42,5 +43,11 @@ authRoutes.patch("/users/:id", protectRoute, isStaff, updateUser);
 
 // User routes (any authenticated user)
 authRoutes.post("/user/update", protectRoute, isUser, updateUserProfile);
+authRoutes.post(
+  "/user/subscriptions",
+  protectRoute,
+  isUser,
+  updateUserSubscriptions
+);
 
 export { authRoutes };

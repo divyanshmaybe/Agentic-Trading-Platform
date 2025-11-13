@@ -62,6 +62,11 @@ def make_portfolio_snapshot() -> trade_utils.PortfolioSnapshot:
         investment_amount=120_000.0,
         cash_available=250_000.0,
         metadata={"cash": 250_000.0},
+        agent_id="agent-1",
+        agent_type="high_risk",
+        agent_status="active",
+        agent_config={"auto_trade": True},
+        agent_metadata={"source": "unit-test"},
     )
 
 
@@ -83,6 +88,11 @@ def test_prepare_trade_execution_payloads(monkeypatch: pytest.MonkeyPatch) -> No
     assert payload.reference_price == pytest.approx(200.0)
     assert payload.take_profit_pct == pytest.approx(trade_utils.DEFAULT_TAKE_PROFIT_PCT)
     assert payload.stop_loss_pct == pytest.approx(trade_utils.DEFAULT_STOP_LOSS_PCT)
+    assert payload.agent_id == "agent-1"
+    assert payload.agent_type == "high_risk"
+    assert payload.agent_status == "active"
+    assert payload.agent_config.get("auto_trade") is True
+    assert payload.agent_metadata.get("source") == "unit-test"
 
     event = payload.to_event()
     payload_dict = json.loads(event["payload"])
@@ -94,6 +104,41 @@ def test_prepare_trade_execution_payloads(monkeypatch: pytest.MonkeyPatch) -> No
     expected_quantity = int(expected_allocation // 200.0)
     assert expected_allocation == pytest.approx(100_000.0)
     assert expected_quantity == 500
+    assert payload_dict["agent_id"] == "agent-1"
+    assert payload_dict["agent_type"] == "high_risk"
+    assert payload_dict["agent_status"] == "active"
+    assert payload_dict["agent_config"]["auto_trade"] is True
+
+
+def test_prepare_trade_execution_payloads_skips_without_active_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prices = {"RELIANCE": Decimal("200")}
+    stub_service = StubMarketDataService(prices)
+    monkeypatch.setattr(trade_utils, "get_market_data_service", lambda: stub_service)
+
+    snapshot = trade_utils.PortfolioSnapshot(
+        portfolio_id="pf-1",
+        portfolio_name="High Risk Sleeve",
+        user_id="user-1",
+        organization_id="org-1",
+        customer_id="cust-1",
+        current_value=150_000.0,
+        investment_amount=120_000.0,
+        cash_available=250_000.0,
+        metadata={"cash": 250_000.0},
+        agent_id=None,
+        agent_type=None,
+        agent_status=None,
+        agent_config={"auto_trade": True},
+    )
+
+    payloads = trade_utils.prepare_trade_execution_payloads(
+        [make_trade_signal()],
+        [snapshot],
+    )
+
+    assert payloads == []
 
 
 class FakeTradeExecutionLog:
@@ -224,6 +269,16 @@ async def test_pipeline_service_process_trade_signals(monkeypatch: pytest.Monkey
         current_value=Decimal("150000"),
         investment_amount=Decimal("120000"),
         metadata={"cash": 250_000.0},
+        agents=[
+            SimpleNamespace(
+                id="agent-1",
+                agent_type="high_risk",
+                status="active",
+                strategy_config={"auto_trade": True},
+                metadata={"source": "unit-test"},
+            )
+        ],
+        objective_id="obj-1",
     )
 
     fake_manager = FakePipelineManager([portfolio])
@@ -245,6 +300,11 @@ async def test_pipeline_service_process_trade_signals(monkeypatch: pytest.Monkey
         generated_at=datetime(2025, 11, 11, 9, 15, 30),
         capital=250_000.0,
         reference_price=200.0,
+        agent_id="agent-1",
+        agent_type="high_risk",
+        agent_status="active",
+        agent_config={"auto_trade": True},
+        agent_metadata={"source": "unit-test"},
     )
 
     def fake_prepare(signals, portfolios, logger=None):
@@ -282,6 +342,9 @@ async def test_pipeline_service_process_trade_signals(monkeypatch: pytest.Monkey
             "filing_time": "2025-11-11 09:15:00",
             "generated_at": "2025-11-11T09:15:30Z",
             "metadata_json": "{}",
+            "agent_id": "agent-1",
+            "agent_type": "high_risk",
+            "agent_status": "active",
         }
     ]
 
@@ -324,6 +387,9 @@ async def test_pipeline_service_process_trade_signals(monkeypatch: pytest.Monkey
                     filing_time=row["filing_time"],
                     generated_at=row["generated_at"],
                     metadata={},
+                    agent_id=row.get("agent_id"),
+                    agent_type=row.get("agent_type"),
+                    agent_status=row.get("agent_status"),
                 )
                 for row in rows
             ]
@@ -355,4 +421,46 @@ async def test_pipeline_service_process_trade_signals(monkeypatch: pytest.Monkey
     assert len(persist_calls) == 1
     assert dispatched == ["req-1"]
     assert fake_manager.is_connected() is True
+
+
+@pytest.mark.asyncio
+async def test_pipeline_service_skips_portfolios_without_active_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    portfolio = SimpleNamespace(
+        id="pf-1",
+        portfolio_name="High Risk Sleeve",
+        user_id="user-1",
+        organization_id="org-1",
+        customer_id="cust-1",
+        current_value=Decimal("150000"),
+        investment_amount=Decimal("120000"),
+        metadata={"cash": 250_000.0},
+        agents=[
+            SimpleNamespace(
+                id="agent-1",
+                agent_type="high_risk",
+                status="paused",
+                strategy_config={"auto_trade": True},
+                metadata={},
+            )
+        ],
+        objective_id="obj-1",
+    )
+
+    fake_manager = FakePipelineManager([portfolio])
+    monkeypatch.setattr("services.pipeline_service.get_db_manager", lambda: fake_manager, raising=False)
+    monkeypatch.setattr(PipelineService, "_load_environment", lambda self: None, raising=False)
+
+    summary = await PipelineService(str(PORTFOLIO_SERVER_ROOT), logger=None)._process_nse_trade_signals_async(
+        signals=[{"symbol": "RELIANCE", "signal": 1, "confidence": 0.85}],
+        publish_kafka=True,
+    )
+
+    assert summary == {
+        "processed_signals": 1,
+        "payloads": 0,
+        "jobs": 0,
+        "dispatched": 0,
+    }
 

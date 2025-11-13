@@ -11,6 +11,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -93,6 +94,8 @@ class TradeExecutionService:
         # Only add portfolio_id if it exists
         if job_row.get("portfolio_id"):
             data["portfolio_id"] = job_row["portfolio_id"]
+        if job_row.get("agent_id"):
+            data["agent_id"] = job_row["agent_id"]
 
         record = await client.tradeexecutionlog.create(data=data)
         self.logger.info(
@@ -151,6 +154,9 @@ class TradeExecutionService:
                 generated_at=row.get("generated_at", ""),
                 metadata=metadata,
                 status="pending",
+                agent_id=row.get("agent_id"),
+                agent_type=row.get("agent_type"),
+                agent_status=row.get("agent_status"),
             )
             events.append(event)
 
@@ -511,6 +517,20 @@ class TradeExecutionService:
                 executed_price,
             )
             
+            agent_id = getattr(trade_record, "agent_id", None)
+            if agent_id:
+                try:
+                    await client.tradingagent.update(
+                        where={"id": str(agent_id)},
+                        data={"last_executed_at": datetime.utcnow()},
+                    )
+                except Exception as agent_exc:
+                    self.logger.warning(
+                        "Failed to update trading agent %s after execution: %s",
+                        agent_id,
+                        agent_exc,
+                    )
+
             # Trigger portfolio value recalculation
             await self._recalculate_portfolio_value(portfolio_id, client)
             

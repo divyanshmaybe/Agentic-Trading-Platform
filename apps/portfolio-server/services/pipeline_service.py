@@ -949,13 +949,38 @@ class PipelineService:
                 user_ids.append(str(user_id))
         return user_ids
 
-    def _build_portfolio_snapshot(self, portfolio: Any) -> Optional[PortfolioSnapshot]:
+    def _build_portfolio_snapshot(
+        self,
+        portfolio: Any,
+        *,
+        agent: Optional[Any] = None,
+        agent_config: Optional[Mapping[str, Any]] = None,
+        agent_metadata: Optional[Mapping[str, Any]] = None,
+    ) -> Optional[PortfolioSnapshot]:
         user_id = getattr(portfolio, "user_id", None)
         if not user_id:
             return None
 
         metadata = self._parse_metadata(getattr(portfolio, "metadata", None))
         cash_available = self._safe_float(metadata.get("cash_available", metadata.get("cash")), default=0.0)
+
+        agent_id = str(getattr(agent, "id", "")) if agent else None
+        agent_type = str(getattr(agent, "agent_type", "")) if agent else None
+        agent_status = str(getattr(agent, "status", "")) if agent else None
+        agent_config_dict = dict(agent_config or {})
+        agent_metadata_dict = dict(agent_metadata or {})
+
+        if agent_id:
+            metadata = {
+                **metadata,
+                "trading_agent": {
+                    "id": agent_id,
+                    "type": agent_type,
+                    "status": agent_status,
+                    "config": agent_config_dict,
+                    "metadata": agent_metadata_dict,
+                },
+            }
 
         return PortfolioSnapshot(
             portfolio_id=str(getattr(portfolio, "id")),
@@ -967,6 +992,11 @@ class PipelineService:
             investment_amount=self._safe_float(getattr(portfolio, "investment_amount", 0.0)),
             cash_available=cash_available,
             metadata=metadata,
+            agent_id=agent_id,
+            agent_type=agent_type,
+            agent_status=agent_status,
+            agent_metadata=agent_metadata_dict,
+            agent_config=agent_config_dict,
         )
 
     def _build_trade_signal(self, payload: Mapping[str, Any]) -> Optional[TradeSignal]:
@@ -1056,11 +1086,45 @@ class PipelineService:
                 "user_id": {"in": high_risk_users},
                 "status": "active",
             },
+            include={"agents": True},
         )
 
         snapshots: List[PortfolioSnapshot] = []
         for portfolio in portfolios:
-            snapshot = self._build_portfolio_snapshot(portfolio)
+            agent_rows = [
+                agent
+                for agent in getattr(portfolio, "agents", []) or []
+                if str(getattr(agent, "agent_type", "")).lower() == "high_risk"
+            ]
+
+            active_agent = None
+            active_config: Mapping[str, Any] = {}
+            active_metadata: Mapping[str, Any] = {}
+
+            for agent in agent_rows:
+                status = str(getattr(agent, "status", "") or "active").lower()
+                config = self._clean_json(getattr(agent, "strategy_config", None)) or {}
+                auto_trade_enabled = bool(config.get("auto_trade", True))
+
+                if status == "active" and auto_trade_enabled:
+                    active_agent = agent
+                    active_config = config
+                    active_metadata = self._parse_metadata(getattr(agent, "metadata", None))
+                    break
+
+            if not active_agent:
+                self.logger.debug(
+                    "Skipping portfolio %s: no active high-risk agent with auto-trade",
+                    getattr(portfolio, "id", "unknown"),
+                )
+                continue
+
+            snapshot = self._build_portfolio_snapshot(
+                portfolio,
+                agent=active_agent,
+                agent_config=active_config,
+                agent_metadata=active_metadata,
+            )
             if snapshot:
                 snapshots.append(snapshot)
 

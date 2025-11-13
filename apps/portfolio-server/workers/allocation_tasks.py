@@ -189,6 +189,74 @@ def _calculate_next_rebalance_date(
     return next_date
 
 
+async def _ensure_trading_agent(
+    db: Any,
+    *,
+    portfolio_id: str,
+    allocation: Any,
+    allocation_type: str,
+    request_context: Mapping[str, Any],
+    objective_id: Optional[str] = None,
+) -> None:
+    """Create or update a trading agent linked to the portfolio allocation."""
+
+    normalized_type = str(allocation_type or "").strip().lower()
+    if not normalized_type:
+        normalized_type = "unspecified"
+
+    agent_name = " ".join(part.capitalize() for part in normalized_type.replace("_", " ").split())
+    if agent_name and "agent" not in agent_name.lower():
+        agent_name = f"{agent_name} Agent"
+    elif not agent_name:
+        agent_name = "Automated Agent"
+
+    request_metadata = {
+        "request_id": request_context.get("request_id"),
+        "trigger": request_context.get("trigger"),
+        "regime": request_context.get("current_regime") or request_context.get("regime"),
+        "timestamp": request_context.get("timestamp"),
+    }
+
+    trading_metadata = {
+        "portfolio_allocation_id": getattr(allocation, "id", None),
+        "portfolio_id": portfolio_id,
+        "objective_id": objective_id,
+        "request": {k: v for k, v in request_metadata.items() if v is not None},
+    }
+
+    strategy_config = {
+        "allocation_type": normalized_type,
+        "auto_trade": True,
+    }
+
+    existing_agent = await db.tradingagent.find_first(
+        where={"portfolio_allocation_id": getattr(allocation, "id", None)}
+    )
+
+    data_payload = {
+        "portfolio_id": portfolio_id,
+        "agent_type": normalized_type,
+        "agent_name": agent_name,
+        "strategy_config": _encode_json(strategy_config),
+        "metadata": _encode_json(trading_metadata),
+    }
+
+    if existing_agent:
+        await db.tradingagent.update(
+            where={"id": existing_agent.id},
+            data=data_payload,
+        )
+        return
+
+    await db.tradingagent.create(
+        data={
+            **data_payload,
+            "portfolio_allocation_id": getattr(allocation, "id", None),
+            "status": "active",
+        }
+    )
+
+
 # ============================================================================
 # Celery Tasks
 # ============================================================================
@@ -297,18 +365,47 @@ def allocate_new_portfolio_task(
                     "objective_value": allocation_result.get("objective_value"),
                     "message": allocation_result.get("message"),
                 }
+                allocation_payload = {
+                    "target_weight": float(weight),
+                    "current_weight": float(weight),
+                    "expected_return": allocation_result.get("expected_return"),
+                    "expected_risk": allocation_result.get("expected_risk"),
+                    "regime": current_regime,
+                    "metadata": _encode_json(allocation_metadata),
+                }
 
-                await db.portfolioallocation.create(
-                    data={
+                existing_allocation = await db.portfolioallocation.find_first(
+                    where={
                         "portfolio_id": portfolio_id,
                         "allocation_type": allocation_type,
-                        "target_weight": float(weight),
-                        "current_weight": float(weight),
-                        "expected_return": allocation_result.get("expected_return"),
-                        "expected_risk": allocation_result.get("expected_risk"),
-                        "regime": current_regime,
-                        "metadata": _encode_json(allocation_metadata),
                     }
+                )
+
+                if existing_allocation:
+                    allocation_record = await db.portfolioallocation.update(
+                        where={"id": existing_allocation.id},
+                        data=allocation_payload,
+                    )
+                else:
+                    allocation_record = await db.portfolioallocation.create(
+                        data={
+                            "portfolio_id": portfolio_id,
+                            "allocation_type": allocation_type,
+                            **allocation_payload,
+                        }
+                    )
+
+                agent_context = dict(request.get("metadata") or {})
+                agent_context["request_id"] = request["request_id"]
+                agent_context["current_regime"] = current_regime
+
+                await _ensure_trading_agent(
+                    db,
+                    portfolio_id=portfolio_id,
+                    allocation=allocation_record,
+                    allocation_type=allocation_type,
+                    request_context=agent_context,
+                    objective_id=None,
                 )
             
             # Calculate initial rebalancing date based on frequency
@@ -494,17 +591,47 @@ def allocate_for_objective_task(
                     "message": allocation_result.get("message"),
                 }
 
-                await db.portfolioallocation.create(
-                    data={
+                allocation_payload = {
+                    "target_weight": float(weight),
+                    "current_weight": float(weight),
+                    "expected_return": allocation_result.get("expected_return"),
+                    "expected_risk": allocation_result.get("expected_risk"),
+                    "regime": current_regime,
+                    "metadata": _encode_json(allocation_metadata),
+                }
+
+                existing_allocation = await db.portfolioallocation.find_first(
+                    where={
                         "portfolio_id": portfolio_id,
                         "allocation_type": allocation_type,
-                        "target_weight": float(weight),
-                        "current_weight": float(weight),
-                        "expected_return": allocation_result.get("expected_return"),
-                        "expected_risk": allocation_result.get("expected_risk"),
-                        "regime": current_regime,
-                        "metadata": _encode_json(allocation_metadata),
-                    },
+                    }
+                )
+
+                if existing_allocation:
+                    allocation_record = await db.portfolioallocation.update(
+                        where={"id": existing_allocation.id},
+                        data=allocation_payload,
+                    )
+                else:
+                    allocation_record = await db.portfolioallocation.create(
+                        data={
+                            "portfolio_id": portfolio_id,
+                            "allocation_type": allocation_type,
+                            **allocation_payload,
+                        },
+                    )
+
+                agent_context = dict(request.get("metadata") or {})
+                agent_context["request_id"] = request["request_id"]
+                agent_context["current_regime"] = current_regime
+
+                await _ensure_trading_agent(
+                    db,
+                    portfolio_id=portfolio_id,
+                    allocation=allocation_record,
+                    allocation_type=allocation_type,
+                    request_context=agent_context,
+                    objective_id=objective_id,
                 )
             
             # Calculate next rebalancing date
@@ -738,17 +865,47 @@ def daily_rebalancing_sweep_task(self) -> Dict[str, Any]:
                                 "days_overdue": request["metadata"]["days_overdue"],
                             }
 
-                            await db.portfolioallocation.create(
-                                data={
+                            allocation_payload = {
+                                "target_weight": float(weight),
+                                "current_weight": float(weight),
+                                "expected_return": result.get("expected_return"),
+                                "expected_risk": result.get("expected_risk"),
+                                "regime": current_regime,
+                                "metadata": _encode_json(allocation_metadata),
+                            }
+
+                            existing_allocation = await db.portfolioallocation.find_first(
+                                where={
                                     "portfolio_id": portfolio.id,
                                     "allocation_type": allocation_type,
-                                    "target_weight": float(weight),
-                                    "current_weight": float(weight),
-                                    "expected_return": result.get("expected_return"),
-                                    "expected_risk": result.get("expected_risk"),
-                                    "regime": current_regime,
-                                    "metadata": _encode_json(allocation_metadata),
-                                },
+                                }
+                            )
+
+                            if existing_allocation:
+                                allocation_record = await db.portfolioallocation.update(
+                                    where={"id": existing_allocation.id},
+                                    data=allocation_payload,
+                                )
+                            else:
+                                allocation_record = await db.portfolioallocation.create(
+                                    data={
+                                        "portfolio_id": portfolio.id,
+                                        "allocation_type": allocation_type,
+                                        **allocation_payload,
+                                    },
+                                )
+
+                            agent_context = dict(request.get("metadata") or {})
+                            agent_context["request_id"] = request["request_id"]
+                            agent_context["current_regime"] = current_regime
+
+                            await _ensure_trading_agent(
+                                db,
+                                portfolio_id=portfolio.id,
+                                allocation=allocation_record,
+                                allocation_type=allocation_type,
+                                request_context=agent_context,
+                                objective_id=getattr(portfolio, "objective_id", None),
                             )
                         
                         # Calculate next rebalancing date

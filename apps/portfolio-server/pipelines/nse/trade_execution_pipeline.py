@@ -66,6 +66,9 @@ class TradeExecutionOutputSchema(pw.Schema):
     filing_time: str
     generated_at: str
     metadata_json: str
+    agent_id: Optional[str]
+    agent_type: Optional[str]
+    agent_status: Optional[str]
 
 
 class _TradeSubject(pw.io.python.ConnectorSubject):
@@ -226,6 +229,9 @@ def build_trade_execution_pipeline(
         filing_time=_payload_field_str(pw.this.payload, "filing_time"),
         generated_at=_payload_field_str(pw.this.payload, "generated_at"),
         metadata_json=_payload_field_json(pw.this.payload),
+        agent_id=_payload_field_str(pw.this.payload, "agent_id"),
+        agent_type=_payload_field_str(pw.this.payload, "agent_type"),
+        agent_status=_payload_field_str(pw.this.payload, "agent_status"),
     )
 
     enriched = with_allocation.select(
@@ -260,6 +266,9 @@ def build_trade_execution_pipeline(
         filing_time=pw.this.filing_time,
         generated_at=pw.this.generated_at,
         metadata_json=pw.this.metadata_json,
+        agent_id=pw.this.agent_id,
+        agent_type=pw.this.agent_type,
+        agent_status=pw.this.agent_status,
     )
 
 
@@ -334,6 +343,9 @@ class TradeExecutionEvent(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
     status: str = "queued"
     source: str = "nse_trade_execution_pipeline"
+    agent_id: Optional[str] = None
+    agent_type: Optional[str] = None
+    agent_status: Optional[str] = None
 
 
 TRADE_EXECUTION_TOPIC = os.getenv("TRADE_EXECUTION_TOPIC", "nse_pipeline_trade_logs")

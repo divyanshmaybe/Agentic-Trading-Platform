@@ -94,6 +94,7 @@ class FakePrismaClient:
         self.objective = FakeObjectiveModel()
         self.portfolio = FakePortfolioModel()
         self.portfolioallocation = FakePortfolioAllocationModel()
+        self.tradingagent = FakeTradingAgentModel()
 
 
 class StubPipelineService:
@@ -124,6 +125,7 @@ class FakePortfolioModel:
         portfolio_id = data.get("id") or f"portfolio-{self.counter}"
         row = {
             "metadata": data.get("metadata"),
+            "agents": data.get("agents", []),
             **data,
             "id": portfolio_id,
             "created_at": data.get("created_at") or datetime.utcnow(),
@@ -160,6 +162,82 @@ class FakePortfolioAllocationModel:
         row = {**data, "id": allocation_id}
         self.rows.append(row)
         return FakeRecord(**row)
+
+    async def find_first(self, where: Dict[str, Any]) -> Optional[Any]:
+        for row in self.rows:
+            matches = True
+            for key, expected in where.items():
+                if row.get(key) != expected:
+                    matches = False
+                    break
+            if matches:
+                return FakeRecord(**row)
+        return None
+
+    async def update(self, where: Dict[str, Any], data: Dict[str, Any]) -> Any:
+        allocation_id = where["id"]
+        for idx, row in enumerate(self.rows):
+            if row.get("id") == allocation_id:
+                new_row = {**row, **data, "id": allocation_id}
+                self.rows[idx] = new_row
+                return FakeRecord(**new_row)
+        raise KeyError(f"Allocation {allocation_id} not found")
+
+
+class FakeTradingAgentModel:
+    def __init__(self) -> None:
+        self.rows: Dict[str, Dict[str, Any]] = {}
+        self.counter = 0
+
+    @staticmethod
+    def _matches(row: Dict[str, Any], where: Dict[str, Any]) -> bool:
+        for key, expected in where.items():
+            value = row.get(key)
+            if isinstance(expected, dict):
+                if "equals" in expected:
+                    expected = expected["equals"]
+                elif "in" in expected:
+                    if value not in expected["in"]:
+                        return False
+                    continue
+            if value != expected:
+                return False
+        return True
+
+    async def find_first(self, where: Dict[str, Any]) -> Optional[Any]:
+        for row in self.rows.values():
+            if self._matches(row, where):
+                return FakeRecord(**row)
+        return None
+
+    async def create(self, data: Dict[str, Any]) -> Any:
+        self.counter += 1
+        agent_id = data.get("id") or f"agent-{self.counter}"
+        row = {
+            **data,
+            "id": agent_id,
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow(),
+        }
+        self.rows[agent_id] = row
+        return FakeRecord(**row)
+
+    async def update(self, where: Dict[str, Any], data: Dict[str, Any]) -> Any:
+        agent_id = where["id"]
+        row = self.rows[agent_id]
+        row.update(data)
+        row["updated_at"] = datetime.utcnow()
+        self.rows[agent_id] = row
+        return FakeRecord(**row)
+
+    async def find_many(self, where: Optional[Dict[str, Any]] = None) -> List[Any]:
+        if not where:
+            return [FakeRecord(**row) for row in self.rows.values()]
+        return [
+            FakeRecord(**row)
+            for row in self.rows.values()
+            if self._matches(row, where)
+        ]
 
 
 def test_objective_intake_pipeline_missing_fields() -> None:
@@ -606,6 +684,19 @@ async def test_objective_intake_then_allocation(monkeypatch: pytest.MonkeyPatch)
     assert allocation_result["success"] is True
     assert prisma.portfolioallocation.rows, "Allocation rows should be created"
     assert prisma.portfolio.rows[task_kwargs["portfolio_id"]]["allocation_status"] == "ready"
+
+    first_allocation = prisma.portfolioallocation.rows[0]
+    assert isinstance(first_allocation["metadata"], fields.Json)
+
+    portfolio_metadata = prisma.portfolio.rows[task_kwargs["portfolio_id"]]["metadata"]
+    if isinstance(portfolio_metadata, fields.Json):
+        assert portfolio_metadata.data.get("objective_id") == task_kwargs["objective_id"]
+
+    assert prisma.tradingagent.rows, "Trading agents should be provisioned alongside allocations"
+    first_agent = next(iter(prisma.tradingagent.rows.values()))
+    assert first_agent["portfolio_allocation_id"] == first_allocation["id"]
+    assert first_agent["portfolio_id"] == task_kwargs["portfolio_id"]
+    assert first_agent["agent_type"] == first_allocation["allocation_type"]
 
 
 @pytest.mark.asyncio
