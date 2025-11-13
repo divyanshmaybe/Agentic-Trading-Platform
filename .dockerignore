@@ -1,0 +1,39 @@
+# Global Docker build ignores
+.git
+.gitmodules
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.coverage
+.venv/
+venv/
+
+# Node / frontend artifacts
+node_modules/
+**/node_modules/
+dist/
+build/
+.next/
+.turbo/
+
+# Environment and config files
+.env
+.env.local
+.env.*
+*.log
+
+# IDE and OS files
+.DS_Store
+.idea/
+.vscode/
+
+# Project-specific scripts not needed in images
+kafkaStudio.py
+
+# Docker Compose leftovers
+docker-compose.override.yml
+

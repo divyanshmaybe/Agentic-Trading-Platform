@@ -1,4 +1,5 @@
 celery==5.5.3
+confluent-kafka==2.12.2
 cvxpy==1.5.2
 fastapi==0.121.0
 google-generativeai==0.8.5
@@ -16,6 +17,7 @@ prisma==0.15.0
 pydantic==2.12.4
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.1
+PyJWT==2.10.1
 pyotp==2.9.0
 redis==5.2.1
 requests==2.32.5
@@ -26,3 +28,4 @@ typing-extensions==4.15.0
 unstructured==0.14.9
 uvicorn==0.38.0
 yfinance==0.2.51
+websockets==15.0.1

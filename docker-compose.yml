@@ -51,6 +51,7 @@ services:
       context: .
       dockerfile: apps/auth_server/Dockerfile
     env_file:
+      - .env
       - apps/auth_server/.env
     environment:
       NODE_ENV: production
@@ -59,6 +60,7 @@ services:
       REDIS_URL: redis://redis:6379
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
     ports:
       - "4000:4000"
     depends_on:
@@ -72,6 +74,92 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+    networks:
+      - auth_network
+
+  # Portfolio Server (FastAPI)
+  portfolio_server:
+    image: portfolio_server:latest
+    container_name: portfolio_server
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: apps/portfolio-server/Dockerfile
+    env_file:
+      - .env
+      - apps/portfolio-server/docker.env
+    environment:
+      PORT: 8000
+      DATABASE_URL: postgresql://auth_user:auth_password@postgres:5432/auth_db
+      SHADOW_DATABASE_URL: postgresql://auth_user:auth_password@postgres:5432/auth_db
+      AUTH_SERVER_URL: http://auth_server:4000
+      PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      INTERNAL_SERVICE_SECRET: agentinvest-secret
+      GEMINI_API_KEY: dummy
+      PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
+    working_dir: /app/apps/portfolio-server
+    command: >
+      bash -c "python -m prisma generate &&
+               until python -m prisma db push; do
+                 echo 'Waiting for Postgres...';
+                 sleep 2;
+               done &&
+               uvicorn main:app --host 0.0.0.0 --port 8000"
+    volumes:
+      - ./apps/portfolio-server:/app/apps/portfolio-server
+      - ./shared:/app/shared
+      - ./middleware:/app/middleware
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - auth_network
+
+  # Celery worker (Portfolio pipelines & tasks)
+  portfolio_celery:
+    image: portfolio_server:latest
+    container_name: portfolio_celery
+    restart: unless-stopped
+    env_file:
+      - .env
+      - apps/portfolio-server/docker.env
+    environment:
+      PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
+      DATABASE_URL: postgresql://auth_user:auth_password@postgres:5432/auth_db
+      SHADOW_DATABASE_URL: postgresql://auth_user:auth_password@postgres:5432/auth_db
+      AUTH_SERVER_URL: http://auth_server:4000
+      PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      INTERNAL_SERVICE_SECRET: agentinvest-secret
+      GEMINI_API_KEY: dummy
+    working_dir: /app/apps/portfolio-server
+    command: >
+      bash -c "python -m prisma generate &&
+               until python -m prisma db push; do
+                 echo 'Waiting for Postgres...';
+                 sleep 2;
+               done &&
+               celery -A celery_app:celery_app worker --loglevel=info --beat"
+    volumes:
+      - ./apps/portfolio-server:/app/apps/portfolio-server
+      - ./shared:/app/shared
+      - ./middleware:/app/middleware
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - auth_network
 

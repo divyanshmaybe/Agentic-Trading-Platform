@@ -1,0 +1,16 @@
+# Portfolio server Docker ignore
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+*.py[cod]
+*.pyo
+.env
+.env.*
+tests/__pycache__/
+docs/
+celerybeat-schedule
+.coverage
+
+# Shared caches
+/tmp/
+
