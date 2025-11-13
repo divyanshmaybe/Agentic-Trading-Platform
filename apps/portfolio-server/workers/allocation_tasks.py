@@ -13,7 +13,7 @@ import sys
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Set
 
 from dateutil.relativedelta import relativedelta
 from fastapi.encoders import jsonable_encoder
@@ -34,6 +34,16 @@ _JSON_ENCODERS = {
     date: lambda value: value.isoformat(),
     timedelta: lambda value: value.total_seconds(),
     Decimal: float,
+}
+
+ALLOCATION_SUBSCRIPTION_MAP: Dict[str, str] = {
+    "equity": "high_risk",
+    "high_risk": "high_risk",
+    "alpha": "alpha",
+    "quant": "alpha",
+    "debt": "low_risk",
+    "fixed_income": "low_risk",
+    "low_risk": "low_risk",
 }
 
 
@@ -72,6 +82,56 @@ def _encode_json(value: Any) -> Any:
     if sanitized is None:
         return None
     return fields.Json(sanitized)
+
+
+def _json_to_dict(value: Any) -> Dict[str, Any]:
+    if isinstance(value, fields.Json):
+        try:
+            return dict(value.data or {})
+        except Exception:
+            return {}
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str) and value:
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+async def _get_user_subscriptions(db: Any, user_id: Optional[str]) -> Set[str]:
+    if not user_id:
+        return set()
+
+    try:
+        rows = await db.query_raw(
+            "SELECT subscriptions FROM users WHERE id = %s",
+            user_id,
+        )
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.warning("Failed to fetch subscriptions for user %s: %s", user_id, exc)
+        return set()
+
+    if not rows:
+        return set()
+
+    row = rows[0]
+    subscriptions = None
+    if isinstance(row, Mapping):
+        subscriptions = row.get("subscriptions")
+    else:
+        subscriptions = getattr(row, "subscriptions", None)
+
+    if not subscriptions:
+        return set()
+
+    try:
+        return {str(item).lower() for item in subscriptions if item}
+    except TypeError:
+        return {str(subscriptions).lower()}
 
 
 # ==========================================================================
@@ -197,12 +257,18 @@ async def _ensure_trading_agent(
     allocation_type: str,
     request_context: Mapping[str, Any],
     objective_id: Optional[str] = None,
-) -> None:
+    user_subscriptions: Optional[Set[str]] = None,
+) -> bool:
     """Create or update a trading agent linked to the portfolio allocation."""
 
     normalized_type = str(allocation_type or "").strip().lower()
     if not normalized_type:
         normalized_type = "unspecified"
+
+    subscription_key = ALLOCATION_SUBSCRIPTION_MAP.get(normalized_type, normalized_type)
+    subscriptions = user_subscriptions or set()
+    auto_trade_enabled = subscription_key in subscriptions
+    status = "active" if auto_trade_enabled else "paused"
 
     agent_name = " ".join(part.capitalize() for part in normalized_type.replace("_", " ").split())
     if agent_name and "agent" not in agent_name.lower():
@@ -217,21 +283,46 @@ async def _ensure_trading_agent(
         "timestamp": request_context.get("timestamp"),
     }
 
+    existing_agent = await db.tradingagent.find_first(
+        where={"portfolio_allocation_id": getattr(allocation, "id", None)}
+    )
+
+    existing_metadata = _json_to_dict(getattr(existing_agent, "metadata", None) if existing_agent else None)
     trading_metadata = {
+        **existing_metadata,
         "portfolio_allocation_id": getattr(allocation, "id", None),
         "portfolio_id": portfolio_id,
         "objective_id": objective_id,
         "request": {k: v for k, v in request_metadata.items() if v is not None},
     }
 
-    strategy_config = {
-        "allocation_type": normalized_type,
-        "auto_trade": True,
+    events = trading_metadata.get("subscription_events", [])
+    events = [event for event in events if isinstance(event, Mapping)]
+    events.append(
+        {
+            "auto_trade": auto_trade_enabled,
+            "status": status,
+            "subscription_key": subscription_key,
+            "trigger": request_metadata.get("trigger"),
+            "timestamp": request_metadata.get("timestamp") or datetime.utcnow().isoformat(),
+        }
+    )
+    trading_metadata["subscription_events"] = events[-20:]
+    trading_metadata["subscription_state"] = {
+        "auto_trade": auto_trade_enabled,
+        "status": status,
+        "subscription_key": subscription_key,
+        "updated_at": datetime.utcnow().isoformat(),
     }
 
-    existing_agent = await db.tradingagent.find_first(
-        where={"portfolio_allocation_id": getattr(allocation, "id", None)}
-    )
+    existing_config = _json_to_dict(getattr(existing_agent, "strategy_config", None) if existing_agent else None)
+    strategy_config = {
+        **existing_config,
+        "allocation_type": normalized_type,
+        "subscription_key": subscription_key,
+        "auto_trade": auto_trade_enabled,
+        "synced_at": datetime.utcnow().isoformat(),
+    }
 
     data_payload = {
         "portfolio_id": portfolio_id,
@@ -239,22 +330,17 @@ async def _ensure_trading_agent(
         "agent_name": agent_name,
         "strategy_config": _encode_json(strategy_config),
         "metadata": _encode_json(trading_metadata),
+        "status": status,
     }
 
     if existing_agent:
-        await db.tradingagent.update(
-            where={"id": existing_agent.id},
-            data=data_payload,
-        )
-        return
+        await db.tradingagent.update(where={"id": existing_agent.id}, data=data_payload)
+        return auto_trade_enabled
 
     await db.tradingagent.create(
-        data={
-            **data_payload,
-            "portfolio_allocation_id": getattr(allocation, "id", None),
-            "status": "active",
-        }
+        data={**data_payload, "portfolio_allocation_id": getattr(allocation, "id", None)}
     )
+    return auto_trade_enabled
 
 
 # ============================================================================
@@ -320,6 +406,8 @@ def allocate_new_portfolio_task(
             
             if db is None:
                 raise RuntimeError("Database not available")
+            
+            user_subscriptions = await _get_user_subscriptions(db, user_id)
             
             await db.portfolio.update(
                 where={"id": portfolio_id},
@@ -406,6 +494,7 @@ def allocate_new_portfolio_task(
                     allocation_type=allocation_type,
                     request_context=agent_context,
                     objective_id=None,
+                    user_subscriptions=user_subscriptions,
                 )
             
             # Calculate initial rebalancing date based on frequency
@@ -544,6 +633,8 @@ def allocate_for_objective_task(
             if db is None:
                 raise RuntimeError("Database not available")
             
+            user_subscriptions = await _get_user_subscriptions(db, user_id)
+            
             await db.portfolio.update(
                 where={"id": portfolio_id},
                 data={"allocation_status": "processing"}
@@ -632,6 +723,7 @@ def allocate_for_objective_task(
                     allocation_type=allocation_type,
                     request_context=agent_context,
                     objective_id=objective_id,
+                    user_subscriptions=user_subscriptions,
                 )
             
             # Calculate next rebalancing date
@@ -856,6 +948,9 @@ def daily_rebalancing_sweep_task(self) -> Dict[str, Any]:
                         if not weights:
                             weights = _coerce_to_plain_dict(result.get("weights_json"))
 
+                        owner_id = getattr(portfolio, "user_id", None) or getattr(portfolio, "customer_id", None)
+                        user_subscriptions = await _get_user_subscriptions(db, owner_id)
+
                         for allocation_type, weight in weights.items():
                             allocation_metadata = {
                                 "request_id": request["request_id"],
@@ -906,6 +1001,7 @@ def daily_rebalancing_sweep_task(self) -> Dict[str, Any]:
                                 allocation_type=allocation_type,
                                 request_context=agent_context,
                                 objective_id=getattr(portfolio, "objective_id", None),
+                                user_subscriptions=user_subscriptions,
                             )
                         
                         # Calculate next rebalancing date

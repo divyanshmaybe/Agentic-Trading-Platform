@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from "express";
+import axios from "axios";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import { generateTokens } from "../utils/tokens";
@@ -764,6 +765,35 @@ export const updateUserSubscriptions = async (
       data: { subscriptions: Array.from(currentSubscriptions) },
       select: { id: true, subscriptions: true },
     });
+
+    const portfolioServiceUrl =
+      process.env.PORTFOLIO_SERVICE_URL || "http://localhost:8000";
+
+    const syncPayload = {
+      user_id: userId,
+      subscriptions: Array.from(currentSubscriptions),
+    };
+
+    try {
+      await axios.post(
+        `${portfolioServiceUrl}/api/internal/trading-agents/sync`,
+        syncPayload,
+        {
+          headers: {
+            "X-Internal-Service": "true",
+            "X-Service-Secret":
+              process.env.INTERNAL_SERVICE_SECRET || "",
+          },
+          timeout: 5000,
+        }
+      );
+    } catch (syncError: any) {
+      console.warn(
+        "⚠️ Failed to sync trading agents for user %s: %s",
+        userId,
+        syncError?.message || syncError
+      );
+    }
 
     return res.status(200).json({
       success: true,

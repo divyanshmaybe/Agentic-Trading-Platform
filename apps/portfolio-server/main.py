@@ -32,6 +32,7 @@ from routes.portfolio_routes import router as portfolio_router
 from routes.objective_routes import create_objective_routes
 from routes.trade_routes import router as trade_router
 from routes.regime_routes import router as regime_router
+from routes.internal_routes import router as internal_router
 from utils.pipeline_utils import get_pipeline_status
 from workers.pipeline_tasks import start_nse_pipeline, run_news_sentiment_pipeline
 
@@ -65,38 +66,38 @@ def create_lifespan(base_app_instance, pipeline_service_instance):
                 )
         
         # # Start NSE pipeline via Celery task
-        app.state.pipeline_status = "initializing"
-        app.state.pipeline_job_id = None
-        app.state.news_pipeline_job_id = None
+        # app.state.pipeline_status = "initializing"
+        # app.state.pipeline_job_id = None
+        # app.state.news_pipeline_job_id = None
 
-        try:
-            base_app_instance.logger.info("Dispatching NSE pipeline task to Celery...")
-            task_result = start_nse_pipeline.delay()
-            app.state.pipeline_job_id = task_result.id
-            app.state.pipeline_status = "queued"
-            base_app_instance.logger.info(
-                "✓ NSE pipeline task dispatched (task_id=%s)", task_result.id
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            app.state.pipeline_job_id = None
-            app.state.pipeline_status = "error"
-            base_app_instance.logger.exception(
-                "Failed to dispatch NSE pipeline task: %s", exc
-            )
+        # try:
+        #     base_app_instance.logger.info("Dispatching NSE pipeline task to Celery...")
+        #     task_result = start_nse_pipeline.delay()
+        #     app.state.pipeline_job_id = task_result.id
+        #     app.state.pipeline_status = "queued"
+        #     base_app_instance.logger.info(
+        #         "✓ NSE pipeline task dispatched (task_id=%s)", task_result.id
+        #     )
+        # except Exception as exc:  # pragma: no cover - defensive
+        #     app.state.pipeline_job_id = None
+        #     app.state.pipeline_status = "error"
+        #     base_app_instance.logger.exception(
+        #         "Failed to dispatch NSE pipeline task: %s", exc
+        #     )
 
-        # Dispatch news sentiment pipeline once at startup (Celery beat handles subsequent runs)
-        try:
-            base_app_instance.logger.info("Dispatching news sentiment pipeline task to Celery...")
-            news_task = run_news_sentiment_pipeline.delay()
-            app.state.news_pipeline_job_id = news_task.id
-            base_app_instance.logger.info(
-                "✓ News sentiment pipeline task dispatched (task_id=%s)", news_task.id
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            app.state.news_pipeline_job_id = None
-            base_app_instance.logger.exception(
-                "Failed to dispatch news sentiment pipeline task: %s", exc
-            )
+        # # Dispatch news sentiment pipeline once at startup (Celery beat handles subsequent runs)
+        # try:
+        #     base_app_instance.logger.info("Dispatching news sentiment pipeline task to Celery...")
+        #     news_task = run_news_sentiment_pipeline.delay()
+        #     app.state.news_pipeline_job_id = news_task.id
+        #     base_app_instance.logger.info(
+        #         "✓ News sentiment pipeline task dispatched (task_id=%s)", news_task.id
+        #     )
+        # except Exception as exc:  # pragma: no cover - defensive
+        #     app.state.news_pipeline_job_id = None
+        #     base_app_instance.logger.exception(
+        #         "Failed to dispatch news sentiment pipeline task: %s", exc
+        #     )
         
         # Initialize Regime Classification Service
         try:
@@ -147,6 +148,7 @@ base_app.add_routes("/api", trade_router)
 base_app.add_routes("/api", market_router)
 base_app.add_routes("/api", portfolio_router)
 base_app.add_routes("/api", create_objective_routes(pipeline_service))
+base_app.add_routes("/api", internal_router)
 base_app.add_routes("/api", regime_router)
 base_app.add_routes("", create_health_routes(pipeline_service, server_dir))
 

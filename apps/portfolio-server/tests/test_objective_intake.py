@@ -95,6 +95,24 @@ class FakePrismaClient:
         self.portfolio = FakePortfolioModel()
         self.portfolioallocation = FakePortfolioAllocationModel()
         self.tradingagent = FakeTradingAgentModel()
+        self.user_subscriptions: Dict[str, List[str]] = {}
+
+    async def query_raw(self, query: str, *params: Any, **kwargs: Any) -> List[Dict[str, Any]]:
+        user_id: Optional[str] = None
+        if params:
+            user_id = str(params[0])
+        elif "WHERE id" in query.upper():
+            try:
+                fragment = query.split("WHERE", 1)[1]
+                if "=" in fragment:
+                    user_id = fragment.split("=", 1)[1].strip().strip(";").strip().strip("'\"")
+            except IndexError:
+                user_id = None
+        if not user_id:
+            return []
+        subscriptions = self.user_subscriptions.get(user_id, [])
+        return [{"subscriptions": subscriptions}]
+        self.tradingagent = FakeTradingAgentModel()
 
 
 class StubPipelineService:
@@ -697,6 +715,149 @@ async def test_objective_intake_then_allocation(monkeypatch: pytest.MonkeyPatch)
     assert first_agent["portfolio_allocation_id"] == first_allocation["id"]
     assert first_agent["portfolio_id"] == task_kwargs["portfolio_id"]
     assert first_agent["agent_type"] == first_allocation["allocation_type"]
+    strategy_config = first_agent["strategy_config"]
+    if isinstance(strategy_config, fields.Json):
+        strategy_config = strategy_config.data
+    assert strategy_config.get("auto_trade") is False
+    assert first_agent["status"] == "paused"
+
+
+@pytest.mark.asyncio
+async def test_allocation_enables_subscribed_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    from workers import allocation_tasks as allocation_tasks_module
+
+    prisma = FakePrismaClient()
+    controller = ObjectiveController(prisma, StubPipelineService())
+
+    prisma.user_subscriptions["user-99"] = ["high_risk"]
+
+    class FakePortfolioController:
+        def __init__(self, prisma_client: FakePrismaClient) -> None:
+            self.prisma = prisma_client
+
+        async def get_or_create_portfolio(self, user: Dict[str, Any]) -> Any:
+            existing = await self.prisma.portfolio.find_first(
+                where={
+                    "organization_id": user["organization_id"],
+                    "customer_id": user.get("customer_id") or user["id"],
+                }
+            )
+            if existing:
+                return existing
+            return await self.prisma.portfolio.create(
+                data={
+                    "user_id": user["id"],
+                    "organization_id": user["organization_id"],
+                    "customer_id": user.get("customer_id") or user["id"],
+                    "portfolio_name": "Subscribed Portfolio",
+                    "initial_investment": Decimal("250000"),
+                    "investment_amount": Decimal("250000"),
+                    "current_value": Decimal("250000"),
+                    "investment_horizon_years": 5,
+                    "expected_return_target": Decimal("0.1"),
+                    "risk_tolerance": "high",
+                    "liquidity_needs": "long",
+                    "allocation_status": "pending",
+                }
+            )
+
+    controller._portfolio_controller = FakePortfolioController(prisma)
+
+    class FakeRegimeService:
+        def __init__(self) -> None:
+            self._state = {"regime": "Bull Market", "timestamp": 1731436800.0}
+
+        @classmethod
+        def get_instance(cls) -> "FakeRegimeService":
+            return cls()
+
+        def get_current_regime(self) -> Dict[str, Any]:
+            return self._state
+
+    monkeypatch.setattr("controllers.objective_controller.RegimeService", FakeRegimeService)
+
+    monkeypatch.setattr(
+        "workers.allocation_tasks.allocate_portfolios",
+        lambda requests, logger=None, audit_path=None: [
+            {
+                "success": True,
+                "weights": {"high_risk": 0.6, "debt": 0.4},
+                "expected_return": 0.12,
+                "expected_risk": 0.08,
+                "objective_value": 250000.0,
+                "message": "ok",
+            }
+        ],
+    )
+
+    class FakeDBManagerInstance:
+        def __init__(self, client: FakePrismaClient) -> None:
+            self.client = client
+
+        async def connect(self) -> FakePrismaClient:
+            return self.client
+
+    fake_db_manager = FakeDBManagerInstance(prisma)
+
+    class _DBManager:
+        @staticmethod
+        def get_instance() -> FakeDBManagerInstance:
+            return fake_db_manager
+
+    fake_db_manager_module = types.ModuleType("dbManager")
+    fake_db_manager_module.DBManager = _DBManager
+    monkeypatch.setitem(sys.modules, "dbManager", fake_db_manager_module)
+
+    payload = ObjectiveCreateRequest(
+        name="Subscribed Objective",
+        investable_amount=Decimal("250000"),
+        investment_horizon_years=5,
+        expected_return_target=Decimal("0.12"),
+        investment_horizon_label="long",
+        target_return=Decimal("0.12"),
+        risk_tolerance="high",
+        liquidity_needs="long",
+        rebalancing_frequency="quarterly",
+        constraints={},
+        preferences={},
+    )
+
+    user = {"id": "user-99", "organization_id": "org-1", "customer_id": "user-99"}
+    response = await controller.create_objective(user, payload)
+    async def _fake_regime() -> str:
+        return "bull_market"
+
+    monkeypatch.setattr("workers.allocation_tasks._get_current_regime", _fake_regime)
+    allocation_task = allocation_tasks_module.allocate_for_objective_task._get_current_object()
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(
+        None,
+        lambda: allocation_task.__wrapped__(
+            response.portfolio_id,
+            response.objective.id,
+            user["id"],
+            user["organization_id"],
+            {
+                "risk_tolerance": "high",
+                "investment_horizon_years": 5,
+                "liquidity_needs": "long",
+                "expected_return_target": 0.12,
+                "rebalancing_frequency": "quarterly",
+            },
+            float(payload.investable_amount),
+            float(payload.investable_amount),
+            "objective_created",
+        ),
+    )
+
+    agent_rows = list(prisma.tradingagent.rows.values())
+    assert agent_rows, "Expected trading agent to be created for subscribed user"
+    agent = agent_rows[0]
+    assert agent["status"] == "active"
+    config = agent["strategy_config"]
+    if isinstance(config, fields.Json):
+        config = config.data
+    assert config.get("auto_trade") is True
 
 
 @pytest.mark.asyncio

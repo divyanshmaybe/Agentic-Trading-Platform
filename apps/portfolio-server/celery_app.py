@@ -19,7 +19,7 @@ celery_app = Celery(
     backend=RESULT_BACKEND,
     include=[
         "workers.trade_tasks",
-        "workers.pipeline_tasks",
+        # "workers.pipeline_tasks",
         "workers.market_data_tasks",  # REST-based market data helpers
         "workers.angelone_token_task",  # Angel One token map generation
         "workers.allocation_tasks",  # Portfolio allocation and rebalancing
