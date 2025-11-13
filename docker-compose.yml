@@ -176,7 +176,7 @@ services:
       NEXT_TELEMETRY_DISABLED: "1"
     working_dir: /app/apps/frontend
     command: >
-      bash -c "pnpm --filter frontend run start -- --hostname 0.0.0.0 --port 3000"
+      sh -c "pnpm --filter frontend exec next start -H 0.0.0.0 -p ${PORT:-3000}"
     volumes:
       - ./apps/frontend:/app/apps/frontend
       - ./packages:/app/packages

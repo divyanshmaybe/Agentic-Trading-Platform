@@ -44,8 +44,8 @@ COPY apps/frontend/package.json ./apps/frontend/
 COPY --from=builder /app/apps/frontend/.next ./apps/frontend/.next
 COPY --from=builder /app/apps/frontend/public ./apps/frontend/public
 
-# Production-only install for the frontend workspace
-RUN pnpm install --frozen-lockfile --filter frontend... --prod && \
+# Production install (include dev deps needed at runtime like TypeScript)
+RUN pnpm install --frozen-lockfile --filter frontend... && \
     pnpm store prune
 
 WORKDIR /app/apps/frontend
