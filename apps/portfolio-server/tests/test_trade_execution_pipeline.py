@@ -219,6 +219,7 @@ async def test_trade_execution_service_persist_and_execute(monkeypatch: pytest.M
             "filing_time": "2025-11-11 09:15:00",
             "generated_at": "2025-11-11T09:15:30Z",
             "metadata_json": "{}",
+            "agent_id": "agent-1",
         }
     ]
 
@@ -227,6 +228,7 @@ async def test_trade_execution_service_persist_and_execute(monkeypatch: pytest.M
     assert len(published_events) == 1
     record = await fake_manager.get_client().tradeexecutionlog.find_unique({"id": "req-1"})
     assert record.status == "pending"
+    assert record.agent_id == "agent-1"
 
     result = await service.execute_trade(events[0].trade_id, simulate=True)
     assert result["status"] == "simulated_executed"
