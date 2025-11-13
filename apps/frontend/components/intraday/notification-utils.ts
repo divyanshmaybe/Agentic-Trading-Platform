@@ -151,22 +151,24 @@ function coerceActions(input: unknown): KafkaNotificationAction[] | undefined {
     return undefined
   }
 
-  return input
-    .map((action) => {
-      if (!isRecord(action)) {
-        return null
-      }
+  const actions: KafkaNotificationAction[] = []
 
-      const label = typeof action.label === "string" ? action.label : undefined
-      const value = typeof action.value === "string" ? action.value : undefined
-      const href = typeof action.href === "string" ? action.href : undefined
+  for (const action of input) {
+    if (!isRecord(action)) {
+      continue
+    }
 
-      if (!label || !value) {
-        return null
-      }
+    const label = typeof action.label === "string" ? action.label : undefined
+    const value = typeof action.value === "string" ? action.value : undefined
+    const href = typeof action.href === "string" ? action.href : undefined
 
-      return { label, value, href }
-    })
-    .filter((action): action is KafkaNotificationAction => Boolean(action))
+    if (!label || !value) {
+      continue
+    }
+
+    actions.push({ label, value, href })
+  }
+
+  return actions
 }
 

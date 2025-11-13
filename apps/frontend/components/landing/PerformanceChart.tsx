@@ -60,7 +60,7 @@ export function PerformanceChart() {
       maintainAspectRatio: false,
       plugins: {
         legend: { display: false },
-        tooltip: { mode: "index", intersect: false },
+        tooltip: { mode: "index" as const, intersect: false },
       },
       scales: {
         x: {
