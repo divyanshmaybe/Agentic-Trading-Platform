@@ -11,6 +11,7 @@ CERT_MANAGER_MANIFEST="${CERT_MANAGER_MANIFEST:-https://github.com/cert-manager/
 ARGOCD_MANIFEST="${ARGOCD_MANIFEST:-${REPO_ROOT}/devops/argocd/argocd.yml}"
 KUSTOMIZE_DIR="${KUSTOMIZE_DIR:-${SCRIPT_DIR}}"
 IMAGES="${IMAGES:-punhaniabhishek/agent-invest-frontend:latest punhaniabhishek/agent-invest-auth-server:latest punhaniabhishek/agent-invest-portfolio-server:latest}"
+ARGOCD_PASSWORD=""
 
 log() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >&2
@@ -89,7 +90,8 @@ install_argocd() {
 
   log "ArgoCD initial admin password:"
   log "-------------------------------------"
-  kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath="{.data.password}" | base64 -d
+  ARGOCD_PASSWORD=$(kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath="{.data.password}" | base64 -d)
+  log "${ARGOCD_PASSWORD}"
   log "-------------------------------------"
   log "Username: admin"
 }
@@ -101,8 +103,15 @@ load_images() {
       log "Loading image '${image}' into Kind cluster..."
       kind load docker-image "${image}" --name "${KIND_CLUSTER_NAME}"
     else
-      log "Skipping image '${image}' (not found locally)."
-      missing=1
+      log "Pulling image '${image}' from registry..."
+      docker pull "${image}"
+      if [[ $? -eq 0 ]]; then
+        log "Loading pulled image '${image}' into Kind cluster..."
+        kind load docker-image "${image}" --name "${KIND_CLUSTER_NAME}"
+      else
+        log "Failed to pull image '${image}' from registry."
+        missing=1
+      fi
     fi
   done
   return "${missing}"
@@ -112,15 +121,53 @@ apply_manifests() {
   log "Applying ArgoCD Application manifest from ${ARGOCD_MANIFEST}..."
   kubectl apply -f "${ARGOCD_MANIFEST}"
 
-  log "Waiting for ArgoCD Application to sync..."
-  kubectl wait --namespace argocd \
-    --for=condition=Ready application/pathway-submission \
-    --timeout=300s
+  log "ArgoCD Application created. ArgoCD will now deploy your Kubernetes manifests."
+  log "Check ArgoCD UI at http://localhost:8080 (admin/${ARGOCD_PASSWORD}) to monitor deployment progress."
+
+  log "Waiting for ArgoCD to sync the application..."
+  local max_attempts=30
+  local attempt=0
+  while [[ ${attempt} -lt ${max_attempts} ]]; do
+    if kubectl get application pathway-submission -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null | grep -q "Synced"; then
+      log "ArgoCD application synced successfully."
+      break
+    fi
+    log "Waiting for ArgoCD sync... (attempt $((attempt + 1))/${max_attempts})"
+    sleep 5
+    attempt=$((attempt + 1))
+  done
+
+  if [[ ${attempt} -eq ${max_attempts} ]]; then
+    log "Warning: ArgoCD sync timeout. Resources may still be deploying."
+  fi
+
+  log "Waiting for namespace 'agent-invest' to be created..."
+  local ns_attempt=0
+  while [[ ${ns_attempt} -lt 20 ]]; do
+    if kubectl get namespace agent-invest >/dev/null 2>&1; then
+      log "Namespace 'agent-invest' exists."
+      break
+    fi
+    log "Waiting for namespace creation... (attempt $((ns_attempt + 1))/20)"
+    sleep 2
+    ns_attempt=$((ns_attempt + 1))
+  done
+
+  if ! kubectl get namespace agent-invest >/dev/null 2>&1; then
+    log "Warning: Namespace 'agent-invest' not found. ArgoCD may still be syncing."
+    return 0
+  fi
 
   log "Waiting for workloads in namespace 'agent-invest' to become ready..."
-  kubectl wait --namespace agent-invest \
+  if kubectl wait --namespace agent-invest \
     --for=condition=Available deployment --all \
-    --timeout=300s
+    --timeout=300s 2>/dev/null; then
+    log "All deployments are ready."
+  else
+    log "Warning: Some deployments may not be ready yet. Check ArgoCD UI for details."
+    log "Current deployments status:"
+    kubectl get deployments -n agent-invest 2>/dev/null || true
+  fi
 }
 
 main() {
@@ -154,6 +201,7 @@ main() {
 
   log "Cluster '${KIND_CLUSTER_NAME}' is ready."
   log "ArgoCD UI: kubectl port-forward svc/argocd-server -n argocd 8080:80 (then visit http://localhost:8080)"
+  log "ArgoCD Admin Password: ${ARGOCD_PASSWORD}"
   log "Hosts to add to /etc/hosts: agent-invest.local, api.agent-invest.local, grafana.agent-invest.local, prometheus.agent-invest.local, loki.agent-invest.local, flower.agent-invest.local"
 }
 
