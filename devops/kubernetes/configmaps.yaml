@@ -120,10 +120,13 @@ data:
             prefix: index_
             period: 24h
     storage_config:
-      boltdb:
-        directory: /loki/index
+      tsdb_shipper:
+        active_index_directory: /loki/tsdb-index
+        cache_location: /loki/tsdb-cache
       filesystem:
         directory: /loki/chunks
+    compactor:
+      working_directory: /loki/compactor
     limits_config:
       allow_structured_metadata: false
       reject_old_samples: true
