@@ -8,21 +8,22 @@ spec:
   project: default
 
   # Source repository configuration
-  # Only sync resources from terraformdeployment directory
+  # Sync resources from devops/kubernetes directory
   # ArgoCD will automatically track and prune resources it created from this path
   source:
-    repoURL: https://github.com/aayush0325/Agentic-Trading-Platform-Pathway.git
+    repoURL: https://github.com/Abhishek-Punhani/Agentic-Trading-Platform-Pathway.git
     targetRevision: main
-    path: devops/app
-    # Directory-based application - only resources in terraformdeployment are managed
+    path: devops/kubernetes
+    # Directory-based application - only resources in kubernetes directory are managed
     directory:
-      recurse: true
-      include: "*.yml"
+      recurse: false
+      include: "*.yaml"
+      exclude: "create-secrets.sh,start.sh,destroy.sh,README.md,PORT_MAPPING.md,kind-config.yaml,metrics-server.yaml"
 
   # Destination cluster and namespace
   destination:
     server: https://kubernetes.default.svc
-    namespace: default
+    namespace: agent-invest
   
   # Sync policy for automated deployments and self-healing
   syncPolicy:
