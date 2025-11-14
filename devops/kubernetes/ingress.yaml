@@ -10,10 +10,10 @@ spec:
   ingressClassName: nginx
   tls:
   - hosts:
-    - agent-invest.local
+    - localhost
     secretName: frontend-tls
   rules:
-    - host: agent-invest.local
+    - host: localhost
       http:
         paths:
           - path: /
@@ -37,10 +37,10 @@ spec:
   ingressClassName: nginx
   tls:
   - hosts:
-    - api.agent-invest.local
+    - api.localhost
     secretName: api-tls
   rules:
-    - host: api.agent-invest.local
+    - host: api.localhost
       http:
         paths:
           - path: /auth(/|$)(.*)
@@ -69,13 +69,13 @@ spec:
   ingressClassName: nginx
   tls:
   - hosts:
-    - grafana.agent-invest.local
-    - prometheus.agent-invest.local
-    - loki.agent-invest.local
-    - flower.agent-invest.local
+    - grafana.localhost
+    - prometheus.localhost
+    - loki.localhost
+    - flower.localhost
     secretName: monitoring-tls
   rules:
-    - host: grafana.agent-invest.local
+    - host: grafana.localhost
       http:
         paths:
           - path: /
@@ -85,7 +85,7 @@ spec:
                 name: grafana
                 port:
                   number: 3000
-    - host: prometheus.agent-invest.local
+    - host: prometheus.localhost
       http:
         paths:
           - path: /
@@ -95,7 +95,7 @@ spec:
                 name: prometheus
                 port:
                   number: 9090
-    - host: loki.agent-invest.local
+    - host: loki.localhost
       http:
         paths:
           - path: /
@@ -105,7 +105,7 @@ spec:
                 name: loki
                 port:
                   number: 3100
-    - host: flower.agent-invest.local
+    - host: flower.localhost
       http:
         paths:
           - path: /
