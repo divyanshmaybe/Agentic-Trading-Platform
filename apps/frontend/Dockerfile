@@ -1,52 +1,63 @@
-FROM node:20-alpine AS builder
+ARG NODE_VERSION=20.11.1-alpine
+
+FROM node:${NODE_VERSION} AS pnpm-base
+
+ARG PNPM_VERSION=9.10.0
+
+ENV PNPM_HOME=/pnpm \
+    PATH="${PNPM_HOME}:${PATH}"
+
+RUN corepack enable pnpm && corepack prepare pnpm@${PNPM_VERSION} --activate
 
 WORKDIR /app
 
-# Enable pnpm via corepack
-RUN corepack enable && corepack prepare pnpm@latest --activate
+FROM pnpm-base AS deps
 
-# Workspace manifests
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.json turbo.json ./
-
-# Copy workspace packages that the frontend relies on
 COPY packages ./packages
 COPY shared ./shared
 COPY types ./types
+COPY apps/frontend/package.json ./apps/frontend/package.json
 
-# Copy frontend source
-COPY apps/frontend/package.json ./apps/frontend/
+RUN pnpm fetch --filter frontend...
+
+FROM pnpm-base AS builder
+
+COPY --from=deps /pnpm /pnpm
+COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.json turbo.json ./
+COPY packages ./packages
+COPY shared ./shared
+COPY types ./types
 COPY apps/frontend ./apps/frontend
 
-# Install dependencies (workspace-aware) and build
-RUN pnpm install --frozen-lockfile --filter frontend... && \
-    pnpm --filter frontend run build
+RUN pnpm install --offline --filter frontend... \
+    && pnpm --filter frontend run build \
+    && pnpm prune --prod
 
-FROM node:20-alpine AS runner
+FROM node:${NODE_VERSION} AS runner
 
-WORKDIR /app
+ARG PNPM_VERSION=9.10.0
 
-RUN corepack enable && corepack prepare pnpm@latest --activate
-
-ENV NODE_ENV=production \
+ENV PNPM_HOME=/pnpm \
+    PATH="${PNPM_HOME}:${PATH}" \
+    NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=3000
 
-# Copy workspace manifests needed for pnpm install
-COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.json turbo.json ./
+RUN corepack enable pnpm && corepack prepare pnpm@${PNPM_VERSION} --activate
 
-# Copy required packages and frontend application
-COPY packages ./packages
-COPY shared ./shared
-COPY types ./types
-COPY apps/frontend/package.json ./apps/frontend/
+WORKDIR /app
 
-# Copy build artifacts from builder stage
-COPY --from=builder /app/apps/frontend/.next ./apps/frontend/.next
-COPY --from=builder /app/apps/frontend/public ./apps/frontend/public
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/packages ./packages
+COPY --from=builder /app/shared ./shared
+COPY --from=builder /app/types ./types
+COPY --from=builder /app/apps/frontend ./apps/frontend
 
-# Production install (include dev deps needed at runtime like TypeScript)
-RUN pnpm install --frozen-lockfile --filter frontend... && \
-    pnpm store prune
+RUN addgroup -g 1001 -S nodejs && adduser -S next -G nodejs -u 1001 && \
+    chown -R next:nodejs /app
+
+USER next
 
 WORKDIR /app/apps/frontend
 

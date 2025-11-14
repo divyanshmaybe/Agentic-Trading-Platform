@@ -1,68 +1,70 @@
-# Production Dockerfile for auth_server
-FROM node:20-alpine AS builder
+ARG NODE_VERSION=20.11.1-alpine
+
+FROM node:${NODE_VERSION} AS pnpm-base
+
+ARG PNPM_VERSION=9.10.0
+
+ENV PNPM_HOME=/pnpm \
+	PATH="${PNPM_HOME}:${PATH}"
+
+RUN corepack enable pnpm && corepack prepare pnpm@${PNPM_VERSION} --activate
+
 WORKDIR /app
-RUN corepack enable && corepack prepare pnpm@latest --activate
-RUN apk add --no-cache openssl curl
 
-# Copy workspace configuration files
-COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.json ./
+FROM pnpm-base AS deps
 
-# Copy auth_server files (including Prisma schema)
-COPY apps/auth_server/package.json ./apps/auth_server/
-COPY apps/auth_server/prisma ./apps/auth_server/prisma
-COPY apps/auth_server ./apps/auth_server
-
-# Copy shared dependencies
+COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.json turbo.json ./
+COPY packages ./packages
 COPY shared/js ./shared/js
 COPY types ./types
 COPY middleware ./middleware
-COPY packages ./packages
+COPY apps/auth_server/package.json ./apps/auth_server/package.json
 
-# Install all workspace dependencies first (needed for shared code compilation)
-# This ensures shared/js/dbManager.ts can find @prisma/client
-RUN pnpm install --no-frozen-lockfile --production=false
+RUN pnpm fetch --filter auth_server...
 
-# Generate Prisma client for auth_server (must be done before TypeScript compilation)
-# This generates the client in the workspace node_modules where TypeScript can find it
-RUN pnpm --filter=auth_server run prisma:generate
+FROM pnpm-base AS builder
 
-# Build the auth_server (TypeScript compilation)
-# Use pnpm to run build which handles workspace module resolution correctly
-# The build script runs 'prisma generate && tsc' - prisma generate is idempotent
-RUN pnpm --filter=auth_server run build
-
-FROM node:20-alpine AS runner
-WORKDIR /app
-RUN corepack enable && corepack prepare pnpm@latest --activate
 RUN apk add --no-cache openssl curl
-ENV NODE_ENV=production
 
-# Copy workspace configuration
-COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.json ./
-
-# Copy built application from builder
-COPY --from=builder /app/apps/auth_server ./apps/auth_server
-
-# Copy shared dependencies (needed at runtime)
-COPY --from=builder /app/shared/js ./shared/js
+COPY --from=deps /pnpm /pnpm
+COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.json turbo.json ./
+COPY packages ./packages
+COPY shared/js ./shared/js
 COPY types ./types
 COPY middleware ./middleware
-COPY packages ./packages
+COPY apps/auth_server ./apps/auth_server
 
-# Install all workspace dependencies (needed for runtime, including @prisma/client)
-RUN pnpm install --no-frozen-lockfile --production=false
+RUN pnpm install --offline --filter auth_server... \
+	&& pnpm --filter auth_server run prisma:generate \
+	&& pnpm --filter auth_server run build \
+	&& pnpm prune --prod
 
-# Generate Prisma client (required at runtime)
-RUN pnpm --filter=auth_server run prisma:generate
+FROM node:${NODE_VERSION} AS runner
 
-# Clean up pnpm store to reduce image size
-RUN pnpm store prune
+ARG PNPM_VERSION=9.10.0
 
-# Set working directory to auth_server
+ENV PNPM_HOME=/pnpm \
+	PATH="${PNPM_HOME}:${PATH}" \
+	NODE_ENV=production
+
+RUN corepack enable pnpm && corepack prepare pnpm@${PNPM_VERSION} --activate
+
+WORKDIR /app
+
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/packages ./packages
+COPY --from=builder /app/shared/js ./shared/js
+COPY --from=builder /app/types ./types
+COPY --from=builder /app/middleware ./middleware
+COPY --from=builder /app/apps/auth_server ./apps/auth_server
+
+RUN addgroup -g 1001 -S nodejs && adduser -S auth -G nodejs -u 1001 && \
+	chown -R auth:nodejs /app
+
+USER auth
+
 WORKDIR /app/apps/auth_server
 
-# Expose port
 EXPOSE 4000
 
-# Start the server
 CMD ["pnpm", "run", "start"]
