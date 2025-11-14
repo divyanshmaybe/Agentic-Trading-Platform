@@ -117,6 +117,8 @@ kubectl create secret generic portfolio-env-secret \
   --namespace="$NAMESPACE" \
   --from-literal=DATABASE_URL="postgresql://portfolio_user:portfolio_password@portfolio-postgres:5432/portfolio_db" \
   --from-literal=SHADOW_DATABASE_URL="postgresql://portfolio_user:portfolio_password@portfolio-postgres:5432/portfolio_db" \
+  --from-literal=CELERY_BROKER_URL="redis://portfolio-redis:6379/0" \
+  --from-literal=CELERY_RESULT_BACKEND="redis://portfolio-redis:6379/1" \
   --from-literal=INTERNAL_SERVICE_SECRET="${INTERNAL_SERVICE_SECRET}" \
   --from-literal=GEMINI_API_KEY="${GEMINI_API_KEY}" \
   --from-literal=OPENAI_API_KEY="${OPENAI_API_KEY}" \
@@ -130,7 +132,7 @@ kubectl create secret generic portfolio-env-secret \
   --dry-run=client -o yaml | kubectl apply -f - > /dev/null 2>&1
 
 if [ $? -eq 0 ]; then
-    echo "  ✓ portfolio-env-secret created/updated (12 keys)"
+    echo "  ✓ portfolio-env-secret created/updated (14 keys)"
 else
     echo "  ✗ Failed to create portfolio-env-secret"
     exit 1
@@ -176,7 +178,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 echo "📋 Secrets Summary:"
 echo "  - auth-env-secret: 8 environment variables"
-echo "  - portfolio-env-secret: 12 environment variables"
+echo "  - portfolio-env-secret: 14 environment variables"
 echo "  - auth-db-credentials: PostgreSQL credentials"
 echo "  - portfolio-db-credentials: PostgreSQL credentials"
 echo ""

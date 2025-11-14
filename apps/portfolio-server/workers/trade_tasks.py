@@ -23,7 +23,13 @@ from services.trade_engine import TradeEngine
 logger = logging.getLogger(__name__)
 
 
-@celery_app.task(bind=True, autoretry_for=(Exception,), retry_backoff=True, max_retries=5)
+@celery_app.task(
+    bind=True,
+    name="trading.process_pending_trade",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    max_retries=5,
+)
 def process_pending_trade(self, trade_id: str) -> bool:
     return asyncio.run(_process_pending_trade_async(trade_id))
 

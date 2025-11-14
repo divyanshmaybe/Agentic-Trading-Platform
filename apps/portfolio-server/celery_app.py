@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import os
 from datetime import timedelta
+from typing import Dict, Iterable
+
 from dotenv import load_dotenv
+from kombu import Queue
 
 # Load environment variables
 load_dotenv()
@@ -12,6 +15,28 @@ from celery.schedules import crontab
 
 BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
 RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/1")
+DEFAULT_QUEUE = os.getenv("CELERY_DEFAULT_QUEUE", "general")
+
+QUEUE_NAMES: Dict[str, str] = {
+    "allocations": os.getenv("CELERY_QUEUE_ALLOCATIONS", "allocations"),
+    "trading": os.getenv("CELERY_QUEUE_TRADING", "trading"),
+    "pipelines": os.getenv("CELERY_QUEUE_PIPELINES", "pipelines"),
+    "risk": os.getenv("CELERY_QUEUE_RISK", "risk"),
+    "orders": os.getenv("CELERY_QUEUE_ORDERS", "orders"),
+    "market": os.getenv("CELERY_QUEUE_MARKET", "market"),
+    "tokens": os.getenv("CELERY_QUEUE_TOKENS", "tokens"),
+}
+
+
+def _queue_set(values: Iterable[str]) -> list[Queue]:
+    seen = {DEFAULT_QUEUE}
+    queue_objects = [Queue(DEFAULT_QUEUE)]
+    for name in values:
+        if name and name not in seen:
+            queue_objects.append(Queue(name))
+            seen.add(name)
+    return queue_objects
+
 
 celery_app = Celery(
     "portfolio-server",
@@ -19,15 +44,20 @@ celery_app = Celery(
     backend=RESULT_BACKEND,
     include=[
         "workers.trade_tasks",
-        # "workers.pipeline_tasks",
-        "workers.market_data_tasks",  # REST-based market data helpers
-        "workers.angelone_token_task",  # Angel One token map generation
-        "workers.allocation_tasks",  # Portfolio allocation and rebalancing
-        "workers.risk_alert_tasks",  # Email notifications for risk monitor
-        "workers.order_monitor_worker",  # Continuous order monitoring for limit/stop/TP orders
-        "workers.trade_execution_tasks",  # Automated trade execution
+        "workers.market_data_tasks",
+        "workers.angelone_token_task",
+        "workers.allocation_tasks",
+        "workers.risk_alert_tasks",
+        "workers.order_monitor_worker",
+        "workers.trade_execution_tasks",
+        "workers.pipeline_tasks",
     ],
 )
+
+VISIBILITY_TIMEOUT = int(os.getenv("CELERY_VISIBILITY_TIMEOUT", "900"))
+RESULT_TTL = int(os.getenv("CELERY_RESULT_TTL", "86400"))
+SOFT_TIME_LIMIT = int(os.getenv("CELERY_TASK_SOFT_TIME_LIMIT", "600"))
+HARD_TIME_LIMIT = int(os.getenv("CELERY_TASK_TIME_LIMIT", str(SOFT_TIME_LIMIT + 120)))
 
 celery_app.conf.update(
     task_serializer="json",
@@ -36,32 +66,105 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     task_acks_late=True,
-    worker_max_tasks_per_child=100,
+    task_track_started=True,
+    task_default_queue=DEFAULT_QUEUE,
+    task_default_exchange="portfolio-celery",
+    task_default_exchange_type="direct",
+    task_default_routing_key=DEFAULT_QUEUE,
+    task_default_delivery_mode="persistent",
+    task_queue_max_priority=10,
+    worker_max_tasks_per_child=int(os.getenv("CELERY_MAX_TASKS_PER_CHILD", "200")),
+    worker_prefetch_multiplier=int(os.getenv("CELERY_WORKER_PREFETCH_MULTIPLIER", "1")),
     worker_redirect_stdouts=False,
+    worker_send_task_events=True,
+    worker_hijack_root_logger=False,
+    worker_disable_rate_limits=False,
+    task_reject_on_worker_lost=True,
+    broker_connection_retry_on_startup=True,
+    broker_transport_options={
+        "visibility_timeout": VISIBILITY_TIMEOUT,
+        "fanout_prefix": True,
+        "fanout_patterns": True,
+        "max_retries": 3,
+    },
+    result_expires=RESULT_TTL,
+    result_persistent=True,
 )
 
+celery_app.conf.task_queues = _queue_set(QUEUE_NAMES.values())
+
+celery_app.conf.task_routes = {
+    # Allocation + trading queues
+    "portfolio.allocate_new_portfolio": {"queue": QUEUE_NAMES["allocations"]},
+    "portfolio.allocate_for_objective": {"queue": QUEUE_NAMES["allocations"]},
+    "portfolio.daily_rebalancing_sweep": {"queue": QUEUE_NAMES["allocations"]},
+    "pipeline.rebalance.scheduled": {"queue": QUEUE_NAMES["allocations"]},
+    "trading.execute_trade_job": {"queue": QUEUE_NAMES["trading"]},
+    "trading.process_pending_trade": {"queue": QUEUE_NAMES["trading"]},
+    "pipeline.trade_execution.process_signal": {"queue": QUEUE_NAMES["trading"]},
+    # Pipelines + data
+    "pipeline.start": {"queue": QUEUE_NAMES["pipelines"]},
+    "pipeline.news_sentiment.run": {"queue": QUEUE_NAMES["pipelines"]},
+    "pipeline.risk_monitor.run": {"queue": QUEUE_NAMES["pipelines"]},
+    "market_data.fetch_via_api": {"queue": QUEUE_NAMES["market"]},
+    "market_data.batch_fetch_via_api": {"queue": QUEUE_NAMES["market"]},
+    "market_data.health_check_api": {"queue": QUEUE_NAMES["market"]},
+    "market_data.generate_angelone_tokens": {"queue": QUEUE_NAMES["tokens"]},
+    # Risk + alerts
+    "risk.alerts.send_email": {"queue": QUEUE_NAMES["risk"]},
+    # Order monitoring
+    "order_monitor.start_continuous_monitoring": {"queue": QUEUE_NAMES["orders"]},
+    "order_monitor.check_pending_orders_once": {"queue": QUEUE_NAMES["orders"]},
+}
+
+ANNOTATED_TASKS = [
+    "portfolio.allocate_new_portfolio",
+    "portfolio.allocate_for_objective",
+    "portfolio.daily_rebalancing_sweep",
+    "pipeline.rebalance.scheduled",
+    "pipeline.risk_monitor.run",
+    "pipeline.news_sentiment.run",
+    "pipeline.trade_execution.process_signal",
+    "trading.execute_trade_job",
+    "trading.process_pending_trade",
+]
+
+celery_app.conf.task_annotations = {
+    task_name: {
+        "soft_time_limit": SOFT_TIME_LIMIT,
+        "time_limit": HARD_TIME_LIMIT,
+    }
+    for task_name in ANNOTATED_TASKS
+}
+
+celery_app.conf.beat_scheduler = "redbeat.RedBeatScheduler"
+celery_app.conf.redbeat_redis_url = os.getenv("REDBEAT_REDIS_URL", BROKER_URL)
+celery_app.conf.redbeat_lock_timeout = int(os.getenv("CELERY_REDBEAT_LOCK_TIMEOUT", "600"))
+celery_app.conf.redbeat_lock_key = os.getenv("CELERY_REDBEAT_LOCK_KEY", "redbeat::lock")
+
 NEWS_FETCH_RATE = int(os.getenv("NEWS_FETCH_RATE", "3600"))
+NEWS_PIPELINE_QUEUE = os.getenv("NEWS_PIPELINE_QUEUE", QUEUE_NAMES["pipelines"])
 
 REBALANCE_ENABLED = os.getenv("PORTFOLIO_REBALANCE_ENABLED", "true").lower() in {"1", "true", "yes"}
 REBALANCE_HOUR = int(os.getenv("PORTFOLIO_REBALANCE_HOUR", "5"))
 REBALANCE_MINUTE = int(os.getenv("PORTFOLIO_REBALANCE_MINUTE", "0"))
 REBALANCE_DAY_OF_WEEK = os.getenv("PORTFOLIO_REBALANCE_DAY_OF_WEEK", "mon-fri")
-REBALANCE_QUEUE = os.getenv("PORTFOLIO_REBALANCE_QUEUE", "default")
+REBALANCE_QUEUE = os.getenv("PORTFOLIO_REBALANCE_QUEUE", QUEUE_NAMES["allocations"])
 
 RISK_MONITOR_ENABLED = os.getenv("PORTFOLIO_RISK_MONITOR_ENABLED", "true").lower() in {"1", "true", "yes"}
 RISK_MONITOR_INTERVAL = int(os.getenv("PORTFOLIO_RISK_MONITOR_INTERVAL", "900"))
-RISK_MONITOR_QUEUE = os.getenv("PORTFOLIO_RISK_MONITOR_QUEUE", "default")
+RISK_MONITOR_QUEUE = os.getenv("PORTFOLIO_RISK_MONITOR_QUEUE", QUEUE_NAMES["pipelines"])
 
 # Order Monitor Configuration (for limit/stop/take-profit orders)
 ORDER_MONITOR_ENABLED = os.getenv("ORDER_MONITOR_ENABLED", "true").lower() in {"1", "true", "yes"}
 ORDER_MONITOR_INTERVAL = int(os.getenv("ORDER_MONITOR_INTERVAL", "5"))  # Check every 5 seconds
-ORDER_MONITOR_QUEUE = os.getenv("ORDER_MONITOR_QUEUE", "default")
+ORDER_MONITOR_QUEUE = os.getenv("ORDER_MONITOR_QUEUE", QUEUE_NAMES["orders"])
 
 celery_app.conf.beat_schedule = {
     "news-sentiment-pipeline": {
         "task": "pipeline.news_sentiment.run",
         "schedule": timedelta(seconds=NEWS_FETCH_RATE),
-        "options": {"queue": os.getenv("NEWS_PIPELINE_QUEUE", "default")},
+        "options": {"queue": NEWS_PIPELINE_QUEUE},
     }
 }
 

@@ -109,7 +109,7 @@ main() {
   apply_manifests
 
   log "Cluster '${KIND_CLUSTER_NAME}' is ready."
-  log "Hosts to add to /etc/hosts: localhost, api.localhost, grafana.localhost, prometheus.localhost, loki.localhost"
+  log "Hosts to add to /etc/hosts: agent-invest.local, api.agent-invest.local, grafana.agent-invest.local, prometheus.agent-invest.local, loki.agent-invest.local, flower.agent-invest.local"
 }
 
 main "$@"

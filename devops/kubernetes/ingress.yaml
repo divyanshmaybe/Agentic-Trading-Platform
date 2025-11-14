@@ -72,6 +72,7 @@ spec:
     - grafana.agent-invest.local
     - prometheus.agent-invest.local
     - loki.agent-invest.local
+    - flower.agent-invest.local
     secretName: monitoring-tls
   rules:
     - host: grafana.agent-invest.local
@@ -104,4 +105,14 @@ spec:
                 name: loki
                 port:
                   number: 3100
+    - host: flower.agent-invest.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: portfolio-celery-flower
+                port:
+                  number: 5555
 

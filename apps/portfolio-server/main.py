@@ -9,11 +9,13 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# Add shared directory to path
-project_root = os.path.join(os.path.dirname(__file__), "../..")
+# Add project root and shared/middleware directories to path
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 shared_py_path = os.path.join(project_root, "shared/py")
 middleware_py_path = os.path.join(project_root, "middleware/py")
 
+# Add project root first so middleware and shared can be imported as top-level packages
+sys.path.insert(0, project_root)
 sys.path.insert(0, shared_py_path)
 sys.path.insert(0, middleware_py_path)
 
