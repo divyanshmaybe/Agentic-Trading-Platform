@@ -14,11 +14,10 @@ spec:
     repoURL: https://github.com/Abhishek-Punhani/Agentic-Trading-Platform-Pathway.git
     targetRevision: main
     path: devops/kubernetes
-    # Directory-based application - only resources in kubernetes directory are managed
-    directory:
-      recurse: false
-      include: "*.yaml"
-      exclude: "create-secrets.sh,start.sh,destroy.sh,README.md,PORT_MAPPING.md,kind-config.yaml,metrics-server.yaml,kustomization.yaml"
+    kustomize:
+      # Use Kustomize to build the manifests
+      commonLabels:
+        app.kubernetes.io/managed-by: argocd
 
   # Destination cluster and namespace
   destination:
