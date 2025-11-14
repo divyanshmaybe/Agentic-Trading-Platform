@@ -94,3 +94,4 @@ jobs:
           JWT_SECRET: test-secret-key-for-ci
           INTERNAL_SERVICE_SECRET: test-internal-secret
 
+
