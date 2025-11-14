@@ -800,7 +800,7 @@ spec:
     spec:
       containers:
         - name: exporter
-          image: ovalmoney/celery-exporter:1.7.0
+          image: ovalmoney/celery-exporter:latest
           imagePullPolicy: IfNotPresent
           env:
             - name: CELERY_BROKER_URL
