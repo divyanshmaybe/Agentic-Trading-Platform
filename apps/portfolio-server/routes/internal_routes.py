@@ -9,7 +9,7 @@ from prisma import Prisma
 
 from db import prisma_client
 from workers.allocation_tasks import _ensure_trading_agent  # type: ignore
-from middleware.py.internal_auth_middleware import internal_auth
+from middleware.internal_auth_middleware import internal_auth
 
 
 router = APIRouter(
