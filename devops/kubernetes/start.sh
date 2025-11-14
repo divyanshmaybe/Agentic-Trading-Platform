@@ -125,20 +125,45 @@ apply_manifests() {
   log "Check ArgoCD UI at http://localhost:8080 (admin/${ARGOCD_PASSWORD}) to monitor deployment progress."
 
   log "Waiting for ArgoCD to sync the application..."
-  local max_attempts=30
+  local max_attempts=60
   local attempt=0
+  local sync_status=""
+  local operation_phase=""
+  
   while [[ ${attempt} -lt ${max_attempts} ]]; do
-    if kubectl get application pathway-submission -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null | grep -q "Synced"; then
+    sync_status=$(kubectl get application pathway-submission -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "")
+    operation_phase=$(kubectl get application pathway-submission -n argocd -o jsonpath='{.status.operationState.phase}' 2>/dev/null || echo "")
+    
+    # Check if sync is complete and successful
+    if [[ "${sync_status}" == "Synced" ]]; then
       log "ArgoCD application synced successfully."
       break
     fi
-    log "Waiting for ArgoCD sync... (attempt $((attempt + 1))/${max_attempts})"
+    
+    # Check if there's an error
+    local error_msg=$(kubectl get application pathway-submission -n argocd -o jsonpath='{.status.conditions[?(@.type=="SyncError")].message}' 2>/dev/null || echo "")
+    if [[ -n "${error_msg}" ]] && [[ "${operation_phase}" != "Running" ]]; then
+      log "ArgoCD sync error: ${error_msg}"
+      log "Check ArgoCD UI for details: kubectl port-forward svc/argocd-server -n argocd 8080:80"
+      break
+    fi
+    
+    # Show progress
+    if [[ "${operation_phase}" == "Running" ]]; then
+      log "ArgoCD sync in progress... (attempt $((attempt + 1))/${max_attempts})"
+    else
+      log "Waiting for ArgoCD sync... Status: ${sync_status:-Unknown} (attempt $((attempt + 1))/${max_attempts})"
+    fi
+    
     sleep 5
     attempt=$((attempt + 1))
   done
 
   if [[ ${attempt} -eq ${max_attempts} ]]; then
-    log "Warning: ArgoCD sync timeout. Resources may still be deploying."
+    log "Warning: ArgoCD sync timeout after $((max_attempts * 5)) seconds."
+    log "Current status:"
+    kubectl get application pathway-submission -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null && echo ""
+    log "Check ArgoCD UI for details: kubectl port-forward svc/argocd-server -n argocd 8080:80"
   fi
 
   log "Waiting for namespace 'agent-invest' to be created..."

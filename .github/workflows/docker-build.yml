@@ -1,84 +1,84 @@
-name: Docker Build CI
+# name: Docker Build CI
 
-on:
-  push:
-    branches: [main, develop]
-    paths:
-      - 'apps/**/Dockerfile'
-      - 'apps/**/.dockerignore'
-      - 'docker-compose.yml'
-      - '.github/workflows/docker-build.yml'
-  pull_request:
-    branches: [main, develop]
-    paths:
-      - 'apps/**/Dockerfile'
-      - 'apps/**/.dockerignore'
-      - 'docker-compose.yml'
-      - '.github/workflows/docker-build.yml'
-  workflow_dispatch:
+# on:
+#   push:
+#     branches: [main, develop]
+#     paths:
+#       - 'apps/**/Dockerfile'
+#       - 'apps/**/.dockerignore'
+#       - 'docker-compose.yml'
+#       - '.github/workflows/docker-build.yml'
+#   pull_request:
+#     branches: [main, develop]
+#     paths:
+#       - 'apps/**/Dockerfile'
+#       - 'apps/**/.dockerignore'
+#       - 'docker-compose.yml'
+#       - '.github/workflows/docker-build.yml'
+#   workflow_dispatch:
 
-jobs:
-  build-frontend:
-    name: Build Frontend Docker Image
-    runs-on: ubuntu-latest
+# jobs:
+#   build-frontend:
+#     name: Build Frontend Docker Image
+#     runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+#       - name: Set up Docker Buildx
+#         uses: docker/setup-buildx-action@v3
 
-      - name: Build frontend Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./apps/frontend/Dockerfile
-          push: false
-          tags: frontend:test
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+#       - name: Build frontend Docker image
+#         uses: docker/build-push-action@v5
+#         with:
+#           context: .
+#           file: ./apps/frontend/Dockerfile
+#           push: false
+#           tags: frontend:test
+#           cache-from: type=gha
+#           cache-to: type=gha,mode=max
 
-  build-auth-server:
-    name: Build Auth Server Docker Image
-    runs-on: ubuntu-latest
+#   build-auth-server:
+#     name: Build Auth Server Docker Image
+#     runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+#       - name: Set up Docker Buildx
+#         uses: docker/setup-buildx-action@v3
 
-      - name: Build auth server Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./apps/auth_server/Dockerfile
-          push: false
-          tags: auth_server:test
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+#       - name: Build auth server Docker image
+#         uses: docker/build-push-action@v5
+#         with:
+#           context: .
+#           file: ./apps/auth_server/Dockerfile
+#           push: false
+#           tags: auth_server:test
+#           cache-from: type=gha
+#           cache-to: type=gha,mode=max
 
-  build-portfolio-server:
-    name: Build Portfolio Server Docker Image
-    runs-on: ubuntu-latest
+#   build-portfolio-server:
+#     name: Build Portfolio Server Docker Image
+#     runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+#       - name: Set up Docker Buildx
+#         uses: docker/setup-buildx-action@v3
 
-      - name: Build portfolio server Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./apps/portfolio-server/Dockerfile
-          push: false
-          tags: portfolio_server:test
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+#       - name: Build portfolio server Docker image
+#         uses: docker/build-push-action@v5
+#         with:
+#           context: .
+#           file: ./apps/portfolio-server/Dockerfile
+#           push: false
+#           tags: portfolio_server:test
+#           cache-from: type=gha
+#           cache-to: type=gha,mode=max
 
 

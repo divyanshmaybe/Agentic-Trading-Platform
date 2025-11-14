@@ -18,7 +18,7 @@ spec:
     directory:
       recurse: false
       include: "*.yaml"
-      exclude: "create-secrets.sh,start.sh,destroy.sh,README.md,PORT_MAPPING.md,kind-config.yaml,metrics-server.yaml"
+      exclude: "create-secrets.sh,start.sh,destroy.sh,README.md,PORT_MAPPING.md,kind-config.yaml,metrics-server.yaml,kustomization.yaml"
 
   # Destination cluster and namespace
   destination:
