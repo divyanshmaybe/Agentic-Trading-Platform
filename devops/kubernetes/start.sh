@@ -60,14 +60,6 @@ install_cert_manager() {
     --for=condition=Ready pod \
     --selector=app=cert-manager \
     --timeout=180s
-
-  # Configure GitHub authentication for ArgoCD after cert-manager is ready
-  if [[ -f "${SCRIPT_DIR}/configure-github.sh" ]]; then
-    log "Configuring GitHub authentication for ArgoCD..."
-    bash "${SCRIPT_DIR}/configure-github.sh"
-  else
-    log "Warning: configure-github.sh not found, skipping GitHub configuration."
-  fi
 }
 
 install_argocd() {
@@ -149,6 +141,22 @@ main() {
     install_ingress
     install_cert_manager
     install_argocd
+    
+    # Configure GitHub authentication for ArgoCD after ArgoCD is installed
+    if [[ -f "${SCRIPT_DIR}/configure-github.sh" ]]; then
+      log "Configuring GitHub authentication for ArgoCD..."
+      bash "${SCRIPT_DIR}/configure-github.sh"
+    else
+      log "Warning: configure-github.sh not found, skipping GitHub configuration."
+    fi
+    
+    # Create Kubernetes secrets after ArgoCD is configured
+    if [[ -f "${SCRIPT_DIR}/create-secrets.sh" ]]; then
+      log "Creating Kubernetes secrets..."
+      bash "${SCRIPT_DIR}/create-secrets.sh"
+    else
+      log "Warning: create-secrets.sh not found, skipping secrets creation."
+    fi
   else
     log "Ensuring ingress controller is present..."
     kubectl get ns ingress-nginx >/dev/null 2>&1 || install_ingress
@@ -158,6 +166,22 @@ main() {
 
     log "Ensuring ArgoCD is present..."
     kubectl get ns argocd >/dev/null 2>&1 || install_argocd
+    
+    # Configure GitHub authentication for ArgoCD after ArgoCD is installed
+    if [[ -f "${SCRIPT_DIR}/configure-github.sh" ]]; then
+      log "Configuring GitHub authentication for ArgoCD..."
+      bash "${SCRIPT_DIR}/configure-github.sh"
+    else
+      log "Warning: configure-github.sh not found, skipping GitHub configuration."
+    fi
+    
+    # Create Kubernetes secrets after ArgoCD is configured
+    if [[ -f "${SCRIPT_DIR}/create-secrets.sh" ]]; then
+      log "Creating Kubernetes secrets..."
+      bash "${SCRIPT_DIR}/create-secrets.sh"
+    else
+      log "Warning: create-secrets.sh not found, skipping secrets creation."
+    fi
   fi
 
   # load_images || log "One or more images were not loaded. Build them locally or update IMAGES."

@@ -754,7 +754,7 @@ spec:
             - sh
             - -c
             - |
-              exec flower \
+              exec /home/flower \
                 --port=${FLOWER_PORT:-5555} \
                 --broker=${CELERY_BROKER_URL} \
                 --basic_auth=${FLOWER_BASIC_AUTH:-admin:admin} \

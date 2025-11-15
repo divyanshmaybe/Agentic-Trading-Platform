@@ -11,34 +11,48 @@ log() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >&2
 }
 
-# Check if GitHub token is provided
+# Check if GitHub token is provided via environment or .env file
 if [[ -z "${GITHUB_TOKEN:-}" ]]; then
-  echo "GitHub Personal Access Token (PAT) required."
-  echo ""
-  echo "To create a GitHub PAT:"
-  echo "1. Go to https://github.com/settings/profile"
-  echo "2. Click 'Developer settings' in the left sidebar (scroll down)"
-  echo "3. Click 'Personal access tokens' → 'Tokens (classic)'"
-  echo "4. Click 'Generate new token' → 'Generate new token (classic)'"
-  echo "5. Give it a name (e.g., 'ArgoCD')"
-  echo "6. Select expiration (e.g., 90 days or No expiration)"
-  echo "7. Select scopes: 'repo' (for private repos) or 'public_repo' (for public repos)"
-  echo "8. Click 'Generate token' at the bottom"
-  echo "9. Copy the token immediately (you won't see it again!)"
-  echo ""
-  read -sp "Enter your GitHub Personal Access Token: " GITHUB_TOKEN
-  echo ""
+  # Try to load from .env file
+  ENV_FILE="${SCRIPT_DIR}/../../.env"
+  if [[ -f "${ENV_FILE}" ]]; then
+    GITHUB_TOKEN=$(grep "^GITHUB_ACCESS_TOKEN=" "${ENV_FILE}" | cut -d'=' -f2- | sed 's/^"//' | sed 's/"$//')
+  fi
   
+  # If still not found, prompt user
   if [[ -z "${GITHUB_TOKEN}" ]]; then
-    echo "Error: GitHub token is required"
-    exit 1
+    echo "GitHub Personal Access Token (PAT) required."
+    echo ""
+    echo "To create a GitHub PAT:"
+    echo "1. Go to https://github.com/settings/profile"
+    echo "2. Click 'Developer settings' in the left sidebar (scroll down)"
+    echo "3. Click 'Personal access tokens' → 'Tokens (classic)'"
+    echo "4. Click 'Generate new token' → 'Generate new token (classic)'"
+    echo "5. Give it a name (e.g., 'ArgoCD')"
+    echo "6. Select expiration (e.g., 90 days or No expiration)"
+    echo "7. Select scopes: 'repo' (for private repos) or 'public_repo' (for public repos)"
+    echo "8. Click 'Generate token' at the bottom"
+    echo "9. Copy the token immediately (you won't see it again!)"
+    echo ""
+    read -sp "Enter your GitHub Personal Access Token: " GITHUB_TOKEN
+    echo ""
+    
+    if [[ -z "${GITHUB_TOKEN}" ]]; then
+      echo "Error: GitHub token is required"
+      exit 1
+    fi
   fi
 fi
 
 # Optionally get username
 if [[ -z "${GITHUB_USERNAME:-}" ]]; then
-  read -p "Enter your GitHub username (optional, press Enter to use 'git'): " GITHUB_USERNAME
-  GITHUB_USERNAME="${GITHUB_USERNAME:-git}"
+  # Try to load from .env file or use default
+  ENV_FILE="${SCRIPT_DIR}/../../.env"
+  if [[ -f "${ENV_FILE}" ]]; then
+    GITHUB_USERNAME=$(grep "^GITHUB_USERNAME=" "${ENV_FILE}" | cut -d'=' -f2- | sed 's/^"//' | sed 's/"$//' || echo "git")
+  else
+    GITHUB_USERNAME="git"
+  fi
 fi
 
 export GITHUB_TOKEN
