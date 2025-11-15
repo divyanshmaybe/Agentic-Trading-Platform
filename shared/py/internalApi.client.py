@@ -20,7 +20,7 @@ class InternalApiClient:
 
         # Service URLs
         self.services = {
-            "auth": os.getenv("AUTH_SERVICE_URL", "http://localhost:4000"),
+            "auth": os.getenv("AUTH_SERVER_URL", "http://localhost:4000"),
             "portfolio": os.getenv("PORTFOLIO_SERVICE_URL", "http://localhost:8000"),
         }
 

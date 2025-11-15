@@ -73,6 +73,7 @@ spec:
     - prometheus.localhost
     - loki.localhost
     - flower.localhost
+    - argocd.localhost
     secretName: monitoring-tls
   rules:
     - host: grafana.localhost
@@ -115,4 +116,14 @@ spec:
                 name: portfolio-celery-flower
                 port:
                   number: 5555
+    - host: argocd.localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: argocd-server
+                port:
+                  number: 443
 

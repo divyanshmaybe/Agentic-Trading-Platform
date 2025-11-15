@@ -23,7 +23,7 @@ class AuthServiceClient:
         load_dotenv(os.path.join(base_dir, ".env"), override=False)
 
         self.logger = logging.getLogger(__name__)
-        self.base_url = os.getenv("AUTH_SERVICE_URL", "http://localhost:4000")
+        self.base_url = os.getenv("AUTH_SERVER_URL", "http://localhost:4000")
         self.jwt_secret = (
             os.getenv("JWT_SECRET_ACCESS")
             or os.getenv("JWT_SECRET")

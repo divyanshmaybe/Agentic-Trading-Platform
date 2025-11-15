@@ -10,6 +10,7 @@ data:
   REDIS_PORT: "6379"
   REDIS_URL: redis://auth-redis:6379
   PORTFOLIO_SERVICE_URL: http://portfolio-server:8000
+  CLIENT_URL: http://localhost
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -20,6 +21,7 @@ data:
   PORT: "8000"
   AUTH_SERVER_URL: http://auth-server:4000
   PORTFOLIO_SERVICE_URL: http://portfolio-server:8000
+  CLIENT_URL: http://localhost
   REDIS_HOST: portfolio-redis
   REDIS_PORT: "6379"
   MARKET_DATA_PROVIDER: finnhub
@@ -67,6 +69,8 @@ data:
   PORT: "3000"
   NEXT_TELEMETRY_DISABLED: "1"
   NEXT_PUBLIC_API_BASE_URL: http://api.localhost
+  NEXT_PUBLIC_PORTFOLIO_API_URL: http://api.localhost/portfolio
+  NEXT_PUBLIC_AUTH_BASE_URL: http://api.localhost/auth
 ---
 apiVersion: v1
 kind: ConfigMap
