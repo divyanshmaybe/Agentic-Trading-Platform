@@ -67,39 +67,39 @@ def create_lifespan(base_app_instance, pipeline_service_instance):
                     "Failed to dispatch Angel One token task: %s (will use fallback)", exc
                 )
         
-        # # Start NSE pipeline via Celery task
-        # app.state.pipeline_status = "initializing"
-        # app.state.pipeline_job_id = None
-        # app.state.news_pipeline_job_id = None
+        # Start NSE pipeline via Celery task
+        app.state.pipeline_status = "initializing"
+        app.state.pipeline_job_id = None
+        app.state.news_pipeline_job_id = None
 
-        # try:
-        #     base_app_instance.logger.info("Dispatching NSE pipeline task to Celery...")
-        #     task_result = start_nse_pipeline.delay()
-        #     app.state.pipeline_job_id = task_result.id
-        #     app.state.pipeline_status = "queued"
-        #     base_app_instance.logger.info(
-        #         "✓ NSE pipeline task dispatched (task_id=%s)", task_result.id
-        #     )
-        # except Exception as exc:  # pragma: no cover - defensive
-        #     app.state.pipeline_job_id = None
-        #     app.state.pipeline_status = "error"
-        #     base_app_instance.logger.exception(
-        #         "Failed to dispatch NSE pipeline task: %s", exc
-        #     )
+        try:
+            base_app_instance.logger.info("Dispatching NSE pipeline task to Celery...")
+            task_result = start_nse_pipeline.delay()
+            app.state.pipeline_job_id = task_result.id
+            app.state.pipeline_status = "queued"
+            base_app_instance.logger.info(
+                "✓ NSE pipeline task dispatched (task_id=%s)", task_result.id
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            app.state.pipeline_job_id = None
+            app.state.pipeline_status = "error"
+            base_app_instance.logger.exception(
+                "Failed to dispatch NSE pipeline task: %s", exc
+            )
 
-        # # Dispatch news sentiment pipeline once at startup (Celery beat handles subsequent runs)
-        # try:
-        #     base_app_instance.logger.info("Dispatching news sentiment pipeline task to Celery...")
-        #     news_task = run_news_sentiment_pipeline.delay()
-        #     app.state.news_pipeline_job_id = news_task.id
-        #     base_app_instance.logger.info(
-        #         "✓ News sentiment pipeline task dispatched (task_id=%s)", news_task.id
-        #     )
-        # except Exception as exc:  # pragma: no cover - defensive
-        #     app.state.news_pipeline_job_id = None
-        #     base_app_instance.logger.exception(
-        #         "Failed to dispatch news sentiment pipeline task: %s", exc
-        #     )
+        # Dispatch news sentiment pipeline once at startup (Celery beat handles subsequent runs)
+        try:
+            base_app_instance.logger.info("Dispatching news sentiment pipeline task to Celery...")
+            news_task = run_news_sentiment_pipeline.delay()
+            app.state.news_pipeline_job_id = news_task.id
+            base_app_instance.logger.info(
+                "✓ News sentiment pipeline task dispatched (task_id=%s)", news_task.id
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            app.state.news_pipeline_job_id = None
+            base_app_instance.logger.exception(
+                "Failed to dispatch news sentiment pipeline task: %s", exc
+            )
         
         # Initialize Regime Classification Service
         try:
