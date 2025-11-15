@@ -33,14 +33,10 @@ RUN pip install --upgrade pip \
     && pip install --no-cache-dir -r /tmp/requirements.portfolio.txt \
     && pip install --no-cache-dir -r /tmp/requirements.shared.txt
 
-# Copy only Python directories and create package structure
+# Copy shared libs and application source
 COPY shared/py /app/shared/py
-COPY middleware/py /app/middleware/py
+COPY middleware /app/middleware
 COPY apps/portfolio-server /app/apps/portfolio-server
-
-# Create __init__.py files for package imports
-RUN mkdir -p /app/shared /app/middleware && \
-    touch /app/shared/__init__.py /app/middleware/__init__.py
 
 WORKDIR /app/apps/portfolio-server
 
@@ -51,7 +47,7 @@ FROM python:${PYTHON_VERSION} AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:${PATH}" \
-    PYTHONPATH="/app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py" \
+    PYTHONPATH="/app:/app/apps/portfolio-server:/app/shared/py:/app/middleware:/app/middleware/py" \
     PORT=8000 \
     DATABASE_URL="postgresql://auth_user:auth_password@postgres:5432/auth_db"
 
@@ -81,6 +77,10 @@ COPY --from=builder /app/middleware /app/middleware
 COPY --from=builder /app/apps/portfolio-server /app/apps/portfolio-server
 
 WORKDIR /app/apps/portfolio-server
+
+# Fetch Prisma query engine binaries so the app can start without needing
+# network access or additional manual steps.
+RUN python -m prisma py fetch
 
 EXPOSE 8000
 

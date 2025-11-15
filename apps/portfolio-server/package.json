@@ -2,14 +2,14 @@
 	"name": "@portfolio/server",
 	"version": "1.0.0",
 	"private": true,
-	"description": "Portfolio Server - FastAPI server with NSE pipeline integration",
+	"description": "Portfolio Server",
 	"scripts": {
 		"setup": "python -m pip install -r requirements.txt && prisma generate",
 		"prisma:generate": "prisma generate",
-		"dev": "PYTHONPATH=../..:../../shared/py:../../middleware/py python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000",
-		"celery": "PYTHONPATH=../..:../../shared/py:../../middleware/py celery -A celery_app:celery_app worker --loglevel=info",
-		"test": "PYTHONPATH=../..:../../shared/py:../../middleware/py pytest tests/ -v --tb=short",
-		"test:cov": "PYTHONPATH=../..:../../shared/py:../../middleware/py pytest tests/ -v --tb=short --cov=. --cov-report=term-missing --cov-report=html"
+		"dev": "PYTHONPATH=../..:../../shared/py:../../middleware:../../middleware/py python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000",
+		"celery": "PYTHONPATH=../..:../../shared/py:../../middleware:../../middleware/py celery -A celery_app:celery_app worker --loglevel=info",
+		"test": "PYTHONPATH=../..:../../shared/py:../../middleware:../../middleware/py pytest tests/ -v --tb=short",
+		"test:cov": "PYTHONPATH=../..:../../shared/py:../../middleware:../../middleware/py pytest tests/ -v --tb=short --cov=. --cov-report=term-missing --cov-report=html"
 	},
 	"dependencies": {},
 	"devDependencies": {}
