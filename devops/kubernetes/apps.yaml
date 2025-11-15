@@ -145,6 +145,9 @@ spec:
         - name: portfolio-server
           image: punhaniabhishek/agent-invest-portfolio-server:latest
           imagePullPolicy: Always
+          env:
+            - name: PYTHONPATH
+              value: "/app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py"
           envFrom:
             - configMapRef:
                 name: portfolio-config
