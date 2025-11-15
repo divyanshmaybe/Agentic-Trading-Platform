@@ -2,13 +2,30 @@ from __future__ import annotations
 
 import os
 from datetime import timedelta
+from pathlib import Path
 from typing import Dict, Iterable
 
 from dotenv import load_dotenv
 from kombu import Queue
 
-# Load environment variables
-load_dotenv()
+# Load environment variables from portfolio-server .env and project root .env
+# (same logic as PipelineService._load_environment)
+_celery_file = Path(__file__).resolve()
+_server_dir = _celery_file.parent
+_project_root = _server_dir.parent.parent
+
+# Load root .env first (lower priority)
+_root_env = _project_root / ".env"
+if _root_env.exists():
+    load_dotenv(_root_env, override=False)
+
+# Load server .env (higher priority, overrides root)
+_server_env = _server_dir / ".env"
+if _server_env.exists():
+    load_dotenv(_server_env, override=True)
+else:
+    # Fallback: try to load from current directory
+    load_dotenv(override=False)
 
 from celery import Celery
 from celery.schedules import crontab

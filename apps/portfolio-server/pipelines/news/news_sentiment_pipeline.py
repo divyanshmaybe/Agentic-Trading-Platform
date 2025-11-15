@@ -538,7 +538,7 @@ def execute_news_sentiment_pipeline(
         try:
             # Import the functions we need directly
             from pipelines.news.research_pipeline import (
-                _fetch_articles_newsapi,
+                _fetch_news_api,
                 _ensure_finbert_loaded,
                 _finbert_tok,
                 _finbert_model,
@@ -554,7 +554,7 @@ def execute_news_sentiment_pipeline(
             for stream, query in NEWS_STREAMS.items():
                 try:
                     log.info(f"Fetching {top_k} articles for stream: {stream}")
-                    articles = _fetch_articles_newsapi(stream, query, top_k, news_api_key)
+                    articles = _fetch_news_api(stream, query, top_k, news_api_key)
                     
                     # Run sentiment analysis on each article
                     analyzed_articles = []

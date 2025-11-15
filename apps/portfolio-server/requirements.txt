@@ -33,3 +33,4 @@ unstructured==0.14.9
 uvicorn==0.38.0
 yfinance==0.2.51
 websockets==15.0.1
+brotli==1.2.0

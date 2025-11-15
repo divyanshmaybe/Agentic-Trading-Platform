@@ -22,9 +22,19 @@ class DBManager:
 
         self.logger = logging.getLogger(__name__)
         self.database_url = database_url or os.getenv("DATABASE_URL") or os.getenv("DB_URL")
-
+        
+        # Default to localhost PostgreSQL if not set (for development)
         if not self.database_url:
-            raise ValueError("DATABASE_URL environment variable is not set")
+            db_host = os.getenv("DB_HOST", "localhost")
+            db_port = os.getenv("DB_PORT", "5432")
+            db_user = os.getenv("DB_USER", "postgres")
+            db_password = os.getenv("DB_PASSWORD", "postgres")
+            db_name = os.getenv("DB_NAME", "portfolio_db")
+            self.database_url = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+            self.logger.info(
+                "DATABASE_URL not set, using default localhost config: postgresql://%s:***@%s:%s/%s",
+                db_user, db_host, db_port, db_name
+            )
 
         # Ensure Prisma can discover the database connection string
         os.environ.setdefault("DATABASE_URL", self.database_url)

@@ -29,25 +29,103 @@ task_logger = get_task_logger(__name__)
 )
 def start_nse_pipeline(self) -> None:
     """Celery task that runs the NSE pipeline indefinitely."""
+    import os
+    import psutil
     from redis import Redis
     from celery_app import BROKER_URL
     
     # Redis-based lock to prevent concurrent execution
     redis_client = Redis.from_url(BROKER_URL)
     lock_key = "pipeline:nse:lock"
+    pid_key = "pipeline:nse:pid"
+    current_pid = os.getpid()
+    
+    # Check if lock exists and if the process is still alive
+    lock_value = redis_client.get(lock_key)
+    if lock_value:
+        stored_pid = redis_client.get(pid_key)
+        if stored_pid:
+            try:
+                stored_pid = int(stored_pid.decode())
+                # Check if the process is actually running
+                if psutil.pid_exists(stored_pid):
+                    try:
+                        process = psutil.Process(stored_pid)
+                        # Check if it's actually the NSE pipeline (heuristic: check cmdline)
+                        cmdline = ' '.join(process.cmdline()) if process.cmdline() else ''
+                        if 'pipeline' in cmdline.lower() or 'celery' in cmdline.lower():
+                            ttl = redis_client.ttl(lock_key)
+                            task_logger.warning(
+                                "NSE pipeline already running (PID: %s, lock TTL: %s seconds), aborting this instance. "
+                                "To clear stale lock, run: python scripts/check_nse_lock.py --clear",
+                                stored_pid, ttl
+                            )
+                            return
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        # Process doesn't exist or can't access - stale lock
+                        task_logger.warning(
+                            "Stale NSE pipeline lock detected (PID %s not running). Clearing lock...",
+                            stored_pid
+                        )
+                        redis_client.delete(lock_key)
+                        redis_client.delete(pid_key)
+                else:
+                    # PID doesn't exist - stale lock
+                    task_logger.warning(
+                        "Stale NSE pipeline lock detected (PID %s not found). Clearing lock...",
+                        stored_pid
+                    )
+                    redis_client.delete(lock_key)
+                    redis_client.delete(pid_key)
+            except (ValueError, AttributeError):
+                # Invalid PID format - clear stale lock
+                task_logger.warning("Invalid PID in lock, clearing stale lock...")
+                redis_client.delete(lock_key)
+                redis_client.delete(pid_key)
+        else:
+            # Lock exists but no PID - might be stale, but check TTL first
+            ttl = redis_client.ttl(lock_key)
+            if ttl and ttl > 3600:  # If lock is very new (< 1 hour), don't auto-clear
+                task_logger.warning(
+                    "NSE pipeline lock exists without PID (TTL: %s seconds). Clearing if stale...",
+                    ttl
+                )
+                # Only clear if lock is old (likely stale)
+                if ttl < 86400 - 300:  # Less than 24 hours - 5 minutes = likely stale
+                    redis_client.delete(lock_key)
+    
+    # Try to acquire lock
     lock_acquired = redis_client.set(lock_key, "locked", nx=True, ex=86400)  # 24 hour TTL
     
     if not lock_acquired:
-        task_logger.warning("NSE pipeline already running, aborting this instance")
+        ttl = redis_client.ttl(lock_key)
+        task_logger.warning(
+            "NSE pipeline lock still exists (TTL: %s seconds), aborting this instance. "
+            "To clear stale lock, run: python scripts/check_nse_lock.py --clear",
+            ttl
+        )
         return
+    
+    # Store PID with lock
+    redis_client.set(pid_key, str(current_pid), ex=86400)
+    task_logger.info("✅ NSE pipeline lock acquired (PID: %s) - starting pipeline...", current_pid)
     
     try:
         server_dir = Path(__file__).resolve().parents[1]
         service = PipelineService(str(server_dir), logger=task_logger)
+        task_logger.info("🚀 Launching NSE pipeline (polling, downloading PDFs, generating signals)...")
         service.run_nse_pipeline_forever()
+    except KeyboardInterrupt:
+        task_logger.info("🛑 NSE pipeline stopped by user (KeyboardInterrupt)")
+        raise
+    except Exception as e:
+        task_logger.error("❌ NSE pipeline crashed: %s", e, exc_info=True)
+        raise
     finally:
         # Release lock when pipeline stops
         redis_client.delete(lock_key)
+        redis_client.delete(pid_key)
+        task_logger.info("🔒 NSE pipeline lock released (PID: %s)", current_pid)
 
 
 @celery_app.task(
