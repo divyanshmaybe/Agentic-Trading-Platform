@@ -16,6 +16,8 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: auth-redis
+  labels:
+    app.kubernetes.io/managed-by: argocd
 spec:
   serviceName: auth-redis
   replicas: 1
@@ -26,6 +28,7 @@ spec:
     metadata:
       labels:
         app: auth-redis
+        app.kubernetes.io/managed-by: argocd
     spec:
       containers:
         - name: redis
@@ -83,6 +86,8 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: portfolio-redis
+  labels:
+    app.kubernetes.io/managed-by: argocd
 spec:
   serviceName: portfolio-redis
   replicas: 1
@@ -93,6 +98,7 @@ spec:
     metadata:
       labels:
         app: portfolio-redis
+        app.kubernetes.io/managed-by: argocd
     spec:
       containers:
         - name: redis
