@@ -4,6 +4,7 @@ import { authConfig } from "./config";
 import { databaseManager } from "./lib/prisma";
 import { authRoutes } from "./routes/auth.routes";
 import { internalRoutes } from "./routes/internal.routes";
+import { userRoutes } from "./routes/user.routes";
 import { setupAuthQueues } from "./queue.setup";
 import { allowedOrigins } from "./config";
 
@@ -32,6 +33,7 @@ const app = new BaseApp({
 
 // Setup routes
 app.addRoutes("/api/auth", authRoutes);
+app.addRoutes("/api/user", userRoutes);
 app.addRoutes("/api/internal", internalRoutes);
 app.initializeErrorHandling();
 

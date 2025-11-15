@@ -16,9 +16,7 @@ import {
   requestActivationEmail,
   requestPasswordEmail,
   updateUser,
-  updateUserProfile,
   verifyEmail,
-  updateUserSubscriptions,
 } from "../controllers/auth.controllers";
 
 const authRoutes: Router = Router();
@@ -40,14 +38,5 @@ authRoutes.post("/logout", protectRoute, isUser, logoutUser);
 authRoutes.post("/users", protectRoute, isStaff, createUser);
 authRoutes.get("/users", protectRoute, isStaff, getUsers);
 authRoutes.patch("/users/:id", protectRoute, isStaff, updateUser);
-
-// User routes (any authenticated user)
-authRoutes.post("/user/update", protectRoute, isUser, updateUserProfile);
-authRoutes.post(
-  "/user/subscriptions",
-  protectRoute,
-  isUser,
-  updateUserSubscriptions
-);
 
 export { authRoutes };
