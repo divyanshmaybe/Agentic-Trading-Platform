@@ -147,7 +147,7 @@ spec:
           imagePullPolicy: Always
           env:
             - name: PYTHONPATH
-              value: "/app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py"
+              value: "/app:/app/apps/portfolio-server:/app/shared/py:/app/middleware:/app/middleware/py"
           envFrom:
             - configMapRef:
                 name: portfolio-config
