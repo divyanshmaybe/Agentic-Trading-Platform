@@ -1225,7 +1225,7 @@ class PipelineService:
             self.logger.info("NSE Live Trading Pipeline - Real-time Sentiment Analysis")
             self.logger.info("=" * 70)
 
-            refresh_interval = 60
+            refresh_interval = int(os.getenv("NSE_REFRESH_INTERVAL", "60"))
             static_data_path = "staticdata.csv"
             signals_output = "trading_signals.jsonl"
             backtest_output = "backtest_results.jsonl"
@@ -1314,10 +1314,23 @@ class PipelineService:
 
         from pipelines.news import execute_news_sentiment_pipeline  # type: ignore  # noqa: E402
 
+        # Load API keys with explicit checking
+        news_api_key = os.getenv("NEWS_ORG_API_KEY")
+        gemini_api_key = os.getenv("GEMINI_API_KEY")
+        
+        self.logger.debug(
+            "API keys loaded - NEWS_ORG_API_KEY: %s, GEMINI_API_KEY: %s",
+            "present" if news_api_key else "missing",
+            "present" if gemini_api_key else "missing",
+        )
+        
+        if gemini_api_key:
+            self.logger.info("GEMINI_API_KEY loaded (length: %s)", len(gemini_api_key))
+
         metadata = execute_news_sentiment_pipeline(
             news_dir,
-            news_api_key=os.getenv("NEWS_ORG_API_KEY"),
-            gemini_api_key=os.getenv("GEMINI_API_KEY"),
+            news_api_key=news_api_key,
+            gemini_api_key=gemini_api_key,
             top_k=top_k,
             logger=self.logger,
         )

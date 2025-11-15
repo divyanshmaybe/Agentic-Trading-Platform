@@ -53,53 +53,39 @@ def create_lifespan(base_app_instance, pipeline_service_instance):
         # Run base startup
         await base_app_instance._startup()
         
-        # Start Angel One token map generation (async via Celery)
-        if os.getenv("MARKET_DATA_PROVIDER", "").lower() in {"angelone", "angel", "smartapi"}:
-            try:
-                from workers.angelone_token_task import generate_angelone_tokens_task
-                base_app_instance.logger.info("🚀 Dispatching Angel One token map generation to Celery...")
-                token_task = generate_angelone_tokens_task.delay(force_refresh=False)
-                base_app_instance.logger.info(
-                    "✓ Angel One token task dispatched (task_id=%s)", token_task.id
-                )
-            except Exception as exc:
-                base_app_instance.logger.warning(
-                    "Failed to dispatch Angel One token task: %s (will use fallback)", exc
-                )
+        # Check if pipelines should run on startup
+        news_on_startup = os.getenv("NEWS_PIPELINE_RUN_ON_STARTUP", "true").lower() in {"1", "true", "yes"}
+        nse_on_startup = os.getenv("NSE_PIPELINE_RUN_ON_STARTUP", "true").lower() in {"1", "true", "yes"}
         
-        # Start NSE pipeline via Celery task
-        app.state.pipeline_status = "initializing"
+        # Initialize pipeline status tracking
+        app.state.pipeline_status = "not_started"
         app.state.pipeline_job_id = None
         app.state.news_pipeline_job_id = None
-
-        try:
-            base_app_instance.logger.info("Dispatching NSE pipeline task to Celery...")
-            task_result = start_nse_pipeline.delay()
-            app.state.pipeline_job_id = task_result.id
-            app.state.pipeline_status = "queued"
-            base_app_instance.logger.info(
-                "✓ NSE pipeline task dispatched (task_id=%s)", task_result.id
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            app.state.pipeline_job_id = None
-            app.state.pipeline_status = "error"
-            base_app_instance.logger.exception(
-                "Failed to dispatch NSE pipeline task: %s", exc
-            )
-
-        # Dispatch news sentiment pipeline once at startup (Celery beat handles subsequent runs)
-        try:
-            base_app_instance.logger.info("Dispatching news sentiment pipeline task to Celery...")
-            news_task = run_news_sentiment_pipeline.delay()
-            app.state.news_pipeline_job_id = news_task.id
-            base_app_instance.logger.info(
-                "✓ News sentiment pipeline task dispatched (task_id=%s)", news_task.id
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            app.state.news_pipeline_job_id = None
-            base_app_instance.logger.exception(
-                "Failed to dispatch news sentiment pipeline task: %s", exc
-            )
+        
+        # Dispatch news pipeline on startup if configured
+        if news_on_startup:
+            try:
+                base_app_instance.logger.info("🚀 Dispatching news sentiment pipeline at startup...")
+                result = run_news_sentiment_pipeline.delay()
+                app.state.news_pipeline_job_id = result.id
+                base_app_instance.logger.info(f"✅ News pipeline started: task_id={result.id}")
+            except Exception as exc:
+                base_app_instance.logger.error(f"❌ Failed to dispatch news pipeline: {exc}")
+        
+        # Dispatch NSE pipeline on startup if configured
+        if nse_on_startup:
+            try:
+                base_app_instance.logger.info("🚀 Dispatching NSE pipeline at startup...")
+                result = start_nse_pipeline.delay()
+                app.state.pipeline_job_id = result.id
+                app.state.pipeline_status = "running"
+                base_app_instance.logger.info(f"✅ NSE pipeline started: task_id={result.id}")
+            except Exception as exc:
+                base_app_instance.logger.error(f"❌ Failed to dispatch NSE pipeline: {exc}")
+        
+        base_app_instance.logger.info(
+            "📋 Pipelines configured. News: hourly via Beat + startup, NSE: continuous polling (60s interval)"
+        )
         
         # Initialize Regime Classification Service
         try:

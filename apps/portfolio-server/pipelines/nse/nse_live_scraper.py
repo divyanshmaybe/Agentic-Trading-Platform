@@ -366,47 +366,65 @@ class NSEScraperSubject(ConnectorSubject):
                             print(f"[DEBUG] PDF already processed, skipping: {pdf_url}")
                             continue
                         
-                        # Check XBRL relevance before emitting
+                        # Check XBRL relevance before emitting, but also allow announcements with PDF attachments
                         xbrl_url = ann.pop('xbrl_url', '')
+                        pdf_url = ann.get('attchmntFile', '')
+                        
+                        is_relevant = False
                         if xbrl_url:
                             try:
                                 xbrl_data = fetch_xbrl_content(xbrl_url)
                                 if is_relevant_announcement(xbrl_data):
-                                    print(f"[INFO] New relevant: {ann.get('symbol', '')} - {ann.get('desc', '')}")
+                                    is_relevant = True
+                                    print(f"[INFO] New relevant XBRL: {ann.get('symbol', '')} - {ann.get('desc', '')}")
                                     
                                     # Update PDF URL from XBRL if available
                                     if xbrl_data and 'attachment_url' in xbrl_data:
                                         ann['attchmntFile'] = xbrl_data['attachment_url']
                                         pdf_url = ann['attchmntFile']
-                                    
-                                    # Track processed file
-                                    if pdf_url:
-                                        self._processed_files.add(pdf_url)
-                                    
-                                    # Emit to Pathway table (seq_id must be first as it's the primary key)
-                                    self.next(
-                                        seq_id=seq_id,
-                                        symbol=ann.get('symbol', ''),
-                                        desc=ann.get('desc', ''),
-                                        dt=ann.get('dt', ''),
-                                        attchmntFile=pdf_url,
-                                        sm_name=ann.get('sm_name', ''),
-                                        sm_isin=ann.get('sm_isin', ''),
-                                        an_dt=ann.get('an_dt', ''),
-                                        sort_date=ann.get('sort_date', ''),
-                                        attchmntText=ann.get('attchmntText', ''),
-                                        fileSize=ann.get('fileSize', ''),
-                                    )
-                                    
-                                    # Periodically save
-                                    save_counter += 1
-                                    if save_counter >= SAVE_INTERVAL:
-                                        save_processed_announcements(self._seen_seq_ids, self._processed_files)
-                                        save_counter = 0
                             except Exception as e:
-                                print(f"[WARN] Error processing announcement {seq_id}: {e}")
-                                # Continue with next announcement
-                                continue
+                                print(f"[WARN] Error processing XBRL for announcement {seq_id}: {e}")
+                        
+                        # Also consider announcements with PDF attachments as potentially relevant
+                        # This catches announcements that don't have XBRL data but have PDFs
+                        if not is_relevant and pdf_url:
+                            # Check if description contains relevant keywords
+                            desc = ann.get('desc', '').lower()
+                            relevant_keywords = [
+                                'board meeting', 'press release', 'appointment', 'acquisition', 
+                                'financial results', 'quarterly results', 'annual report',
+                                'investor presentation', 'change in director', 'dividend',
+                                'bonus', 'rights issue', 'merger', 'amalgamation'
+                            ]
+                            if any(keyword in desc for keyword in relevant_keywords):
+                                is_relevant = True
+                                print(f"[INFO] New relevant PDF: {ann.get('symbol', '')} - {ann.get('desc', '')}")
+                        
+                        if is_relevant:
+                            # Track processed file
+                            if pdf_url:
+                                self._processed_files.add(pdf_url)
+                            
+                            # Emit to Pathway table (seq_id must be first as it's the primary key)
+                            self.next(
+                                seq_id=seq_id,
+                                symbol=ann.get('symbol', ''),
+                                desc=ann.get('desc', ''),
+                                dt=ann.get('dt', ''),
+                                attchmntFile=pdf_url,
+                                sm_name=ann.get('sm_name', ''),
+                                sm_isin=ann.get('sm_isin', ''),
+                                an_dt=ann.get('an_dt', ''),
+                                sort_date=ann.get('sort_date', ''),
+                                attchmntText=ann.get('attchmntText', ''),
+                                fileSize=ann.get('fileSize', ''),
+                            )
+                            
+                            # Periodically save
+                            save_counter += 1
+                            if save_counter >= SAVE_INTERVAL:
+                                save_processed_announcements(self._seen_seq_ids, self._processed_files)
+                                save_counter = 0
                     except Exception as e:
                         print(f"[WARN] Error processing announcement: {e}")
                         continue  # Continue with next announcement

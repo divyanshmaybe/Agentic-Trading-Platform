@@ -128,16 +128,20 @@ def _ensure_finbert_loaded() -> None:
 
         from transformers import AutoModelForSequenceClassification, AutoTokenizer
         import torch
+        import os
 
         tokenizer = AutoTokenizer.from_pretrained("yiyanghkust/finbert-tone")
         model = AutoModelForSequenceClassification.from_pretrained("yiyanghkust/finbert-tone")
 
-        if torch.cuda.is_available():
-            if torch.cuda.device_count() > 1:
-                print(f"Using {torch.cuda.device_count()} GPUs for FinBERT")
-                model = torch.nn.DataParallel(model)
+        # Force CPU usage to avoid CUDA memory issues with multiple workers
+        # Check env var to allow GPU if explicitly set
+        use_gpu = os.getenv("FINBERT_USE_GPU", "false").lower() in ("true", "1", "yes")
+        
+        if use_gpu and torch.cuda.is_available():
+            print("[INFO] FinBERT using GPU (FINBERT_USE_GPU=true)")
             device = torch.device("cuda")
         else:
+            print("[INFO] FinBERT using CPU (safer for multi-worker deployments)")
             device = torch.device("cpu")
 
         model.to(device)

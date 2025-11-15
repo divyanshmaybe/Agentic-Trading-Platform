@@ -18,12 +18,36 @@ from services.pipeline_service import PipelineService  # type: ignore  # noqa: E
 task_logger = get_task_logger(__name__)
 
 
-@celery_app.task(bind=True, name="pipeline.start", autoretry_for=(Exception,), retry_backoff=True)
+@celery_app.task(
+    bind=True,
+    name="pipeline.start",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    # Prevent concurrent execution
+    acks_late=True,
+    reject_on_worker_lost=True,
+)
 def start_nse_pipeline(self) -> None:
     """Celery task that runs the NSE pipeline indefinitely."""
-    server_dir = Path(__file__).resolve().parents[1]
-    service = PipelineService(str(server_dir), logger=task_logger)
-    service.run_nse_pipeline_forever()
+    from redis import Redis
+    from celery_app import BROKER_URL
+    
+    # Redis-based lock to prevent concurrent execution
+    redis_client = Redis.from_url(BROKER_URL)
+    lock_key = "pipeline:nse:lock"
+    lock_acquired = redis_client.set(lock_key, "locked", nx=True, ex=86400)  # 24 hour TTL
+    
+    if not lock_acquired:
+        task_logger.warning("NSE pipeline already running, aborting this instance")
+        return
+    
+    try:
+        server_dir = Path(__file__).resolve().parents[1]
+        service = PipelineService(str(server_dir), logger=task_logger)
+        service.run_nse_pipeline_forever()
+    finally:
+        # Release lock when pipeline stops
+        redis_client.delete(lock_key)
 
 
 @celery_app.task(
@@ -32,16 +56,34 @@ def start_nse_pipeline(self) -> None:
     autoretry_for=(Exception,),
     retry_backoff=True,
     retry_kwargs={"max_retries": 3},
+    # Prevent concurrent execution - only one instance can run at a time
+    acks_late=True,
+    reject_on_worker_lost=True,
 )
 def run_news_sentiment_pipeline(self, top_k: int | None = None) -> dict:
     """Celery task that runs the News sentiment pipeline once."""
-
-    server_dir = Path(__file__).resolve().parents[1]
-    service = PipelineService(str(server_dir), logger=task_logger)
-    top_k_value = top_k or int(os.getenv("NEWS_TOP_K", "3"))
-    metadata = service.run_news_sentiment_pipeline(top_k=top_k_value)
-    task_logger.info("News sentiment pipeline completed: %s", metadata)
-    return metadata
+    from redis import Redis
+    from celery_app import BROKER_URL
+    
+    # Redis-based lock to prevent concurrent execution
+    redis_client = Redis.from_url(BROKER_URL)
+    lock_key = "pipeline:news_sentiment:lock"
+    lock_acquired = redis_client.set(lock_key, "locked", nx=True, ex=7200)  # 2 hour TTL
+    
+    if not lock_acquired:
+        task_logger.warning("News sentiment pipeline already running, skipping this execution")
+        return {"status": "skipped", "reason": "already_running"}
+    
+    try:
+        server_dir = Path(__file__).resolve().parents[1]
+        service = PipelineService(str(server_dir), logger=task_logger)
+        top_k_value = top_k or int(os.getenv("NEWS_TOP_K", "3"))
+        metadata = service.run_news_sentiment_pipeline(top_k=top_k_value)
+        task_logger.info("News sentiment pipeline completed: %s", metadata)
+        return metadata
+    finally:
+        # Always release the lock
+        redis_client.delete(lock_key)
 
 
 @celery_app.task(

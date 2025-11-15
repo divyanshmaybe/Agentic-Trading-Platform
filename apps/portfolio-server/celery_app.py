@@ -142,6 +142,7 @@ celery_app.conf.redbeat_redis_url = os.getenv("REDBEAT_REDIS_URL", BROKER_URL)
 celery_app.conf.redbeat_lock_timeout = int(os.getenv("CELERY_REDBEAT_LOCK_TIMEOUT", "600"))
 celery_app.conf.redbeat_lock_key = os.getenv("CELERY_REDBEAT_LOCK_KEY", "redbeat::lock")
 
+NEWS_PIPELINE_ENABLED = os.getenv("NEWS_PIPELINE_ENABLED", "false").lower() in {"1", "true", "yes"}
 NEWS_FETCH_RATE = int(os.getenv("NEWS_FETCH_RATE", "3600"))
 NEWS_PIPELINE_QUEUE = os.getenv("NEWS_PIPELINE_QUEUE", QUEUE_NAMES["pipelines"])
 
@@ -151,7 +152,7 @@ REBALANCE_MINUTE = int(os.getenv("PORTFOLIO_REBALANCE_MINUTE", "0"))
 REBALANCE_DAY_OF_WEEK = os.getenv("PORTFOLIO_REBALANCE_DAY_OF_WEEK", "mon-fri")
 REBALANCE_QUEUE = os.getenv("PORTFOLIO_REBALANCE_QUEUE", QUEUE_NAMES["allocations"])
 
-RISK_MONITOR_ENABLED = os.getenv("PORTFOLIO_RISK_MONITOR_ENABLED", "true").lower() in {"1", "true", "yes"}
+RISK_MONITOR_ENABLED = os.getenv("PORTFOLIO_RISK_MONITOR_ENABLED", "false").lower() in {"1", "true", "yes"}
 RISK_MONITOR_INTERVAL = int(os.getenv("PORTFOLIO_RISK_MONITOR_INTERVAL", "900"))
 RISK_MONITOR_QUEUE = os.getenv("PORTFOLIO_RISK_MONITOR_QUEUE", QUEUE_NAMES["pipelines"])
 
@@ -160,13 +161,16 @@ ORDER_MONITOR_ENABLED = os.getenv("ORDER_MONITOR_ENABLED", "true").lower() in {"
 ORDER_MONITOR_INTERVAL = int(os.getenv("ORDER_MONITOR_INTERVAL", "5"))  # Check every 5 seconds
 ORDER_MONITOR_QUEUE = os.getenv("ORDER_MONITOR_QUEUE", QUEUE_NAMES["orders"])
 
-celery_app.conf.beat_schedule = {
-    "news-sentiment-pipeline": {
+# Initialize empty beat schedule
+celery_app.conf.beat_schedule = {}
+
+# Only enable news pipeline via Beat if explicitly configured
+if NEWS_PIPELINE_ENABLED:
+    celery_app.conf.beat_schedule["news-sentiment-pipeline"] = {
         "task": "pipeline.news_sentiment.run",
         "schedule": timedelta(seconds=NEWS_FETCH_RATE),
         "options": {"queue": NEWS_PIPELINE_QUEUE},
     }
-}
 
 if REBALANCE_ENABLED:
     celery_app.conf.beat_schedule["portfolio-daily-rebalance"] = {
