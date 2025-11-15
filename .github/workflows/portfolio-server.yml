@@ -84,11 +84,21 @@ jobs:
       - name: Free up disk space
         run: |
           # Remove unused system packages to free up space (can save several GB)
+          echo "Freeing up disk space..."
           sudo rm -rf /usr/local/lib/android || true
           sudo rm -rf /opt/ghc || true
           sudo rm -rf /usr/share/dotnet || true
           sudo rm -rf /usr/share/swift || true
           sudo rm -rf "$AGENT_TOOLSDIRECTORY" || true
+          # Clean up Docker images and containers if not needed
+          sudo docker system prune -af --volumes || true
+          # Clean up apt cache
+          sudo apt-get clean || true
+          sudo rm -rf /var/lib/apt/lists/* || true
+          # Clean up pip cache if it exists
+          pip cache purge || true
+          rm -rf ~/.cache/pip || true
+          echo "Disk space after cleanup:"
           df -h
 
       - name: Install Python dependencies
@@ -99,7 +109,9 @@ jobs:
           grep -v "^torch==" requirements.txt > requirements-ci.txt || cp requirements.txt requirements-ci.txt
           # Install CPU-only PyTorch first (much smaller, no CUDA dependencies)
           # Use PyTorch CPU index to get CPU-only builds (saves ~2GB+ disk space)
-          pip install --no-cache-dir torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
+          echo "Installing CPU-only PyTorch..."
+          pip install --no-cache-dir torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu || \
+            (echo "CPU-only PyTorch install failed, trying default..." && pip install --no-cache-dir torch==2.6.0)
           # Install other requirements without cache to save disk space
           pip install --no-cache-dir -r requirements-ci.txt
           pip install --no-cache-dir -r ../../shared/py/requirements.txt
