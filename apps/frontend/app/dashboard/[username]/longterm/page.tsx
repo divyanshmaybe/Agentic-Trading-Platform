@@ -3,6 +3,7 @@
 import { useParams } from "next/navigation"
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader"
 import { Container } from "@/components/shared/Container"
+import { PageHeading } from "@/components/shared/PageHeading"
 import { useAuth } from "@/hooks/useAuth"
 
 export default function HighRiskPage() {
@@ -26,12 +27,10 @@ export default function HighRiskPage() {
       <DashboardHeader userName={authUser.firstName} username={username} userRole={authUser.role} />
       
       <Container className="max-w-10xl space-y-6 py-8">
-        <section className="space-y-4">
-          <h1 className="text-3xl font-bold">Long-Term Trading Strategies</h1>
-          <p className="text-sm text-white/60">
-            Monitor your high-risk positions and aggressive strategies.
-          </p>
-        </section>
+        <PageHeading
+          title="Long-Term Trading Strategies"
+          tagline="Monitor your high-risk positions and aggressive strategies."
+        />
 
         <div className="rounded-lg border border-white/10 bg-black/40 p-8">
           <p className="text-center text-white/50">Coming soon...</p>

@@ -9,8 +9,8 @@ import { useParams } from "next/navigation"
 import { AlphaChat, AlphaGraph, AlphaStats, TopAlphas, TradeTable } from "@/components/alpha"
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader"
 import { Container } from "@/components/shared/Container"
+import { PageHeading } from "@/components/shared/PageHeading"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { useAuth } from "@/hooks/useAuth"
 
 type AddAlphaForm = {
@@ -183,25 +183,19 @@ export default function AlphasPage() {
 
       <main className="lg:pr-96">
         <Container className="no-scrollbar max-w-10xl space-y-6 py-8 lg:max-h-[calc(100vh-4rem)] lg:overflow-y-auto">
-          <header className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <div>
-				<p className="text-xs uppercase tracking-[0.3em] text-white/45">                  
-					Monitor performance, iterate ideas, and deploy your next winning alpha.
-				</p>
-                <h1 className="mt-2 text-4xl font-semibold text-[#fafafa]">Alpha Command Center</h1>
-                <p className="mt-2 text-sm text-white/60">
-                </p>
-              </div>
-            </div>
-            <Button
-              onClick={() => setModalOpen(true)}
-              className="border border-emerald-500/40 bg-emerald-500/20 text-emerald-100 hover:bg-emerald-500/30"
-            >
-              <Plus className="mr-2 size-4" />
-              Add Your Own Alpha
-            </Button>
-          </header>
+          <PageHeading
+            tagline="Monitor performance, iterate ideas, and deploy your next winning alpha."
+            title="Alpha Command Center"
+            action={
+              <Button
+                onClick={() => setModalOpen(true)}
+                className="border border-emerald-500/40 bg-emerald-500/20 text-emerald-100 hover:bg-emerald-500/30"
+              >
+                <Plus className="mr-2 size-4" />
+                Add Your Own Alpha
+              </Button>
+            }
+          />
 
           <div className="flex flex-col gap-6">
             <div className="grid gap-6 lg:grid-cols-2">

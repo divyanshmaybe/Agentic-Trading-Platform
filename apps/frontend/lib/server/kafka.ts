@@ -58,6 +58,14 @@ function buildKafkaClient(): Kafka {
     clientId,
     brokers,
     logLevel: logLevel.NOTHING,
+    retry: {
+      retries: 3,
+      initialRetryTime: 100,
+      multiplier: 2,
+      maxRetryTime: 30000,
+    },
+    connectionTimeout: 3000,
+    requestTimeout: 30000,
   }
 
   const securityProtocol = process.env.KAFKA_SECURITY_PROTOCOL?.toUpperCase()
@@ -104,6 +112,9 @@ export function createNotificationConsumer(groupId?: string) {
   return kafka.consumer({
     groupId: groupId ?? `frontend-low-risk-${randomUUID()}`,
     allowAutoTopicCreation: false,
+    sessionTimeout: 30000,
+    heartbeatInterval: 3000,
+    maxInFlightRequests: 1,
   })
 }
 
