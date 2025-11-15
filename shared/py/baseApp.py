@@ -10,6 +10,8 @@ import logging
 import os
 import sys
 import uvicorn
+import time
+import psutil
 from typing import Optional, Dict, Any, Callable
 from contextlib import asynccontextmanager
 
@@ -38,6 +40,7 @@ class BaseApp:
         self.name = name
         self.version = version
         self.custom_lifespan = custom_lifespan
+        self.start_time = time.time()
         
         # Initialize managers
         self.redis_manager: Optional[RedisManager] = None
@@ -101,11 +104,29 @@ class BaseApp:
         """Setup common routes"""
         @self.app.get("/health")
         async def health_check():
-            """Health check endpoint"""
+            """Health check endpoint with Prometheus-style metrics"""
+            # Get memory usage
+            memory_info = psutil.virtual_memory()
+            process = psutil.Process()
+            process_memory = process.memory_info()
+            
             return {
-                "status": "healthy",
+                "status": "OK",
                 "service": self.name,
-                "version": self.version
+                "version": self.version,
+                "timestamp": time.time(),
+                "uptime": time.time() - self.start_time,
+                "memory": {
+                    "rss": process_memory.rss,
+                    "vms": process_memory.vms,
+                    "percent": process.memory_percent(),
+                    "system_total": memory_info.total,
+                    "system_available": memory_info.available,
+                    "system_percent": memory_info.percent
+                },
+                "cpu": {
+                    "percent": psutil.cpu_percent(interval=0.1)
+                }
             }
 
         @self.app.get("/")

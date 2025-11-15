@@ -87,9 +87,13 @@ data:
       - job_name: 'auth-server'
         static_configs:
           - targets: ['auth-server:4000']
+        metrics_path: '/health'
+        scrape_interval: 30s
       - job_name: 'portfolio-server'
         static_configs:
           - targets: ['portfolio-server:8000']
+        metrics_path: '/health'
+        scrape_interval: 30s
       - job_name: 'frontend'
         static_configs:
           - targets: ['frontend:3000']
