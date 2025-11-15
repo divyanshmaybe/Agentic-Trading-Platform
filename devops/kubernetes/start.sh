@@ -121,6 +121,9 @@ apply_manifests() {
   log "Applying ArgoCD Application manifest from ${ARGOCD_MANIFEST}..."
   kubectl apply -f "${ARGOCD_MANIFEST}"
 
+  log "Applying ArgoCD ingress..."
+  kubectl apply -f "${REPO_ROOT}/devops/argocd/argocd-ingress.yaml"
+
   log "Waiting for ArgoCD Application to sync..."
   kubectl wait --for=condition=available --timeout=600s application/pathway-submission -n argocd || log "Application sync timeout, check ArgoCD UI for status."
 
@@ -160,7 +163,7 @@ main() {
       kubectl create namespace agent-invest --dry-run=client -o yaml | kubectl apply -f - || true
       
       log "Creating Kubernetes secrets..."
-      bash "${SCRIPT_DIR}/create-secrets.sh"
+      bash "${SCRIPT_DIR}/create-secrets.sh" || log "Warning: Some secrets may not have been created successfully"
     else
       log "Warning: create-secrets.sh not found, skipping secrets creation."
     fi
@@ -188,24 +191,23 @@ main() {
       kubectl create namespace agent-invest --dry-run=client -o yaml | kubectl apply -f - || true
       
       log "Creating Kubernetes secrets..."
-      bash "${SCRIPT_DIR}/create-secrets.sh"
+      bash "${SCRIPT_DIR}/create-secrets.sh" || log "Warning: Some secrets may not have been created successfully"
     else
       log "Warning: create-secrets.sh not found, skipping secrets creation."
     fi
   fi
 
-  # load_images || log "One or more images were not loaded. Build them locally or update IMAGES."
-  if load_images; then
-    log "All images loaded successfully."
-  else
-    log "Warning: Some images were not loaded. Build them locally or update IMAGES."
-  fi
+  # Load images (don't fail if missing)
+  load_images || log "Warning: Some images were not loaded. Build them locally or update IMAGES."
+  
+  # Always apply ArgoCD manifests
   apply_manifests
 
   log "Cluster '${KIND_CLUSTER_NAME}' is ready."
   log "ArgoCD UI: kubectl port-forward svc/argocd-server -n argocd 8080:80 (then visit http://localhost:8080)"
+  log "ArgoCD UI (via ingress): https://argocd.localhost (admin/${ARGOCD_PASSWORD})"
   log "ArgoCD Admin Password: ${ARGOCD_PASSWORD}"
-  log "Hosts to add to /etc/hosts: agent-invest.local, api.agent-invest.local, grafana.agent-invest.local, prometheus.agent-invest.local, loki.agent-invest.local, flower.agent-invest.local"
+  log "Hosts to add to /etc/hosts: localhost argocd.localhost, agent-invest.local, api.agent-invest.local, grafana.agent-invest.local, prometheus.agent-invest.local, loki.agent-invest.local, flower.agent-invest.local"
 }
 
 main "$@"

@@ -74,7 +74,6 @@ check_var "INTERNAL_SERVICE_SECRET"
 echo ""
 echo "Portfolio Server Variables:"
 check_var "GEMINI_API_KEY"
-check_var "OPENAI_API_KEY"
 check_var "NEWS_ORG_API_KEY"
 check_var "SERP_API_KEY"
 check_var "GROQ_API_KEY"
@@ -82,6 +81,13 @@ check_var "ANGELONE_CLIENT_CODE"
 check_var "ANGELONE_API_KEY"
 check_var "ANGELONE_PASSWORD"
 check_var "ANGELONE_TOTP_SECRET"
+
+# Optional variables (don't fail if missing)
+if [ -n "${OPENAI_API_KEY:-}" ]; then
+    echo "  ✓ OPENAI_API_KEY is set (optional)"
+else
+    echo "  ⚠️  OPENAI_API_KEY is not set (optional)"
+fi
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
