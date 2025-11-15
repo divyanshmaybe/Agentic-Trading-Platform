@@ -98,15 +98,35 @@ class TradeExecutionService:
             data["agent_id"] = job_row["agent_id"]
 
         record = await client.tradeexecutionlog.create(data=data)
-        self.logger.info(
-            "Logged trade request %s for portfolio %s (%s %s x %s) - triggered by %s",
-            record.id,
-            data["portfolio_id"],
-            data["side"],
-            data["symbol"],
-            data["quantity"],
-            metadata.get("triggered_by", "unknown"),
-        )
+        
+        # Extract agent information for logging
+        agent_id = job_row.get("agent_id")
+        agent_type = job_row.get("agent_type")
+        agent_status = job_row.get("agent_status")
+        
+        if agent_id:
+            self.logger.info(
+                "✅ Logged trade request %s for portfolio %s | Agent %s (%s, %s) | %s %s x %d | Triggered by %s",
+                record.id,
+                data.get("portfolio_id", "unknown"),
+                agent_id,
+                agent_type or "unknown",
+                agent_status or "unknown",
+                data["side"],
+                data["symbol"],
+                data["quantity"],
+                metadata.get("triggered_by", "unknown"),
+            )
+        else:
+            self.logger.info(
+                "✅ Logged trade request %s for portfolio %s (%s %s x %s) - triggered by %s (no agent)",
+                record.id,
+                data.get("portfolio_id", "unknown"),
+                data["side"],
+                data["symbol"],
+                data["quantity"],
+                metadata.get("triggered_by", "unknown"),
+            )
         return TradeExecutionRecord(
             id=record.id,
             request_id=data["request_id"],
@@ -245,7 +265,34 @@ class TradeExecutionService:
                 executed_quantity=executed_quantity,
                 metadata={"simulation": True},
             )
-            self.logger.info("✅ Simulated execution for trade %s", trade_id)
+            
+            # Log trade execution with agent information
+            agent_id = getattr(record, "agent_id", None)
+            agent_type = getattr(record, "agent_type", None)
+            symbol = str(getattr(record, "symbol", ""))
+            side = str(getattr(record, "side", ""))
+            quantity = int(record.quantity)
+            
+            if agent_id:
+                self.logger.info(
+                    "✅ Simulated trade execution: Trade %s | Agent %s (%s) | %s %s x %d @ ₹%.2f",
+                    trade_id,
+                    agent_id,
+                    agent_type or "unknown",
+                    side,
+                    symbol,
+                    quantity,
+                    executed_price,
+                )
+            else:
+                self.logger.info(
+                    "✅ Simulated trade execution: Trade %s | %s %s x %d @ ₹%.2f (no agent)",
+                    trade_id,
+                    side,
+                    symbol,
+                    quantity,
+                    executed_price,
+                )
             
             # Create TP/SL orders for NSE pipeline trades
             await self._create_tp_sl_orders(
@@ -518,16 +565,27 @@ class TradeExecutionService:
             )
             
             agent_id = getattr(trade_record, "agent_id", None)
+            agent_type = getattr(trade_record, "agent_type", None)
             if agent_id:
                 try:
                     await client.tradingagent.update(
                         where={"id": str(agent_id)},
                         data={"last_executed_at": datetime.utcnow()},
                     )
+                    self.logger.info(
+                        "✅ Updated trading agent %s (%s) after trade execution: %s %s x %d @ ₹%.2f",
+                        agent_id,
+                        agent_type or "unknown",
+                        side,
+                        symbol,
+                        executed_quantity,
+                        executed_price,
+                    )
                 except Exception as agent_exc:
                     self.logger.warning(
-                        "Failed to update trading agent %s after execution: %s",
+                        "Failed to update trading agent %s (%s) after execution: %s",
                         agent_id,
+                        agent_type or "unknown",
                         agent_exc,
                     )
 

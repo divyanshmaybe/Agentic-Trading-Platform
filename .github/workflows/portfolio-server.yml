@@ -61,7 +61,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          cache: "pip"
+          # No cache configured - we use --no-cache-dir to save disk space
 
       - name: Install system dependencies
         run: |

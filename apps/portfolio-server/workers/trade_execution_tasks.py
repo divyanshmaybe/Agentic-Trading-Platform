@@ -20,8 +20,10 @@ task_logger = get_task_logger(__name__)
 
 async def _execute_trade_job_async(trade_id: str, simulate: Optional[bool]) -> dict[str, Any]:
     service = TradeExecutionService(logger=task_logger)
+    task_logger.info("🔄 Processing trade execution for trade_id: %s (simulate=%s)", trade_id, simulate)
     await service.update_status(trade_id, status="in_progress")
     result = await service.execute_trade(trade_id, simulate=simulate)
+    task_logger.info("✅ Trade execution completed for trade_id: %s | Status: %s", trade_id, result.get("status", "unknown"))
     return result
 
 

@@ -1090,6 +1090,9 @@ class PipelineService:
         )
 
         snapshots: List[PortfolioSnapshot] = []
+        active_agents_count = 0
+        skipped_portfolios = 0
+        
         for portfolio in portfolios:
             agent_rows = [
                 agent
@@ -1105,16 +1108,25 @@ class PipelineService:
                 status = str(getattr(agent, "status", "") or "active").lower()
                 config = self._clean_json(getattr(agent, "strategy_config", None)) or {}
                 auto_trade_enabled = bool(config.get("auto_trade", True))
+                agent_id = str(getattr(agent, "id", "unknown"))
 
                 if status == "active" and auto_trade_enabled:
                     active_agent = agent
                     active_config = config
                     active_metadata = self._parse_metadata(getattr(agent, "metadata", None))
+                    active_agents_count += 1
+                    self.logger.info(
+                        "✅ Found active trading agent %s (%s) for portfolio %s (auto-trade enabled)",
+                        agent_id,
+                        getattr(agent, "agent_type", "unknown"),
+                        getattr(portfolio, "id", "unknown"),
+                    )
                     break
 
             if not active_agent:
+                skipped_portfolios += 1
                 self.logger.debug(
-                    "Skipping portfolio %s: no active high-risk agent with auto-trade",
+                    "Skipping portfolio %s: no active high-risk agent with auto-trade enabled",
                     getattr(portfolio, "id", "unknown"),
                 )
                 continue
@@ -1127,6 +1139,13 @@ class PipelineService:
             )
             if snapshot:
                 snapshots.append(snapshot)
+        
+        self.logger.info(
+            "📊 Trade signal processing summary: %d active trading agents found, %d portfolios skipped, %d eligible snapshots",
+            active_agents_count,
+            skipped_portfolios,
+            len(snapshots),
+        )
 
         if not snapshots:
             self.logger.info("No eligible portfolios for automated trade execution")
@@ -1194,6 +1213,16 @@ class PipelineService:
                 for event in events:
                     execute_trade_job.delay(event.trade_id)
                     dispatched += 1
+                    self.logger.info(
+                        "✅ Enqueued trade execution: Trade %s | Agent %s (%s) | %s %s x %d | Portfolio %s",
+                        event.trade_id,
+                        event.agent_id or "unknown",
+                        event.agent_type or "unknown",
+                        event.side,
+                        event.symbol,
+                        event.quantity,
+                        event.portfolio_id,
+                    )
             except Exception as exc:  # pragma: no cover - defensive
                 self.logger.error("Failed to enqueue trade execution workers: %s", exc)
 

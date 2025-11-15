@@ -22,7 +22,7 @@ class DBManager:
 
         self.logger = logging.getLogger(__name__)
         self.database_url = database_url or os.getenv("DATABASE_URL") or os.getenv("DB_URL")
-        
+
         # Default to localhost PostgreSQL if not set (for development)
         if not self.database_url:
             db_host = os.getenv("DB_HOST", "localhost")
