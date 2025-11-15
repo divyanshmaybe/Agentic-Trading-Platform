@@ -60,6 +60,14 @@ install_cert_manager() {
     --for=condition=Ready pod \
     --selector=app=cert-manager \
     --timeout=180s
+
+  # Configure GitHub authentication for ArgoCD after cert-manager is ready
+  if [[ -f "${SCRIPT_DIR}/configure-github.sh" ]]; then
+    log "Configuring GitHub authentication for ArgoCD..."
+    bash "${SCRIPT_DIR}/configure-github.sh"
+  else
+    log "Warning: configure-github.sh not found, skipping GitHub configuration."
+  fi
 }
 
 install_argocd() {
@@ -152,7 +160,7 @@ main() {
     kubectl get ns argocd >/dev/null 2>&1 || install_argocd
   fi
 
-  load_images || log "One or more images were not loaded. Build them locally or update IMAGES."
+  # load_images || log "One or more images were not loaded. Build them locally or update IMAGES."
   apply_manifests
 
   log "Cluster '${KIND_CLUSTER_NAME}' is ready."

@@ -63,9 +63,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libblas3 \
     liblapack3 \
     libgfortran5 \
+    libatomic1 \
+    libgcc-s1 \
+    libstdc++6 \
+    libc6 \
     git \
     curl \
     bash \
+    ca-certificates \
+    nodejs \
+    npm \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /opt/venv /opt/venv
