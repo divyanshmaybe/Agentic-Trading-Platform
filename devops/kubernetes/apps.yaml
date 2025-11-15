@@ -95,7 +95,6 @@ spec:
             - sh
             - -c
             - |
-              pnpm prisma generate && \
               pnpm prisma db push && \
               pnpm run start
           readinessProbe:
@@ -148,6 +147,11 @@ spec:
           env:
             - name: PYTHONPATH
               value: "/app:/app/apps/portfolio-server:/app/shared/py:/app/middleware:/app/middleware/py"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: portfolio-env-secret
+                  key: DATABASE_URL
           envFrom:
             - configMapRef:
                 name: portfolio-config
@@ -160,6 +164,7 @@ spec:
             - sh
             - -c
             - |
+              rm -f /app/apps/portfolio-server/.env && \
               python -m prisma generate && \
               until python -m prisma db push --accept-data-loss; do \
                 echo "Waiting for Postgres..."; \
@@ -226,6 +231,7 @@ spec:
             - sh
             - -c
             - |
+              rm -f /app/apps/portfolio-server/.env && \
               python -m prisma generate && \
               until python -m prisma db push --accept-data-loss; do \
                 echo "Waiting for Postgres..."; \
@@ -326,6 +332,7 @@ spec:
             - sh
             - -c
             - |
+              rm -f /app/apps/portfolio-server/.env && \
               python -m prisma generate && \
               until python -m prisma db push --accept-data-loss; do \
                 echo "Waiting for Postgres..."; \
@@ -399,6 +406,7 @@ spec:
             - sh
             - -c
             - |
+              rm -f /app/apps/portfolio-server/.env && \
               python -m prisma generate && \
               until python -m prisma db push --accept-data-loss; do \
                 echo "Waiting for Postgres..."; \
@@ -461,6 +469,7 @@ spec:
             - sh
             - -c
             - |
+              rm -f /app/apps/portfolio-server/.env && \
               python -m prisma generate && \
               until python -m prisma db push --accept-data-loss; do \
                 echo "Waiting for Postgres..."; \
@@ -523,6 +532,7 @@ spec:
             - sh
             - -c
             - |
+              rm -f /app/apps/portfolio-server/.env && \
               python -m prisma generate && \
               until python -m prisma db push --accept-data-loss; do \
                 echo "Waiting for Postgres..."; \
@@ -585,6 +595,7 @@ spec:
             - sh
             - -c
             - |
+              rm -f /app/apps/portfolio-server/.env && \
               python -m prisma generate && \
               until python -m prisma db push --accept-data-loss; do \
                 echo "Waiting for Postgres..."; \
@@ -647,6 +658,7 @@ spec:
             - sh
             - -c
             - |
+              rm -f /app/apps/portfolio-server/.env && \
               python -m prisma generate && \
               until python -m prisma db push --accept-data-loss; do \
                 echo "Waiting for Postgres..."; \
@@ -709,6 +721,7 @@ spec:
             - sh
             - -c
             - |
+              rm -f /app/apps/portfolio-server/.env && \
               python -m prisma generate && \
               until python -m prisma db push --accept-data-loss; do \
                 echo "Waiting for Postgres..."; \
@@ -757,7 +770,7 @@ spec:
             - sh
             - -c
             - |
-              exec /home/flower \
+              exec celery flower \
                 --port=${FLOWER_PORT:-5555} \
                 --broker=${CELERY_BROKER_URL} \
                 --basic_auth=${FLOWER_BASIC_AUTH:-admin:admin} \
@@ -882,22 +895,6 @@ spec:
               value: "true"
             - name: CLUSTER_ID
               value: "MkU3OEVBNTcwNTJENDM2Qk"
-          readinessProbe:
-            exec:
-              command:
-                - sh
-                - -c
-                - kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1
-            initialDelaySeconds: 20
-            periodSeconds: 10
-          livenessProbe:
-            exec:
-              command:
-                - sh
-                - -c
-                - kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1
-            initialDelaySeconds: 30
-            periodSeconds: 30
 ---
 apiVersion: v1
 kind: Service

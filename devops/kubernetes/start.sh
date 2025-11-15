@@ -121,9 +121,13 @@ apply_manifests() {
   log "Applying ArgoCD Application manifest from ${ARGOCD_MANIFEST}..."
   kubectl apply -f "${ARGOCD_MANIFEST}"
 
-  log "ArgoCD Application created. ArgoCD will now deploy your Kubernetes manifests using Kustomize."
-  log "Check ArgoCD UI at http://localhost:8080 (admin/${ARGOCD_PASSWORD}) to monitor deployment progress."
-  log "The application will sync automatically once ArgoCD can access the repository."
+  log "Waiting for ArgoCD Application to sync..."
+  kubectl wait --for=condition=available --timeout=600s application/pathway-submission -n argocd || log "Application sync timeout, check ArgoCD UI for status."
+
+  log "ArgoCD Application synced. Checking pod status..."
+  kubectl get pods -n agent-invest --no-headers | head -5 || log "Pods not ready yet, check with 'kubectl get pods -n agent-invest'"
+
+  log "ArgoCD UI at http://localhost:8080 (admin/${ARGOCD_PASSWORD}) to monitor deployment progress."
 }
 
 main() {
@@ -152,6 +156,9 @@ main() {
     
     # Create Kubernetes secrets after ArgoCD is configured
     if [[ -f "${SCRIPT_DIR}/create-secrets.sh" ]]; then
+      log "Creating namespace 'agent-invest' if it doesn't exist..."
+      kubectl create namespace agent-invest --dry-run=client -o yaml | kubectl apply -f - || true
+      
       log "Creating Kubernetes secrets..."
       bash "${SCRIPT_DIR}/create-secrets.sh"
     else
@@ -177,6 +184,9 @@ main() {
     
     # Create Kubernetes secrets after ArgoCD is configured
     if [[ -f "${SCRIPT_DIR}/create-secrets.sh" ]]; then
+      log "Creating namespace 'agent-invest' if it doesn't exist..."
+      kubectl create namespace agent-invest --dry-run=client -o yaml | kubectl apply -f - || true
+      
       log "Creating Kubernetes secrets..."
       bash "${SCRIPT_DIR}/create-secrets.sh"
     else
@@ -185,6 +195,11 @@ main() {
   fi
 
   # load_images || log "One or more images were not loaded. Build them locally or update IMAGES."
+  if load_images; then
+    log "All images loaded successfully."
+  else
+    log "Warning: Some images were not loaded. Build them locally or update IMAGES."
+  fi
   apply_manifests
 
   log "Cluster '${KIND_CLUSTER_NAME}' is ready."

@@ -157,6 +157,16 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     print_success "cert-manager uninstalled"
 fi
 
+# Optional: Delete Kind cluster
+print_header "🐳 Delete Kind Cluster"
+read -p "Do you want to delete the Kind cluster 'agent-invest'? (y/n) " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    print_info "Deleting Kind cluster 'agent-invest'..."
+    kind delete cluster --name agent-invest || print_warning "Failed to delete Kind cluster"
+    print_success "Kind cluster deleted"
+fi
+
 # Step 11: Display final status
 print_header "✅ Destruction Complete!"
 echo ""
