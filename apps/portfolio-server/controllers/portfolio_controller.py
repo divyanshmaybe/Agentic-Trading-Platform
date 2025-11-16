@@ -28,6 +28,8 @@ from schemas import (
     RecentTradeSummary,
     PortfolioDashboardResponse,
     AgentDashboardResponse,
+    AllocationSnapshotListResponse,
+    AllocationSnapshotResponse,
 )
 from schemas.portfolio import TradeSummary as PortfolioTradeSummary
 
@@ -807,3 +809,60 @@ class PortfolioController:
             )
         
         return SnapshotListResponse(items=snapshots, total=len(snapshots))
+
+    async def get_allocation_snapshots(
+        self,
+        request_user: dict,
+        *,
+        allocation_id: str,
+        limit: int = 100,
+    ) -> AllocationSnapshotListResponse:
+        """Get allocation snapshot history for a specific portfolio allocation"""
+        user_id = request_user.get("id")
+        if not user_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User id is required")
+
+        # Get portfolio for user
+        portfolio = await self._get_portfolio_for_user(user_id, request_user.get("organization_id"))
+        if portfolio is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found for user")
+
+        # Verify allocation belongs to user's portfolio
+        allocation = await self.prisma.portfolioallocation.find_unique(
+            where={"id": allocation_id},
+            include={"portfolio": True},
+        )
+        
+        if not allocation or allocation.portfolio_id != portfolio.id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Allocation not found")
+
+        # Get allocation snapshots
+        snapshots = await self.prisma.allocationsnapshot.find_many(
+            where={"portfolio_allocation_id": allocation_id},
+            order={"created_at": "desc"},
+            take=limit,
+            include={
+                "portfolio_allocation": True,
+                "rebalance_run": True,
+            },
+        )
+
+        snapshot_items = []
+        for snapshot in snapshots:
+            allocation_name = getattr(snapshot.portfolio_allocation, "allocation_name", None) or "Unknown"
+            snapshot_items.append(
+                AllocationSnapshotResponse(
+                    id=snapshot.id,
+                    rebalance_run_id=snapshot.rebalance_run_id,
+                    portfolio_allocation_id=snapshot.portfolio_allocation_id,
+                    allocation_name=allocation_name,
+                    snapshot_weight=Decimal(str(snapshot.snapshot_weight)),
+                    snapshot_amount=Decimal(str(snapshot.snapshot_amount)),
+                    snapshot_current_value=Decimal(str(snapshot.snapshot_current_value)),
+                    snapshot_pnl=Decimal(str(snapshot.snapshot_pnl)),
+                    created_at=snapshot.created_at,
+                    metadata=self._parse_metadata(snapshot.metadata),
+                )
+            )
+
+        return AllocationSnapshotListResponse(items=snapshot_items, total=len(snapshot_items))

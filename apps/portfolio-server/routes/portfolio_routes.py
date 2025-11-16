@@ -19,6 +19,7 @@ from schemas import (
     PortfolioDashboardResponse,
     AgentDashboardResponse,
     SnapshotListResponse,
+    AllocationSnapshotListResponse,
 )
 from utils.auth import get_authenticated_user
 
@@ -144,3 +145,33 @@ async def get_portfolio_snapshots(
     Otherwise, returns aggregated snapshots (sum of all agents in portfolio).
     """
     return await controller.get_snapshots(request_user, agent_id=agent_id, limit=limit)
+
+
+@router.get("/agents/{agent_id}/snapshots", response_model=SnapshotListResponse)
+async def get_trading_agent_snapshots(
+    agent_id: str,
+    controller: PortfolioController = Depends(get_portfolio_controller),
+    request_user: dict = Depends(get_authenticated_user),
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of snapshots to return"),
+) -> SnapshotListResponse:
+    """
+    Get trading agent snapshot history for a specific agent.
+    
+    Returns portfolio value and realized P&L snapshots over time for the agent.
+    """
+    return await controller.get_snapshots(request_user, agent_id=agent_id, limit=limit)
+
+
+@router.get("/allocations/{allocation_id}/snapshots", response_model=AllocationSnapshotListResponse)
+async def get_allocation_snapshots(
+    allocation_id: str,
+    controller: PortfolioController = Depends(get_portfolio_controller),
+    request_user: dict = Depends(get_authenticated_user),
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of snapshots to return"),
+) -> AllocationSnapshotListResponse:
+    """
+    Get allocation snapshot history for a specific portfolio allocation.
+    
+    Returns allocation weight and value snapshots over time, typically captured during rebalancing.
+    """
+    return await controller.get_allocation_snapshots(request_user, allocation_id=allocation_id, limit=limit)

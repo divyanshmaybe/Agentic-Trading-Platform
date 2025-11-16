@@ -169,6 +169,28 @@ class SnapshotListResponse(BaseModel):
     total: int
 
 
+class AllocationSnapshotResponse(BaseModel):
+    """Allocation snapshot for tracking allocation weight and value over time"""
+    id: str
+    rebalance_run_id: str
+    portfolio_allocation_id: str
+    allocation_name: Optional[str] = None
+    snapshot_weight: Decimal
+    snapshot_amount: Decimal
+    snapshot_current_value: Decimal
+    snapshot_pnl: Decimal
+    created_at: datetime
+    metadata: Optional[dict] = None
+
+    class Config:
+        from_attributes = True
+
+
+class AllocationSnapshotListResponse(BaseModel):
+    items: List[AllocationSnapshotResponse]
+    total: int
+
+
 class AllocationDashboardSummary(BaseModel):
     """Allocation summary for dashboard"""
     allocation_type: str
