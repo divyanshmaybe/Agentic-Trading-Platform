@@ -439,6 +439,8 @@ You should take as input sector-wise sentiment scores, time windows for investin
 
 You should also receive a comprehensive table of technical indicators per stock, such as moving averages, RSI, MACD, Bollinger Bands, and volume metrics.
 
+CRITICAL: The sector analysis contains news articles with their URLs (marked as "News URL: <url>"). You MUST ONLY use URLs that are explicitly provided in the sector analysis above. DO NOT invent, hallucinate, or create URLs. Only extract URLs that actually appear in the "News URL:" fields in the sector analysis. If you cannot find a relevant URL in the sector analysis for a stock, leave the news_source field as an empty string "".
+
 Your task is to combine the sector sentiment analysis with technical strengths or weaknesses of individual stocks, scoring and ranking stocks that belong to sectors with positive sentiment and favorable time windows.
 
 Recommend the top stocks by providing for each the stock ticker, sector, investment time window, and a clear explanation that ties the sector sentiment with the technical indicators that support the investment decision.
@@ -469,6 +471,7 @@ You must return a structured json output in the following format:
  Output must be a single JSON array containing one object per sector.
  Use valid JSON syntax (double quotes, commas, brackets).
  You must strictly adhere to this output format and must return a valid array of json objects.
+ CRITICAL: The news_source field MUST contain ONLY URLs that are explicitly listed in the sector analysis above (marked as "News URL: <url>"). DO NOT invent, make up, or hallucinate URLs. You can ONLY use URLs that actually appear in the sector analysis. If you cannot find a matching URL in the sector analysis for a stock, you MUST use an empty string "" (NOT null, NOT "N/A", NOT a made-up URL).
  Do not return anything apart from this, such as here's the summary or here's the answer.
  Return only an array of json strings and nothing else
  Also for hold signals since investment time window is not valid, instead of simply printing
@@ -476,7 +479,7 @@ You must return a structured json output in the following format:
  hold signals.
                               
  Also if a url is invalid, starting with https://example.com, then dont include that and leave 
- the url field blank for that particular json object.
+ the url field blank (empty string "") for that particular json object.
 """
         ).content
 
@@ -527,6 +530,15 @@ You must return a structured json output in the following format:
                 print(f"[STOCK_RECOMMENDER] WARNING: LLM returned empty array - no stock recommendations generated")
             else:
                 print(f"[STOCK_RECOMMENDER] Successfully parsed {len(parsed)} stock recommendations")
+                # Post-process: ensure news_source is never null, use empty string instead
+                for rec in parsed:
+                    if isinstance(rec, dict):
+                        if "news_source" not in rec or rec.get("news_source") is None:
+                            rec["news_source"] = ""
+                        # Also check for invalid example.com URLs
+                        news_source = rec.get("news_source", "")
+                        if news_source and "example.com" in str(news_source):
+                            rec["news_source"] = ""
             return parsed
         except Exception as exc:
             print(f"[STOCK_RECOMMENDER] ERROR: JSON parse failed: {exc}")
@@ -545,19 +557,60 @@ You must return a structured json output in the following format:
         return {"error": str(exc)}
 
 
-def stock_recommender(sector_analysis: str, tech_json: str, *, gemini_api_key: Optional[str] = None) -> Any:
+def stock_recommender(sector_analysis: str, tech_json: str, *, gemini_api_key: Optional[str] = None, sentiment_data: Optional[Dict[str, Any]] = None) -> Any:
+    # Extract valid URLs from sentiment data to prevent hallucination
+    valid_urls = set()
+    if sentiment_data:
+        try:
+            for stream, articles in sentiment_data.items():
+                for article in articles:
+                    url = article.get("url") or ""
+                    if url and url.strip() and url != "N/A" and "example.com" not in url:
+                        valid_urls.add(url.strip())
+        except Exception as exc:
+            print(f"[STOCK_RECOMMENDER] Warning: Failed to extract URLs from sentiment data: {exc}")
+    
     raw = stock_recommender_llm(
         sector_analysis,
         tech_json,
         gemini_api_key or os.getenv("GEMINI_API_KEY", ""),
     )
 
+    parsed = None
     if isinstance(raw, (dict, list)):
-        return raw
-    try:
-        return json.loads(raw)
-    except Exception:
-        return raw
+        parsed = raw
+    else:
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            parsed = raw
+    
+    # Validate URLs against valid_urls if we have sentiment data
+    if parsed and isinstance(parsed, list) and valid_urls:
+        validated_count = 0
+        removed_count = 0
+        for rec in parsed:
+            if isinstance(rec, dict):
+                news_source = rec.get("news_source") or ""
+                if news_source:
+                    news_source = str(news_source).strip()
+                    # Check if URL is in valid URLs or if it's empty/null
+                    if news_source and news_source != "N/A":
+                        if news_source not in valid_urls:
+                            print(f"[STOCK_RECOMMENDER] WARNING: Removing hallucinated URL: {news_source}")
+                            rec["news_source"] = ""
+                            removed_count += 1
+                        else:
+                            validated_count += 1
+                            rec["news_source"] = news_source  # Ensure it's the exact URL from valid set
+                    else:
+                        rec["news_source"] = ""
+                else:
+                    rec["news_source"] = ""
+        if validated_count > 0 or removed_count > 0:
+            print(f"[STOCK_RECOMMENDER] URL validation: {validated_count} valid, {removed_count} hallucinated URLs removed")
+    
+    return parsed
 
 
 # ---------------------------------------------------------------------------

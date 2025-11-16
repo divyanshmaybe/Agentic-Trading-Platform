@@ -698,10 +698,12 @@ def execute_news_sentiment_pipeline(
             log.info("Invoking Gemini stock recommender (sector analysis length: %s chars, tech data: %s stocks)...", 
                     len(sector_analysis_payload["analysis"]), len(technical_snapshot))
             
+            # Pass sentiment_data for URL validation to prevent hallucination
             stock_recs = stock_recommender(
                 sector_analysis_payload["analysis"],
                 tech_json,
                 gemini_api_key=gemini_key,
+                sentiment_data=sentiment_by_stream,
             )
             if isinstance(stock_recs, str):
                 stock_recommendations = json.loads(stock_recs)
