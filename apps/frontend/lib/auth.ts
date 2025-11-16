@@ -278,3 +278,56 @@ export async function updateUser(
     },
   })
 }
+
+export type UpdateSubscriptionPayload = {
+  action: "subscribe" | "unsubscribe"
+  agent: "high_risk" | "low_risk" | "alpha"
+}
+
+export type UpdateSubscriptionResponse = {
+  success: boolean
+  data: {
+    id: string
+    subscriptions: string[]
+  }
+}
+
+export async function updateUserSubscription(
+  payload: UpdateSubscriptionPayload,
+  accessToken?: string,
+): Promise<UpdateSubscriptionResponse> {
+  const token = resolveAccessToken(accessToken)
+
+  // User routes are mounted at /api/user, not /api/auth
+  const authServerUrl = process.env.NEXT_PUBLIC_AUTH_BASE_URL 
+    ? process.env.NEXT_PUBLIC_AUTH_BASE_URL.replace("/api/auth", "")
+    : "http://localhost:4000"
+  
+  const response = await fetch(`${authServerUrl}/api/user/subscriptions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    credentials: "include",
+    body: JSON.stringify(payload),
+  })
+
+  const isJson = response.headers
+    .get("content-type")
+    ?.includes("application/json")
+
+  const body = isJson ? await response.json() : null
+
+  if (!response.ok) {
+    const error: AuthApiError = body ?? {}
+    const message =
+      error.message ||
+      error.error ||
+      (typeof body === "string" ? body : undefined) ||
+      response.statusText
+    throw new Error(message || "Request failed")
+  }
+
+  return body as UpdateSubscriptionResponse
+}

@@ -190,6 +190,27 @@ export default function ObjectivesPage() {
           }`
           addMessage(allocationMsg, false)
         }
+        
+        // Automatically enable AI trading subscription
+        try {
+          const { enableAITradingSubscription } = await import("@/lib/objectiveIntake")
+          const subscriptionResult = await enableAITradingSubscription()
+          if (subscriptionResult.success) {
+            addMessage(
+              "✅ AI trading has been enabled! Your trading agent will now automatically execute trades based on market signals and your investment objectives.",
+              false,
+            )
+          } else {
+            addMessage(
+              `Note: ${subscriptionResult.message || "AI trading subscription could not be enabled automatically. You can enable it manually in your settings."}`,
+              false,
+            )
+          }
+        } catch (error) {
+          // Non-critical error, just log it
+          console.error("Failed to enable AI trading subscription:", error)
+        }
+        
         setContext({})
         setCurrentFieldIndex(0)
         setMissingFields([])

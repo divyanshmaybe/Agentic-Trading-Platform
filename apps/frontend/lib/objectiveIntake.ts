@@ -149,3 +149,29 @@ export function formatFieldName(fieldName: string): string {
     .join(" ")
 }
 
+export async function enableAITradingSubscription(
+  accessToken?: string,
+): Promise<{ success: boolean; message?: string }> {
+  try {
+    const { updateUserSubscription } = await import("@/lib/auth")
+    const response = await updateUserSubscription(
+      {
+        action: "subscribe",
+        agent: "high_risk",
+      },
+      accessToken,
+    )
+    return {
+      success: response.success,
+      message: "AI trading subscription enabled",
+    }
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Failed to enable AI trading subscription"
+    return {
+      success: false,
+      message: errorMessage,
+    }
+  }
+}
+
