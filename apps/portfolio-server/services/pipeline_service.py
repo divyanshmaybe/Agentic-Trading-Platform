@@ -931,23 +931,45 @@ class PipelineService:
         return datetime.utcnow()
 
     async def _fetch_high_risk_user_ids(self, client: Any) -> List[str]:
+        """
+        Fetch user IDs with active high_risk trading agents.
+        Uses TradingAgent table instead of querying users table.
+        """
         try:
-            rows = await client.query_raw(
-                "SELECT id FROM users WHERE 'high_risk' = ANY(subscriptions)"
+            # Query TradingAgent table for active high_risk agents
+            agents = await client.tradingagent.find_many(
+                where={
+                    "agent_type": "high_risk",
+                    "status": "active",
+                },
+                include={
+                    "portfolio": True,
+                    "allocation": True,
+                }
             )
+            
+            if not agents:
+                self.logger.warning("No active high_risk trading agents found")
+                return []
+            
+            user_ids = []
+            for agent in agents:
+                if agent.portfolio and agent.portfolio.user_id:
+                    user_ids.append(str(agent.portfolio.user_id))
+            
+            # Remove duplicates
+            user_ids = list(set(user_ids))
+            
+            self.logger.info(
+                "Found %d active high_risk agent(s) for %d unique user(s)",
+                len(agents),
+                len(user_ids)
+            )
+            return user_ids
+            
         except Exception as exc:
-            self.logger.error("Failed to fetch high-risk users: %s", exc)
+            self.logger.error("Failed to fetch high-risk agents: %s", exc)
             return []
-
-        user_ids: List[str] = []
-        for row in rows or []:
-            if isinstance(row, Mapping):
-                user_id = row.get("id")
-            else:
-                user_id = None
-            if user_id:
-                user_ids.append(str(user_id))
-        return user_ids
 
     def _build_portfolio_snapshot(
         self,

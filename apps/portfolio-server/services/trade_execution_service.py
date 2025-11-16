@@ -736,10 +736,13 @@ class TradeExecutionService:
             agent_type = getattr(trade_record, "agent_type", None)
             if agent_id:
                 try:
-                    await client.tradingagent.update(
+                    # Update trading agent last_executed_at
+                    agent = await client.tradingagent.update(
                         where={"id": str(agent_id)},
                         data={"last_executed_at": datetime.utcnow()},
+                        include={"allocation": True},
                     )
+                    
                     self.logger.info(
                         "✅ Updated trading agent %s (%s) after trade execution: %s %s x %d @ ₹%.2f",
                         agent_id,
@@ -749,6 +752,29 @@ class TradeExecutionService:
                         executed_quantity,
                         executed_price,
                     )
+                    
+                    # Update PortfolioAllocation allocated_amount
+                    if agent.allocation:
+                        allocation = agent.allocation
+                        allocated_capital = float(getattr(trade_record, "allocated_capital", 0))
+                        
+                        # Calculate new allocated amount
+                        current_allocated = float(getattr(allocation, "allocated_amount", 0) or 0)
+                        new_allocated = self._as_decimal(current_allocated + allocated_capital)
+                        
+                        await client.portfolioallocation.update(
+                            where={"id": allocation.id},
+                            data={"allocated_amount": new_allocated},
+                        )
+                        
+                        self.logger.info(
+                            "✅ Updated allocation %s: allocated_amount %.2f → %.2f (+%.2f)",
+                            allocation.id,
+                            current_allocated,
+                            float(new_allocated),
+                            allocated_capital,
+                        )
+                        
                 except Exception as agent_exc:
                     self.logger.warning(
                         "Failed to update trading agent %s (%s) after execution: %s",

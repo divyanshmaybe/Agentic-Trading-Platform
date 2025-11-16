@@ -322,6 +322,8 @@ model TradeExecutionLog {
   broker_order_id   String?
   executed_price    Decimal? @db.Decimal(20, 4)
   executed_quantity Int      @default(0)
+  agent_id          String?
+  agent_type        String?
   kafka_status      String?
   error_message     String?
   metadata          Json?    @default("{}")
@@ -333,6 +335,7 @@ model TradeExecutionLog {
   @@index([user_id])
   @@index([status])
   @@index([portfolio_id])
+  @@index([agent_id])
   @@map("trade_execution_logs")
 }
 
