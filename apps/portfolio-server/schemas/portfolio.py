@@ -98,3 +98,57 @@ class TradeListResponse(BaseModel):
     page: int
     limit: int
     total: int
+
+
+class TradingAgentSummary(BaseModel):
+    id: str
+    portfolio_id: Optional[str]
+    portfolio_allocation_id: str
+    agent_type: str
+    agent_name: str
+    status: str
+    strategy_config: Optional[dict] = None
+    performance_metrics: Optional[dict] = None
+    last_executed_at: Optional[datetime] = None
+    error_count: int
+    last_error_message: Optional[str] = None
+    metadata: Optional[dict] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class TradingAgentListResponse(BaseModel):
+    items: List[TradingAgentSummary]
+    total: int
+
+
+class PortfolioAllocationSummary(BaseModel):
+    id: str
+    portfolio_id: str
+    allocation_type: str
+    target_weight: Decimal
+    current_weight: Decimal
+    allocated_amount: Decimal
+    current_value: Decimal
+    expected_return: Optional[Decimal] = None
+    expected_risk: Optional[Decimal] = None
+    regime: Optional[str] = None
+    pnl: Decimal
+    pnl_percentage: Decimal
+    drift_percentage: Decimal
+    requires_rebalancing: bool
+    metadata: Optional[dict] = None
+    created_at: datetime
+    updated_at: datetime
+    trading_agent: Optional[TradingAgentSummary] = None
+
+    class Config:
+        from_attributes = True
+
+
+class PortfolioAllocationListResponse(BaseModel):
+    items: List[PortfolioAllocationSummary]
+    total: int

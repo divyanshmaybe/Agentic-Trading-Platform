@@ -4,6 +4,10 @@ from .portfolio import (
     PositionListResponse,
     PositionSummary,
     TradeListResponse,
+    TradingAgentSummary,
+    TradingAgentListResponse,
+    PortfolioAllocationSummary,
+    PortfolioAllocationListResponse,
 )
 from .market import CandleData, MarketQuote, MarketQuoteResponse
 from .trade import PortfolioSnapshot, TradeCreate, TradeRequest, TradeResponse, TradeSummary
@@ -33,6 +37,10 @@ __all__ = [
     "PositionListResponse",
     "PositionSummary",
     "TradeListResponse",
+    "TradingAgentSummary",
+    "TradingAgentListResponse",
+    "PortfolioAllocationSummary",
+    "PortfolioAllocationListResponse",
     "CandleData",
     "MarketQuote",
     "MarketQuoteResponse",

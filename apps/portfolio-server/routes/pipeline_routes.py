@@ -2,9 +2,10 @@
 Pipeline Routes
 """
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from controllers.pipeline_controller import PipelineController
 from services.pipeline_service import PipelineService
+from utils.auth import get_authenticated_user
 
 
 def create_pipeline_routes(
@@ -17,8 +18,11 @@ def create_pipeline_routes(
     controller = PipelineController(pipeline_service, server_dir)
     
     @router.get("/status")
-    async def get_pipeline_status(request: Request):
-        """Get pipeline status"""
+    async def get_pipeline_status(
+        request: Request,
+        _: dict = Depends(get_authenticated_user),
+    ):
+        """Get pipeline status (requires authentication)"""
         return await controller.get_status(request)
     
     return router

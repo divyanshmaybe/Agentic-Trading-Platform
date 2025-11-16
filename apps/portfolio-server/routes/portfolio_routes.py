@@ -9,7 +9,14 @@ from prisma import Prisma
 
 from controllers.portfolio_controller import PortfolioController
 from db import prisma_client
-from schemas import HoldingResponse, PortfolioResponse, PositionListResponse, TradeListResponse
+from schemas import (
+    HoldingResponse,
+    PortfolioResponse,
+    PositionListResponse,
+    TradeListResponse,
+    TradingAgentListResponse,
+    PortfolioAllocationListResponse,
+)
 from utils.auth import get_authenticated_user
 
 
@@ -81,3 +88,21 @@ async def get_recent_trades(
         order_type=order_type,
         status_filter=status_filter,
     )
+
+
+@router.get("/trading-agents", response_model=TradingAgentListResponse)
+async def get_trading_agents(
+    controller: PortfolioController = Depends(get_portfolio_controller),
+    request_user: dict = Depends(get_authenticated_user),
+) -> TradingAgentListResponse:
+    """Get all trading agents for the authenticated user's portfolio"""
+    return await controller.get_trading_agents(request_user)
+
+
+@router.get("/allocations", response_model=PortfolioAllocationListResponse)
+async def get_portfolio_allocations(
+    controller: PortfolioController = Depends(get_portfolio_controller),
+    request_user: dict = Depends(get_authenticated_user),
+) -> PortfolioAllocationListResponse:
+    """Get all portfolio allocations for the authenticated user's portfolio"""
+    return await controller.get_portfolio_allocations(request_user)

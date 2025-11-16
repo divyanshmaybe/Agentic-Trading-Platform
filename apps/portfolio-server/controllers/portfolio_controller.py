@@ -17,6 +17,10 @@ from schemas import (
     PositionListResponse,
     PositionSummary,
     TradeListResponse,
+    TradingAgentListResponse,
+    TradingAgentSummary,
+    PortfolioAllocationListResponse,
+    PortfolioAllocationSummary,
 )
 from schemas.portfolio import TradeSummary as PortfolioTradeSummary
 
@@ -412,3 +416,117 @@ class PortfolioController:
         ]
 
         return TradeListResponse(items=summaries, page=page, limit=limit, total=total)
+
+    async def get_trading_agents(
+        self,
+        request_user: dict,
+        *,
+        target_user_id: Optional[str] = None,
+    ) -> TradingAgentListResponse:
+        """Get all trading agents for the user's portfolio"""
+        user_id = target_user_id or request_user.get("id")
+        if not user_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User id is required")
+
+        self._authorize_user(request_user, user_id)
+
+        portfolio = await self._get_portfolio_for_user(user_id, request_user.get("organization_id"))
+        if portfolio is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found for user")
+
+        agents = await self.prisma.tradingagent.find_many(
+            where={"portfolio_id": portfolio.id},
+            order={"created_at": "desc"},
+        )
+
+        summaries = [
+            TradingAgentSummary(
+                id=agent.id,
+                portfolio_id=agent.portfolio_id,
+                portfolio_allocation_id=agent.portfolio_allocation_id,
+                agent_type=agent.agent_type,
+                agent_name=agent.agent_name,
+                status=agent.status,
+                strategy_config=self._parse_metadata(agent.strategy_config),
+                performance_metrics=self._parse_metadata(agent.performance_metrics),
+                last_executed_at=agent.last_executed_at,
+                error_count=agent.error_count,
+                last_error_message=agent.last_error_message,
+                metadata=self._parse_metadata(agent.metadata),
+                created_at=agent.created_at,
+                updated_at=agent.updated_at,
+            )
+            for agent in agents
+        ]
+
+        return TradingAgentListResponse(items=summaries, total=len(summaries))
+
+    async def get_portfolio_allocations(
+        self,
+        request_user: dict,
+        *,
+        target_user_id: Optional[str] = None,
+    ) -> PortfolioAllocationListResponse:
+        """Get all portfolio allocations for the user's portfolio"""
+        user_id = target_user_id or request_user.get("id")
+        if not user_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User id is required")
+
+        self._authorize_user(request_user, user_id)
+
+        portfolio = await self._get_portfolio_for_user(user_id, request_user.get("organization_id"))
+        if portfolio is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found for user")
+
+        allocations = await self.prisma.portfolioallocation.find_many(
+            where={"portfolio_id": portfolio.id},
+            include={"tradingAgent": True},
+            order={"created_at": "asc"},
+        )
+
+        summaries = []
+        for allocation in allocations:
+            trading_agent = None
+            if allocation.tradingAgent:
+                agent = allocation.tradingAgent
+                trading_agent = TradingAgentSummary(
+                    id=agent.id,
+                    portfolio_id=agent.portfolio_id,
+                    portfolio_allocation_id=agent.portfolio_allocation_id,
+                    agent_type=agent.agent_type,
+                    agent_name=agent.agent_name,
+                    status=agent.status,
+                    strategy_config=self._parse_metadata(agent.strategy_config),
+                    performance_metrics=self._parse_metadata(agent.performance_metrics),
+                    last_executed_at=agent.last_executed_at,
+                    error_count=agent.error_count,
+                    last_error_message=agent.last_error_message,
+                    metadata=self._parse_metadata(agent.metadata),
+                    created_at=agent.created_at,
+                    updated_at=agent.updated_at,
+                )
+
+            summaries.append(
+                PortfolioAllocationSummary(
+                    id=allocation.id,
+                    portfolio_id=allocation.portfolio_id,
+                    allocation_type=allocation.allocation_type,
+                    target_weight=allocation.target_weight,
+                    current_weight=allocation.current_weight,
+                    allocated_amount=allocation.allocated_amount,
+                    current_value=allocation.current_value,
+                    expected_return=allocation.expected_return,
+                    expected_risk=allocation.expected_risk,
+                    regime=allocation.regime,
+                    pnl=allocation.pnl,
+                    pnl_percentage=allocation.pnl_percentage,
+                    drift_percentage=allocation.drift_percentage,
+                    requires_rebalancing=allocation.requires_rebalancing,
+                    metadata=self._parse_metadata(allocation.metadata),
+                    created_at=allocation.created_at,
+                    updated_at=allocation.updated_at,
+                    trading_agent=trading_agent,
+                )
+            )
+
+        return PortfolioAllocationListResponse(items=summaries, total=len(summaries))
