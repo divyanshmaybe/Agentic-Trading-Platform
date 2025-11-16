@@ -2,6 +2,7 @@ celery==5.5.3
 celery-redbeat==2.2.0
 confluent-kafka==2.12.2
 cvxpy==1.5.2
+docling==2.61.2
 fastapi==0.121.0
 google-generativeai==0.8.5
 hmmlearn==0.3.2
@@ -13,6 +14,7 @@ matplotlib==3.10.7
 numpy==1.26.4
 pandas==2.3.3
 pathway==0.26.4
+pdf2image==1.17.0
 pdfplumber==0.11.7
 prisma==0.15.0
 psutil==6.0.0
@@ -24,10 +26,11 @@ pyotp==2.9.0
 redis==5.2.1
 requests==2.32.5
 scikit-learn==1.7.2
-torch==2.3.1
+torch==2.6.0
 transformers==4.57.1
 typing-extensions==4.15.0
 unstructured==0.14.9
 uvicorn==0.38.0
 yfinance==0.2.51
 websockets==15.0.1
+brotli==1.2.0

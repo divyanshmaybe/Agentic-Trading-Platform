@@ -55,9 +55,9 @@ async def get_current_regime(
     description="Get historical regime classifications for time-series analysis"
 )
 async def get_regime_history(
+    _: Annotated[dict, Depends(get_authenticated_user)],
+    controller: Annotated[RegimeController, Depends(get_regime_controller)],
     limit: Annotated[int, Query(ge=1, le=1000, description="Maximum number of historical points")] = 100,
-    _: Annotated[dict, Depends(get_authenticated_user)] = None,
-    controller: Annotated[RegimeController, Depends(get_regime_controller)] = None
 ) -> RegimeHistoryResponse:
     """
     Get regime classification history.

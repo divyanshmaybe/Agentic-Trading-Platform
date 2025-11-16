@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from datetime import datetime
 from decimal import Decimal
 from typing import Dict, Literal, Optional
 
@@ -17,6 +18,16 @@ from schemas import (
     PositionListResponse,
     PositionSummary,
     TradeListResponse,
+    TradingAgentListResponse,
+    TradingAgentSummary,
+    PortfolioAllocationListResponse,
+    PortfolioAllocationSummary,
+    SnapshotListResponse,
+    SnapshotResponse,
+    AllocationDashboardSummary,
+    RecentTradeSummary,
+    PortfolioDashboardResponse,
+    AgentDashboardResponse,
 )
 from schemas.portfolio import TradeSummary as PortfolioTradeSummary
 
@@ -412,3 +423,387 @@ class PortfolioController:
         ]
 
         return TradeListResponse(items=summaries, page=page, limit=limit, total=total)
+
+    async def get_trading_agents(
+        self,
+        request_user: dict,
+        *,
+        target_user_id: Optional[str] = None,
+    ) -> TradingAgentListResponse:
+        """Get all trading agents for the user's portfolio"""
+        user_id = target_user_id or request_user.get("id")
+        if not user_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User id is required")
+
+        self._authorize_user(request_user, user_id)
+
+        portfolio = await self._get_portfolio_for_user(user_id, request_user.get("organization_id"))
+        if portfolio is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found for user")
+
+        agents = await self.prisma.tradingagent.find_many(
+            where={"portfolio_id": portfolio.id},
+            order={"created_at": "desc"},
+        )
+
+        summaries = [
+            TradingAgentSummary(
+                id=agent.id,
+                portfolio_id=agent.portfolio_id,
+                portfolio_allocation_id=agent.portfolio_allocation_id,
+                agent_type=agent.agent_type,
+                agent_name=agent.agent_name,
+                status=agent.status,
+                strategy_config=self._parse_metadata(agent.strategy_config),
+                performance_metrics=self._parse_metadata(agent.performance_metrics),
+                last_executed_at=agent.last_executed_at,
+                error_count=agent.error_count,
+                last_error_message=agent.last_error_message,
+                metadata=self._parse_metadata(agent.metadata),
+                created_at=agent.created_at,
+                updated_at=agent.updated_at,
+            )
+            for agent in agents
+        ]
+
+        return TradingAgentListResponse(items=summaries, total=len(summaries))
+
+    async def get_portfolio_allocations(
+        self,
+        request_user: dict,
+        *,
+        target_user_id: Optional[str] = None,
+    ) -> PortfolioAllocationListResponse:
+        """Get all portfolio allocations for the user's portfolio"""
+        user_id = target_user_id or request_user.get("id")
+        if not user_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User id is required")
+
+        self._authorize_user(request_user, user_id)
+
+        portfolio = await self._get_portfolio_for_user(user_id, request_user.get("organization_id"))
+        if portfolio is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found for user")
+
+        allocations = await self.prisma.portfolioallocation.find_many(
+            where={"portfolio_id": portfolio.id},
+            include={"tradingAgent": True},
+            order={"created_at": "asc"},
+        )
+
+        summaries = []
+        for allocation in allocations:
+            trading_agent = None
+            if allocation.tradingAgent:
+                agent = allocation.tradingAgent
+                trading_agent = TradingAgentSummary(
+                    id=agent.id,
+                    portfolio_id=agent.portfolio_id,
+                    portfolio_allocation_id=agent.portfolio_allocation_id,
+                    agent_type=agent.agent_type,
+                    agent_name=agent.agent_name,
+                    status=agent.status,
+                    strategy_config=self._parse_metadata(agent.strategy_config),
+                    performance_metrics=self._parse_metadata(agent.performance_metrics),
+                    last_executed_at=agent.last_executed_at,
+                    error_count=agent.error_count,
+                    last_error_message=agent.last_error_message,
+                    metadata=self._parse_metadata(agent.metadata),
+                    created_at=agent.created_at,
+                    updated_at=agent.updated_at,
+                )
+
+            summaries.append(
+                PortfolioAllocationSummary(
+                    id=allocation.id,
+                    portfolio_id=allocation.portfolio_id,
+                    allocation_type=allocation.allocation_type,
+                    target_weight=allocation.target_weight,
+                    current_weight=allocation.current_weight,
+                    allocated_amount=allocation.allocated_amount,
+                    current_value=allocation.current_value,
+                    expected_return=allocation.expected_return,
+                    expected_risk=allocation.expected_risk,
+                    regime=allocation.regime,
+                    pnl=allocation.pnl,
+                    pnl_percentage=allocation.pnl_percentage,
+                    drift_percentage=allocation.drift_percentage,
+                    requires_rebalancing=allocation.requires_rebalancing,
+                    metadata=self._parse_metadata(allocation.metadata),
+                    created_at=allocation.created_at,
+                    updated_at=allocation.updated_at,
+                    trading_agent=trading_agent,
+                )
+            )
+
+        return PortfolioAllocationListResponse(items=summaries, total=len(summaries))
+
+    async def get_dashboard(
+        self,
+        request_user: dict,
+        *,
+        target_user_id: Optional[str] = None,
+    ) -> PortfolioDashboardResponse:
+        """Get aggregated portfolio dashboard data"""
+        user_id = target_user_id or request_user.get("id")
+        if not user_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User id is required")
+
+        self._authorize_user(request_user, user_id)
+
+        portfolio = await self._get_portfolio_for_user(user_id, request_user.get("organization_id"))
+        if portfolio is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found for user")
+
+        # Get portfolio statistics
+        positions = await self.prisma.position.find_many(
+            where={"portfolio_id": portfolio.id, "status": "open"},
+        )
+        
+        agents = await self.prisma.tradingagent.find_many(
+            where={"portfolio_id": portfolio.id, "status": "active"},
+        )
+        
+        allocations = await self.prisma.portfolioallocation.find_many(
+            where={"portfolio_id": portfolio.id},
+        )
+        
+        # Get recent trades (last 10)
+        recent_trades = await self.prisma.trade.find_many(
+            where={"portfolio_id": portfolio.id},
+            order={"created_at": "desc"},
+            take=10,
+        )
+        
+        # Calculate cash balance (look for cashAvailable allocation or use investment_amount - current_value)
+        cash_allocation = next(
+            (a for a in allocations if a.allocation_type == "cashAvailable"),
+            None
+        )
+        cash_balance = cash_allocation.current_value if cash_allocation else (
+            portfolio.investment_amount - portfolio.current_value
+        )
+        
+        # Build allocation summaries
+        allocation_summaries = [
+            AllocationDashboardSummary(
+                allocation_type=alloc.allocation_type,
+                target_weight=alloc.target_weight,
+                allocated_amount=alloc.allocated_amount,
+                current_value=alloc.current_value,
+                realized_pnl=getattr(alloc, "realized_pnl", Decimal("0")) or Decimal("0"),
+                pnl_percentage=alloc.pnl_percentage,
+            )
+            for alloc in allocations
+            if alloc.allocation_type != "cashAvailable"  # Exclude cash from dashboard allocations
+        ]
+        
+        # Build recent trade summaries
+        recent_trade_summaries = [
+            RecentTradeSummary(
+                id=trade.id,
+                symbol=trade.symbol,
+                side=trade.side,
+                quantity=trade.quantity,
+                executed_price=trade.executed_price,
+                executed_at=trade.execution_time,
+                realized_pnl=getattr(trade, "realized_pnl", None),
+            )
+            for trade in recent_trades
+        ]
+        
+        return PortfolioDashboardResponse(
+            portfolio_id=portfolio.id,
+            portfolio_name=portfolio.portfolio_name,
+            investment_amount=portfolio.investment_amount,
+            current_value=portfolio.current_value,
+            realized_pnl=getattr(portfolio, "realized_pnl", Decimal("0")) or Decimal("0"),
+            total_positions=len(positions),
+            active_agents=len(agents),
+            cash_balance=cash_balance,
+            allocations=allocation_summaries,
+            recent_trades=recent_trade_summaries,
+        )
+
+    async def get_agent_dashboard(
+        self,
+        agent_id: str,
+        request_user: dict,
+    ) -> AgentDashboardResponse:
+        """Get agent-specific dashboard data"""
+        # Get agent with related data
+        agent = await self.prisma.tradingagent.find_unique(
+            where={"id": agent_id},
+            include={
+                "portfolio": True,
+                "allocation": True,
+                "positions": {
+                    "where": {"status": "open"},
+                },
+                "trades": {
+                    "order_by": {"created_at": "desc"},
+                    "take": 10,
+                },
+            },
+        )
+        
+        if not agent:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+        
+        # Authorize user has access to portfolio
+        portfolio = agent.portfolio
+        if portfolio:
+            user_id = portfolio.customer_id
+            self._authorize_user(request_user, user_id)
+        
+        # Calculate portfolio value from positions
+        positions = getattr(agent, "positions", []) or []
+        portfolio_value = sum(
+            (getattr(p, "current_price", Decimal("0")) or Decimal("0")) * Decimal(str(getattr(p, "quantity", 0)))
+            for p in positions
+        )
+        
+        # Get realized P&L from agent
+        realized_pnl = getattr(agent, "realized_pnl", Decimal("0")) or Decimal("0")
+        
+        # Build position summaries
+        position_summaries = [
+            PositionSummary(
+                id=pos.id,
+                portfolio_id=pos.portfolio_id,
+                symbol=pos.symbol,
+                exchange=pos.exchange,
+                segment=pos.segment,
+                quantity=pos.quantity,
+                average_buy_price=pos.average_buy_price,
+                current_price=pos.current_price,
+                current_value=pos.current_value,
+                pnl=pos.pnl,
+                pnl_percentage=pos.pnl_percentage,
+                position_type=pos.position_type,
+                status=pos.status,
+                updated_at=pos.updated_at,
+            )
+            for pos in positions
+        ]
+        
+        # Build allocation summary if exists
+        allocation_summary = None
+        if agent.allocation:
+            alloc = agent.allocation
+            allocation_summary = PortfolioAllocationSummary(
+                id=alloc.id,
+                portfolio_id=alloc.portfolio_id,
+                allocation_type=alloc.allocation_type,
+                target_weight=alloc.target_weight,
+                current_weight=alloc.current_weight,
+                allocated_amount=alloc.allocated_amount,
+                current_value=alloc.current_value,
+                expected_return=alloc.expected_return,
+                expected_risk=alloc.expected_risk,
+                regime=alloc.regime,
+                pnl=alloc.pnl,
+                pnl_percentage=alloc.pnl_percentage,
+                drift_percentage=alloc.drift_percentage,
+                requires_rebalancing=alloc.requires_rebalancing,
+                metadata=self._parse_metadata(alloc.metadata),
+                created_at=alloc.created_at,
+                updated_at=alloc.updated_at,
+                trading_agent=None,  # Don't nest recursively
+            )
+        
+        # Build trade summaries
+        trades = getattr(agent, "trades", []) or []
+        trade_summaries = [
+            PortfolioTradeSummary(
+                id=trade.id,
+                portfolio_id=trade.portfolio_id,
+                symbol=trade.symbol,
+                side=trade.side,
+                order_type=trade.order_type,
+                quantity=trade.quantity,
+                executed_quantity=trade.executed_quantity,
+                executed_price=trade.executed_price,
+                status=trade.status,
+                net_amount=trade.net_amount,
+                trade_type=trade.trade_type,
+                created_at=trade.created_at,
+                execution_time=trade.execution_time,
+            )
+            for trade in trades
+        ]
+        
+        return AgentDashboardResponse(
+            agent_id=agent.id,
+            agent_name=agent.agent_name,
+            agent_type=agent.agent_type,
+            portfolio_id=agent.portfolio_id or "",
+            status=agent.status,
+            portfolio_value=portfolio_value,
+            realized_pnl=realized_pnl,
+            positions_count=len(positions),
+            positions=position_summaries,
+            allocation=allocation_summary,
+            performance_metrics=self._parse_metadata(agent.performance_metrics),
+            recent_trades=trade_summaries,
+        )
+
+    async def get_snapshots(
+        self,
+        request_user: dict,
+        *,
+        agent_id: Optional[str] = None,
+        limit: int = 100,
+        target_user_id: Optional[str] = None,
+    ) -> SnapshotListResponse:
+        """Get snapshot history for agent or portfolio"""
+        from services.snapshot_service import TradingAgentSnapshotService
+        
+        user_id = target_user_id or request_user.get("id")
+        if not user_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User id is required")
+
+        self._authorize_user(request_user, user_id)
+
+        portfolio = await self._get_portfolio_for_user(user_id, request_user.get("organization_id"))
+        if portfolio is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found for user")
+
+        service = TradingAgentSnapshotService(logger=self.logger)
+        
+        if agent_id:
+            # Get agent-specific snapshots
+            # Verify agent belongs to user's portfolio
+            agent = await self.prisma.tradingagent.find_unique(
+                where={"id": agent_id},
+            )
+            if not agent or agent.portfolio_id != portfolio.id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+            
+            snapshot_data = await service.get_agent_snapshot_history(agent_id, limit=limit)
+        else:
+            # Get aggregated portfolio snapshots
+            snapshot_data = await service.get_portfolio_snapshot_history(portfolio.id, limit=limit)
+        
+        snapshots = []
+        for item in snapshot_data:
+            # Parse snapshot_at - handle both datetime objects and ISO strings
+            snapshot_at_str = item["snapshot_at"]
+            if isinstance(snapshot_at_str, datetime):
+                snapshot_at = snapshot_at_str
+            else:
+                # Handle ISO string
+                snapshot_at_str = snapshot_at_str.replace("Z", "+00:00")
+                snapshot_at = datetime.fromisoformat(snapshot_at_str)
+            
+            snapshots.append(
+                SnapshotResponse(
+                    snapshot_at=snapshot_at,
+                    portfolio_value=Decimal(str(item["portfolio_value"])),
+                    realized_pnl=Decimal(str(item["realized_pnl"])),
+                    positions_count=item["positions_count"],
+                    agents_count=item.get("agents_count"),
+                )
+            )
+        
+        return SnapshotListResponse(items=snapshots, total=len(snapshots))

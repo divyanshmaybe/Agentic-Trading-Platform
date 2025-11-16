@@ -98,15 +98,35 @@ class TradeExecutionService:
             data["agent_id"] = job_row["agent_id"]
 
         record = await client.tradeexecutionlog.create(data=data)
-        self.logger.info(
-            "Logged trade request %s for portfolio %s (%s %s x %s) - triggered by %s",
-            record.id,
-            data["portfolio_id"],
-            data["side"],
-            data["symbol"],
-            data["quantity"],
-            metadata.get("triggered_by", "unknown"),
-        )
+        
+        # Extract agent information for logging
+        agent_id = job_row.get("agent_id")
+        agent_type = job_row.get("agent_type")
+        agent_status = job_row.get("agent_status")
+        
+        if agent_id:
+            self.logger.info(
+                "✅ Logged trade request %s for portfolio %s | Agent %s (%s, %s) | %s %s x %d | Triggered by %s",
+                record.id,
+                data.get("portfolio_id", "unknown"),
+                agent_id,
+                agent_type or "unknown",
+                agent_status or "unknown",
+                data["side"],
+                data["symbol"],
+                data["quantity"],
+                metadata.get("triggered_by", "unknown"),
+            )
+        else:
+            self.logger.info(
+                "✅ Logged trade request %s for portfolio %s (%s %s x %s) - triggered by %s (no agent)",
+                record.id,
+                data.get("portfolio_id", "unknown"),
+                data["side"],
+                data["symbol"],
+                data["quantity"],
+                metadata.get("triggered_by", "unknown"),
+            )
         return TradeExecutionRecord(
             id=record.id,
             request_id=data["request_id"],
@@ -245,10 +265,44 @@ class TradeExecutionService:
                 executed_quantity=executed_quantity,
                 metadata={"simulation": True},
             )
-            self.logger.info("✅ Simulated execution for trade %s", trade_id)
+            
+            # Log trade execution with agent information
+            agent_id = getattr(record, "agent_id", None)
+            agent_type = getattr(record, "agent_type", None)
+            symbol = str(getattr(record, "symbol", ""))
+            side = str(getattr(record, "side", ""))
+            quantity = int(record.quantity)
+            
+            if agent_id:
+                self.logger.info(
+                    "✅ Simulated trade execution: Trade %s | Agent %s (%s) | %s %s x %d @ ₹%.2f",
+                    trade_id,
+                    agent_id,
+                    agent_type or "unknown",
+                    side,
+                    symbol,
+                    quantity,
+                    executed_price,
+                )
+            else:
+                self.logger.info(
+                    "✅ Simulated trade execution: Trade %s | %s %s x %d @ ₹%.2f (no agent)",
+                    trade_id,
+                    side,
+                    symbol,
+                    quantity,
+                    executed_price,
+                )
             
             # Create TP/SL orders for NSE pipeline trades
             await self._create_tp_sl_orders(
+                record,
+                executed_price=executed_price,
+                executed_quantity=executed_quantity,
+            )
+            
+            # Calculate and update realized P&L for SELL trades
+            await self._calculate_realized_pnl(
                 record,
                 executed_price=executed_price,
                 executed_quantity=executed_quantity,
@@ -419,6 +473,167 @@ class TradeExecutionService:
                 exc_info=True
             )
     
+    async def _calculate_realized_pnl(
+        self,
+        trade_record: Any,
+        *,
+        executed_price: float,
+        executed_quantity: int,
+    ) -> None:
+        """
+        Calculate and accumulate realized P&L for SELL trades only.
+        
+        Realized P&L = (sell_price - average_buy_price) * quantity
+        Accumulates at Trade, TradingAgent, PortfolioAllocation, and Portfolio levels.
+        
+        Args:
+            trade_record: The executed trade log record
+            executed_price: Price at which the trade was executed
+            executed_quantity: Quantity that was executed
+        """
+        client = await self._ensure_client()
+        
+        side = str(getattr(trade_record, "side", "")).upper()
+        
+        # Only calculate realized P&L for SELL trades
+        if side != "SELL":
+            return
+        
+        portfolio_id = str(getattr(trade_record, "portfolio_id", ""))
+        symbol = str(getattr(trade_record, "symbol", ""))
+        agent_id = getattr(trade_record, "agent_id", None)
+        trade_log_id = str(getattr(trade_record, "id", ""))
+        
+        if not portfolio_id or not symbol:
+            self.logger.warning(
+                "Cannot calculate realized P&L: missing portfolio_id or symbol for trade %s",
+                trade_log_id,
+            )
+            return
+        
+        try:
+            # Find the position for this symbol to get average_buy_price
+            position = await client.position.find_first(
+                where={
+                    "portfolio_id": portfolio_id,
+                    "symbol": {"equals": symbol, "mode": "insensitive"},
+                    "status": "open",
+                },
+                order={"created_at": "desc"},  # Get most recent position
+            )
+            
+            if not position:
+                self.logger.warning(
+                    "Cannot calculate realized P&L: no open position found for %s in portfolio %s",
+                    symbol,
+                    portfolio_id,
+                )
+                return
+            
+            average_buy_price = float(getattr(position, "average_buy_price", 0))
+            if average_buy_price == 0:
+                self.logger.warning(
+                    "Cannot calculate realized P&L: invalid average_buy_price for position %s",
+                    symbol,
+                )
+                return
+            
+            # Calculate realized P&L
+            realized_pnl = (executed_price - average_buy_price) * executed_quantity
+            realized_pnl_decimal = self._as_decimal(realized_pnl)
+            
+            self.logger.info(
+                "💰 Realized P&L for SELL trade: %s %d @ ₹%.2f (avg buy: ₹%.2f) = ₹%.2f",
+                symbol,
+                executed_quantity,
+                executed_price,
+                average_buy_price,
+                realized_pnl,
+            )
+            
+            # Update Trade record (if exists - TradeExecutionLog may not have a Trade yet)
+            # Try to find Trade by trade_log_id or create reference
+            try:
+                # Try to find existing Trade linked to this execution
+                existing_trade = await client.trade.find_first(
+                    where={
+                        "portfolio_id": portfolio_id,
+                        "symbol": {"equals": symbol, "mode": "insensitive"},
+                        "side": side,
+                        "executed_price": executed_price,
+                        "executed_quantity": executed_quantity,
+                    },
+                    order={"created_at": "desc"},
+                )
+                
+                if existing_trade:
+                    await client.trade.update(
+                        where={"id": existing_trade.id},
+                        data={"realized_pnl": realized_pnl_decimal},
+                    )
+            except Exception as trade_exc:
+                self.logger.debug("No Trade record found to update with realized P&L: %s", trade_exc)
+            
+            # Accumulate realized P&L at Portfolio level
+            portfolio = await client.portfolio.find_unique(where={"id": portfolio_id})
+            if portfolio:
+                current_portfolio_pnl = float(getattr(portfolio, "realized_pnl", 0) or 0)
+                new_portfolio_pnl = self._as_decimal(current_portfolio_pnl + realized_pnl)
+                await client.portfolio.update(
+                    where={"id": portfolio_id},
+                    data={"realized_pnl": new_portfolio_pnl},
+                )
+            
+            # Accumulate realized P&L at Allocation and Agent levels
+            if agent_id:
+                try:
+                    agent = await client.tradingagent.find_unique(
+                        where={"id": str(agent_id)},
+                        include={"allocation": True},
+                    )
+                    
+                    if agent:
+                        # Update TradingAgent realized P&L
+                        current_agent_pnl = float(getattr(agent, "realized_pnl", 0) or 0)
+                        new_agent_pnl = self._as_decimal(current_agent_pnl + realized_pnl)
+                        await client.tradingagent.update(
+                            where={"id": str(agent_id)},
+                            data={"realized_pnl": new_agent_pnl},
+                        )
+                        
+                        # Update PortfolioAllocation realized P&L
+                        allocation = agent.allocation
+                        if allocation:
+                            current_allocation_pnl = float(getattr(allocation, "realized_pnl", 0) or 0)
+                            new_allocation_pnl = self._as_decimal(current_allocation_pnl + realized_pnl)
+                            await client.portfolioallocation.update(
+                                where={"id": allocation.id},
+                                data={"realized_pnl": new_allocation_pnl},
+                            )
+                            
+                            self.logger.info(
+                                "✅ Accumulated realized P&L: Agent %s (+₹%.2f), Allocation %s (+₹%.2f), Portfolio %s (+₹%.2f)",
+                                agent_id,
+                                realized_pnl,
+                                allocation.id,
+                                realized_pnl,
+                                portfolio_id,
+                                realized_pnl,
+                            )
+                except Exception as agent_exc:
+                    self.logger.warning(
+                        "Failed to update agent/allocation realized P&L: %s",
+                        agent_exc,
+                    )
+            
+        except Exception as exc:
+            self.logger.error(
+                "Failed to calculate realized P&L for trade %s: %s",
+                trade_log_id,
+                exc,
+                exc_info=True,
+            )
+    
     async def _update_portfolio_allocation(
         self,
         trade_record: Any,
@@ -518,16 +733,27 @@ class TradeExecutionService:
             )
             
             agent_id = getattr(trade_record, "agent_id", None)
+            agent_type = getattr(trade_record, "agent_type", None)
             if agent_id:
                 try:
                     await client.tradingagent.update(
                         where={"id": str(agent_id)},
                         data={"last_executed_at": datetime.utcnow()},
                     )
+                    self.logger.info(
+                        "✅ Updated trading agent %s (%s) after trade execution: %s %s x %d @ ₹%.2f",
+                        agent_id,
+                        agent_type or "unknown",
+                        side,
+                        symbol,
+                        executed_quantity,
+                        executed_price,
+                    )
                 except Exception as agent_exc:
                     self.logger.warning(
-                        "Failed to update trading agent %s after execution: %s",
+                        "Failed to update trading agent %s (%s) after execution: %s",
                         agent_id,
+                        agent_type or "unknown",
                         agent_exc,
                     )
 

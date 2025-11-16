@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import sys
 from datetime import datetime
 from typing import Dict, List, Set
 
@@ -7,9 +9,15 @@ from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, Field
 from prisma import Prisma
 
+# Add middleware path to sys.path for internal auth import
+PROJECT_ROOT = os.path.join(os.path.dirname(__file__), "../../..")
+MIDDLEWARE_PATH = os.path.join(PROJECT_ROOT, "middleware/py")
+if MIDDLEWARE_PATH not in sys.path:
+    sys.path.insert(0, MIDDLEWARE_PATH)
+
 from db import prisma_client
 from workers.allocation_tasks import _ensure_trading_agent  # type: ignore
-from middleware.internal_auth_middleware import internal_auth
+from internal_auth_middleware import internal_auth  # type: ignore
 
 
 router = APIRouter(

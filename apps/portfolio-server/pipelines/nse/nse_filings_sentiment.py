@@ -252,7 +252,11 @@ def download_and_parse_pdf(url: str, filename: str) -> str:
         # Suppress pdfplumber warnings about invalid color values
         warnings.filterwarnings("ignore", message=".*Cannot set gray.*")
         
-        print(f"[PIPELINE] Downloading PDF: {filename}")
+        if not url or not url.strip():
+            print(f"[WARN] Empty PDF URL for {filename}, skipping download")
+            return ""
+        
+        print(f"[PIPELINE] Downloading PDF: {filename} from {url[:100]}...")
         
         # Use unique temporary file per worker to avoid race conditions
         os.makedirs("docs", exist_ok=True)
@@ -267,14 +271,28 @@ def download_and_parse_pdf(url: str, filename: str) -> str:
                          "Chrome/124.0.0.0 Safari/537.36"
         }
         
-        response = requests.get(url, headers=headers, stream=True, timeout=15)
-        response.raise_for_status()
+        # Ensure URL is complete (some PDFs might be relative URLs)
+        if not url.startswith('http'):
+            url = f"https://www.nseindia.com{url}"
         
-        with open(path, "wb") as f:
-            for chunk in response.iter_content(8192):
-                f.write(chunk)
-        
-        print(f"[PIPELINE] PDF downloaded: {filename}, extracting text...")
+        try:
+            response = requests.get(url, headers=headers, stream=True, timeout=30)
+            response.raise_for_status()
+            
+            print(f"[PIPELINE] PDF download started: {filename} ({response.headers.get('Content-Length', 'unknown')} bytes)")
+            
+            with open(path, "wb") as f:
+                for chunk in response.iter_content(8192):
+                    f.write(chunk)
+            
+            file_size = os.path.getsize(path)
+            print(f"[PIPELINE] PDF downloaded: {filename} ({file_size} bytes), extracting text...")
+        except requests.exceptions.RequestException as e:
+            print(f"[ERROR] Failed to download PDF {filename} from {url}: {e}")
+            return ""
+        except Exception as e:
+            print(f"[ERROR] Unexpected error downloading PDF {filename}: {e}")
+            return ""
         
         # Extract text using pdfplumber (suppress warnings)
         text = ""
@@ -342,6 +360,17 @@ def fetch_stock_data(symbol: str, filing_time: str) -> str:
     except Exception:
         filing_dt = datetime.utcnow()
 
+    # Check if we're within market hours (NSE: 9:15 AM - 3:30 PM IST)
+    current_time = filing_dt.time()
+    market_open_time = datetime.strptime(f"{MARKET_OPEN[0]}:{MARKET_OPEN[1]}", "%H:%M").time()
+    market_close_time = datetime.strptime(f"{MARKET_CLOSE[0]}:{MARKET_CLOSE[1]}", "%H:%M").time()
+    
+    is_market_hours = market_open_time <= current_time <= market_close_time
+    
+    if not is_market_hours:
+        # Market is closed - return a message indicating this
+        return f"Market closed (NSE hours: {MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d} - {MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST). Filing time: {filing_time}"
+
     try:
         service = get_market_data_service()
         adapter = getattr(service, "adapter", None)
@@ -375,8 +404,14 @@ def fetch_stock_data(symbol: str, filing_time: str) -> str:
         df["timestamp"] = pd.to_datetime(df["timestamp"]).astype(str)
         return df.to_json(orient="records")
     except Exception as exc:
-        print(f"[WARN] Market service candle fetch failed for {symbol}: {exc}")
-        return f"Error fetching data: {exc}"
+        error_msg = str(exc)
+        # Check if error is due to market closure
+        if "Something Went Wrong" in error_msg or "market" in error_msg.lower() or "closed" in error_msg.lower():
+            print(f"[INFO] Market data unavailable for {symbol} (likely market closed or API issue): {error_msg[:100]}")
+            return f"Market data unavailable (market may be closed or API issue)"
+        else:
+            print(f"[WARN] Market service candle fetch failed for {symbol}: {exc}")
+            return f"Error fetching data: {exc}"
 
 
 # ============================================================================
@@ -441,11 +476,16 @@ def generate_trading_signal(
     Generate trading signal using LLM
     Returns structured response with signal and explanation
     """
-    print("[PIPELINE] Generating trading signal with LLM...")
-    
     # Load API key from environment if not provided or empty
     if not api_key or api_key.strip() == "":
         api_key = os.getenv("GEMINI_API_KEY", "")
+    
+    # Validate inputs
+    if not text or not text.strip():
+        print("[WARN] Empty text provided to generate_trading_signal")
+        return "Error: Empty text content"
+    
+    print(f"[PIPELINE] Generating trading signal with LLM (text length: {len(text)} chars)...")
     user_prompt = f"""
 You are a financial analysis model capable of making real-time trading decisions based on corporate filings, announcements, and financial news.
 
@@ -692,6 +732,10 @@ def create_nse_filings_pipeline(
     
     # Step 1: Download PDFs and extract filenames
     print("[SENTIMENT] Step 1: Processing filings from scraper...")
+    
+    # Add logging to see if we're receiving data
+    filings_count = filings_source.select(count=pw.reducers.count())
+    
     filings_with_paths = filings_source.select(
         *pw.this,
         filename=pw.apply(lambda url: url.split("/")[-1] if url else "", pw.this.attchmntFile),
@@ -699,11 +743,14 @@ def create_nse_filings_pipeline(
     
     # Step 2: Download and parse PDFs
     print("[SENTIMENT] Step 2: Downloading and parsing PDFs...")
+    print("[SENTIMENT] Waiting for announcements from scraper...")
+    
     filings_with_text = filings_with_paths.select(
         symbol=pw.this.symbol,
         desc=pw.this.desc,
         sort_date=pw.this.sort_date,
         attchmntFile=pw.this.attchmntFile,
+        filename=pw.this.filename,
         text=download_and_parse_pdf(pw.this.attchmntFile, pw.this.filename),
     ).filter(pw.this.text != "")
     
@@ -720,6 +767,11 @@ def create_nse_filings_pipeline(
     
     # Step 4: Generate trading signals using LLM
     print("[SENTIMENT] Step 4: Generating trading signals with LLM...")
+    
+    # Check if Gemini API key is available
+    if not GEMINI_API_KEY or not GEMINI_API_KEY.strip():
+        print("[WARN] GEMINI_API_KEY not set - trading signals will fail!")
+    
     filings_with_responses = filings_enriched.select(
         *pw.this,
         llm_response=generate_trading_signal(

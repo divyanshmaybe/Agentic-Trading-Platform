@@ -284,47 +284,91 @@ class NSEScraperSubject(ConnectorSubject):
         
         try:
             # Establish session (required by NSE)
+            print("[DEBUG] Establishing NSE session...")
             session.get(NSE_BASE_URL, headers=headers, timeout=10)
             time.sleep(1)
             session.get(NSE_ANNOUNCEMENTS_URL, headers=headers, timeout=10)
             time.sleep(1)
             
             # Fetch from API
+            print(f"[DEBUG] Fetching from NSE API: {NSE_API_URL}")
             response = session.get(NSE_API_URL, headers=headers, timeout=15)
+            print(f"[DEBUG] API response status: {response.status_code}")
+            
+            if response.status_code != 200:
+                print(f"[ERROR] API returned status {response.status_code}: {response.text[:200]}")
+                return []
+            
             response.raise_for_status()
             
-            # Handle Brotli compression if requests didn't auto-decompress
-            if response.headers.get('Content-Encoding') == 'br':
-                try:
-                    # Try to parse as JSON first (requests may have auto-decompressed)
-                    data = response.json()
-                except (json.JSONDecodeError, UnicodeDecodeError):
-                    # Still compressed, decompress manually
+            # Handle Brotli compression - requests library usually auto-decompresses
+            # But if Content-Encoding header says 'br', we need to handle it
+            content_encoding = response.headers.get('Content-Encoding', '').lower()
+            
+            try:
+                # Try to parse as JSON - requests should have auto-decompressed if brotli is installed
+                # response.text should work even without brotli if requests handles it
+                if content_encoding == 'br':
+                    # Try response.json() first (should work if requests auto-decompressed)
                     try:
-                        import brotli
-                        decompressed = brotli.decompress(response.content)
-                        data = json.loads(decompressed.decode('utf-8'))
-                    except Exception:
-                        return []
-            else:
-                # Parse JSON directly
-                data = response.json()
+                        data = response.json()
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        # Try using response.text which might have been auto-decompressed
+                        try:
+                            data = json.loads(response.text)
+                        except (json.JSONDecodeError, UnicodeDecodeError):
+                            # Last resort: manual decompression if brotli module is available
+                            try:
+                                import brotli
+                                decompressed = brotli.decompress(response.content)
+                                data = json.loads(decompressed.decode('utf-8'))
+                            except ImportError:
+                                print("[ERROR] Brotli compression detected but 'brotli' module not installed.")
+                                print("[ERROR] Please install: pip install brotli")
+                                print("[ERROR] Or: pip install brotlipy")
+                                return []
+                            except Exception as e:
+                                print(f"[ERROR] Failed to decompress Brotli response: {e}")
+                                return []
+                else:
+                    # Not Brotli-compressed, parse directly
+                    data = response.json()
+            except json.JSONDecodeError as e:
+                print(f"[ERROR] Failed to parse JSON: {e}")
+                print(f"[DEBUG] Content-Type: {response.headers.get('Content-Type')}")
+                print(f"[DEBUG] Content-Encoding: {content_encoding}")
+                print(f"[DEBUG] Response text (first 500 chars): {response.text[:500] if hasattr(response, 'text') else 'N/A'}")
+                return []
             
             if not isinstance(data, list):
+                print(f"[WARN] API returned non-list data: {type(data)}")
+                if isinstance(data, dict):
+                    # Sometimes API returns error dict
+                    print(f"[DEBUG] Response dict: {data}")
                 return []
+            
+            print(f"[INFO] Fetched {len(data)} announcements from API")
             
             # Convert to our format
             announcements = []
             for item in data:
                 try:
                     announcements.append(normalize_api_announcement(item))
-                except Exception:
+                except Exception as e:
+                    print(f"[WARN] Failed to normalize announcement: {e}")
                     continue  # Skip invalid items
             
             return announcements
             
+        except requests.exceptions.RequestException as e:
+            print(f"[ERROR] API request failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return []  # Return empty list, keep polling
         except Exception as e:
-            print(f"[ERROR] API fetch failed: {e}")
+            print(f"[ERROR] Unexpected error in API fetch: {e}")
+            import traceback
+            traceback.print_exc()
             return []  # Return empty list, keep polling
     
     def run(self) -> None:
@@ -344,8 +388,14 @@ class NSEScraperSubject(ConnectorSubject):
                     time.sleep(self._refresh_interval)
                     continue
                 
+                # Check if we should process all announcements (for testing)
+                process_all = os.getenv("NSE_PROCESS_ALL_ANNOUNCEMENTS", "false").lower() in {"1", "true", "yes"}
+                if process_all:
+                    print("[INFO] Processing ALL announcements (NSE_PROCESS_ALL_ANNOUNCEMENTS=true)")
+                
                 # Process only new announcements
                 new_count = 0
+                emitted_count = 0
                 for ann in announcements:
                     try:
                         seq_id = ann.get('seq_id', '')
@@ -366,52 +416,88 @@ class NSEScraperSubject(ConnectorSubject):
                             print(f"[DEBUG] PDF already processed, skipping: {pdf_url}")
                             continue
                         
-                        # Check XBRL relevance before emitting
+                        # Check XBRL relevance before emitting, but also allow announcements with PDF attachments
                         xbrl_url = ann.pop('xbrl_url', '')
-                        if xbrl_url:
+                        pdf_url = ann.get('attchmntFile', '')
+                        desc = ann.get('desc', '')
+                        symbol = ann.get('symbol', '')
+                        
+                        is_relevant = process_all  # If process_all is True, skip filtering
+                        
+                        if not is_relevant and xbrl_url:
                             try:
                                 xbrl_data = fetch_xbrl_content(xbrl_url)
                                 if is_relevant_announcement(xbrl_data):
-                                    print(f"[INFO] New relevant: {ann.get('symbol', '')} - {ann.get('desc', '')}")
+                                    is_relevant = True
+                                    print(f"[INFO] ✓ New relevant XBRL: {symbol} - {desc[:80]}")
                                     
                                     # Update PDF URL from XBRL if available
                                     if xbrl_data and 'attachment_url' in xbrl_data:
                                         ann['attchmntFile'] = xbrl_data['attachment_url']
                                         pdf_url = ann['attchmntFile']
-                                    
-                                    # Track processed file
-                                    if pdf_url:
-                                        self._processed_files.add(pdf_url)
-                                    
-                                    # Emit to Pathway table (seq_id must be first as it's the primary key)
-                                    self.next(
-                                        seq_id=seq_id,
-                                        symbol=ann.get('symbol', ''),
-                                        desc=ann.get('desc', ''),
-                                        dt=ann.get('dt', ''),
-                                        attchmntFile=pdf_url,
-                                        sm_name=ann.get('sm_name', ''),
-                                        sm_isin=ann.get('sm_isin', ''),
-                                        an_dt=ann.get('an_dt', ''),
-                                        sort_date=ann.get('sort_date', ''),
-                                        attchmntText=ann.get('attchmntText', ''),
-                                        fileSize=ann.get('fileSize', ''),
-                                    )
-                                    
-                                    # Periodically save
-                                    save_counter += 1
-                                    if save_counter >= SAVE_INTERVAL:
-                                        save_processed_announcements(self._seen_seq_ids, self._processed_files)
-                                        save_counter = 0
                             except Exception as e:
-                                print(f"[WARN] Error processing announcement {seq_id}: {e}")
-                                # Continue with next announcement
-                                continue
+                                print(f"[WARN] Error processing XBRL for announcement {seq_id}: {e}")
+                        
+                        # Also consider announcements with PDF attachments as potentially relevant
+                        # This catches announcements that don't have XBRL data but have PDFs
+                        if not is_relevant and pdf_url:
+                            # Check if description contains relevant keywords
+                            desc_lower = desc.lower()
+                            relevant_keywords = [
+                                'board meeting', 'press release', 'appointment', 'acquisition', 
+                                'financial results', 'quarterly results', 'annual report',
+                                'investor presentation', 'change in director', 'dividend',
+                                'bonus', 'rights issue', 'merger', 'amalgamation', 'outcome',
+                                'corporate action', 'insider trading', 'shareholding'
+                            ]
+                            if any(keyword in desc_lower for keyword in relevant_keywords):
+                                is_relevant = True
+                                print(f"[INFO] ✓ New relevant PDF: {symbol} - {desc[:80]}")
+                        
+                        # If still not relevant but has PDF, include it anyway (less strict filtering)
+                        if not is_relevant and pdf_url and len(pdf_url) > 0:
+                            is_relevant = True
+                            print(f"[INFO] ✓ New announcement with PDF (auto-included): {symbol} - {desc[:80]}")
+                        
+                        if is_relevant:
+                            # Track processed file
+                            if pdf_url:
+                                self._processed_files.add(pdf_url)
+                            
+                            # Emit to Pathway table (seq_id must be first as it's the primary key)
+                            print(f"[INFO] Emitting announcement to pipeline: {symbol} - {desc[:60]}...")
+                            self.next(
+                                seq_id=seq_id,
+                                symbol=ann.get('symbol', ''),
+                                desc=ann.get('desc', ''),
+                                dt=ann.get('dt', ''),
+                                attchmntFile=pdf_url,
+                                sm_name=ann.get('sm_name', ''),
+                                sm_isin=ann.get('sm_isin', ''),
+                                an_dt=ann.get('an_dt', ''),
+                                sort_date=ann.get('sort_date', ''),
+                                attchmntText=ann.get('attchmntText', ''),
+                                fileSize=ann.get('fileSize', ''),
+                            )
+                            emitted_count += 1
+                            
+                            # Periodically save
+                            save_counter += 1
+                            if save_counter >= SAVE_INTERVAL:
+                                save_processed_announcements(self._seen_seq_ids, self._processed_files)
+                                save_counter = 0
                     except Exception as e:
                         print(f"[WARN] Error processing announcement: {e}")
+                        import traceback
+                        traceback.print_exc()
                         continue  # Continue with next announcement
                 
-                print(f"[INFO] Found {new_count} new announcements, {len(announcements) - new_count} already seen")
+                already_seen = sum(1 for ann in announcements if ann.get('seq_id', '') in self._seen_seq_ids)
+                print(f"[INFO] Poll summary: {len(announcements)} total, {new_count} new, {already_seen} already seen")
+                if emitted_count > 0:
+                    print(f"[INFO] ✓ Emitted {emitted_count} announcements to pipeline for processing")
+                elif new_count > 0:
+                    print(f"[WARN] Found {new_count} new announcements but none were relevant or had PDFs")
                 
                 # Save processed IDs and files after each poll
                 save_processed_announcements(self._seen_seq_ids, self._processed_files)

@@ -16,6 +16,8 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: auth-postgres
+  labels:
+    app.kubernetes.io/managed-by: argocd
 spec:
   serviceName: auth-postgres
   replicas: 1
@@ -26,6 +28,7 @@ spec:
     metadata:
       labels:
         app: auth-postgres
+        app.kubernetes.io/managed-by: argocd
     spec:
       containers:
         - name: postgres
@@ -84,6 +87,8 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: portfolio-postgres
+  labels:
+    app.kubernetes.io/managed-by: argocd
 spec:
   serviceName: portfolio-postgres
   replicas: 1
@@ -94,6 +99,7 @@ spec:
     metadata:
       labels:
         app: portfolio-postgres
+        app.kubernetes.io/managed-by: argocd
     spec:
       containers:
         - name: postgres

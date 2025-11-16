@@ -2,13 +2,30 @@ from __future__ import annotations
 
 import os
 from datetime import timedelta
+from pathlib import Path
 from typing import Dict, Iterable
 
 from dotenv import load_dotenv
 from kombu import Queue
 
-# Load environment variables
-load_dotenv()
+# Load environment variables from portfolio-server .env and project root .env
+# (same logic as PipelineService._load_environment)
+_celery_file = Path(__file__).resolve()
+_server_dir = _celery_file.parent
+_project_root = _server_dir.parent.parent
+
+# Load root .env first (lower priority)
+_root_env = _project_root / ".env"
+if _root_env.exists():
+    load_dotenv(_root_env, override=False)
+
+# Load server .env (higher priority, overrides root)
+_server_env = _server_dir / ".env"
+if _server_env.exists():
+    load_dotenv(_server_env, override=True)
+else:
+    # Fallback: try to load from current directory
+    load_dotenv(override=False)
 
 from celery import Celery
 from celery.schedules import crontab
@@ -51,6 +68,7 @@ celery_app = Celery(
         "workers.order_monitor_worker",
         "workers.trade_execution_tasks",
         "workers.pipeline_tasks",
+        "workers.snapshot_tasks",
     ],
 )
 
@@ -142,6 +160,7 @@ celery_app.conf.redbeat_redis_url = os.getenv("REDBEAT_REDIS_URL", BROKER_URL)
 celery_app.conf.redbeat_lock_timeout = int(os.getenv("CELERY_REDBEAT_LOCK_TIMEOUT", "600"))
 celery_app.conf.redbeat_lock_key = os.getenv("CELERY_REDBEAT_LOCK_KEY", "redbeat::lock")
 
+NEWS_PIPELINE_ENABLED = os.getenv("NEWS_PIPELINE_ENABLED", "false").lower() in {"1", "true", "yes"}
 NEWS_FETCH_RATE = int(os.getenv("NEWS_FETCH_RATE", "3600"))
 NEWS_PIPELINE_QUEUE = os.getenv("NEWS_PIPELINE_QUEUE", QUEUE_NAMES["pipelines"])
 
@@ -151,7 +170,7 @@ REBALANCE_MINUTE = int(os.getenv("PORTFOLIO_REBALANCE_MINUTE", "0"))
 REBALANCE_DAY_OF_WEEK = os.getenv("PORTFOLIO_REBALANCE_DAY_OF_WEEK", "mon-fri")
 REBALANCE_QUEUE = os.getenv("PORTFOLIO_REBALANCE_QUEUE", QUEUE_NAMES["allocations"])
 
-RISK_MONITOR_ENABLED = os.getenv("PORTFOLIO_RISK_MONITOR_ENABLED", "true").lower() in {"1", "true", "yes"}
+RISK_MONITOR_ENABLED = os.getenv("PORTFOLIO_RISK_MONITOR_ENABLED", "false").lower() in {"1", "true", "yes"}
 RISK_MONITOR_INTERVAL = int(os.getenv("PORTFOLIO_RISK_MONITOR_INTERVAL", "900"))
 RISK_MONITOR_QUEUE = os.getenv("PORTFOLIO_RISK_MONITOR_QUEUE", QUEUE_NAMES["pipelines"])
 
@@ -160,13 +179,16 @@ ORDER_MONITOR_ENABLED = os.getenv("ORDER_MONITOR_ENABLED", "true").lower() in {"
 ORDER_MONITOR_INTERVAL = int(os.getenv("ORDER_MONITOR_INTERVAL", "5"))  # Check every 5 seconds
 ORDER_MONITOR_QUEUE = os.getenv("ORDER_MONITOR_QUEUE", QUEUE_NAMES["orders"])
 
-celery_app.conf.beat_schedule = {
-    "news-sentiment-pipeline": {
+# Initialize empty beat schedule
+celery_app.conf.beat_schedule = {}
+
+# Only enable news pipeline via Beat if explicitly configured
+if NEWS_PIPELINE_ENABLED:
+    celery_app.conf.beat_schedule["news-sentiment-pipeline"] = {
         "task": "pipeline.news_sentiment.run",
         "schedule": timedelta(seconds=NEWS_FETCH_RATE),
         "options": {"queue": NEWS_PIPELINE_QUEUE},
     }
-}
 
 if REBALANCE_ENABLED:
     celery_app.conf.beat_schedule["portfolio-daily-rebalance"] = {
@@ -188,6 +210,17 @@ if ORDER_MONITOR_ENABLED:
         "task": "order_monitor.check_pending_orders_once",
         "schedule": timedelta(seconds=ORDER_MONITOR_INTERVAL),
         "options": {"queue": ORDER_MONITOR_QUEUE},
+    }
+
+# Snapshot capture - Every 6 hours (0:00, 6:00, 12:00, 18:00 UTC)
+SNAPSHOT_ENABLED = os.getenv("SNAPSHOT_CAPTURE_ENABLED", "true").lower() in {"1", "true", "yes"}
+SNAPSHOT_QUEUE = os.getenv("SNAPSHOT_QUEUE", DEFAULT_QUEUE)
+
+if SNAPSHOT_ENABLED:
+    celery_app.conf.beat_schedule["trading-agent-snapshots"] = {
+        "task": "snapshot.capture_agent_snapshots",
+        "schedule": crontab(hour="0,6,12,18", minute=0),  # Every 6 hours
+        "options": {"queue": SNAPSHOT_QUEUE},
     }
 
 __all__ = ["celery_app"]

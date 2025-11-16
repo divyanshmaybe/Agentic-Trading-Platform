@@ -530,21 +530,78 @@ def execute_news_sentiment_pipeline(
     log.info("Starting news sentiment pipeline (top_k=%s)", top_k)
 
     # ------------------------------------------------------------------
-    # Stage 1: Pathway sentiment extraction
+    # Stage 1: Sentiment extraction (bypassing Pathway for batch processing)
     # ------------------------------------------------------------------
     sentiment_source = "placeholder"
     if news_api_key:
-        log.info("Fetching articles via NewsAPI")
-        streams = _create_stream_table(top_k)
-        sentiment_table = build_news_sentiment_pipeline(
-            streams, news_api_key, top_k_default=top_k
-        )
-        pw.io.jsonlines.write(sentiment_table, str(sentiment_path))
+        log.info("Fetching articles via NewsAPI and running sentiment analysis...")
         try:
-            pw.run(monitoring_level=pw.MonitoringLevel.NONE)
+            # Import the functions we need directly
+            from pipelines.news.research_pipeline import (
+                _fetch_news_api,
+                _ensure_finbert_loaded,
+                _finbert_tok,
+                _finbert_model,
+                _finbert_device,
+            )
+            import torch
+            
+            # Ensure FinBERT is loaded
+            _ensure_finbert_loaded()
+            
+            # Process each stream
+            articles_by_stream = {}
+            for stream, query in NEWS_STREAMS.items():
+                try:
+                    log.info(f"Fetching {top_k} articles for stream: {stream}")
+                    articles = _fetch_news_api(stream, query, top_k, news_api_key)
+                    
+                    # Run sentiment analysis on each article
+                    analyzed_articles = []
+                    for title, content, url in articles:
+                        # FinBERT sentiment analysis
+                        combined_text = f"{title}. {content}"
+                        inputs = _finbert_tok(
+                            combined_text,
+                            return_tensors="pt",
+                            truncation=True,
+                            max_length=512,
+                            padding=True
+                        ).to(_finbert_device)
+                        
+                        with torch.no_grad():
+                            outputs = _finbert_model(**inputs)
+                            probs = torch.softmax(outputs.logits, dim=-1)
+                            sentiment_idx = torch.argmax(probs, dim=-1).item()
+                            sentiment_map = {0: "positive", 1: "negative", 2: "neutral"}
+                            sentiment = sentiment_map.get(sentiment_idx, "neutral")
+                        
+                        analyzed_articles.append({
+                            "stream": stream,
+                            "title": title,
+                            "content": content,
+                            "url": url,
+                            "sentiment": sentiment,
+                        })
+                    
+                    articles_by_stream[stream] = analyzed_articles
+                    log.info(f"  {stream}: analyzed {len(analyzed_articles)} articles")
+                    
+                except Exception as exc:
+                    log.warning(f"Failed to fetch/analyze articles for {stream}: {exc}")
+                    articles_by_stream[stream] = []
+            
+            # Write to sentiment_articles.jsonl
+            with open(sentiment_path, 'w') as f:
+                for stream_articles in articles_by_stream.values():
+                    for article in stream_articles:
+                        f.write(json.dumps(article) + "\n")
+            
             sentiment_source = "newsapi"
-        except Exception as exc:  # pragma: no cover - runtime debug
-            log.exception("Pathway run failed, using fallback data: %s", exc)
+            log.info("Article fetching and sentiment analysis completed")
+            
+        except Exception as exc:
+            log.exception("Article fetching/sentiment failed, using fallback data: %s", exc)
             sentiment_path.unlink(missing_ok=True)
     else:
         log.warning("NEWS_ORG_API_KEY not configured; using placeholder dataset")
@@ -580,10 +637,15 @@ def execute_news_sentiment_pipeline(
     except TypeError:
         payload_json = json.dumps({k: list(v) for k, v in sentiment_by_stream.items()})
 
-    if gemini_api_key:
+    # Normalize API key: treat empty strings as None
+    gemini_key = gemini_api_key.strip() if gemini_api_key and isinstance(gemini_api_key, str) else gemini_api_key
+    if not gemini_key:
+        gemini_key = None
+
+    if gemini_key:
         log.info("Invoking Gemini trading agent for sector analysis")
         try:
-            sector_analysis = trading_agent_llm(payload_json, gemini_api_key)
+            sector_analysis = trading_agent_llm(payload_json, gemini_key)
             if not isinstance(sector_analysis, str):
                 sector_analysis = json.dumps(sector_analysis, indent=2)
             sector_agent_source = "gemini"
@@ -614,7 +676,7 @@ def execute_news_sentiment_pipeline(
     recommendation_provider = "placeholder"
     technical_snapshot: List[Dict[str, Any]] = []
 
-    if gemini_api_key:
+    if gemini_key:
         technical_snapshot = _compute_technical_snapshot(log)
         if not technical_snapshot:
             log.warning("Technical indicators unavailable; recommendations may be limited")
@@ -624,15 +686,22 @@ def execute_news_sentiment_pipeline(
             stock_recs = stock_recommender(
                 sector_analysis_payload["analysis"],
                 tech_json,
-                gemini_api_key=gemini_api_key,
+                gemini_api_key=gemini_key,
             )
             if isinstance(stock_recs, str):
                 stock_recommendations = json.loads(stock_recs)
             else:
                 stock_recommendations = stock_recs
-            if not isinstance(stock_recommendations, list):
+            
+            # Handle error responses from stock_recommender
+            if isinstance(stock_recommendations, dict) and "error" in stock_recommendations:
+                log.error("Stock recommender returned error: %s", stock_recommendations.get("error"))
+                stock_recommendations = _build_placeholder_recommendations()
+            elif not isinstance(stock_recommendations, list):
+                log.error("Unexpected recommendation payload type: %s", type(stock_recommendations))
                 raise ValueError("Unexpected recommendation payload")
-            recommendation_provider = "gemini"
+            else:
+                recommendation_provider = "gemini"
         except Exception as exc:  # pragma: no cover - external service issues
             log.exception("Gemini stock recommender failed: %s", exc)
             stock_recommendations = _build_placeholder_recommendations()
