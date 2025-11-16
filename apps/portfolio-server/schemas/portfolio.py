@@ -152,3 +152,69 @@ class PortfolioAllocationSummary(BaseModel):
 class PortfolioAllocationListResponse(BaseModel):
     items: List[PortfolioAllocationSummary]
     total: int
+
+
+class SnapshotResponse(BaseModel):
+    """Single snapshot data point for timeline charts"""
+    snapshot_at: datetime
+    portfolio_value: Decimal
+    realized_pnl: Decimal
+    positions_count: int
+    agents_count: Optional[int] = None
+
+
+class SnapshotListResponse(BaseModel):
+    """List of snapshots for timeline charts"""
+    items: List[SnapshotResponse]
+    total: int
+
+
+class AllocationDashboardSummary(BaseModel):
+    """Allocation summary for dashboard"""
+    allocation_type: str
+    target_weight: Decimal
+    allocated_amount: Decimal
+    current_value: Decimal
+    realized_pnl: Decimal
+    pnl_percentage: Decimal
+
+
+class RecentTradeSummary(BaseModel):
+    """Recent trade summary for dashboard"""
+    id: str
+    symbol: str
+    side: str
+    quantity: int
+    executed_price: Optional[Decimal] = None
+    executed_at: Optional[datetime] = None
+    realized_pnl: Optional[Decimal] = None
+
+
+class PortfolioDashboardResponse(BaseModel):
+    """Main portfolio dashboard data"""
+    portfolio_id: str
+    portfolio_name: str
+    investment_amount: Decimal
+    current_value: Decimal
+    realized_pnl: Decimal
+    total_positions: int
+    active_agents: int
+    cash_balance: Optional[Decimal] = None
+    allocations: List[AllocationDashboardSummary]
+    recent_trades: List[RecentTradeSummary]
+
+
+class AgentDashboardResponse(BaseModel):
+    """Agent-specific dashboard data"""
+    agent_id: str
+    agent_name: str
+    agent_type: str
+    portfolio_id: str
+    status: str
+    portfolio_value: Decimal
+    realized_pnl: Decimal
+    positions_count: int
+    positions: List[PositionSummary]
+    allocation: Optional[PortfolioAllocationSummary] = None
+    performance_metrics: Optional[dict] = None
+    recent_trades: List[TradeSummary]

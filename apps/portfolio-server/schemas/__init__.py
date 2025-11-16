@@ -8,6 +8,12 @@ from .portfolio import (
     TradingAgentListResponse,
     PortfolioAllocationSummary,
     PortfolioAllocationListResponse,
+    SnapshotResponse,
+    SnapshotListResponse,
+    AllocationDashboardSummary,
+    RecentTradeSummary,
+    PortfolioDashboardResponse,
+    AgentDashboardResponse,
 )
 from .market import CandleData, MarketQuote, MarketQuoteResponse
 from .trade import PortfolioSnapshot, TradeCreate, TradeRequest, TradeResponse, TradeSummary
@@ -41,6 +47,12 @@ __all__ = [
     "TradingAgentListResponse",
     "PortfolioAllocationSummary",
     "PortfolioAllocationListResponse",
+    "SnapshotResponse",
+    "SnapshotListResponse",
+    "AllocationDashboardSummary",
+    "RecentTradeSummary",
+    "PortfolioDashboardResponse",
+    "AgentDashboardResponse",
     "CandleData",
     "MarketQuote",
     "MarketQuoteResponse",

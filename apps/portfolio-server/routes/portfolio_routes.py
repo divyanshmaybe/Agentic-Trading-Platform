@@ -16,6 +16,9 @@ from schemas import (
     TradeListResponse,
     TradingAgentListResponse,
     PortfolioAllocationListResponse,
+    PortfolioDashboardResponse,
+    AgentDashboardResponse,
+    SnapshotListResponse,
 )
 from utils.auth import get_authenticated_user
 
@@ -106,3 +109,38 @@ async def get_portfolio_allocations(
 ) -> PortfolioAllocationListResponse:
     """Get all portfolio allocations for the authenticated user's portfolio"""
     return await controller.get_portfolio_allocations(request_user)
+
+
+@router.get("/dashboard", response_model=PortfolioDashboardResponse)
+async def get_portfolio_dashboard(
+    controller: PortfolioController = Depends(get_portfolio_controller),
+    request_user: dict = Depends(get_authenticated_user),
+) -> PortfolioDashboardResponse:
+    """Get main portfolio dashboard with aggregated stats, P&L, and allocation summary"""
+    return await controller.get_dashboard(request_user)
+
+
+@router.get("/agents/{agent_id}/dashboard", response_model=AgentDashboardResponse)
+async def get_agent_dashboard(
+    agent_id: str,
+    controller: PortfolioController = Depends(get_portfolio_controller),
+    request_user: dict = Depends(get_authenticated_user),
+) -> AgentDashboardResponse:
+    """Get agent-specific dashboard with positions, P&L, and performance metrics"""
+    return await controller.get_agent_dashboard(agent_id, request_user)
+
+
+@router.get("/snapshots", response_model=SnapshotListResponse)
+async def get_portfolio_snapshots(
+    controller: PortfolioController = Depends(get_portfolio_controller),
+    request_user: dict = Depends(get_authenticated_user),
+    agent_id: Optional[str] = Query(None, description="Filter by specific agent ID"),
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of snapshots to return"),
+) -> SnapshotListResponse:
+    """
+    Get portfolio snapshot history for timeline charts.
+    
+    If agent_id is provided, returns snapshots for that specific agent.
+    Otherwise, returns aggregated snapshots (sum of all agents in portfolio).
+    """
+    return await controller.get_snapshots(request_user, agent_id=agent_id, limit=limit)

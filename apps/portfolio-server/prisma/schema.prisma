@@ -70,6 +70,7 @@ model Portfolio {
   last_rebalanced_at       DateTime?
   next_rebalance_at        DateTime?
   allocation_trades        Json?
+  realized_pnl             Decimal   @default(0) @db.Decimal(20, 4)
   metadata                 Json?     @default("{}")
   created_at               DateTime  @default(now())
   updated_at               DateTime  @updatedAt
@@ -107,6 +108,7 @@ model PortfolioAllocation {
   regime               String?
   pnl                  Decimal  @default(0) @db.Decimal(20, 4)
   pnl_percentage       Decimal  @default(0) @db.Decimal(9, 6)
+  realized_pnl         Decimal  @default(0) @db.Decimal(20, 4)
   drift_percentage     Decimal  @default(0) @db.Decimal(9, 6)
   requires_rebalancing Boolean  @default(false)
   metadata             Json?    @default("{}")
@@ -134,6 +136,7 @@ model TradingAgent {
   status                  String    @default("active")
   strategy_config         Json?
   performance_metrics     Json?
+  realized_pnl            Decimal   @default(0) @db.Decimal(20, 4)
   last_executed_at        DateTime?
   error_count             Int       @default(0)
   last_error_message      String?
@@ -145,6 +148,7 @@ model TradingAgent {
   allocation PortfolioAllocation @relation("AllocationAgent", fields: [portfolio_allocation_id], references: [id], onDelete: Cascade)
   trades     Trade[]
   positions  Position[]
+  snapshots  TradingAgentSnapshot[]
 
   @@unique([portfolio_allocation_id])
   @@index([portfolio_id])
@@ -181,6 +185,7 @@ model Trade {
   fees              Decimal?  @db.Decimal(20, 4)
   taxes             Decimal?  @db.Decimal(20, 4)
   net_amount        Decimal?  @db.Decimal(20, 4)
+  realized_pnl      Decimal?  @db.Decimal(20, 4)
   source            String?
   metadata          Json?     @default("{}")
   created_at        DateTime  @default(now())
@@ -329,4 +334,26 @@ model TradeExecutionLog {
   @@index([status])
   @@index([portfolio_id])
   @@map("trade_execution_logs")
+}
+
+/// --------------------
+/// Trading Agent Snapshot
+/// --------------------
+model TradingAgentSnapshot {
+  id              String   @id @default(uuid())
+  agent_id        String
+  portfolio_id    String
+  snapshot_at     DateTime @default(now())
+  portfolio_value Decimal  @db.Decimal(20, 4)
+  realized_pnl    Decimal  @db.Decimal(20, 4)
+  positions_count Int      @default(0)
+  metadata        Json?    @default("{}")
+  created_at      DateTime @default(now())
+
+  agent TradingAgent @relation(fields: [agent_id], references: [id], onDelete: Cascade)
+
+  @@index([agent_id])
+  @@index([portfolio_id])
+  @@index([snapshot_at])
+  @@map("trading_agent_snapshots")
 }

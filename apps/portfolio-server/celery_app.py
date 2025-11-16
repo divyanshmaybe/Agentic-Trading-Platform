@@ -68,6 +68,7 @@ celery_app = Celery(
         "workers.order_monitor_worker",
         "workers.trade_execution_tasks",
         "workers.pipeline_tasks",
+        "workers.snapshot_tasks",
     ],
 )
 
@@ -209,6 +210,17 @@ if ORDER_MONITOR_ENABLED:
         "task": "order_monitor.check_pending_orders_once",
         "schedule": timedelta(seconds=ORDER_MONITOR_INTERVAL),
         "options": {"queue": ORDER_MONITOR_QUEUE},
+    }
+
+# Snapshot capture - Every 6 hours (0:00, 6:00, 12:00, 18:00 UTC)
+SNAPSHOT_ENABLED = os.getenv("SNAPSHOT_CAPTURE_ENABLED", "true").lower() in {"1", "true", "yes"}
+SNAPSHOT_QUEUE = os.getenv("SNAPSHOT_QUEUE", DEFAULT_QUEUE)
+
+if SNAPSHOT_ENABLED:
+    celery_app.conf.beat_schedule["trading-agent-snapshots"] = {
+        "task": "snapshot.capture_agent_snapshots",
+        "schedule": crontab(hour="0,6,12,18", minute=0),  # Every 6 hours
+        "options": {"queue": SNAPSHOT_QUEUE},
     }
 
 __all__ = ["celery_app"]
