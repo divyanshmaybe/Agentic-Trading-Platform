@@ -13,7 +13,8 @@
     "prisma:push": "prisma db push",
     "prisma:studio": "prisma studio",
     "prisma:reset": "prisma db push --force-reset",
-    "db:empty": "prisma db execute --stdin <<< \"TRUNCATE TABLE users, organizations CASCADE;\""
+    "db:empty": "prisma db execute --stdin <<< \"TRUNCATE TABLE users, organizations CASCADE;\"",
+    "studio": "prisma studio --port 5556"
   },
   "keywords": [],
   "author": "",
