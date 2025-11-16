@@ -468,17 +468,26 @@ def _fallback_sentiment() -> Dict[str, List[Dict[str, Any]]]:
 
 def _compute_technical_snapshot(logger: logging.Logger) -> List[Dict[str, Any]]:
     indicators: List[Dict[str, Any]] = []
+    failed_count = 0
     for symbol, industry in SAMPLE_STOCKS:
         logger.debug("Fetching technical indicators for %s", symbol)
         try:
             data = compute_technical_indicators(symbol)
         except Exception as exc:  # pragma: no cover - network/IO failures
             logger.warning("Technical indicator fetch failed for %s: %s", symbol, exc)
+            failed_count += 1
             continue
         if not data:
+            logger.debug("No technical data returned for %s (likely insufficient data points)", symbol)
+            failed_count += 1
             continue
         data["Industry"] = industry
         indicators.append(data)
+    
+    logger.info("Technical snapshot: %s successful, %s failed out of %s stocks", 
+               len(indicators), failed_count, len(SAMPLE_STOCKS))
+    if len(indicators) == 0:
+        logger.error("❌ Technical snapshot is EMPTY - all %s stocks failed to fetch indicators. Stock recommendations will likely fail.", len(SAMPLE_STOCKS))
     return indicators
 
 
@@ -677,12 +686,18 @@ def execute_news_sentiment_pipeline(
     technical_snapshot: List[Dict[str, Any]] = []
 
     if gemini_key:
+        log.info("Computing technical snapshot for stock recommendations...")
         technical_snapshot = _compute_technical_snapshot(log)
         if not technical_snapshot:
-            log.warning("Technical indicators unavailable; recommendations may be limited")
+            log.warning("Technical indicators unavailable (empty snapshot); recommendations may be limited or fallback to placeholders")
+        else:
+            log.info("Technical snapshot computed: %s stocks with indicators", len(technical_snapshot))
 
         try:
             tech_json = json.dumps(technical_snapshot)
+            log.info("Invoking Gemini stock recommender (sector analysis length: %s chars, tech data: %s stocks)...", 
+                    len(sector_analysis_payload["analysis"]), len(technical_snapshot))
+            
             stock_recs = stock_recommender(
                 sector_analysis_payload["analysis"],
                 tech_json,
@@ -695,17 +710,39 @@ def execute_news_sentiment_pipeline(
             
             # Handle error responses from stock_recommender
             if isinstance(stock_recommendations, dict) and "error" in stock_recommendations:
-                log.error("Stock recommender returned error: %s", stock_recommendations.get("error"))
+                error_detail = stock_recommendations.get("error", "Unknown error")
+                raw_text = stock_recommendations.get("raw_text", "")
+                log.error("❌ Stock recommender returned error: %s", error_detail)
+                if raw_text:
+                    log.error("Raw LLM response (first 500 chars): %s", raw_text[:500])
+                log.warning("Falling back to placeholder recommendations")
                 stock_recommendations = _build_placeholder_recommendations()
             elif not isinstance(stock_recommendations, list):
-                log.error("Unexpected recommendation payload type: %s", type(stock_recommendations))
-                raise ValueError("Unexpected recommendation payload")
+                log.error("❌ Unexpected recommendation payload type: %s (value: %s)", 
+                         type(stock_recommendations), str(stock_recommendations)[:200])
+                log.warning("Falling back to placeholder recommendations")
+                stock_recommendations = _build_placeholder_recommendations()
+            elif len(stock_recommendations) == 0:
+                log.warning("⚠️ Stock recommender returned empty list - no recommendations generated")
+                log.warning("This may indicate: 1) No positive signals in sector analysis, 2) Technical indicators don't support any trades, 3) LLM was too conservative")
+                log.warning("Falling back to placeholder recommendations")
+                stock_recommendations = _build_placeholder_recommendations()
             else:
                 recommendation_provider = "gemini"
+                log.info("✅ Successfully generated %s stock recommendations from Gemini", len(stock_recommendations))
+                # Log first recommendation as sample
+                if stock_recommendations:
+                    first_rec = stock_recommendations[0]
+                    log.info("Sample recommendation: %s (%s) - Signal: %s", 
+                            first_rec.get("stock_name", "N/A"),
+                            first_rec.get("sector", "N/A"),
+                            first_rec.get("trade_signal", "N/A"))
         except Exception as exc:  # pragma: no cover - external service issues
-            log.exception("Gemini stock recommender failed: %s", exc)
+            log.exception("❌ Gemini stock recommender failed with exception: %s", exc)
+            log.warning("Falling back to placeholder recommendations")
             stock_recommendations = _build_placeholder_recommendations()
     else:
+        log.warning("GEMINI_API_KEY not configured; using placeholder stock recommendations")
         stock_recommendations = _build_placeholder_recommendations()
 
     _write_json(recommendations_path, stock_recommendations)

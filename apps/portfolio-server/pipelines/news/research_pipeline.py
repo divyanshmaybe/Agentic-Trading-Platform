@@ -493,6 +493,9 @@ You must return a structured json output in the following format:
         )
         decision = model.invoke(prompt)
         text = getattr(decision, "content", str(decision)).strip()
+        
+        # Log raw response for debugging (first 500 chars)
+        print(f"[STOCK_RECOMMENDER] Raw LLM response (first 500 chars): {text[:500]}...")
 
         if text.startswith("```"):
             text = re.sub(r"^```[a-zA-Z0-9]*\n?", "", text)
@@ -500,6 +503,8 @@ You must return a structured json output in the following format:
             text = text.strip()
         first_bracket, last_bracket = text.find("["), text.rfind("]")
         if first_bracket == -1 or last_bracket == -1:
+            print(f"[STOCK_RECOMMENDER] ERROR: No JSON array found in LLM output. Full response length: {len(text)}")
+            print(f"[STOCK_RECOMMENDER] Response preview: {text[:1000]}")
             return {"error": "No JSON array found in LLM output", "raw_text": text[:1000]}
 
         json_text = text[first_bracket : last_bracket + 1]
@@ -512,13 +517,20 @@ You must return a structured json output in the following format:
         try:
             parsed = json.loads(json_text)
             if not isinstance(parsed, list):
+                print(f"[STOCK_RECOMMENDER] ERROR: Parsed JSON is not an array. Type: {type(parsed).__name__}, Value: {parsed}")
                 return {
                     "error": "Parsed JSON is not an array",
                     "parsed_type": type(parsed).__name__,
                     "parsed_value": parsed,
                 }
+            if len(parsed) == 0:
+                print(f"[STOCK_RECOMMENDER] WARNING: LLM returned empty array - no stock recommendations generated")
+            else:
+                print(f"[STOCK_RECOMMENDER] Successfully parsed {len(parsed)} stock recommendations")
             return parsed
         except Exception as exc:
+            print(f"[STOCK_RECOMMENDER] ERROR: JSON parse failed: {exc}")
+            print(f"[STOCK_RECOMMENDER] Cleaned JSON snippet: {json_text[:1000]}")
             return {
                 "error": f"JSON parse failed: {exc}",
                 "cleaned_json_snippet": json_text[:1000],
