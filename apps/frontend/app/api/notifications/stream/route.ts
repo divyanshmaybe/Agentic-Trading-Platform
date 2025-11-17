@@ -63,7 +63,16 @@ export async function GET(request: NextRequest) {
 
       try {
         consumer = createNotificationConsumer()
-        await consumer.connect()
+        
+        try {
+          await consumer.connect()
+        } catch (connectError) {
+          emitError(`Failed to connect to Kafka: ${connectError instanceof Error ? connectError.message : String(connectError)}`)
+          await teardownConsumer(consumer)
+          closed = true
+          controller.close()
+          return
+        }
 
         const subscribedTopics: string[] = []
         for (const topic of topics) {

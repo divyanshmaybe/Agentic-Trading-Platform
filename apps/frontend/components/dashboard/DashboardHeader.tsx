@@ -27,6 +27,7 @@ export function DashboardHeader({ userName = "User", username, userRole, onLogou
     { name: "Algorithmic Strategies", href: `/dashboard/${username}/alphas` },
     { name: "Long-Term Strategies", href: `/dashboard/${username}/longterm` },
     { name: "Intraday Strategies", href: `/dashboard/${username}/intraday` },
+	{ name: "Objectives", href: `/dashboard/${username}/objectives` },
   ]
 
   const isAdmin = userRole === "admin"
