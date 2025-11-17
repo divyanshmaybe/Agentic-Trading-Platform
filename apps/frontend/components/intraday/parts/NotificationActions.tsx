@@ -16,6 +16,11 @@ export function NotificationActions({
 }) {
   const [tradeModalOpen, setTradeModalOpen] = useState(false)
 
+  // Filter out "review filing" button for nse-signal notifications
+  const filteredActions = notification.type === "nse-signal"
+    ? actions?.filter((action) => !action.label.toLowerCase().includes("review filing"))
+    : actions
+
   return (
     <>
       <footer className="mt-4 flex flex-wrap gap-2">
@@ -31,7 +36,7 @@ export function NotificationActions({
             Buy
           </button>
         )}
-        {actions?.map((action, index) => (
+        {filteredActions?.map((action, index) => (
           <NotificationAction
             key={`${action.value}-${index}`}
             action={action}
