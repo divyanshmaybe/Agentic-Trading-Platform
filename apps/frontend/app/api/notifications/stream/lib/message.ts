@@ -99,43 +99,40 @@ function getHeaderString(headers: KafkaMessage["headers"], key: string): string 
 }
 
 export function normalizeKafkaPayload(payload: Record<string, unknown>): Record<string, unknown> {
-  const candidateKeys = ["value", "payload", "data"]
-  const visited = new Set<Record<string, unknown>>()
+  // Handle simple key-value structure
+  // If payload has a "value" key, extract it
+  if ("value" in payload) {
+    const value = payload.value
 
-  let current: Record<string, unknown> | undefined = payload
-
-  while (current && !visited.has(current)) {
-    visited.add(current)
-    let advanced = false
-
-    for (const key of candidateKeys) {
-      if (!(key in current)) {
-        continue
-      }
-
-      const nextLayer = current[key]
-
-      if (typeof nextLayer === "string") {
-        try {
-          current = JSON.parse(nextLayer) as Record<string, unknown>
-          advanced = true
-          break
-        } catch {
-          // Not JSON; move on to other keys.
+    // If value is a JSON string, parse it once
+    if (typeof value === "string") {
+      try {
+        const parsed = JSON.parse(value) as unknown
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          return parsed as Record<string, unknown>
         }
-      } else if (nextLayer && typeof nextLayer === "object" && !Array.isArray(nextLayer)) {
-        current = nextLayer as Record<string, unknown>
-        advanced = true
-        break
+      } catch {
+        // Not valid JSON, return payload as-is
       }
     }
 
-    if (!advanced) {
-      break
+    // If value is an object, use it directly
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return value as Record<string, unknown>
     }
   }
 
-  return current ?? {}
+  // Check for "payload" or "data" keys as fallback
+  if ("payload" in payload && payload.payload && typeof payload.payload === "object" && !Array.isArray(payload.payload)) {
+    return payload.payload as Record<string, unknown>
+  }
+
+  if ("data" in payload && payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)) {
+    return payload.data as Record<string, unknown>
+  }
+
+  // Return payload as-is if no special structure found
+  return payload
 }
 
 export function mapKafkaMessageToNotification(

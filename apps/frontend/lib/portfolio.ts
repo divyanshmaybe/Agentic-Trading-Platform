@@ -98,6 +98,80 @@ export type RecentTradesResponse = {
   total: number
 }
 
+// Dashboard API Types
+export type AllocationDashboardSummary = {
+  allocation_type: string
+  target_weight: string
+  allocated_amount: string
+  current_value: string
+  realized_pnl: string
+  pnl_percentage: string
+}
+
+export type RecentTradeSummary = {
+  id: string
+  symbol: string
+  side: string
+  quantity: number
+  executed_price: string | null
+  executed_at: string | null
+  realized_pnl: string | null
+}
+
+export type PortfolioDashboardResponse = {
+  portfolio_id: string
+  portfolio_name: string
+  investment_amount: string
+  current_value: string
+  realized_pnl: string
+  total_positions: number
+  active_agents: number
+  cash_balance: string | null
+  allocations: AllocationDashboardSummary[]
+  recent_trades: RecentTradeSummary[]
+}
+
+export type PortfolioAllocationSummary = {
+  id: string
+  portfolio_id: string
+  allocation_type: string
+  target_weight: string
+  current_weight: string
+  allocated_amount: string
+  current_value: string
+  expected_return: string | null
+  expected_risk: string | null
+  regime: string | null
+  pnl: string
+  pnl_percentage: string
+  drift_percentage: string
+  requires_rebalancing: boolean
+  metadata: Record<string, unknown> | null
+  created_at: string
+  updated_at: string
+  trading_agent: {
+    id: string
+    portfolio_id: string | null
+    portfolio_allocation_id: string
+    agent_type: string
+    agent_name: string
+    status: string
+    strategy_config: Record<string, unknown> | null
+    performance_metrics: Record<string, unknown> | null
+    last_executed_at: string | null
+    error_count: number
+    last_error_message: string | null
+    metadata: Record<string, unknown> | null
+    created_at: string
+    updated_at: string
+  } | null
+}
+
+export type PortfolioAllocationListResponse = {
+  items: PortfolioAllocationSummary[]
+  total: number
+}
+
 type ApiError = {
   detail?: string
   message?: string
@@ -184,6 +258,10 @@ export async function getPortfolio(accessToken?: string): Promise<Portfolio> {
 export async function getPositions(
   page = 1,
   limit = 10,
+  search?: string,
+  profitability?: string,
+  sortBy: string = "updatedAt",
+  sortOrder: "asc" | "desc" = "desc",
   accessToken?: string,
 ): Promise<PositionsResponse> {
   const token = resolveAccessToken(accessToken)
@@ -191,7 +269,17 @@ export async function getPositions(
   const params = new URLSearchParams({
     page: String(page),
     limit: String(limit),
+    sortBy,
+    sortOrder,
   })
+  
+  if (search) {
+    params.append("search", search)
+  }
+  
+  if (profitability) {
+    params.append("profitability", profitability)
+  }
 
   return request<PositionsResponse>(`/api/portfolio/positions?${params}`, {
     method: "GET",
@@ -254,6 +342,86 @@ export async function getRecentTrades(
     headers: {
       Authorization: `Bearer ${token}`,
     },
+  })
+}
+
+export async function getPortfolioDashboard(
+  accessToken?: string,
+): Promise<PortfolioDashboardResponse> {
+  const token = resolveAccessToken(accessToken)
+
+  return request<PortfolioDashboardResponse>("/api/portfolio/dashboard", {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+}
+
+export async function getPortfolioAllocations(
+  accessToken?: string,
+): Promise<PortfolioAllocationListResponse> {
+  const token = resolveAccessToken(accessToken)
+
+  return request<PortfolioAllocationListResponse>("/api/portfolio/allocations", {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+}
+
+export type TradeRequest = {
+  portfolio_id: string
+  symbol: string
+  exchange?: string
+  segment?: string
+  side: "BUY" | "SELL"
+  order_type: "market" | "limit" | "stop" | "stop_loss" | "take_profit"
+  quantity: number
+  limit_price?: number
+  trigger_price?: number
+  trade_type?: string
+  customer_id?: string
+  source?: string
+  metadata?: Record<string, unknown>
+}
+
+export type TradeResponse = {
+  success: boolean
+  message: string
+  trades: Array<{
+    id: string
+    symbol: string
+    side: string
+    order_type: string
+    status: string
+    quantity: number
+    price?: string
+    executed_quantity?: number
+    executed_price?: string
+    execution_time?: string
+  }>
+  pending_orders: number
+  portfolio: {
+    id: string
+    current_value: string
+    updated_at: string
+  }
+}
+
+export async function submitTrade(
+  tradeData: TradeRequest,
+  accessToken?: string,
+): Promise<TradeResponse> {
+  const token = resolveAccessToken(accessToken)
+
+  return request<TradeResponse>("/api/trades/", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(tradeData),
   })
 }
 

@@ -1,4 +1,12 @@
-export function DetailRow({ label, value }: { label: string; value: string | null }) {
+export function DetailRow({
+  label,
+  value,
+  valueClassName,
+}: {
+  label: string
+  value: string | null
+  valueClassName?: string
+}) {
   if (!value) {
     return null
   }
@@ -6,7 +14,7 @@ export function DetailRow({ label, value }: { label: string; value: string | nul
   return (
     <div className="flex flex-wrap justify-between gap-2 text-xs uppercase tracking-[0.25em] text-white/60">
       <span>{label}</span>
-      <span className="font-semibold text-white/80">{value}</span>
+      <span className={`font-semibold ${valueClassName ?? "text-white/80"}`}>{value}</span>
     </div>
   )
 }

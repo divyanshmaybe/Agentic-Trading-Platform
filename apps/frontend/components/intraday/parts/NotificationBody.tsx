@@ -33,10 +33,23 @@ const notificationRenderers: Record<string, NotificationRenderer> = {
     const signalLabel = deriveSignalLabel(signal)
     const confidence = normalizePercent(data.confidence)
 
+    // Style signal strength: green for 1 (bullish), red for others
+    const signalStrengthValue = signal != null ? signal.toFixed(2) : "N/A"
+    const signalStrengthClassName =
+      signal === 1
+        ? "text-emerald-400 font-bold"
+        : signal != null && signal !== 1
+          ? "text-red-400 font-bold"
+          : "text-white/80"
+
     return (
       <NotificationBodySection>
         {renderIfPresent(data.explanation)}
-        <DetailRow label="Signal Strength" value={signal != null ? signal.toFixed(2) : "N/A"} />
+        <DetailRow
+          label="Signal Strength"
+          value={signalStrengthValue}
+          valueClassName={signalStrengthClassName}
+        />
         <DetailRow label="Positioning" value={signalLabel ?? "Not provided"} />
         <DetailRow label="Confidence" value={confidence ?? "Not provided"} />
         <DetailRow label="Filing Time" value={formatTemporal(data.filingTime)} />
