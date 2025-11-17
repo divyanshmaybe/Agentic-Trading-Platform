@@ -1003,32 +1003,41 @@ class PipelineService:
         metadata = self._parse_metadata(getattr(portfolio, "metadata", None))
         cash_available = self._safe_float(metadata.get("cash_available", metadata.get("cash")), default=0.0)
         
-        # Get capital from agent's allocation or portfolio objective
-        allocation = getattr(agent, "allocation", None) if agent else None
+        # Get capital from agent's allocation - this is what should be used for trading
+        # Try both 'allocation' and 'portfolioAllocation' relation names
+        allocation = None
+        if agent:
+            allocation = getattr(agent, "allocation", None) or getattr(agent, "portfolioAllocation", None)
         allocation_amount = self._safe_float(getattr(allocation, "allocated_amount", 0.0)) if allocation else 0.0
-        objective_investment = self._safe_float(getattr(portfolio.objective, "total_investment", 0.0)) if hasattr(portfolio, "objective") and portfolio.objective else 0.0
         
-        # Use allocation amount if available, otherwise use a portion of objective investment
+        # Use allocation amount as cash_available for trading (this is the capital_base)
         if allocation_amount > 0:
-            effective_investment = allocation_amount
-        elif objective_investment > 0 and allocation:
-            # Calculate based on target weight if allocation exists
-            target_weight = self._safe_float(getattr(allocation, "target_weight", 0.0))
-            if target_weight > 0:
-                effective_investment = objective_investment * target_weight
-            else:
-                effective_investment = objective_investment
-        else:
-            effective_investment = self._safe_float(getattr(portfolio, "investment_amount", 0.0))
-        
-        # Use effective investment as cash available if not set
-        if cash_available <= 0 and effective_investment > 0:
-            cash_available = effective_investment
+            cash_available = allocation_amount
             self.logger.debug(
-                "Using effective_investment %.2f as cash_available for portfolio %s",
-                effective_investment,
+                "Using allocation amount %.2f as cash_available for portfolio %s (agent %s)",
+                allocation_amount,
+                getattr(portfolio, "id", "unknown"),
+                getattr(agent, "id", "unknown") if agent else "none",
+            )
+        elif cash_available <= 0:
+            # Fallback: use a portion of portfolio investment if no allocation
+            portfolio_investment = self._safe_float(getattr(portfolio, "investment_amount", 0.0))
+            if allocation and hasattr(allocation, "target_weight"):
+                target_weight = self._safe_float(getattr(allocation, "target_weight", 0.0))
+                if target_weight > 0:
+                    cash_available = portfolio_investment * target_weight
+                else:
+                    cash_available = portfolio_investment
+            else:
+                cash_available = portfolio_investment
+            self.logger.debug(
+                "Using fallback cash_available %.2f for portfolio %s",
+                cash_available,
                 getattr(portfolio, "id", "unknown"),
             )
+        
+        # effective_investment for portfolio snapshot (used for investment_amount field)
+        effective_investment = allocation_amount if allocation_amount > 0 else self._safe_float(getattr(portfolio, "investment_amount", 0.0))
 
         agent_id = str(getattr(agent, "id", "")) if agent else None
         agent_type = str(getattr(agent, "agent_type", "")) if agent else None
@@ -1152,7 +1161,7 @@ class PipelineService:
                 "user_id": {"in": high_risk_users},
                 "status": "active",
             },
-            include={"agents": True},
+            include={"agents": {"include": {"allocation": True}}},
         )
 
         snapshots: List[PortfolioSnapshot] = []

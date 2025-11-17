@@ -239,7 +239,9 @@ class AngelOneAdapter(WebsocketAdapter):
         self.totp_secret = os.getenv("ANGELONE_TOTP_SECRET")
         
         # Pre-fetch configuration
-        self.enable_nifty500_prefetch = os.getenv("ENABLE_NIFTY500_PREFETCH", "true").lower() in ("true", "1", "yes")
+        # Disable Nifty-500 prefetch by default - it causes connection issues
+        # Enable only if explicitly set and you understand the implications
+        self.enable_nifty500_prefetch = os.getenv("ENABLE_NIFTY500_PREFETCH", "false").lower() in ("true", "1", "yes")
         
         if not all([self.client_code, self.api_key, self.password, self.totp_secret]):
             raise RuntimeError(
@@ -551,13 +553,15 @@ class AngelOneAdapter(WebsocketAdapter):
     
     async def on_connect(self, ws, symbols: Iterable[str]) -> None:
         """Subscribe to initial symbols on connection."""
-        # Pre-fetch Nifty 500 symbols if enabled
-        if self.enable_nifty500_prefetch:
-            await self._prefetch_nifty500(ws)
-        
-        # Subscribe to any additional requested symbols
+        # Subscribe to requested symbols FIRST (fast path for single symbol lookups)
         if symbols:
             await self._batch_subscribe(ws, list(symbols), subscribe=True)
+        
+        # Pre-fetch Nifty 500 symbols ONLY if enabled AND no immediate symbols needed
+        # This prevents blocking single-symbol requests
+        if self.enable_nifty500_prefetch and not symbols:
+            # Run prefetch in background to not block connection
+            asyncio.create_task(self._prefetch_nifty500(ws))
     
     async def _prefetch_nifty500(self, ws) -> None:
         """
@@ -1161,6 +1165,18 @@ class MarketPriceSubject(ConnectorSubject):
                     await asyncio.sleep(wait + jitter)
                     backoff = min(wait * 2, self._max_backoff)
                     continue
+                elif status_code in (502, 503, 504):
+                    # Gateway errors - wait longer before retry
+                    wait = min(backoff * 3, self._max_backoff)
+                    logger.warning(
+                        "MarketPriceSubject received HTTP %s (Bad Gateway/Service Unavailable). "
+                        "Retrying in %.1fs",
+                        status_code,
+                        wait,
+                    )
+                    await asyncio.sleep(wait)
+                    backoff = min(backoff * 1.5, self._max_backoff)
+                    continue
 
                 logger.error(
                     "MarketPriceSubject received unexpected HTTP status %s. Retrying in %.1fs",
@@ -1199,7 +1215,14 @@ class MarketPriceSubject(ConnectorSubject):
         url = getattr(self._adapter, "ws_url", DEFAULT_WS_URL)
         logger.info("Connecting to market data stream: %s", url)
         
-        async with websockets.connect(url, ping_interval=None, ping_timeout=None) as ws:
+        # Use reasonable ping settings to detect dead connections quickly
+        # But don't be too aggressive to avoid 502 errors
+        async with websockets.connect(
+            url, 
+            ping_interval=30,  # Send ping every 30 seconds
+            ping_timeout=10,   # Wait 10 seconds for pong
+            close_timeout=5    # Wait 5 seconds for clean close
+        ) as ws:
             self._loop = asyncio.get_running_loop()
             self._symbol_queue = asyncio.Queue()
 
@@ -1341,46 +1364,26 @@ class MarketDataService:
 
     def get_or_fetch_price(self, symbol: str) -> Decimal:
         normalized = symbol.upper()
+        
+        # Fast path: check cache first (instant return if available)
         price = self.get_latest_price(normalized)
         if price is not None:
             return price
 
-        logger.info("Waiting for first tick for %s", normalized)
+        # Register symbol and wait briefly for live price (only if WebSocket is active)
+        logger.debug("Price not in cache for %s, registering and waiting briefly", normalized)
         self.register_symbol(normalized)
 
-        for _ in range(20):
+        # Wait for live price with shorter timeout (2 seconds max)
+        # This ensures fast response when WebSocket is working
+        for _ in range(4):  # 4 * 0.5s = 2 seconds max wait
             price = self.get_latest_price(normalized)
             if price is not None:
                 return price
             time.sleep(0.5)
 
-        # If live price unavailable, try fetching from historical candles (last close price)
-        logger.warning("Live price for %s unavailable, attempting historical candle fallback", normalized)
-        historical_price = None
-        try:
-            if isinstance(self.adapter, AngelOneAdapter):
-                from datetime import datetime, timedelta
-                # Get last 7 days of data
-                to_date = datetime.now()
-                from_date = to_date - timedelta(days=7)
-                candles = self.adapter.get_historical_candles(
-                    normalized,
-                    interval="FIFTEEN_MINUTE",
-                    fromdate=from_date.strftime("%Y-%m-%d %H:%M"),
-                    todate=to_date.strftime("%Y-%m-%d %H:%M"),
-                )
-                if candles and len(candles) > 0:
-                    # Use the close price of the most recent candle
-                    last_candle = candles[-1]
-                    close_price = Decimal(str(last_candle.get("close", 0)))
-                    if close_price > 0:
-                        historical_price = close_price
-                        logger.info("Using historical candle close price %.2f for %s", close_price, normalized)
-        except Exception as exc:
-            logger.warning("Failed to fetch Angel One historical price for %s: %s", normalized, exc)
-
-        # Always try Yahoo Finance as a reliable fallback (even if historical worked)
-        logger.info("Attempting Yahoo Finance fallback for %s", normalized)
+        # If live price unavailable, try Yahoo Finance first (fastest fallback)
+        logger.info("Live price for %s not in cache, trying Yahoo Finance fallback", normalized)
         yahoo_price = None
         try:
             import yfinance as yf
@@ -1391,8 +1394,8 @@ class MarketDataService:
             
             # Get latest price from Yahoo - try multiple methods
             try:
-                # Method 1: Try history with short period
-                hist = ticker.history(period="1d", timeout=10)
+                # Method 1: Try history with short period (fastest)
+                hist = ticker.history(period="1d", timeout=5)
                 if not hist.empty:
                     yahoo_price = Decimal(str(hist['Close'].iloc[-1]))
             except:
@@ -1410,32 +1413,62 @@ class MarketDataService:
             
             if yahoo_price is not None and yahoo_price > 0:
                 logger.info("✅ Using Yahoo Finance price %.2f for %s", yahoo_price, normalized)
+                # Cache this price for immediate use
+                with self._lock:
+                    self._latest[normalized] = yahoo_price
+                return yahoo_price
         except ImportError:
-            logger.warning("yfinance not installed, cannot use Yahoo Finance fallback")
+            logger.debug("yfinance not installed, skipping Yahoo Finance fallback")
         except Exception as exc:
-            logger.warning("Failed to fetch Yahoo Finance price for %s: %s", normalized, exc)
+            logger.debug("Yahoo Finance fallback failed for %s: %s", normalized, exc)
 
-        # Use Yahoo Finance price if available (preferred), otherwise use historical
-        final_price = yahoo_price if yahoo_price is not None else historical_price
-        
-        if final_price is not None and final_price > 0:
-            # Cache this price for immediate use
-            with self._lock:
-                self._latest[normalized] = final_price
-            return final_price
+        # If Yahoo Finance fails, try historical candles (slower, but more reliable for Indian stocks)
+        logger.info("Attempting Angel One historical candle fallback for %s", normalized)
+        try:
+            if isinstance(self.adapter, AngelOneAdapter):
+                from datetime import datetime, timedelta
+                # Get last 1 day of data (faster than 7 days)
+                to_date = datetime.now()
+                from_date = to_date - timedelta(days=1)
+                candles = self.adapter.get_historical_candles(
+                    normalized,
+                    interval="FIFTEEN_MINUTE",
+                    fromdate=from_date.strftime("%Y-%m-%d %H:%M"),
+                    todate=to_date.strftime("%Y-%m-%d %H:%M"),
+                )
+                if candles and len(candles) > 0:
+                    # Use the close price of the most recent candle
+                    last_candle = candles[-1]
+                    close_price = Decimal(str(last_candle.get("close", 0)))
+                    if close_price > 0:
+                        logger.info("Using historical candle close price %.2f for %s", close_price, normalized)
+                        # Cache this price for immediate use
+                        with self._lock:
+                            self._latest[normalized] = close_price
+                        return close_price
+        except Exception as exc:
+            logger.debug("Failed to fetch Angel One historical price for %s: %s", normalized, exc)
 
-        raise RuntimeError(f"Live price for {normalized} unavailable from provider {self.adapter.name}. Tried: live stream, historical candles, and Yahoo Finance.")
+        # If all fallbacks fail, return cached price if available (even if stale)
+        cached_price = self.get_latest_price(normalized)
+        if cached_price is not None:
+            logger.warning("Using stale cached price %.2f for %s (market may be closed)", cached_price, normalized)
+            return cached_price
+
+        raise RuntimeError(f"Unable to fetch price for {normalized}. Market may be closed or symbol not found.")
 
     async def await_price(self, symbol: str, timeout: float = 3.0) -> Decimal:
         """Wait for a price update for the given symbol with short timeout for responsiveness."""
         normalized = symbol.upper()
-        self.register_symbol(symbol)
-        deadline = time.time() + timeout
-
-        # Quick initial check
+        
+        # Quick initial check (fast path - most common case)
         price = self.get_latest_price(normalized)
         if price is not None:
             return price
+
+        # Register symbol and wait for live price
+        self.register_symbol(symbol)
+        deadline = time.time() + timeout
 
         # Poll with short intervals for real-time responsiveness
         while time.time() < deadline:
@@ -1444,7 +1477,12 @@ class MarketDataService:
                 return price
             await asyncio.sleep(0.1)  # Poll every 100ms
 
-        raise RuntimeError(f"Timed out waiting for live price for {normalized}")
+        # If timeout, fallback to get_or_fetch_price (which uses Yahoo Finance/historical)
+        logger.debug("Live price timeout for %s, using fallback", normalized)
+        try:
+            return self.get_or_fetch_price(normalized)
+        except RuntimeError:
+            raise RuntimeError(f"Timed out waiting for live price for {normalized}")
 
     def _run_pathway_runtime(self) -> None:
         """Run Pathway runtime with optimized settings for real-time streaming."""

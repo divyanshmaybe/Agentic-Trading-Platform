@@ -74,6 +74,12 @@ class TradeExecutionService:
         # Add triggering agent information to metadata
         if "triggered_by" not in metadata:
             metadata["triggered_by"] = job_row.get("triggered_by", "high_risk_agent")
+        
+        # Store agent_id and agent_type in metadata for fallback retrieval
+        if job_row.get("agent_id"):
+            metadata["agent_id"] = job_row["agent_id"]
+        if job_row.get("agent_type"):
+            metadata["agent_type"] = job_row["agent_type"]
 
         data = {
             "request_id": job_row["request_id"],
@@ -248,6 +254,22 @@ class TradeExecutionService:
         if record is None:
             self.logger.warning("Trade %s not found for execution", trade_id)
             return {"status": "missing", "trade_id": trade_id}
+        
+        # Ensure agent_id is available from the record
+        # If not in the record, try to get it from metadata
+        agent_id = getattr(record, "agent_id", None)
+        if not agent_id:
+            # Try to get from metadata
+            if hasattr(record, "metadata") and record.metadata:
+                import json
+                meta = record.metadata
+                if isinstance(meta, str):
+                    try:
+                        meta = json.loads(meta)
+                    except:
+                        meta = {}
+                if isinstance(meta, dict) and "agent_id" in meta:
+                    agent_id = meta["agent_id"]
 
         simulate = simulate if simulate is not None else (
             os.getenv("ANGELONE_TRADING_ENABLED", "false").lower() not in {"1", "true", "yes"}
@@ -267,8 +289,20 @@ class TradeExecutionService:
             )
             
             # Log trade execution with agent information
-            agent_id = getattr(record, "agent_id", None)
+            # agent_id should already be set from above check
             agent_type = getattr(record, "agent_type", None)
+            if not agent_type and agent_id:
+                # Try to get agent_type from metadata
+                if hasattr(record, "metadata") and record.metadata:
+                    import json
+                    meta = record.metadata
+                    if isinstance(meta, str):
+                        try:
+                            meta = json.loads(meta)
+                        except:
+                            meta = {}
+                    if isinstance(meta, dict) and "agent_type" in meta:
+                        agent_type = meta["agent_type"]
             symbol = str(getattr(record, "symbol", ""))
             side = str(getattr(record, "side", ""))
             quantity = int(record.quantity)
@@ -732,8 +766,25 @@ class TradeExecutionService:
                 executed_price,
             )
             
+            # Get agent_id and agent_type - try record first, then metadata
             agent_id = getattr(trade_record, "agent_id", None)
             agent_type = getattr(trade_record, "agent_type", None)
+            
+            # Fallback to metadata if not in record
+            if not agent_id or not agent_type:
+                if hasattr(trade_record, "metadata") and trade_record.metadata:
+                    meta = trade_record.metadata
+                    if isinstance(meta, str):
+                        try:
+                            meta = json.loads(meta)
+                        except:
+                            meta = {}
+                    if isinstance(meta, dict):
+                        if not agent_id and "agent_id" in meta:
+                            agent_id = meta["agent_id"]
+                        if not agent_type and "agent_type" in meta:
+                            agent_type = meta["agent_type"]
+            
             if agent_id:
                 try:
                     # Get current agent to update trades array

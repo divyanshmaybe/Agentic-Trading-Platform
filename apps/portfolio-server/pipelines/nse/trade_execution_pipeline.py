@@ -179,7 +179,8 @@ def _calculate_allocation(payload_json: str) -> float:
         data = json.loads(payload_json)
         capital = float(data.get("capital", 0.0))
         confidence = float(data.get("confidence", 0.0))
-    except (TypeError, ValueError, KeyError):
+    except (TypeError, ValueError, KeyError) as e:
+        LOGGER.warning("Failed to parse allocation inputs: %s", e)
         return 0.0
     
     # Use scalar conditional logic
@@ -190,7 +191,10 @@ def _calculate_allocation(payload_json: str) -> float:
     else:
         fraction = 0.0
     allocation = capital * fraction
-    return round(float(allocation), 4)
+    result = round(float(allocation), 4)
+    LOGGER.debug("Allocation calculation: capital=%.2f, confidence=%.2f, fraction=%.2f, result=%.2f", 
+                 capital, confidence, fraction, result)
+    return result
 
 
 @pw.udf
@@ -317,13 +321,24 @@ def build_trade_execution_pipeline(
 class _TradeCollector:
     """Collects trade job rows from the Pathway subscription."""
 
-    def __init__(self) -> None:
+    def __init__(self, logger: Optional[logging.Logger] = None) -> None:
         self._rows: List[Dict[str, Any]] = []
+        self.logger = logger or LOGGER
 
     def __call__(self, key: Any, row: Mapping[str, Any], time: Any, is_addition: bool) -> None:
         if not is_addition:
             return
-        self._rows.append(dict(row))
+        row_dict = dict(row)
+        self._rows.append(row_dict)
+        self.logger.info(
+            "✅ Collected trade job: %s %s x %d | Allocation: %.2f | Price: %.2f | Agent: %s",
+            row_dict.get("symbol", "unknown"),
+            row_dict.get("side", "unknown"),
+            row_dict.get("quantity", 0),
+            row_dict.get("allocated_capital", 0.0),
+            row_dict.get("reference_price", 0.0),
+            row_dict.get("agent_id", "unknown"),
+        )
 
     @property
     def rows(self) -> List[Dict[str, Any]]:
@@ -346,7 +361,7 @@ def run_trade_execution_requests(
     subject = _TradeSubject(str(uuid.uuid4()), event_queue, stop_event)
 
     results_table = build_trade_execution_pipeline(subject)
-    collector = _TradeCollector()
+    collector = _TradeCollector(logger=logger)
     pw.io.subscribe(results_table, collector)
 
     for item in requests:
