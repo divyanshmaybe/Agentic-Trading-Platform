@@ -14,7 +14,7 @@ import { useAuth } from "@/hooks/useAuth"
 import "@/lib/chart"
 import { notificationItems, portfolioSummary as mockPortfolioSummary, stocks as mockStocks } from "../data"
 import type { PortfolioSummary, StockItem } from "@/lib/dashboardTypes"
-import { getPortfolio, getPositions, fetchMarketCandles } from "@/lib/portfolio"
+import { getPortfolio, getPortfolioDashboard, getPositions, fetchMarketCandles, getPortfolioAllocations } from "@/lib/portfolio"
 import type { Portfolio } from "@/lib/portfolio"
 import { useLiveNewsFeed } from "@/hooks/useLiveNewsFeed"
 
@@ -39,42 +39,89 @@ export default function DashboardPage() {
         setLoading(true)
         setError(null)
 
-        // Fetch portfolio data
+        // Fetch dashboard data (aggregated portfolio stats)
+        const dashboardData = await getPortfolioDashboard()
+        
+        // Fetch portfolio details for additional fields
         const portfolioData = await getPortfolio()
         setPortfolio(portfolioData)
 
-        // Fetch positions
+        // Fetch positions for stocks watchlist
         const positionsData = await getPositions(1, 10)
         
-        // Calculate portfolio summary (always update with API data)
-        const totalValue = parseFloat(portfolioData.current_value)
-        const investmentAmount = parseFloat(portfolioData.investment_amount)
+        // Fetch allocations to build allocation chart
+        let allocation = [
+          { label: "Algorithmic Strategies", value: 45 },
+          { label: "Long-Term Strategies", value: 32 },
+          { label: "Intraday Strategies", value: 23 },
+        ]
         
-        // Calculate total P&L from positions
-        const totalPnL = positionsData.items.reduce(
-          (sum, pos) => sum + parseFloat(pos.pnl),
-          0
-        )
+        try {
+          const allocationsData = await getPortfolioAllocations()
+          if (allocationsData.items.length > 0) {
+            // Transform allocations to chart format
+            const filteredAllocations = allocationsData.items
+              .filter(alloc => alloc.allocation_type !== "cashAvailable")
+
+            // Map API allocation types to display labels
+            const allocationTypeToLabel: Record<string, string> = {
+              "low_risk": "Long-Term",
+              "Low_Risk": "Long-Term",
+              "low risk": "Long-Term",
+              "Low Risk": "Long-Term",
+              "high_risk": "Intraday",
+              "High_Risk": "Intraday",
+              "high risk": "Intraday",
+              "High Risk": "Intraday",
+              "alpha": "Algorithmic",
+              "Alpha": "Algorithmic",
+            }
+            
+            allocation = filteredAllocations.map((alloc, index) => {
+              // Get display label from mapping, or fallback to formatted allocation type
+              const formattedType = alloc.allocation_type.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase())
+              const label = allocationTypeToLabel[alloc.allocation_type] || 
+                           allocationTypeToLabel[formattedType] || 
+                           formattedType
+              
+              let value = parseFloat(alloc.current_weight) * 100
+              
+              // Round to integer for all items except the last one
+              if (index < filteredAllocations.length - 1) {
+                value = Math.round(value)
+              } else {
+                // Last item: ensure percentages add up to exactly 100% by adjusting
+                const sumSoFar = filteredAllocations
+                  .slice(0, index)
+                  .reduce((sum, a) => sum + Math.round(parseFloat(a.current_weight) * 100), 0)
+                value = 100 - sumSoFar
+              }
+              
+              return { label, value }
+            })
+          }
+        } catch (err) {
+          console.error("Error fetching allocations:", err)
+          // Keep default allocation on error
+        }
+        
+        // Calculate portfolio summary from dashboard data
+        const totalValue = parseFloat(dashboardData.current_value)
+        const investmentAmount = parseFloat(dashboardData.investment_amount)
+        const realizedPnL = parseFloat(dashboardData.realized_pnl)
         
         // Calculate change percentage
         const changePct = investmentAmount > 0 
           ? ((totalValue - investmentAmount) / investmentAmount) * 100 
           : 0
-        
-        // Keep the mock allocation for the pie chart as requested
-        const allocation = [
-          { label: "Algorithmic Strategies", value: 45 },
-          { label: "Long-Term Strategies", value: 32 },
-          { label: "Intraday Strategies", value: 23 },
-        ]
 
         setPortfolioSummary({
-          portfolioName: portfolioData.portfolio_name,
+          portfolioName: dashboardData.portfolio_name,
           totalValue: totalValue,
           investmentAmount: investmentAmount,
           changePct: changePct,
           changeValue: totalValue - investmentAmount,
-          dailyPnL: totalPnL,
+          dailyPnL: realizedPnL,
           riskTolerance: portfolioData.risk_tolerance,
           expectedReturn: parseFloat(portfolioData.expected_return_target) * 100, // Convert to percentage
           investmentHorizon: portfolioData.investment_horizon_years,

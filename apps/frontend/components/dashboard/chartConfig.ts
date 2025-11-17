@@ -27,6 +27,26 @@ const PIE_COLOR_MAP = {
 
 type PieColorKey = keyof typeof PIE_COLOR_MAP
 
+// Mapping from API allocation types and display labels to chart color keys
+const ALLOCATION_TYPE_TO_COLOR_MAP: Record<string, PieColorKey> = {
+  // Display labels (what frontend shows)
+  "Long-Term": "Long-Term Strategies",
+  "Intraday": "Intraday Strategies",
+  "Algorithmic": "Algorithmic Strategies",
+  // API allocation types (what backend sends)
+  "Low Risk": "Long-Term Strategies",
+  "High Risk": "Intraday Strategies",
+  "Alpha": "Algorithmic Strategies",
+  // Also handle lowercase and other variations
+  "low risk": "Long-Term Strategies",
+  "high risk": "Intraday Strategies",
+  "alpha": "Algorithmic Strategies",
+  "Low_Risk": "Long-Term Strategies",
+  "High_Risk": "Intraday Strategies",
+  "low_risk": "Long-Term Strategies",
+  "high_risk": "Intraday Strategies",
+}
+
 const PIE_FALLBACK = {
   fill: "#4b5563",
   border: "#1f2937",
@@ -34,7 +54,11 @@ const PIE_FALLBACK = {
   glow: "rgba(75,85,99,0.18)",
 }
 
-const getPieColors = (label: string) => PIE_COLOR_MAP[label as PieColorKey] ?? PIE_FALLBACK
+const getPieColors = (label: string) => {
+  // First try to map API allocation type to chart color key
+  const mappedLabel = ALLOCATION_TYPE_TO_COLOR_MAP[label] || label
+  return PIE_COLOR_MAP[mappedLabel as PieColorKey] ?? PIE_FALLBACK
+}
 
 export const pieDepthPlugin: Plugin<"pie"> = {
   id: "dashboard-pie-depth",
