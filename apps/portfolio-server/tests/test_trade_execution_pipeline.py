@@ -286,6 +286,73 @@ async def test_pipeline_service_process_trade_signals(monkeypatch: pytest.Monkey
     fake_manager = FakePipelineManager([portfolio])
     monkeypatch.setattr("services.pipeline_service.get_db_manager", lambda: fake_manager, raising=False)
 
+    # Mock Prisma client - the service creates a new Prisma() instance
+    class FakeTradingAgent:
+        def __init__(self):
+            self.id = "agent-1"
+            self.agent_type = "high_risk"
+            self.status = "active"
+            self.strategy_config = {"auto_trade": True}
+            self.metadata = {"source": "unit-test"}
+            self.portfolio = SimpleNamespace(
+                id="pf-1",
+                user_id="user-1",
+                portfolio_name="High Risk Sleeve",
+            )
+            self.allocation = SimpleNamespace(
+                allocated_amount=Decimal("100000"),
+            )
+
+    class FakePortfolio:
+        def __init__(self):
+            self.id = "pf-1"
+            self.portfolio_name = "High Risk Sleeve"
+            self.user_id = "user-1"
+            self.organization_id = "org-1"
+            self.customer_id = "cust-1"
+            self.status = "active"
+            self.current_value = Decimal("150000")
+            self.investment_amount = Decimal("120000")
+            self.metadata = {"cash": 250_000.0}
+            self.agents = [
+                SimpleNamespace(
+                    id="agent-1",
+                    agent_type="high_risk",
+                    status="active",
+                    strategy_config={"auto_trade": True},
+                    metadata={"source": "unit-test"},
+                    allocation=SimpleNamespace(
+                        allocated_amount=Decimal("100000"),
+                    ),
+                )
+            ]
+
+    class FakePrisma:
+        def __init__(self):
+            pass
+        
+        async def connect(self):
+            pass
+        
+        async def disconnect(self):
+            pass
+        
+        @property
+        def tradingagent(self):
+            class TradingAgentModel:
+                async def find_many(self, where=None, include=None):
+                    return [FakeTradingAgent()]
+            return TradingAgentModel()
+        
+        @property
+        def portfolio(self):
+            class PortfolioModel:
+                async def find_many(self, where=None, include=None):
+                    return [FakePortfolio()]
+            return PortfolioModel()
+
+    monkeypatch.setattr("prisma.Prisma", FakePrisma)
+
     trade_payload = trade_utils.TradeExecutionPayload(
         request_id="req-1",
         signal_id="sig-1",
