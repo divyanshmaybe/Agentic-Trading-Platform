@@ -5,51 +5,10 @@ import { AnimatePresence, motion } from "framer-motion"
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { useNotificationStream } from "@/hooks/useNotificationStream"
-import {
-  coerceNotification,
-  formatTemporal,
-  resolveHeadline,
-  toRecord,
-} from "@/components/intraday/notification-utils"
+import { coerceNotification } from "@/components/intraday/notification-utils"
 import type { KafkaNotification } from "@/components/intraday/types"
-import { NotificationBody } from "@/components/intraday/parts/NotificationBody"
-import { NotificationActions } from "@/components/intraday/parts/NotificationActions"
-import { X } from "lucide-react"
+import { NotificationItemCard } from "@/components/intraday/parts/NotificationItemCard"
 
-function resolveBody(notification: KafkaNotification): string {
-  if (typeof notification.body === "string" && notification.body.trim().length) {
-    return notification.body
-  }
-
-  const record = toRecord(notification.data)
-  if (record) {
-    if (typeof record.message === "string" && record.message.trim().length) {
-      return record.message
-    }
-    if (typeof record.summary === "string" && record.summary.trim().length) {
-      return record.summary
-    }
-    if (typeof record.description === "string" && record.description.trim().length) {
-      return record.description
-    }
-    if (typeof record.note === "string" && record.note.trim().length) {
-      return record.note
-    }
-  }
-
-  return "Live intraday signal received. Review and act promptly."
-}
-
-function resolveTimestamp(notification: KafkaNotification): string {
-  return (
-    formatTemporal(notification.timestamp) ??
-    notification.timestamp ??
-    new Intl.DateTimeFormat("en-US", {
-      hour: "numeric",
-      minute: "2-digit",
-    }).format(new Date())
-  )
-}
 
 function useIntradayNotifications(): {
   notifications: KafkaNotification[]
@@ -100,15 +59,8 @@ export function IntradayNotifications() {
     })
   }, [])
 
-  const enrichedNotifications = useMemo(() => {
-    return notifications
-      .filter((notification) => !dismissedIds.has(notification.id))
-      .map((notification) => ({
-        notification,
-        title: resolveHeadline(notification),
-        body: resolveBody(notification),
-        timestamp: resolveTimestamp(notification),
-      }))
+  const visibleNotifications = useMemo(() => {
+    return notifications.filter((notification) => !dismissedIds.has(notification.id))
   }, [notifications, dismissedIds])
 
   return (
@@ -126,14 +78,14 @@ export function IntradayNotifications() {
           </div>
         ) : null}
 
-        {enrichedNotifications.length === 0 ? (
+        {visibleNotifications.length === 0 ? (
           <div className="flex h-40 items-center justify-center rounded-xl border border-dashed border-white/10 bg-black/20 text-sm text-white/50">
             Waiting for the next intraday trigger.
           </div>
         ) : (
-          <div className="space-y-3 pr-2">
+          <div className="space-y-4 pr-2">
             <AnimatePresence initial={false} mode="popLayout">
-              {enrichedNotifications.map(({ notification, title, body, timestamp }) => (
+              {visibleNotifications.map((notification) => (
                 <motion.div
                   key={notification.id}
                   layout
@@ -141,29 +93,8 @@ export function IntradayNotifications() {
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -20 }}
                   transition={{ duration: 0.45, ease: [0.21, 0.61, 0.35, 1] }}
-                  className="group relative rounded-xl border border-white/10 bg-black/30 p-4 shadow-[0_8px_24px_-8px_rgba(0,0,0,0.6)] backdrop-blur-sm"
                 >
-                  <div className="mb-2 flex items-center justify-between gap-3">
-                    <span className="text-xs font-medium uppercase tracking-wide text-white/45">
-                      {timestamp}
-                    </span>
-                    <span className="rounded-md bg-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white/50">
-                      Alert
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => handleDismiss(notification.id)}
-                      className="rounded-full border border-white/10 bg-white/5 p-1 text-white/60 transition hover:border-white/20 hover:bg-white/15 hover:text-white"
-                      aria-label="Dismiss notification"
-                    >
-                      <X className="size-3.5" />
-                    </button>
-                  </div>
-                  <h3 className="mb-1.5 text-base font-semibold text-[#fafafa]">{title}</h3>
-                  <p className="text-sm leading-relaxed text-white/70">{body}</p>
-
-                  <NotificationBody notification={notification} />
-                  <NotificationActions actions={notification.actions} />
+                  <NotificationItemCard notification={notification} onDismiss={handleDismiss} />
                 </motion.div>
               ))}
             </AnimatePresence>

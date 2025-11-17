@@ -129,8 +129,9 @@ export async function GET(request: NextRequest) {
                 topic,
                 partition,
                 offset: message.offset,
-                originalPayload: payload,
-                normalizedPayload,
+                hasOriginalValue: "value" in payload,
+                hasNormalizedData: Object.keys(normalizedPayload).length > 0,
+                normalizedKeys: Object.keys(normalizedPayload),
               })
 
               const notification = mapKafkaMessageToNotification(

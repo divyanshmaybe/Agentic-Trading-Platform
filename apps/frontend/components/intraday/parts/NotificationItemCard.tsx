@@ -1,8 +1,9 @@
 import { type ReactNode } from "react"
 
-import { Activity, AlertTriangle, BarChart3, Newspaper, PieChart, Sparkles } from "lucide-react"
+import { Activity, AlertTriangle, BarChart3, Newspaper, PieChart, Sparkles, X } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { normalizeNumber, toRecord } from "../notification-utils"
 
 import type { KafkaNotification } from "../types"
 
@@ -11,9 +12,9 @@ import { NotificationBody } from "./NotificationBody"
 import { NotificationHeader } from "./NotificationHeader"
 
 const notificationTopicTitles: Record<string, string> = {
-  "nse-signal": "NSE Filing Signal",
-  "news-stock-recommendation": "News Stock Insight",
-  "news-sentiment-article": "News Sentiment",
+  "nse-signal": "Trading Signal",
+  "news-stock-recommendation": "Stock Recommendation",
+  "news-sentiment-article": "Sentiment Analysis",
   "news-sector-analysis": "Sector Analysis",
   "portfolio-risk-alert": "Risk Alert",
   generic: "Live Notification",
@@ -74,28 +75,71 @@ const topicIcons: Record<string, ReactNode> = {
   generic: <Sparkles className="size-3.5" />,
 }
 
-export function NotificationItemCard({ notification }: { notification: KafkaNotification }) {
+export function NotificationItemCard({
+  notification,
+  onDismiss,
+}: {
+  notification: KafkaNotification
+  onDismiss?: (id: string) => void
+}) {
   const styles = topicStyles[notification.type] ?? topicStyles.generic
   const title = notificationTopicTitles[notification.type] ?? notificationTopicTitles.generic
   const icon = topicIcons[notification.type] ?? topicIcons.generic
 
+  // Determine background color based on signal strength for nse-signal type
+  const data = toRecord(notification.data)
+  const signal = notification.type === "nse-signal" ? normalizeNumber(data?.signal) : null
+  const bgColorClass =
+    signal === 1
+      ? "bg-emerald-950/40 border-emerald-500/30"
+      : signal != null && signal !== 1
+        ? "bg-red-950/40 border-red-500/30"
+        : "bg-black/30 border-white/12"
+
+  // Determine icon and badge colors based on signal
+  const iconWrapperClass =
+    signal === 1
+      ? "border-emerald-400/40 bg-emerald-500/20 text-emerald-200 shadow-[0_8px_24px_-14px_rgba(16,185,129,0.65)]"
+      : signal != null && signal !== 1
+        ? "border-red-400/40 bg-red-500/20 text-red-200 shadow-[0_8px_24px_-14px_rgba(248,113,113,0.65)]"
+        : styles.icon
+
+  const badgeClass =
+    signal === 1
+      ? "text-emerald-300"
+      : signal != null && signal !== 1
+        ? "text-red-300"
+        : styles.badge
+
   return (
     <article
       className={cn(
-        "group relative overflow-hidden rounded-2xl border border-white/12 bg-black/30 p-5 shadow-[0_18px_40px_-26px_rgba(0,0,0,0.85)] backdrop-blur-sm transition-transform duration-20",
+        "group relative overflow-hidden rounded-2xl border p-5 shadow-[0_18px_40px_-26px_rgba(0,0,0,0.85)] backdrop-blur-sm transition-transform duration-20",
         "before:absolute before:inset-0 before:-z-10 before:opacity-0 before:transition-opacity before:duration-300 group-hover:before:opacity-100",
-        styles.accent,
+        bgColorClass,
+        // Only apply accent gradient if not using signal-based background
+        signal == null && styles.accent,
       )}
     >
+      {onDismiss && (
+        <button
+          type="button"
+          onClick={() => onDismiss(notification.id)}
+          className="absolute right-3 top-3 z-10 rounded-full border border-white/10 bg-white/5 p-1.5 text-white/60 transition hover:border-white/20 hover:bg-white/15 hover:text-white"
+          aria-label="Dismiss notification"
+        >
+          <X className="size-3.5" />
+        </button>
+      )}
       <NotificationHeader
         notification={notification}
         icon={icon}
         title={title}
-        iconWrapperClass={styles.icon}
-        badgeClass={styles.badge}
+        iconWrapperClass={iconWrapperClass}
+        badgeClass={badgeClass}
       />
       <NotificationBody notification={notification} />
-      <NotificationActions actions={notification.actions} />
+      <NotificationActions actions={notification.actions} signal={signal} />
     </article>
   )
 }

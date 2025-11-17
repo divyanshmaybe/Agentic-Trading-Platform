@@ -101,11 +101,14 @@ function getHeaderString(headers: KafkaMessage["headers"], key: string): string 
 export function normalizeKafkaPayload(payload: Record<string, unknown>): Record<string, unknown> {
   const candidateKeys = ["value", "payload", "data"]
   const visited = new Set<Record<string, unknown>>()
+  const maxDepth = 10 // Prevent infinite loops
+  let depth = 0
 
   let current: Record<string, unknown> | undefined = payload
 
-  while (current && !visited.has(current)) {
+  while (current && !visited.has(current) && depth < maxDepth) {
     visited.add(current)
+    depth++
     let advanced = false
 
     for (const key of candidateKeys) {
@@ -115,24 +118,55 @@ export function normalizeKafkaPayload(payload: Record<string, unknown>): Record<
 
       const nextLayer = current[key]
 
+      // Handle JSON string (most common case for nested value.value structures)
       if (typeof nextLayer === "string") {
         try {
-          current = JSON.parse(nextLayer) as Record<string, unknown>
+          const parsed = JSON.parse(nextLayer) as unknown
+          // Only continue if we parsed an object (not array or primitive)
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            current = parsed as Record<string, unknown>
+            advanced = true
+            break
+          }
+        } catch (parseError) {
+          // Not valid JSON; continue to check other keys
+          console.debug(`[Kafka] Failed to parse ${key} as JSON:`, parseError)
+        }
+      } 
+      // Handle nested object structures
+      else if (nextLayer && typeof nextLayer === "object" && !Array.isArray(nextLayer)) {
+        // Check if this nested object has a value key with a JSON string
+        const nestedObj = nextLayer as Record<string, unknown>
+        if ("value" in nestedObj && typeof nestedObj.value === "string") {
+          try {
+            const parsed = JSON.parse(nestedObj.value) as unknown
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+              current = parsed as Record<string, unknown>
+              advanced = true
+              break
+            }
+          } catch {
+            // If nested value isn't JSON, use the nested object itself
+            current = nestedObj
+            advanced = true
+            break
+          }
+        } else {
+          // Use the nested object as-is
+          current = nestedObj
           advanced = true
           break
-        } catch {
-          // Not JSON; move on to other keys.
         }
-      } else if (nextLayer && typeof nextLayer === "object" && !Array.isArray(nextLayer)) {
-        current = nextLayer as Record<string, unknown>
-        advanced = true
-        break
       }
     }
 
     if (!advanced) {
       break
     }
+  }
+
+  if (depth >= maxDepth) {
+    console.warn("[Kafka] Reached max depth while normalizing payload, returning current state")
   }
 
   return current ?? {}

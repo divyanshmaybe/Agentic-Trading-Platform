@@ -117,6 +117,20 @@ def ensure_publisher(name: str, topic: str, model: type[BaseModel], headers: Opt
         return BUS.get_publisher(name)
 
 
+def create_nested_value_wrapper(inner_payload: dict, partition_key: str, source_header: str) -> dict:
+    """Create the nested value structure that matches the Kafka message format."""
+    import time as time_module
+    return {
+        "key": partition_key,
+        "value": json.dumps(inner_payload, separators=(",", ":"), default=str),
+        "headers": {
+            "source": source_header
+        },
+        "diff": 1,
+        "time": int(time_module.time() * 1000)
+    }
+
+
 def publish_event(
     publisher_name: str,
     topic_key: str,
@@ -126,13 +140,26 @@ def publish_event(
     partition_key: Optional[str] = None,
 ) -> None:
     topic = TOPICS[topic_key]
-    publisher = ensure_publisher(publisher_name, topic, model, headers)
+    # Get source header from headers or use default based on topic
+    source_header = (headers or {}).get("source", "news_pipeline" if "news" in topic_key else "nse_filings")
+    
+    # Create publisher without model validation since we're wrapping manually
+    # Don't pass headers as default_headers - they go in the nested structure
+    publisher = ensure_publisher(publisher_name, topic, None, None)
 
     try:
+        # Validate the payload matches the model
         event = model(**payload)
-        publisher.publish(event.model_dump(), key=partition_key)
+        inner_payload = event.model_dump(mode="json")
+        
+        # Wrap in nested structure that matches the Kafka message format
+        nested_value = create_nested_value_wrapper(inner_payload, partition_key or "", source_header)
+        
+        # Publish the nested structure as the payload
+        # KafkaPublisher will serialize this to JSON string for the Kafka message value
+        publisher.publish(nested_value, key=partition_key)
         print(f"✓ Published {publisher_name} event to topic '{topic}':")
-        print(json.dumps(event.model_dump(), indent=2))
+        print(json.dumps(nested_value, indent=2))
         time.sleep(0.5)  # allow pipeline to flush
     finally:
         publisher.stop()
@@ -140,21 +167,25 @@ def publish_event(
 
 now_ts = utc_timestamp()
 
+# Format filing_time as "YYYY-MM-DD HH:MM:SS" for NSE signals
+filing_time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
 publish_event(
     publisher_name="cli_nse_signal",
     topic_key="nse_signal",
     model=NSESignalEvent,
     payload={
-        "symbol": "INFY",
-        "filing_time": now_ts,
-        "filing_url": "https://example.com/filings/infy-buyback",
+        "symbol": "MBEL",
+        "filing_time": filing_time_str,
+        "filing_url": None,  # Can be None as per schema
         "signal": 1,
-        "explanation": "Post-filing sentiment indicates upside momentum; board approved buyback.",
-        "confidence": 0.82,
+        "explanation": "The earnings call transcript reveals strong revenue growth, a robust order book, significant capacity expansion plans, and confident management guidance for future growth, especially in exports. The slight price decline on the day of the transcript filing suggests the market has not fully priced in these strong underlying fundamentals.",
+        "confidence": 0.85,
         "generated_at": now_ts,
+        "source": "nse_filings_pipeline",
     },
-    partition_key="INFY",
-    headers={"source": "cli-sample"},
+    partition_key="MBEL",
+    headers={"source": "nse_filings"},
 )
 
 publish_event(
@@ -163,17 +194,17 @@ publish_event(
     model=NewsStockRecommendationEvent,
     payload={
         "sector": "Information Technology",
-        "stock_name": "TCS",
-        "trade_signal": "OVERWEIGHT",
-        "detailed_analysis": "Positive analyst coverage and strong earnings beat projected to lift near-term returns.",
-        "time_window_investment": "4-6 weeks",
-        "news_source": "QuantWire",
-        "news_source_url": "https://www.youtube.com/",
-        "provider": "news_sentiment_pipeline",
+        "stock_name": "INFY",
+        "trade_signal": "HOLD",
+        "detailed_analysis": "While the Information Technology sector has a positive sentiment, the specific news catalyst was for TCS, not directly for Infosys (INFY). Technically, INFY shows slight bullish short-term momentum with EMA20 (1501.05) above SMA20 (1497.50). However, its RSI14 (47.35) and STOCHK (40.33) are neutral to slightly weak, not indicating strong conviction for an immediate upward surge. Without a direct positive news catalyst for INFY itself and with less robust momentum indicators compared to TCS, a confident short-term BUY signal is not warranted. Therefore, a HOLD position is recommended for the current trading day.",
+        "time_window_investment": "no time window valid for hold signals",
+        "news_source": "",
+        "news_source_url": None,
+        "provider": "gemini",
         "generated_at": now_ts,
     },
-    partition_key="TCS",
-    headers={"source": "cli-sample"},
+    partition_key="INFY",
+    headers={"source": "news_pipeline"},
 )
 
 publish_event(
@@ -181,16 +212,16 @@ publish_event(
     topic_key="news_sentiment",
     model=NewsSentimentArticleEvent,
     payload={
-        "stream": "global_macros",
-        "title": "Fed retains dovish tone, rate cuts likely in Q3",
-        "content": "Central bank minutes signalled flexibility to support soft landing, boosting defensives.",
-        "sentiment": "positive",
-        "url": "https://www.youtube.com/",
-        "provider": "news_sentiment_pipeline",
+        "stream": "Financial Services",
+        "title": "RBI hints at calibrated rate pause amid moderating inflation",
+        "content": "Policy minutes suggest a data-dependent approach with focus on liquidity absorption and targeted sectoral support.",
+        "sentiment": "neutral",
+        "url": "https://news.example.com/rbi-policy-minutes",
+        "provider": "placeholder",
         "generated_at": now_ts,
     },
-    partition_key="global_macros",
-    headers={"source": "cli-sample"},
+    partition_key="Financial Services",
+    headers={"source": "news_pipeline"},
 )
 
 publish_event(
@@ -204,7 +235,7 @@ publish_event(
         "generated_at": now_ts,
     },
     partition_key="sector_analysis",
-    headers={"source": "cli-sample"},
+    headers={"source": "news_pipeline"},
 )
 
 publish_event(
@@ -221,9 +252,10 @@ publish_event(
         "current_price": 1498.30,
         "current_change": -3.2,
         "generated_at": now_ts,
+        "source": "risk_agent_pipeline",
     },
     partition_key="HDFCBANK",
-    headers={"source": "cli-sample"},
+    headers={"source": "risk_agent_pipeline"},
 )
 
 print("\nAll sample notifications published successfully.")
