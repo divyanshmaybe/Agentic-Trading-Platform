@@ -371,3 +371,57 @@ export async function getPortfolioAllocations(
   })
 }
 
+export type TradeRequest = {
+  portfolio_id: string
+  symbol: string
+  exchange?: string
+  segment?: string
+  side: "BUY" | "SELL"
+  order_type: "market" | "limit" | "stop" | "stop_loss" | "take_profit"
+  quantity: number
+  limit_price?: number
+  trigger_price?: number
+  trade_type?: string
+  customer_id?: string
+  source?: string
+  metadata?: Record<string, unknown>
+}
+
+export type TradeResponse = {
+  success: boolean
+  message: string
+  trades: Array<{
+    id: string
+    symbol: string
+    side: string
+    order_type: string
+    status: string
+    quantity: number
+    price?: string
+    executed_quantity?: number
+    executed_price?: string
+    execution_time?: string
+  }>
+  pending_orders: number
+  portfolio: {
+    id: string
+    current_value: string
+    updated_at: string
+  }
+}
+
+export async function submitTrade(
+  tradeData: TradeRequest,
+  accessToken?: string,
+): Promise<TradeResponse> {
+  const token = resolveAccessToken(accessToken)
+
+  return request<TradeResponse>("/api/trades/", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(tradeData),
+  })
+}
+

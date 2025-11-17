@@ -139,7 +139,11 @@ export function NotificationItemCard({
         badgeClass={badgeClass}
       />
       <NotificationBody notification={notification} />
-      <NotificationActions actions={notification.actions} signal={signal} />
+      <NotificationActions
+        actions={notification.actions}
+        signal={signal}
+        notification={notification}
+      />
     </article>
   )
 }

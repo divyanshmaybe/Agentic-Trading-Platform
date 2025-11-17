@@ -1,29 +1,51 @@
+import { useState } from "react"
+
 import { cn } from "@/lib/utils"
 
-import type { KafkaNotificationAction } from "../types"
+import type { KafkaNotificationAction, KafkaNotification } from "../types"
+import { TradeModal } from "./TradeModal"
 
 export function NotificationActions({
   actions,
   signal,
+  notification,
 }: {
   actions: KafkaNotificationAction[] | undefined
   signal: number | null
+  notification: KafkaNotification
 }) {
-  if (!actions?.length) {
-    return null
-  }
+  const [tradeModalOpen, setTradeModalOpen] = useState(false)
 
   return (
-    <footer className="mt-4 flex flex-wrap gap-2">
-      {actions.map((action, index) => (
-        <NotificationAction
-          key={`${action.value}-${index}`}
-          action={action}
-          primary={index === 0}
-          signal={signal}
-        />
-      ))}
-    </footer>
+    <>
+      <footer className="mt-4 flex flex-wrap gap-2">
+        {signal === 1 && (
+          <button
+            type="button"
+            onClick={() => setTradeModalOpen(true)}
+            className={cn(
+              "inline-flex items-center justify-center rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-[0.25em] transition-all duration-200",
+              "border border-emerald-400/30 bg-emerald-500/15 text-emerald-200 shadow-[0_10px_28px_-18px_rgba(16,185,129,0.35)] hover:-translate-y-0.5 hover:border-emerald-300/50 hover:bg-emerald-500/25 hover:text-emerald-100",
+            )}
+          >
+            Buy
+          </button>
+        )}
+        {actions?.map((action, index) => (
+          <NotificationAction
+            key={`${action.value}-${index}`}
+            action={action}
+            primary={index === 0}
+            signal={signal}
+          />
+        ))}
+      </footer>
+      <TradeModal
+        open={tradeModalOpen}
+        onOpenChange={setTradeModalOpen}
+        notification={notification}
+      />
+    </>
   )
 }
 
