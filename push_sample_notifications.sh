@@ -117,8 +117,8 @@ def ensure_publisher(name: str, topic: str, model: type[BaseModel], headers: Opt
         return BUS.get_publisher(name)
 
 
-def create_nested_value_wrapper(inner_payload: dict, partition_key: str, source_header: str) -> dict:
-    """Create the nested value structure that matches the Kafka message format."""
+def create_kafka_message_wrapper(inner_payload: dict, partition_key: str, source_header: str) -> dict:
+    """Create the Kafka message wrapper structure with the payload as a JSON string in value.value."""
     import time as time_module
     return {
         "key": partition_key,
@@ -143,23 +143,20 @@ def publish_event(
     # Get source header from headers or use default based on topic
     source_header = (headers or {}).get("source", "news_pipeline" if "news" in topic_key else "nse_filings")
     
-    # Create publisher without model validation since we're wrapping manually
-    # Don't pass headers as default_headers - they go in the nested structure
+    # Create publisher without model validation
     publisher = ensure_publisher(publisher_name, topic, None, None)
 
     try:
-        # Validate the payload matches the model
         event = model(**payload)
         inner_payload = event.model_dump(mode="json")
         
-        # Wrap in nested structure that matches the Kafka message format
-        nested_value = create_nested_value_wrapper(inner_payload, partition_key or "", source_header)
+        message_wrapper = create_kafka_message_wrapper(inner_payload, partition_key or "", source_header)
         
-        # Publish the nested structure as the payload
-        # KafkaPublisher will serialize this to JSON string for the Kafka message value
-        publisher.publish(nested_value, key=partition_key)
+
+        publisher._queue.put(message_wrapper, block=True, timeout=5.0)
+        
         print(f"✓ Published {publisher_name} event to topic '{topic}':")
-        print(json.dumps(nested_value, indent=2))
+        print(json.dumps(message_wrapper, indent=2))
         time.sleep(0.5)  # allow pipeline to flush
     finally:
         publisher.stop()
@@ -260,5 +257,3 @@ publish_event(
 
 print("\nAll sample notifications published successfully.")
 PY
-
-
