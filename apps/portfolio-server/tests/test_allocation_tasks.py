@@ -8,7 +8,7 @@ import types
 from datetime import datetime
 from decimal import Decimal
 from typing import Any, Dict, List
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from pathlib import Path
 
 import pytest
@@ -118,10 +118,28 @@ async def test_allocate_for_objective_task_creates_allocations(monkeypatch, mock
     fake_db_manager_module.DBManager = _DBManager
     monkeypatch.setitem(sys.modules, "dbManager", fake_db_manager_module)
     
-    # Mock PipelineService
+    # Patch Prisma to return the fake client
+    class FakePrisma:
+        def __init__(self):
+            pass
+        
+        async def connect(self):
+            return mock_db
+        
+        async def disconnect(self):
+            pass
+        
+        def __getattr__(self, name):
+            # Return the corresponding fake model
+            return getattr(mock_db, name)
+    
+    monkeypatch.setattr("prisma.Prisma", lambda: FakePrisma())
+    
+    # Mock PipelineService - it's imported inside the function, so patch the import location
     mock_pipeline_service = MagicMock()
     mock_pipeline_service._persist_allocation_result = AsyncMock()
-    monkeypatch.setattr("workers.allocation_tasks.PipelineService", lambda *args, **kwargs: mock_pipeline_service)
+    # Patch at the module where it's imported
+    monkeypatch.setattr("services.pipeline_service.PipelineService", lambda *args, **kwargs: mock_pipeline_service)
     
     # Create allocation records
     allocation_records = []
@@ -141,10 +159,25 @@ async def test_allocate_for_objective_task_creates_allocations(monkeypatch, mock
     mock_db.portfolioallocation.create.side_effect = allocation_records
     
     # Call the task directly (not as Celery task)
-    task_instance = allocation_tasks.allocate_for_objective_task._get_current_object()
+    # The task function creates its own event loop, so we need to run it in executor
+    task_func = allocation_tasks.allocate_for_objective_task
     
-    # Call the wrapped function
-    result = await task_instance.__wrapped__._allocate()
+    # Call the task function with dummy arguments (it will use mocked dependencies)
+    # The task creates its own event loop, so we run it in executor to avoid loop conflicts
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: task_func(
+            "portfolio-123",
+            "objective-123",
+            "user-123",
+            "org-123",
+            {"risk_tolerance": "medium"},
+            100000.0,
+            100000.0,
+            "test"
+        )
+    )
     
     # Verify allocations were created
     assert mock_db.portfolioallocation.create.call_count == len(mock_allocation_result["weights"])
@@ -178,13 +211,10 @@ async def test_allocate_for_objective_task_handles_missing_weights(mock_db, mock
         
         with patch("workers.allocation_tasks.allocate_portfolios", side_effect=fake_allocate_portfolios):
             with patch("workers.allocation_tasks._get_current_regime", return_value="sideways"):
-                with patch("workers.allocation_tasks.DEFAULT_SEGMENTS", ["high_risk", "low_risk", "alpha"]):
-                    # This should use default weights
-                    task = allocation_tasks.allocate_for_objective_task
-                    
-                    # The task should not fail, but use default weights
-                    # We'll verify this by checking that allocations are still created
-                    pass  # Implementation would go here
+                # This should use default weights from DEFAULT_SEGMENTS
+                # The task should not fail, but use default weights
+                # We'll verify this by checking that allocations are still created
+                pass  # Implementation would go here
 
 
 @pytest.mark.asyncio
@@ -214,7 +244,7 @@ async def test_allocate_for_objective_task_creates_trading_agents(mock_db, mock_
 
 
 @pytest.mark.asyncio
-async def test_allocate_for_objective_task_creates_snapshots(mock_db, mock_db_manager, mock_allocation_result):
+async def test_allocate_for_objective_task_creates_snapshots(monkeypatch, mock_db, mock_db_manager, mock_allocation_result):
     """Test that allocation snapshots are created via _persist_allocation_result."""
     
     def fake_allocate_portfolios(requests, logger=None, audit_path=None):
@@ -223,20 +253,37 @@ async def test_allocate_for_objective_task_creates_snapshots(mock_db, mock_db_ma
     mock_pipeline_service = MagicMock()
     mock_pipeline_service._persist_allocation_result = AsyncMock()
     
+    # Patch Prisma to return the fake client
+    class FakePrisma:
+        def __init__(self):
+            pass
+        
+        async def connect(self):
+            return mock_db
+        
+        async def disconnect(self):
+            pass
+        
+        def __getattr__(self, name):
+            # Return the corresponding fake model
+            return getattr(mock_db, name)
+    
+    monkeypatch.setattr("prisma.Prisma", lambda: FakePrisma())
+    monkeypatch.setattr("services.pipeline_service.PipelineService", lambda *args, **kwargs: mock_pipeline_service)
+    
     with patch("dbManager.DBManager") as mock_db_manager_class:
         mock_db_manager_class.get_instance.return_value = mock_db_manager
         
         with patch("workers.allocation_tasks.allocate_portfolios", side_effect=fake_allocate_portfolios):
             with patch("workers.allocation_tasks._get_current_regime", return_value="sideways"):
-                with patch("workers.allocation_tasks.PipelineService", return_value=mock_pipeline_service):
-                    # Create allocation records
-                    allocation_records = []
-                    for i, (allocation_type, weight) in enumerate(mock_allocation_result["weights"].items()):
-                        mock_allocation = MagicMock()
-                        mock_allocation.id = f"allocation-{i}"
-                        mock_allocation.allocation_type = allocation_type
-                        allocation_records.append(mock_allocation)
-                        mock_db.portfolioallocation.create.return_value = mock_allocation
+                # Create allocation records
+                allocation_records = []
+                for i, (allocation_type, weight) in enumerate(mock_allocation_result["weights"].items()):
+                    mock_allocation = MagicMock()
+                    mock_allocation.id = f"allocation-{i}"
+                    mock_allocation.allocation_type = allocation_type
+                    allocation_records.append(mock_allocation)
+                    mock_db.portfolioallocation.create.return_value = mock_allocation
                     
                     # Verify _persist_allocation_result is called
                     # This should create RebalanceRun, AllocationSnapshot, and SegmentSnapshot records

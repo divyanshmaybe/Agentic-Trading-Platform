@@ -396,6 +396,12 @@ async def test_pipeline_service_process_trade_signals(monkeypatch: pytest.Monkey
                 for row in rows
             ]
 
+    # Add execute_trade method to FakeTradeService
+    async def fake_execute_trade(trade_id: str, simulate: bool = True):
+        return {"status": "simulated_executed", "trade_id": trade_id}
+    
+    FakeTradeService.execute_trade = fake_execute_trade
+    
     monkeypatch.setattr("services.pipeline_service.TradeExecutionService", FakeTradeService, raising=False)
 
     dispatched: List[str] = []
@@ -404,6 +410,9 @@ async def test_pipeline_service_process_trade_signals(monkeypatch: pytest.Monkey
         lambda trade_id: dispatched.append(trade_id),
         raising=False,
     )
+    
+    # Set USE_CELERY_FOR_TRADES to true to test Celery dispatch
+    monkeypatch.setenv("USE_CELERY_FOR_TRADES", "true")
 
     monkeypatch.setattr(PipelineService, "_load_environment", lambda self: None, raising=False)
 
@@ -419,10 +428,11 @@ async def test_pipeline_service_process_trade_signals(monkeypatch: pytest.Monkey
         "payloads": 1,
         "jobs": 1,
         "dispatched": 1,
+        "executed": 0,  # No direct execution when using Celery
     }
     assert len(persist_calls) == 1
     assert dispatched == ["req-1"]
-    assert fake_manager.is_connected() is True
+    # Note: Service now uses Prisma directly, not DBManager, so connection check is not applicable
 
 
 @pytest.mark.asyncio

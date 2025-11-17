@@ -766,6 +766,56 @@ class TradeExecutionService:
                 executed_price,
             )
             
+            # Create Trade record (like manual trades do)
+            organization_id = getattr(portfolio, "organization_id", None)
+            customer_id = getattr(portfolio, "customer_id", None)
+            
+            # Calculate fees and taxes (simulation mode - minimal fees)
+            fees = Decimal("0.0")
+            taxes = Decimal("0.0")
+            net_amount = Decimal(str(executed_price * executed_quantity))
+            
+            # Create Trade record
+            trade_data = {
+                "organization_id": organization_id,
+                "portfolio_id": portfolio_id,
+                "customer_id": customer_id,
+                "trade_type": "auto",  # Auto-trade from pipeline
+                "symbol": symbol,
+                "exchange": "NSE",
+                "segment": "EQUITY",
+                "side": side,
+                "order_type": "market",
+                "quantity": executed_quantity,
+                "status": "executed",
+                "price": executed_price,
+                "executed_price": executed_price,
+                "executed_quantity": executed_quantity,
+                "execution_time": datetime.utcnow(),
+                "fees": fees,
+                "taxes": taxes,
+                "net_amount": net_amount,
+                "source": "nse_pipeline_auto_trade",
+                "metadata": json.dumps({
+                    "trade_log_id": str(getattr(trade_record, "id", "")),
+                    "agent_id": getattr(trade_record, "agent_id", None),
+                    "agent_type": getattr(trade_record, "agent_type", None),
+                    "triggered_by": metadata.get("triggered_by", "high_risk_agent"),
+                    "confidence": float(getattr(trade_record, "confidence", 0)),
+                    "allocated_capital": float(getattr(trade_record, "allocated_capital", 0)),
+                }),
+            }
+            
+            trade_record_db = await client.trade.create(data=trade_data)
+            self.logger.info(
+                "✅ Created Trade record %s: %s %s x %d @ ₹%.2f",
+                trade_record_db.id,
+                side,
+                symbol,
+                executed_quantity,
+                executed_price,
+            )
+            
             # Get agent_id and agent_type - try record first, then metadata
             agent_id = getattr(trade_record, "agent_id", None)
             agent_type = getattr(trade_record, "agent_type", None)
@@ -816,7 +866,8 @@ class TradeExecutionService:
                     
                     # Add new trade to agent's trades array
                     trade_entry = {
-                        "trade_log_id": str(getattr(trade_record, "id", "")),
+                        "trade_id": str(trade_record_db.id),  # Trade record ID
+                        "trade_log_id": str(getattr(trade_record, "id", "")),  # TradeExecutionLog ID
                         "symbol": symbol,
                         "side": side,
                         "quantity": executed_quantity,

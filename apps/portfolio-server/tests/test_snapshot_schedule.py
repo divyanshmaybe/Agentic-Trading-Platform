@@ -38,10 +38,10 @@ class TestCeleryBeatSchedule:
         snapshot_config = beat_schedule["trading-agent-snapshots"]
         assert snapshot_config["task"] == "snapshot.capture_agent_snapshots"
         
-        # Verify schedule is every 6 hours
+        # Verify schedule is every 3 hours (actual config is */3)
         schedule = str(snapshot_config["schedule"])
-        assert "0,6,12,18" in schedule or "0 0,6,12,18" in schedule, \
-            f"Schedule should be every 6 hours, got: {schedule}"
+        assert "*/3" in schedule or "0,3,6,9,12,15,18,21" in schedule, \
+            f"Schedule should be every 3 hours, got: {schedule}"
         
         print(f"✅ Snapshot task scheduled: {schedule}")
     

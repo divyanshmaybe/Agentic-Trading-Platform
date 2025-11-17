@@ -1281,25 +1281,49 @@ class PipelineService:
         )
 
         dispatched = 0
+        executed = 0
         if events:
-            try:
-                from workers.trade_execution_tasks import execute_trade_job  # type: ignore
+            # Check if we should use Celery or execute directly
+            use_celery = os.getenv("USE_CELERY_FOR_TRADES", "false").lower() in {"1", "true", "yes"}
+            
+            if use_celery:
+                # Use Celery for async execution
+                try:
+                    from workers.trade_execution_tasks import execute_trade_job  # type: ignore
 
+                    for event in events:
+                        execute_trade_job.delay(event.trade_id)
+                        dispatched += 1
+                        self.logger.info(
+                            "✅ Enqueued trade execution to Celery: Trade %s | Agent %s (%s) | %s %s x %d | Portfolio %s",
+                            event.trade_id,
+                            event.agent_id or "unknown",
+                            event.agent_type or "unknown",
+                            event.side,
+                            event.symbol,
+                            event.quantity,
+                            event.portfolio_id,
+                        )
+                except Exception as exc:  # pragma: no cover - defensive
+                    self.logger.error("Failed to enqueue trade execution workers: %s", exc)
+            else:
+                # Execute trades immediately in simulation mode (paper trading)
                 for event in events:
-                    execute_trade_job.delay(event.trade_id)
-                    dispatched += 1
-                    self.logger.info(
-                        "✅ Enqueued trade execution: Trade %s | Agent %s (%s) | %s %s x %d | Portfolio %s",
-                        event.trade_id,
-                        event.agent_id or "unknown",
-                        event.agent_type or "unknown",
-                        event.side,
-                        event.symbol,
-                        event.quantity,
-                        event.portfolio_id,
-                    )
-            except Exception as exc:  # pragma: no cover - defensive
-                self.logger.error("Failed to enqueue trade execution workers: %s", exc)
+                    try:
+                        result = await trade_service.execute_trade(event.trade_id, simulate=True)
+                        executed += 1
+                        self.logger.info(
+                            "✅ Executed trade immediately (simulation): Trade %s | Agent %s (%s) | %s %s x %d | Status: %s",
+                            event.trade_id,
+                            event.agent_id or "unknown",
+                            event.agent_type or "unknown",
+                            event.side,
+                            event.symbol,
+                            event.quantity,
+                            result.get("status", "unknown"),
+                        )
+                    except Exception as exc:
+                        self.logger.error("Failed to execute trade %s: %s", event.trade_id, exc, exc_info=True)
 
         # Disconnect Prisma client
         try:
@@ -1312,6 +1336,7 @@ class PipelineService:
             "payloads": len(payloads),
             "jobs": len(job_rows),
             "dispatched": dispatched,
+            "executed": executed,
         }
 
     # ------------------------------------------------------------------
