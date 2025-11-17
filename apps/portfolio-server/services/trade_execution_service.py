@@ -736,21 +736,68 @@ class TradeExecutionService:
             agent_type = getattr(trade_record, "agent_type", None)
             if agent_id:
                 try:
-                    # Update trading agent last_executed_at
+                    # Get current agent to update trades array
+                    agent = await client.tradingagent.find_unique(
+                        where={"id": str(agent_id)},
+                        include={"allocation": True},
+                    )
+                    
+                    if not agent:
+                        self.logger.warning("Agent %s not found for trade update", agent_id)
+                        return
+                    
+                    # Get current trades array from metadata
+                    agent_metadata = {}
+                    if hasattr(agent, "metadata"):
+                        meta = getattr(agent, "metadata")
+                        if isinstance(meta, dict):
+                            agent_metadata = meta
+                        elif isinstance(meta, str) and meta:
+                            try:
+                                agent_metadata = json.loads(meta)
+                            except json.JSONDecodeError:
+                                pass
+                    
+                    # Get or initialize trades array
+                    trades_array = agent_metadata.get("trades", [])
+                    if not isinstance(trades_array, list):
+                        trades_array = []
+                    
+                    # Add new trade to agent's trades array
+                    trade_entry = {
+                        "trade_log_id": str(getattr(trade_record, "id", "")),
+                        "symbol": symbol,
+                        "side": side,
+                        "quantity": executed_quantity,
+                        "executed_price": executed_price,
+                        "allocated_capital": float(getattr(trade_record, "allocated_capital", 0)),
+                        "confidence": float(getattr(trade_record, "confidence", 0)),
+                        "executed_at": str(getattr(trade_record, "created_at", "")),
+                        "triggered_by": metadata.get("triggered_by", "high_risk_agent"),
+                    }
+                    trades_array.append(trade_entry)
+                    agent_metadata["trades"] = trades_array
+                    
+                    # Update trading agent with trades array and last_executed_at
+                    from prisma import fields
                     agent = await client.tradingagent.update(
                         where={"id": str(agent_id)},
-                        data={"last_executed_at": datetime.utcnow()},
+                        data={
+                            "last_executed_at": datetime.utcnow(),
+                            "metadata": fields.Json(agent_metadata),
+                        },
                         include={"allocation": True},
                     )
                     
                     self.logger.info(
-                        "✅ Updated trading agent %s (%s) after trade execution: %s %s x %d @ ₹%.2f",
+                        "✅ Updated trading agent %s (%s) after trade execution: %s %s x %d @ ₹%.2f | Trades in array: %d",
                         agent_id,
                         agent_type or "unknown",
                         side,
                         symbol,
                         executed_quantity,
                         executed_price,
+                        len(trades_array),
                     )
                     
                     # Update PortfolioAllocation allocated_amount

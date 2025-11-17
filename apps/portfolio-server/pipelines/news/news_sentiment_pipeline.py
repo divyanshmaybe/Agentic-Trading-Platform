@@ -29,6 +29,12 @@ import pandas as pd
 import pathway as pw
 from dotenv import load_dotenv
 
+# Suppress verbose Pathway sink logging
+os.environ.setdefault("PATHWAY_LOG_LEVEL", "WARNING")
+# Suppress Pathway IO sink loggers specifically
+logging.getLogger("pathway.io").setLevel(logging.WARNING)
+logging.getLogger("pathway.io.kafka").setLevel(logging.WARNING)
+
 from kafka_service import (  # type: ignore  # noqa: E402
     KafkaPublisher,
     PublisherAlreadyRegistered,

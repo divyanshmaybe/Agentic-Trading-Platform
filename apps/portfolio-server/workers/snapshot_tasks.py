@@ -31,7 +31,7 @@ def capture_trading_agent_snapshots(self) -> Dict[str, Any]:
     """
     Celery task that captures snapshots for all active trading agents.
     
-    This task is scheduled to run every 6 hours via Celery Beat.
+    This task is scheduled to run every 3 hours via Celery Beat.
     It captures portfolio_value and realized_pnl for each active agent.
     
     Returns:
@@ -61,4 +61,48 @@ def capture_trading_agent_snapshots(self) -> Dict[str, Any]:
         
     except Exception as exc:
         task_logger.error("❌ Failed to capture trading agent snapshots: %s", exc, exc_info=True)
+        raise
+
+
+@celery_app.task(
+    bind=True,
+    name="snapshot.capture_portfolio_snapshots",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    max_retries=3,
+)
+def capture_portfolio_snapshots(self) -> Dict[str, Any]:
+    """
+    Celery task that captures snapshots for ALL portfolios.
+    
+    This task is scheduled to run every 3 hours via Celery Beat.
+    For each portfolio it captures: current_value, total_pnl, timestamp
+    
+    Returns:
+        Dict with summary of capture results
+    """
+    try:
+        task_logger.info("📸 Starting portfolio snapshot capture...")
+        
+        service = TradingAgentSnapshotService(logger=task_logger)
+        
+        # Run async function in sync context
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(service.capture_all_portfolio_snapshots())
+        finally:
+            loop.close()
+        
+        task_logger.info(
+            "✅ Portfolio snapshot capture complete: %d/%d portfolios, %d failed",
+            result.get("snapshots_captured", 0),
+            result.get("total_portfolios", 0),
+            result.get("failed", 0),
+        )
+        
+        return result
+        
+    except Exception as exc:
+        task_logger.error("❌ Failed to capture portfolio snapshots: %s", exc, exc_info=True)
         raise

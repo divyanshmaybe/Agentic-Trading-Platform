@@ -29,14 +29,29 @@ def get_allocation(capital: float, confidence: float) -> float:
     Returns:
         Allocated capital for the trade.
     """
-
-    if confidence > 0.8:
-        fraction = 0.40
-    elif confidence > 0.49:
-        fraction = 0.25
+    # Use Pathway's conditional logic for Pathway expressions
+    import pathway as pw
+    if isinstance(confidence, pw.ColumnExpression):
+        # Pathway expression - use conditional logic
+        fraction = pw.if_else(
+            confidence > 0.8,
+            0.40,  # 40% for high confidence (>0.8)
+            pw.if_else(
+                confidence > 0.49,
+                0.25,  # 25% for medium confidence (>0.49)
+                0.0  # 0% for low confidence
+            )
+        )
+        return capital * fraction
     else:
-        fraction = 0.0
-    return capital * fraction
+        # Regular Python values
+        if confidence > 0.8:
+            fraction = 0.40
+        elif confidence > 0.49:
+            fraction = 0.25
+        else:
+            fraction = 0.0
+        return capital * fraction
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -220,14 +235,25 @@ def prepare_trade_execution_payloads(
             logger.warning("Failed to fetch price for %s: %s", signal.symbol, exc)
             reference_price = 0.0
 
-        # Use fallback price for simulation when market is closed
+        # Fallback: Use a default price if fetch fails (for testing/development)
         if reference_price <= 0:
-            reference_price = 100.0  # Default fallback price for simulation mode
-            logger.info(
-                "Using fallback price %.2f for %s (market closed/price unavailable)",
-                reference_price,
-                signal.symbol
-            )
+            # Try to extract price from signal metadata if available
+            signal_meta = dict(signal.metadata or {})
+            if "reference_price" in signal_meta:
+                try:
+                    reference_price = _normalise_price(signal_meta["reference_price"])
+                    logger.info("Using reference_price from signal metadata: %.2f", reference_price)
+                except:
+                    pass
+            
+            # If still no price, use a reasonable default for testing
+            if reference_price <= 0:
+                logger.warning(
+                    "No price available for %s, using default price 100.0 for testing. "
+                    "This should be replaced with actual market data in production.",
+                    signal.symbol
+                )
+                reference_price = 100.0  # Default fallback price for testing
 
         for portfolio in eligible_portfolios:
             if not portfolio.agent_id:

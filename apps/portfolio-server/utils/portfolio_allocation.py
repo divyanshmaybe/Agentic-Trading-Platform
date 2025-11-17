@@ -9,9 +9,16 @@ request allocations without dealing with the underlying streaming primitives.
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
+
+# Suppress verbose Pathway sink logging
+os.environ.setdefault("PATHWAY_LOG_LEVEL", "WARNING")
+logging.getLogger("pathway").setLevel(logging.WARNING)
+logging.getLogger("pathway.io").setLevel(logging.WARNING)
+logging.getLogger("pathway.io.kafka").setLevel(logging.WARNING)
 
 # Ensure the pipelines package is importable when executed from workers or scripts.
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -106,8 +113,11 @@ def allocate_portfolios(
         return []
 
     logger.info("Executing portfolio allocation pipeline for %s request(s)", len(prepared))
-    results = run_portfolio_allocation_requests(prepared, logger=logger, write_to_path=audit_path)
-
-    logger.info("Portfolio allocation pipeline completed with %s result(s)", len(results))
-    return results
+    try:
+        results = run_portfolio_allocation_requests(prepared, logger=logger, write_to_path=audit_path)
+        logger.info("Portfolio allocation pipeline completed with %s result(s)", len(results))
+        return results
+    except Exception as exc:
+        logger.error(f"Portfolio allocation pipeline failed: {exc}", exc_info=True)
+        raise
 

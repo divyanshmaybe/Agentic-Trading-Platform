@@ -45,7 +45,21 @@ class TradeEngine:
         await self._ensure_portfolio(payload.portfolio_id)
 
         if payload.order_type == "market":
-            execution_price = await await_live_price(payload.symbol)
+            # For manual trades, use longer timeout and fallback to get_or_fetch_price
+            try:
+                # First try with longer timeout (15 seconds for manual trades)
+                execution_price = await await_live_price(payload.symbol, timeout=15.0)
+            except RuntimeError:
+                # If await_live_price times out, fallback to get_or_fetch_price
+                # This handles cases where the symbol isn't subscribed yet or market data is busy
+                self.market_data.register_symbol(payload.symbol)
+                price = self.market_data.get_latest_price(payload.symbol)
+                if price is None:
+                    price = self.market_data.get_or_fetch_price(payload.symbol)
+                if price is None:
+                    raise RuntimeError(f"Unable to fetch price for {payload.symbol} after timeout and fallback attempts")
+                execution_price = price
+            
             trade = await self._execute_market_order(payload, execution_price)
             trades = [trade]
             pending = 0

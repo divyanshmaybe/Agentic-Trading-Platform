@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import queue
 import threading
 import uuid
@@ -18,6 +19,12 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 import pathway as pw
+
+# Suppress verbose Pathway sink logging
+os.environ.setdefault("PATHWAY_LOG_LEVEL", "WARNING")
+logging.getLogger("pathway").setLevel(logging.WARNING)
+logging.getLogger("pathway.io").setLevel(logging.WARNING)
+logging.getLogger("pathway.io.kafka").setLevel(logging.WARNING)
 
 from .portfolio_manager import (
     DEFAULT_SEGMENTS,
@@ -427,7 +434,12 @@ def run_portfolio_allocation_requests(
     event_queue.put(None)
 
     try:
-        pw.run()
+        logger.debug("Starting Pathway allocation pipeline execution...")
+        pw.run(monitoring_level=pw.MonitoringLevel.NONE)
+        logger.debug("Pathway allocation pipeline execution completed")
+    except Exception as exc:
+        logger.error(f"Pathway allocation pipeline failed: {exc}", exc_info=True)
+        raise
     finally:
         stop_event.set()
 

@@ -31,6 +31,11 @@ def _ensure_pathway_silent() -> None:
 
     os.environ.setdefault("PATHWAY_DISABLE_PROGRESS", "1")
     os.environ.setdefault("PATHWAY_MONITORING_LEVEL", "none")
+    # Suppress verbose Pathway sink logging
+    os.environ.setdefault("PATHWAY_LOG_LEVEL", "WARNING")
+    logging.getLogger("pathway").setLevel(logging.WARNING)
+    logging.getLogger("pathway.io").setLevel(logging.WARNING)
+    logging.getLogger("pathway.io.kafka").setLevel(logging.WARNING)
 
 
 _ensure_pathway_silent()
@@ -334,7 +339,7 @@ class KafkaPublisher:
             value=pw.this.value,
             headers=pw.this.headers,
         )
-        pw.io.kafka.write(
+        sink = pw.io.kafka.write(
             table,
             self.settings.client_config(),
             self.topic,
@@ -344,7 +349,15 @@ class KafkaPublisher:
         )
 
         try:
-            pw.run(monitoring_level=pw.MonitoringLevel.NONE)
+            # Suppress Pathway sink logging by setting log level before run
+            import logging
+            pathway_logger = logging.getLogger("pathway")
+            original_level = pathway_logger.level
+            pathway_logger.setLevel(logging.WARNING)
+            try:
+                pw.run(monitoring_level=pw.MonitoringLevel.NONE)
+            finally:
+                pathway_logger.setLevel(original_level)
         finally:  # pragma: no cover - Pathway cleanup best effort
             LOGGER.debug("Pathway pipeline for %s exited", self.name)
 

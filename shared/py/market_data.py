@@ -1199,7 +1199,7 @@ class MarketPriceSubject(ConnectorSubject):
         url = getattr(self._adapter, "ws_url", DEFAULT_WS_URL)
         logger.info("Connecting to market data stream: %s", url)
         
-        async with websockets.connect(url, ping_interval=20, ping_timeout=10) as ws:
+        async with websockets.connect(url, ping_interval=None, ping_timeout=None) as ws:
             self._loop = asyncio.get_running_loop()
             self._symbol_queue = asyncio.Queue()
 
@@ -1211,12 +1211,24 @@ class MarketPriceSubject(ConnectorSubject):
             # Initial connection and subscription
             await self._adapter.on_connect(ws, list(self._symbols))
 
-            # Run message consumer and subscription dispatcher concurrently
+            # Run message consumer, subscription dispatcher, and heartbeat concurrently
             consumer = asyncio.create_task(self._consume_messages(ws))
             subscriber = asyncio.create_task(self._dispatch_subscriptions(ws, self._symbol_queue))
+            
+            # Create heartbeat task for Angel One
+            heartbeat = None
+            if isinstance(self._adapter, AngelOneAdapter):
+                heartbeat = asyncio.create_task(self._heartbeat_loop(ws))
+                logger.info("🫀 Created heartbeat task for Angel One websocket")
+            else:
+                logger.debug("No heartbeat task needed for adapter: %s", type(self._adapter).__name__)
+
+            tasks = {consumer, subscriber}
+            if heartbeat:
+                tasks.add(heartbeat)
 
             done, pending = await asyncio.wait(
-                {consumer, subscriber},
+                tasks,
                 return_when=asyncio.FIRST_EXCEPTION,
             )
 
@@ -1234,14 +1246,29 @@ class MarketPriceSubject(ConnectorSubject):
         self._symbol_queue = None
         self._loop = None
 
+    async def _heartbeat_loop(self, ws) -> None:
+        """Send Angel One heartbeat ping every 30 seconds."""
+        logger.info("🫀 Heartbeat loop started for Angel One websocket")
+        try:
+            while True:
+                await asyncio.sleep(30)
+                try:
+                    await ws.send("ping")
+                    logger.debug("📤 Sent Angel One heartbeat ping")
+                except Exception as e:
+                    logger.error(f"❌ Failed to send heartbeat ping: {e}")
+                    raise
+        except asyncio.CancelledError:
+            logger.info("🫀 Heartbeat loop cancelled")
+            raise
+        except Exception as e:
+            logger.error(f"❌ Heartbeat loop crashed: {e}", exc_info=True)
+            raise
+
     async def _consume_messages(self, ws) -> None:
         """Consume WebSocket messages and push to Pathway buffer."""
         async for message in ws:
             try:
-                # Send heartbeat for Angel One if needed
-                if isinstance(self._adapter, AngelOneAdapter):
-                    await self._adapter.send_heartbeat(ws)
-                
                 parsed_messages = await self._adapter.handle_message(message)
                 if not parsed_messages:
                     continue
@@ -1327,7 +1354,77 @@ class MarketDataService:
                 return price
             time.sleep(0.5)
 
-        raise RuntimeError(f"Live price for {normalized} unavailable from provider {self.adapter.name}")
+        # If live price unavailable, try fetching from historical candles (last close price)
+        logger.warning("Live price for %s unavailable, attempting historical candle fallback", normalized)
+        historical_price = None
+        try:
+            if isinstance(self.adapter, AngelOneAdapter):
+                from datetime import datetime, timedelta
+                # Get last 7 days of data
+                to_date = datetime.now()
+                from_date = to_date - timedelta(days=7)
+                candles = self.adapter.get_historical_candles(
+                    normalized,
+                    interval="FIFTEEN_MINUTE",
+                    fromdate=from_date.strftime("%Y-%m-%d %H:%M"),
+                    todate=to_date.strftime("%Y-%m-%d %H:%M"),
+                )
+                if candles and len(candles) > 0:
+                    # Use the close price of the most recent candle
+                    last_candle = candles[-1]
+                    close_price = Decimal(str(last_candle.get("close", 0)))
+                    if close_price > 0:
+                        historical_price = close_price
+                        logger.info("Using historical candle close price %.2f for %s", close_price, normalized)
+        except Exception as exc:
+            logger.warning("Failed to fetch Angel One historical price for %s: %s", normalized, exc)
+
+        # Always try Yahoo Finance as a reliable fallback (even if historical worked)
+        logger.info("Attempting Yahoo Finance fallback for %s", normalized)
+        yahoo_price = None
+        try:
+            import yfinance as yf
+            
+            # Convert symbol to Yahoo format (NSE symbols need .NS suffix)
+            yahoo_symbol = f"{normalized}.NS"
+            ticker = yf.Ticker(yahoo_symbol)
+            
+            # Get latest price from Yahoo - try multiple methods
+            try:
+                # Method 1: Try history with short period
+                hist = ticker.history(period="1d", timeout=10)
+                if not hist.empty:
+                    yahoo_price = Decimal(str(hist['Close'].iloc[-1]))
+            except:
+                # Method 2: Try info if history fails
+                try:
+                    info = ticker.info
+                    if 'regularMarketPrice' in info:
+                        yahoo_price = Decimal(str(info['regularMarketPrice']))
+                    elif 'currentPrice' in info:
+                        yahoo_price = Decimal(str(info['currentPrice']))
+                    elif 'previousClose' in info:
+                        yahoo_price = Decimal(str(info['previousClose']))
+                except:
+                    pass
+            
+            if yahoo_price is not None and yahoo_price > 0:
+                logger.info("✅ Using Yahoo Finance price %.2f for %s", yahoo_price, normalized)
+        except ImportError:
+            logger.warning("yfinance not installed, cannot use Yahoo Finance fallback")
+        except Exception as exc:
+            logger.warning("Failed to fetch Yahoo Finance price for %s: %s", normalized, exc)
+
+        # Use Yahoo Finance price if available (preferred), otherwise use historical
+        final_price = yahoo_price if yahoo_price is not None else historical_price
+        
+        if final_price is not None and final_price > 0:
+            # Cache this price for immediate use
+            with self._lock:
+                self._latest[normalized] = final_price
+            return final_price
+
+        raise RuntimeError(f"Live price for {normalized} unavailable from provider {self.adapter.name}. Tried: live stream, historical candles, and Yahoo Finance.")
 
     async def await_price(self, symbol: str, timeout: float = 3.0) -> Decimal:
         """Wait for a price update for the given symbol with short timeout for responsiveness."""

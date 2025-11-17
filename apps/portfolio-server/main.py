@@ -87,6 +87,25 @@ def create_lifespan(base_app_instance, pipeline_service_instance):
             "📋 Pipelines configured. News: hourly via Beat + startup, NSE: continuous polling (60s interval)"
         )
         
+        # Capture portfolio snapshots on startup
+        snapshot_on_startup = os.getenv("SNAPSHOT_CAPTURE_ON_STARTUP", "true").lower() in {"1", "true", "yes"}
+        if snapshot_on_startup:
+            try:
+                base_app_instance.logger.info("📸 Capturing portfolio snapshots at startup...")
+                from workers.snapshot_tasks import capture_portfolio_snapshots, capture_trading_agent_snapshots
+                
+                # Dispatch both snapshot tasks
+                portfolio_result = capture_portfolio_snapshots.delay()
+                agent_result = capture_trading_agent_snapshots.delay()
+                
+                base_app_instance.logger.info(
+                    "✅ Snapshot tasks dispatched: portfolio=%s, agents=%s",
+                    portfolio_result.id,
+                    agent_result.id,
+                )
+            except Exception as exc:
+                base_app_instance.logger.error("❌ Failed to dispatch snapshot tasks: %s", exc)
+        
         # Initialize Regime Classification Service
         try:
             base_app_instance.logger.info("🚀 Initializing Regime Classification Service...")

@@ -283,6 +283,21 @@ model SegmentSnapshot {
 }
 
 /// --------------------
+/// Portfolio snapshot (simple time-series tracking)
+/// --------------------
+model PortfolioSnapshot {
+  id            String   @id @default(uuid())
+  portfolio_id  String
+  current_value Decimal  @db.Decimal(20, 4)
+  total_pnl     Decimal  @db.Decimal(20, 4)
+  created_at    DateTime @default(now())
+
+  @@index([portfolio_id])
+  @@index([created_at])
+  @@map("portfolio_snapshots")
+}
+
+/// --------------------
 /// Allocation snapshot
 /// --------------------
 model AllocationSnapshot {

@@ -20,6 +20,12 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 import pathway as pw
 from pydantic import BaseModel, Field, validator
 
+# Suppress verbose Pathway sink logging
+os.environ.setdefault("PATHWAY_LOG_LEVEL", "WARNING")
+# Suppress Pathway IO sink loggers specifically
+logging.getLogger("pathway.io").setLevel(logging.WARNING)
+logging.getLogger("pathway.io.kafka").setLevel(logging.WARNING)
+
 from kafka_service import (  # type: ignore  # noqa: E402
     KafkaPublisher,
     PublisherAlreadyRegistered,

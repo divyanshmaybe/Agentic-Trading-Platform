@@ -29,6 +29,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from db import get_db_manager  # type: ignore  # noqa: E402
 from market_data import get_market_data_service  # type: ignore  # noqa: E402
+from prisma import fields  # type: ignore  # noqa: E402
 from pipelines.portfolio.portfolio_manager import DEFAULT_SEGMENTS  # type: ignore  # noqa: E402
 from pipelines.risk import (  # type: ignore  # noqa: E402
     prepare_risk_alerts,
@@ -640,10 +641,19 @@ class PipelineService:
                 default=self._safe_float(portfolio.current_value),
             ),
         )
+        # If total_investable is still 0, try to get from objective
+        if total_investable <= 0:
+            objective = getattr(portfolio, "objective", None)
+            if objective:
+                total_investable = self._safe_float(
+                    getattr(objective, "investable_amount", None) or
+                    getattr(objective, "total_investment", None) or
+                    0.0
+                )
         current_value = self._safe_float(portfolio.current_value, default=total_investable)
         drift_values = result.get("drift") or {}
 
-        metadata_payload = self._clean_json(dict(portfolio.metadata or {}))
+        metadata_payload = self._parse_metadata(portfolio.metadata)
         regime_value = result.get("regime") or metadata_payload.get("current_regime")
         if regime_value:
             metadata_payload["current_regime"] = regime_value
@@ -656,13 +666,20 @@ class PipelineService:
             weight = weights.get(segment, 0.0)
             drift = self._safe_float(drift_values.get(segment, 0.0))
             target_weight_dec = self._to_decimal(weight, places=6)
-            allocated_amount_dec = self._to_decimal(total_investable * weight, places=4)
+            
+            # Use existing allocated_amount if it's already set and non-zero, otherwise calculate
+            existing_allocation = allocation_lookup.get(segment)
+            if existing_allocation and existing_allocation.allocated_amount and float(existing_allocation.allocated_amount) > 0:
+                allocated_amount_dec = self._to_decimal(float(existing_allocation.allocated_amount), places=4)
+            else:
+                allocated_amount_dec = self._to_decimal(total_investable * weight, places=4)
+            
             current_value_dec = self._to_decimal(current_value * weight, places=4)
             drift_dec = self._to_decimal(drift, places=6)
 
             allocation = allocation_lookup.get(segment)
             if allocation:
-                allocation_metadata = self._clean_json(dict(allocation.metadata or {}))
+                allocation_metadata = self._parse_metadata(allocation.metadata)
                 allocation_metadata["last_rebalance"] = {
                     "triggered_at": as_of.isoformat() + "Z",
                     "regime": result.get("regime"),
@@ -679,7 +696,7 @@ class PipelineService:
                         "current_value": current_value_dec,
                         "drift_percentage": drift_dec,
                         "requires_rebalancing": False,
-                        "metadata": allocation_metadata,
+                        "metadata": fields.Json(allocation_metadata),
                     },
                 )
             elif weight > 0:
@@ -691,11 +708,11 @@ class PipelineService:
                         "current_weight": target_weight_dec,
                         "allocated_amount": allocated_amount_dec,
                         "current_value": current_value_dec,
-                        "metadata": {
+                        "metadata": fields.Json({
                             "created_at": as_of.isoformat() + "Z",
                             "created_by": triggered_by,
                             "trigger_reason": trigger_reason,
-                        },
+                        }),
                     }
                 )
                 allocations.append(created)
@@ -726,10 +743,10 @@ class PipelineService:
         await client.portfolio.update(
             where={"id": portfolio.id},
             data={
-                "allocation_strategy": allocation_strategy_payload,
+                "allocation_strategy": fields.Json(allocation_strategy_payload),
                 "last_rebalanced_at": as_of,
                 "next_rebalance_at": next_rebalance_at,
-                "metadata": metadata_payload,
+                "metadata": fields.Json(metadata_payload),
             },
         )
 
@@ -760,8 +777,8 @@ class PipelineService:
                 "snapshot_cash": self._to_decimal(0.0, places=4),
                 "snapshot_invested": snapshot_value_dec,
                 "time_elapsed_days": time_elapsed_days,
-                "expected_progress": {"progress_ratio": result.get("progress_ratio")},
-                "metadata": rebalance_metadata,
+                "expected_progress": fields.Json({"progress_ratio": result.get("progress_ratio")}),
+                "metadata": fields.Json(rebalance_metadata),
             }
         )
 
@@ -786,10 +803,10 @@ class PipelineService:
                     "snapshot_amount": snapshot_amount,
                     "snapshot_current_value": snapshot_current_value,
                     "snapshot_pnl": self._to_decimal(0.0, places=4),
-                    "metadata": {
+                    "metadata": fields.Json({
                         "regime": result.get("regime"),
                         "generated_at": as_of.isoformat() + "Z",
-                    },
+                    }),
                 }
             )
 
@@ -804,10 +821,10 @@ class PipelineService:
                     "volatility": self._to_decimal(0.0, places=6),
                     "max_drawdown": self._to_decimal(0.0, places=6),
                     "sharpe_ratio": None,
-                    "metrics": {
+                    "metrics": fields.Json({
                         "expected_return": result.get("expected_return"),
                         "expected_risk": result.get("expected_risk"),
-                    },
+                    }),
                 }
             )
 
@@ -985,6 +1002,33 @@ class PipelineService:
 
         metadata = self._parse_metadata(getattr(portfolio, "metadata", None))
         cash_available = self._safe_float(metadata.get("cash_available", metadata.get("cash")), default=0.0)
+        
+        # Get capital from agent's allocation or portfolio objective
+        allocation = getattr(agent, "allocation", None) if agent else None
+        allocation_amount = self._safe_float(getattr(allocation, "allocated_amount", 0.0)) if allocation else 0.0
+        objective_investment = self._safe_float(getattr(portfolio.objective, "total_investment", 0.0)) if hasattr(portfolio, "objective") and portfolio.objective else 0.0
+        
+        # Use allocation amount if available, otherwise use a portion of objective investment
+        if allocation_amount > 0:
+            effective_investment = allocation_amount
+        elif objective_investment > 0 and allocation:
+            # Calculate based on target weight if allocation exists
+            target_weight = self._safe_float(getattr(allocation, "target_weight", 0.0))
+            if target_weight > 0:
+                effective_investment = objective_investment * target_weight
+            else:
+                effective_investment = objective_investment
+        else:
+            effective_investment = self._safe_float(getattr(portfolio, "investment_amount", 0.0))
+        
+        # Use effective investment as cash available if not set
+        if cash_available <= 0 and effective_investment > 0:
+            cash_available = effective_investment
+            self.logger.debug(
+                "Using effective_investment %.2f as cash_available for portfolio %s",
+                effective_investment,
+                getattr(portfolio, "id", "unknown"),
+            )
 
         agent_id = str(getattr(agent, "id", "")) if agent else None
         agent_type = str(getattr(agent, "agent_type", "")) if agent else None
@@ -1011,7 +1055,7 @@ class PipelineService:
             organization_id=getattr(portfolio, "organization_id", None),
             customer_id=getattr(portfolio, "customer_id", None),
             current_value=self._safe_float(getattr(portfolio, "current_value", 0.0)),
-            investment_amount=self._safe_float(getattr(portfolio, "investment_amount", 0.0)),
+            investment_amount=max(effective_investment, self._safe_float(getattr(portfolio, "investment_amount", 0.0))),
             cash_available=cash_available,
             metadata=metadata,
             agent_id=agent_id,
@@ -1086,10 +1130,10 @@ class PipelineService:
                 "dispatched": 0,
             }
 
-        manager = get_db_manager()
-        if not manager.is_connected():
-            await manager.connect()
-        client = manager.get_client()
+        # Use Prisma directly to avoid event loop issues with DBManager singleton
+        from prisma import Prisma
+        client = Prisma()
+        await client.connect()
 
         trade_service = TradeExecutionService(logger=self.logger)
 
@@ -1248,6 +1292,12 @@ class PipelineService:
             except Exception as exc:  # pragma: no cover - defensive
                 self.logger.error("Failed to enqueue trade execution workers: %s", exc)
 
+        # Disconnect Prisma client
+        try:
+            await client.disconnect()
+        except:
+            pass
+        
         return {
             "processed_signals": len(processed_signals),
             "payloads": len(payloads),

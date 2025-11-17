@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from datetime import timedelta
 from pathlib import Path
@@ -7,6 +8,18 @@ from typing import Dict, Iterable
 
 from dotenv import load_dotenv
 from kombu import Queue
+
+# Suppress verbose Pathway sink logging globally for Celery workers
+os.environ.setdefault("PATHWAY_LOG_LEVEL", "WARNING")
+os.environ.setdefault("PATHWAY_DISABLE_PROGRESS", "1")
+os.environ.setdefault("PATHWAY_MONITORING_LEVEL", "none")
+# Suppress all Pathway loggers before any Pathway imports
+logging.getLogger("pathway").setLevel(logging.ERROR)
+logging.getLogger("pathway.io").setLevel(logging.ERROR)
+logging.getLogger("pathway.io.kafka").setLevel(logging.ERROR)
+logging.getLogger("pathway.io.filesystem").setLevel(logging.ERROR)
+logging.getLogger("pathway.io.jsonlines").setLevel(logging.ERROR)
+logging.getLogger("pathway.io.csv").setLevel(logging.ERROR)
 
 # Load environment variables from portfolio-server .env and project root .env
 # (same logic as PipelineService._load_environment)
@@ -212,14 +225,22 @@ if ORDER_MONITOR_ENABLED:
         "options": {"queue": ORDER_MONITOR_QUEUE},
     }
 
-# Snapshot capture - Every 6 hours (0:00, 6:00, 12:00, 18:00 UTC)
+# Snapshot capture - Every 3 hours (0:00, 3:00, 6:00, 9:00, 12:00, 15:00, 18:00, 21:00 UTC)
 SNAPSHOT_ENABLED = os.getenv("SNAPSHOT_CAPTURE_ENABLED", "true").lower() in {"1", "true", "yes"}
 SNAPSHOT_QUEUE = os.getenv("SNAPSHOT_QUEUE", DEFAULT_QUEUE)
 
 if SNAPSHOT_ENABLED:
+    # Trading agent snapshots - every 3 hours
     celery_app.conf.beat_schedule["trading-agent-snapshots"] = {
         "task": "snapshot.capture_agent_snapshots",
-        "schedule": crontab(hour="0,6,12,18", minute=0),  # Every 6 hours
+        "schedule": crontab(hour="*/3", minute=0),  # Every 3 hours
+        "options": {"queue": SNAPSHOT_QUEUE},
+    }
+    
+    # Portfolio snapshots - every 3 hours
+    celery_app.conf.beat_schedule["portfolio-snapshots"] = {
+        "task": "snapshot.capture_portfolio_snapshots",
+        "schedule": crontab(hour="*/3", minute=5),  # Every 3 hours (offset by 5 minutes)
         "options": {"queue": SNAPSHOT_QUEUE},
     }
 

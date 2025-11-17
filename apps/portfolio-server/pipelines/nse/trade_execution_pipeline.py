@@ -19,6 +19,12 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 import pathway as pw
 from pydantic import BaseModel, Field
 
+# Suppress verbose Pathway sink logging
+os.environ.setdefault("PATHWAY_LOG_LEVEL", "WARNING")
+# Suppress Pathway IO sink loggers specifically
+logging.getLogger("pathway.io").setLevel(logging.WARNING)
+logging.getLogger("pathway.io.kafka").setLevel(logging.WARNING)
+
 from kafka_service import (  # type: ignore  # noqa: E402
     KafkaPublisher,
     PublisherAlreadyRegistered,
@@ -167,15 +173,37 @@ def _payload_field_json(payload_json: str) -> str:
 
 @pw.udf
 def _calculate_allocation(payload_json: str) -> float:
-    capital = _payload_field_float(payload_json, "capital", 0.0)
-    confidence = _payload_field_float(payload_json, "confidence", 0.0)
-    allocation = get_allocation(capital, confidence)
+    """Calculate allocation based on capital and confidence - UDF works with scalar values only."""
+    # Parse JSON directly to get scalar values (not Pathway expressions)
+    try:
+        data = json.loads(payload_json)
+        capital = float(data.get("capital", 0.0))
+        confidence = float(data.get("confidence", 0.0))
+    except (TypeError, ValueError, KeyError):
+        return 0.0
+    
+    # Use scalar conditional logic
+    if confidence > 0.8:
+        fraction = 0.40
+    elif confidence > 0.49:
+        fraction = 0.25
+    else:
+        fraction = 0.0
+    allocation = capital * fraction
     return round(float(allocation), 4)
 
 
 @pw.udf
 def _resolve_side(payload_json: str) -> str:
-    signal = _payload_field_int(payload_json, "signal", 0)
+    """Resolve side from signal - UDF works with scalar values only."""
+    # Parse JSON directly to get scalar values (not Pathway expressions)
+    try:
+        data = json.loads(payload_json)
+        signal = int(data.get("signal", 0))
+    except (TypeError, ValueError, KeyError):
+        return "HOLD"
+    
+    # Use scalar conditional logic
     if signal > 0:
         return "BUY"
     if signal < 0:
@@ -185,10 +213,24 @@ def _resolve_side(payload_json: str) -> str:
 
 @pw.udf
 def _resolve_quantity(payload_json: str, allocation: float) -> int:
-    price = _payload_field_float(payload_json, "reference_price", 0.0)
-    if allocation <= 0 or price <= 0:
+    """Resolve quantity from allocation and price - UDF works with scalar values only."""
+    # Parse JSON directly to get scalar values (not Pathway expressions)
+    try:
+        data = json.loads(payload_json)
+        price = float(data.get("reference_price", 0.0))
+    except (TypeError, ValueError, KeyError):
         return 0
-    quantity = int(allocation // price)
+    
+    # Convert allocation to float if needed (it might be a Pathway expression)
+    try:
+        alloc_value = float(allocation)
+    except (TypeError, ValueError):
+        return 0
+    
+    # Use scalar conditional logic
+    if alloc_value <= 0 or price <= 0:
+        return 0
+    quantity = int(alloc_value // price)
     return quantity if quantity > 0 else 0
 
 

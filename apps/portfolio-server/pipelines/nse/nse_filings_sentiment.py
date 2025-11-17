@@ -7,6 +7,7 @@ fetches stock technical data, and generates trading signals using LLM analysis.
 """
 
 import asyncio
+import logging
 import os
 import re
 import sys
@@ -20,6 +21,12 @@ import pathway as pw
 import requests
 from dotenv import load_dotenv
 from pydantic import BaseModel
+
+# Suppress verbose Pathway sink logging
+os.environ.setdefault("PATHWAY_LOG_LEVEL", "WARNING")
+# Suppress Pathway IO sink loggers specifically
+logging.getLogger("pathway.io").setLevel(logging.WARNING)
+logging.getLogger("pathway.io.kafka").setLevel(logging.WARNING)
 
 # Ensure shared utilities (Kafka service, etc.) are importable when the pipeline
 # runs in isolation (e.g. Celery worker context or manual execution).

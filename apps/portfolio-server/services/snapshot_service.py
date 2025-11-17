@@ -145,7 +145,6 @@ class TradingAgentSnapshotService:
             # Find all active agents
             agents = await client.tradingagent.find_many(
                 where={"status": "active"},
-                select={"id": True, "portfolio_id": True},
             )
             
             if not agents:
@@ -179,6 +178,86 @@ class TradingAgentSnapshotService:
         except Exception as exc:
             self.logger.error("Failed to capture all agent snapshots: %s", exc, exc_info=True)
             return {"total_agents": 0, "snapshots_captured": 0, "failed": 0}
+
+    async def capture_all_portfolio_snapshots(self) -> Dict[str, Any]:
+        """
+        Capture snapshots for ALL portfolios.
+        
+        For each active portfolio:
+        - Gathers current_value from Portfolio.current_value
+        - Calculates total_pnl = current_value - investment_amount + realized_pnl
+        - Creates PortfolioSnapshot record
+        
+        Returns:
+            Dict with summary of snapshots captured
+        """
+        client = await self._ensure_client()
+        
+        try:
+            # Find all active portfolios
+            portfolios = await client.portfolio.find_many(
+                where={"status": "active"},
+            )
+            
+            if not portfolios:
+                self.logger.info("No active portfolios found for snapshot capture")
+                return {"total_portfolios": 0, "snapshots_captured": 0, "failed": 0}
+            
+            snapshots_captured = 0
+            failed = 0
+            
+            for portfolio in portfolios:
+                try:
+                    portfolio_id = str(getattr(portfolio, "id", ""))
+                    current_value = self._as_decimal(getattr(portfolio, "current_value", 0) or 0)
+                    investment_amount = self._as_decimal(getattr(portfolio, "investment_amount", 0) or 0)
+                    realized_pnl = self._as_decimal(getattr(portfolio, "realized_pnl", 0) or 0)
+                    
+                    # Calculate total PnL = (current_value - investment_amount) + realized_pnl
+                    total_pnl = current_value - investment_amount + realized_pnl
+                    
+                    # Create portfolio snapshot
+                    await client.portfoliosnapshot.create(
+                        data={
+                            "portfolio_id": portfolio_id,
+                            "current_value": current_value,
+                            "total_pnl": total_pnl,
+                        }
+                    )
+                    
+                    self.logger.info(
+                        "📸 Captured portfolio snapshot: portfolio=%s, value=₹%.2f, pnl=₹%.2f",
+                        portfolio_id,
+                        float(current_value),
+                        float(total_pnl),
+                    )
+                    
+                    snapshots_captured += 1
+                    
+                except Exception as exc:
+                    self.logger.error(
+                        "Failed to capture snapshot for portfolio %s: %s",
+                        getattr(portfolio, "id", ""),
+                        exc,
+                    )
+                    failed += 1
+            
+            self.logger.info(
+                "📸 Portfolio snapshot capture complete: %d/%d portfolios captured, %d failed",
+                snapshots_captured,
+                len(portfolios),
+                failed,
+            )
+            
+            return {
+                "total_portfolios": len(portfolios),
+                "snapshots_captured": snapshots_captured,
+                "failed": failed,
+            }
+            
+        except Exception as exc:
+            self.logger.error("Failed to capture all portfolio snapshots: %s", exc, exc_info=True)
+            return {"total_portfolios": 0, "snapshots_captured": 0, "failed": 0}
 
     async def get_agent_snapshot_history(
         self,
