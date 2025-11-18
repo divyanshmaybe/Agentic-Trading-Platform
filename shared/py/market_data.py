@@ -261,7 +261,7 @@ class MarketDataService:
                 # Also store without -EQ if it has it
                 if symbol_upper.endswith("-EQ"):
                     self._prices[symbol_upper[:-3]] = price
-                logger.info(f"💰 {symbol_upper}: {price}")
+                logger.debug(f"💰 {symbol_upper}: {price}")
             else:
                 logger.debug(f"Symbol not found for token {token}, exchange {exchange_type}")
     

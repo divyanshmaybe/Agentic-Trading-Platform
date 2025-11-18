@@ -216,11 +216,37 @@ def run_news_sentiment_pipeline(self, top_k: int | None = None) -> dict:
     redis_client.set(pid_key, str(current_pid), ex=7200)
     task_logger.info("✅ News sentiment pipeline lock acquired (PID: %s) - starting pipeline...", current_pid)
     
+    # Check last run time to avoid re-fetching on restart
+    last_run_key = "pipeline:news_sentiment:last_run"
+    last_run_time = redis_client.get(last_run_key)
+    if last_run_time:
+        from datetime import datetime, timedelta
+        try:
+            last_run = datetime.fromisoformat(last_run_time.decode())
+            time_since_last_run = datetime.utcnow() - last_run
+            # If last run was less than 30 minutes ago, skip
+            if time_since_last_run < timedelta(minutes=30):
+                task_logger.info(
+                    "News sentiment pipeline last ran %s ago (less than 30 minutes), skipping fetch",
+                    time_since_last_run
+                )
+                redis_client.delete(lock_key)
+                redis_client.delete(pid_key)
+                return {"status": "skipped", "reason": "too_soon", "last_run": last_run.isoformat()}
+        except (ValueError, AttributeError):
+            # Invalid timestamp, continue with fetch
+            pass
+    
     try:
         server_dir = Path(__file__).resolve().parents[1]
         service = PipelineService(str(server_dir), logger=task_logger)
         top_k_value = top_k or int(os.getenv("NEWS_TOP_K", "3"))
         metadata = service.run_news_sentiment_pipeline(top_k=top_k_value)
+        
+        # Store last run time
+        from datetime import datetime
+        redis_client.set(last_run_key, datetime.utcnow().isoformat(), ex=86400)  # 24 hour TTL
+        
         task_logger.info("✅ News sentiment pipeline completed: %s", metadata)
         return metadata
     finally:

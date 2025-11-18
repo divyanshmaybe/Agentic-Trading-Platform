@@ -41,7 +41,7 @@ from kafka_service import (  # type: ignore  # noqa: E402
     default_kafka_bus,
 )
 from celery_app import celery_app  # type: ignore  # noqa: E402
-from market_data import get_live_price  # type: ignore  # noqa: E402
+import httpx
 
 # LLM imports
 from pathway.xpacks.llm import llms
@@ -371,16 +371,42 @@ def fetch_stock_data(symbol: str, filing_time: str) -> str:
     is_market_hours = market_open_time <= current_time <= market_close_time
     
     if not is_market_hours:
-        # Market is closed - return a message indicating this
+        # Market is closed - log and return a message indicating this
+        market_status_msg = f"🔴 MARKET CLOSED for {symbol} - NSE hours: {MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d} - {MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST. Filing time: {filing_time}, Current: {current_time.strftime('%H:%M:%S')}"
+        print(f"[MARKET] {market_status_msg}")
+        logging.warning(market_status_msg)
         return f"Market closed (NSE hours: {MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d} - {MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST). Filing time: {filing_time}"
 
     try:
-        # Get current live price using market_data service
-        price = get_live_price(symbol)
-        return f"Current price: {price}, timestamp: {filing_time}"
+        # Get current live price via HTTP API (market_data service)
+        portfolio_server_url = os.getenv("PORTFOLIO_SERVER_URL", "http://localhost:8000")
+        internal_secret = os.getenv("INTERNAL_SERVICE_SECRET", "agentinvest-secret")
+        
+        url = f"{portfolio_server_url}/api/market/quotes"
+        params = {"symbols": symbol}
+        headers = {
+            "X-Internal-Service": "true",
+            "X-Service-Secret": internal_secret,
+        }
+        
+        with httpx.Client(timeout=5.0) as client:
+            response = client.get(url, params=params, headers=headers)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("data") and len(data["data"]) > 0:
+                    price = data["data"][0].get("price")
+                    if price:
+                        return f"Current price: {price}, timestamp: {filing_time}"
+            
+            # If API call failed, return error
+            error_msg = f"HTTP {response.status_code}: {response.text[:100]}"
+            print(f"[WARN] Market service API call failed for {symbol}: {error_msg}")
+            logging.warning(f"Market service API call failed for {symbol}: {error_msg}")
+            return f"Error fetching price: {error_msg[:200]}"
     except Exception as exc:
         error_msg = str(exc)
         print(f"[WARN] Market service price fetch failed for {symbol}: {exc}")
+        logging.warning(f"Market service price fetch failed for {symbol}: {exc}")
         return f"Error fetching price: {error_msg[:200]}"
 
 
@@ -703,15 +729,36 @@ def create_nse_filings_pipeline(
         output_path: Path to write trading signals
     """
     
-    from datetime import datetime, time as dt_time
-    current_time = datetime.now().time()
+    from datetime import datetime, time as dt_time, timezone, timedelta
+    # Use IST timezone (UTC+5:30) for market hours check
+    ist = timezone(timedelta(hours=5, minutes=30))
+    current_time_ist = datetime.now(ist).time()
+    current_time = current_time_ist
+    market_open_time = dt_time(MARKET_OPEN[0], MARKET_OPEN[1])
+    market_close_time = dt_time(MARKET_CLOSE[0], MARKET_CLOSE[1])
     close_buffer_time = dt_time(
         MARKET_CLOSE[0],
         max(0, MARKET_CLOSE[1] - MARKET_CLOSE_BUFFER_MINUTES)
     )
     
+    # Log market status at pipeline start
+    is_market_open = market_open_time <= current_time <= market_close_time
+    is_near_close = current_time >= close_buffer_time
+    
+    if is_market_open and not is_near_close:
+        market_status = f"🟢 MARKET OPEN - NSE trading hours: {MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d} - {MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST. Current time: {current_time.strftime('%H:%M:%S')} IST"
+        print(f"[MARKET] {market_status}")
+        logging.info(market_status)
+    elif is_near_close:
+        market_status = f"🟡 MARKET CLOSING SOON - Within {MARKET_CLOSE_BUFFER_MINUTES} minutes of close ({MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST). Current time: {current_time.strftime('%H:%M:%S')} IST. Skipping new signal processing."
+        print(f"[MARKET] {market_status}")
+        logging.warning(market_status)
+    else:
+        market_status = f"🔴 MARKET CLOSED - NSE hours: {MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d} - {MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST. Current time: {current_time.strftime('%H:%M:%S')} IST"
+        print(f"[MARKET] {market_status}")
+        logging.warning(market_status)
+    
     if current_time >= close_buffer_time:
-        print(f"[SENTIMENT] Market closing soon (within {MARKET_CLOSE_BUFFER_MINUTES} min of close). Skipping new signal processing.")
         return filings_source.select(
             symbol=pw.this.symbol,
             filing_time=pw.this.sort_date if hasattr(pw.this, 'sort_date') else "",

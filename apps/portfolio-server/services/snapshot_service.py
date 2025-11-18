@@ -69,8 +69,13 @@ class TradingAgentSnapshotService:
                 self.logger.warning("Agent %s not found for snapshot", agent_id)
                 return None
             
+            # Validate agent_id is not empty
+            if not agent_id or not str(agent_id).strip():
+                self.logger.warning("Invalid agent_id for snapshot: %s", agent_id)
+                return None
+            
             portfolio_id = str(getattr(agent, "portfolio_id", ""))
-            if not portfolio_id:
+            if not portfolio_id or not portfolio_id.strip():
                 self.logger.warning("Agent %s has no portfolio_id", agent_id)
                 return None
             
@@ -89,19 +94,21 @@ class TradingAgentSnapshotService:
             realized_pnl = self._as_decimal(getattr(agent, "realized_pnl", 0) or 0)
             
             # Create snapshot
+            metadata_dict = {
+                "agent_type": getattr(agent, "agent_type", ""),
+                "agent_name": getattr(agent, "agent_name", ""),
+                "captured_at": datetime.utcnow().isoformat(),
+            }
+            
             snapshot = await client.tradingagentsnapshot.create(
                 data={
-                    "agent": {"connect": {"id": agent_id}},
+                    "agent_id": agent_id,
                     "portfolio_id": portfolio_id,
                     "snapshot_at": datetime.utcnow(),
                     "portfolio_value": portfolio_value,
                     "realized_pnl": realized_pnl,
                     "positions_count": positions_count,
-                    "metadata": {
-                        "agent_type": getattr(agent, "agent_type", ""),
-                        "agent_name": getattr(agent, "agent_name", ""),
-                        "captured_at": datetime.utcnow().isoformat(),
-                    },
+                    "metadata": metadata_dict,
                 }
             )
             

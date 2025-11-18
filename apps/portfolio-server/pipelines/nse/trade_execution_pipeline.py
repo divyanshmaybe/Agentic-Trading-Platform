@@ -192,8 +192,12 @@ def _calculate_allocation(payload_json: str) -> float:
         fraction = 0.0
     allocation = capital * fraction
     result = round(float(allocation), 4)
-    LOGGER.debug("Allocation calculation: capital=%.2f, confidence=%.2f, fraction=%.2f, result=%.2f", 
-                 capital, confidence, fraction, result)
+    if result <= 0:
+        LOGGER.warning("⚠️ Allocation is 0 or negative: capital=%.2f, confidence=%.2f, fraction=%.2f, result=%.2f", 
+                      capital, confidence, fraction, result)
+    else:
+        LOGGER.info("✅ Allocation calculation: capital=%.2f, confidence=%.2f, fraction=%.2f, result=%.2f", 
+                   capital, confidence, fraction, result)
     return result
 
 

@@ -751,11 +751,19 @@ class PipelineService:
         )
 
         snapshot_value_dec = self._to_decimal(current_value, places=4)
-        time_elapsed_days = (
-            (as_of - portfolio.last_rebalanced_at).days
-            if getattr(portfolio, "last_rebalanced_at", None)
-            else None
-        )
+        # Ensure both datetimes are timezone-aware for comparison
+        last_rebalanced = getattr(portfolio, "last_rebalanced_at", None)
+        if last_rebalanced:
+            # Make sure both are timezone-aware
+            if as_of.tzinfo is None:
+                from datetime import timezone
+                as_of = as_of.replace(tzinfo=timezone.utc)
+            if last_rebalanced.tzinfo is None:
+                from datetime import timezone
+                last_rebalanced = last_rebalanced.replace(tzinfo=timezone.utc)
+            time_elapsed_days = (as_of - last_rebalanced).days
+        else:
+            time_elapsed_days = None
 
         rebalance_metadata = {
             "weights": weights,
@@ -1261,9 +1269,12 @@ class PipelineService:
             }
 
         request_events = [payload.to_event() for payload in payloads]
+        self.logger.info("🔄 Running trade execution pipeline with %d payload(s)...", len(request_events))
         job_rows = run_trade_execution_requests(request_events, logger=self.logger)
+        self.logger.info("📊 Trade execution pipeline produced %d actionable job(s)", len(job_rows) if job_rows else 0)
+        
         if not job_rows:
-            self.logger.info("Trade execution pipeline produced no actionable jobs")
+            self.logger.info("⚠️ Trade execution pipeline produced no actionable jobs")
             return {
                 "processed_signals": len(processed_signals),
                 "payloads": len(payloads),
@@ -1274,17 +1285,41 @@ class PipelineService:
         # Add triggered_by to each job row for tracking
         for job_row in job_rows:
             job_row["triggered_by"] = "high_risk_agent"
+            self.logger.debug(
+                "📋 Job row: %s %s x %d | Allocation: %.2f | Price: %.2f | Agent: %s",
+                job_row.get("symbol", "unknown"),
+                job_row.get("side", "unknown"),
+                job_row.get("quantity", 0),
+                job_row.get("allocated_capital", 0.0),
+                job_row.get("reference_price", 0.0),
+                job_row.get("agent_id", "unknown"),
+            )
 
-        events = await trade_service.persist_and_publish(
-            job_rows,
-            publish_kafka=publish_kafka,
-        )
+        self.logger.info("💾 Persisting %d trade job(s) to database...", len(job_rows))
+        try:
+            events = await trade_service.persist_and_publish(
+                job_rows,
+                publish_kafka=publish_kafka,
+            )
+            self.logger.info("✅ Persisted %d trade execution log(s), created %d event(s)", len(job_rows), len(events) if events else 0)
+        except Exception as persist_exc:
+            self.logger.error("❌ Failed to persist trade jobs: %s", persist_exc, exc_info=True)
+            return {
+                "processed_signals": len(processed_signals),
+                "payloads": len(payloads),
+                "jobs": len(job_rows),
+                "dispatched": 0,
+                "error": str(persist_exc),
+            }
 
         dispatched = 0
         executed = 0
-        if events:
+        if not events:
+            self.logger.warning("⚠️ persist_and_publish returned no events (expected %d)", len(job_rows))
+        else:
             # Check if we should use Celery or execute directly
             use_celery = os.getenv("USE_CELERY_FOR_TRADES", "false").lower() in {"1", "true", "yes"}
+            self.logger.info("🚀 Executing %d trade(s) using %s mode...", len(events), "Celery" if use_celery else "direct simulation")
             
             if use_celery:
                 # Use Celery for async execution
@@ -1371,14 +1406,24 @@ class PipelineService:
             self.logger.info(
                 "Starting live NSE scraper (interval: %ss)...", refresh_interval
             )
-            filings_input = create_nse_scraper_input(refresh_interval=refresh_interval)
+            try:
+                filings_input = create_nse_scraper_input(refresh_interval=refresh_interval)
+                self.logger.info("✓ NSE scraper input created successfully")
+            except Exception as scraper_exc:
+                self.logger.error("❌ Failed to create NSE scraper input: %s", scraper_exc, exc_info=True)
+                raise
 
             self.logger.info("Building sentiment analysis pipeline...")
-            trading_signals = create_nse_filings_pipeline(
-                filings_source=filings_input,
-                static_data_path=static_data_path,
-                output_path=signals_output,
-            )
+            try:
+                trading_signals = create_nse_filings_pipeline(
+                    filings_source=filings_input,
+                    static_data_path=static_data_path,
+                    output_path=signals_output,
+                )
+                self.logger.info("✓ Sentiment analysis pipeline created successfully")
+            except Exception as pipeline_exc:
+                self.logger.error("❌ Failed to create sentiment pipeline: %s", pipeline_exc, exc_info=True)
+                raise
 
             def on_new_signal(key, row, time, is_addition, **_):
                 if is_addition:
@@ -1404,7 +1449,12 @@ class PipelineService:
             self.logger.info("✓ Pipeline built successfully!")
             self._update_status("running")
             self.logger.info("✓ Running pipeline (will scrape continuously)...")
-            pw.run(monitoring_level=pw.MonitoringLevel.NONE)
+            self.logger.info("🚀 Pipeline is now running and will process filings in real-time...")
+            try:
+                pw.run(monitoring_level=pw.MonitoringLevel.NONE)
+            except Exception as pipeline_exc:
+                self.logger.error("❌ Pathway pipeline crashed: %s", pipeline_exc, exc_info=True)
+                raise
         except KeyboardInterrupt:  # pragma: no cover - manual stop
             self.logger.info("Pipeline stopped by user")
         except Exception as exc:

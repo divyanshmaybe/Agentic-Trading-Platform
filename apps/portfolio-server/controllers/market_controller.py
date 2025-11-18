@@ -9,6 +9,10 @@ from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 import httpx
 from fastapi import HTTPException, status
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from market_data import MarketDataService
 
 from market_data import get_market_data_service
 from schemas import MarketQuote, MarketQuoteResponse
@@ -20,7 +24,7 @@ class MarketController:
     """Handles market quote retrieval with live, REST, and fallback sources."""
 
     def __init__(self) -> None:
-        self.service = get_market_data_service()
+        self._service: Optional["MarketDataService"] = None
 
         self.fallback_enabled = os.getenv("MARKET_DATA_ENABLE_FALLBACK", "true").lower() in {
             "1",
@@ -133,24 +137,38 @@ class MarketController:
         offset = sum(ord(ch) for ch in symbol) % 20
         return (self.fallback_base + (self.fallback_step * Decimal(offset))).quantize(Decimal("0.01"))
 
-    async def _get_price(self, provider_symbol: str) -> tuple[Optional[Decimal], str, str]:
-        price = self.service.get_latest_price(provider_symbol)
-        if price is not None:
-            return price, "cache", self.service.adapter.name
+    @property
+    def service(self) -> "MarketDataService":
+        """Lazy-load market data service only when needed"""
+        if self._service is None:
+            self._service = get_market_data_service()
+        return self._service
 
-        self.service.register_symbol(provider_symbol)
+    async def _get_price(self, provider_symbol: str) -> tuple[Optional[Decimal], str, str]:
+        # Try REST API first to avoid WebSocket connection
+        price = await self._fetch_rest_price(provider_symbol)
+        if price is not None:
+            return price, "rest-api", "rest-api"
+        
+        # Only use WebSocket service if explicitly enabled and REST failed
+        use_websocket = os.getenv("MARKET_DATA_USE_WEBSOCKET", "false").lower() in ("true", "1", "yes")
+        if not use_websocket:
+            return None, "unavailable", "rest-api-only"
+        
+        # WebSocket fallback (only if enabled)
         try:
+            price = self.service.get_latest_price(provider_symbol)
+            if price is not None:
+                return price, "cache", self.service.adapter.name
+
+            self.service.register_symbol(provider_symbol)
             price = await self.service.await_price(provider_symbol, timeout=3.0)
             if price is not None:
                 return price, "live-stream", self.service.adapter.name
         except RuntimeError:
             price = None
 
-        price = await self._fetch_rest_price(provider_symbol)
-        if price is not None:
-            return price, "rest-api", "rest-api"
-
-        return None, "unavailable", self.service.adapter.name
+        return None, "unavailable", self.service.adapter.name if self._service else "unavailable"
 
     async def _fetch_rest_price(self, provider_symbol: str) -> Optional[Decimal]:
         token = (
@@ -329,6 +347,13 @@ class MarketController:
         Get list of all currently subscribed symbols from the WebSocket adapter.
         Returns count and list of symbols that are actively streaming prices.
         """
+        if self._service is None:
+            return {
+                "subscribed": [],
+                "count": 0,
+                "provider": "unavailable",
+                "message": "Market data service not initialized"
+            }
         adapter = self.service.adapter
         if hasattr(adapter, 'get_subscribed_symbols'):
             symbols = adapter.get_subscribed_symbols()

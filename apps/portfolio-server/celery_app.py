@@ -20,6 +20,12 @@ logging.getLogger("pathway.io.kafka").setLevel(logging.ERROR)
 logging.getLogger("pathway.io.filesystem").setLevel(logging.ERROR)
 logging.getLogger("pathway.io.jsonlines").setLevel(logging.ERROR)
 logging.getLogger("pathway.io.csv").setLevel(logging.ERROR)
+# Suppress Pathway publisher/sink verbose messages
+logging.getLogger("pathway.io.publisher").setLevel(logging.ERROR)
+logging.getLogger("pathway.io.sink").setLevel(logging.ERROR)
+# Suppress "Done writing" messages
+logging.getLogger("pathway.io.filesystem").setLevel(logging.ERROR)
+logging.getLogger("pathway.io.kafka").setLevel(logging.ERROR)
 
 # Load environment variables from portfolio-server .env and project root .env
 # (same logic as PipelineService._load_environment)
@@ -178,8 +184,11 @@ celery_app.conf.redbeat_lock_timeout = int(os.getenv("CELERY_REDBEAT_LOCK_TIMEOU
 celery_app.conf.redbeat_lock_key = os.getenv("CELERY_REDBEAT_LOCK_KEY", "redbeat::lock")
 
 NEWS_PIPELINE_ENABLED = os.getenv("NEWS_PIPELINE_ENABLED", "false").lower() in {"1", "true", "yes"}
-NEWS_FETCH_RATE = int(os.getenv("NEWS_FETCH_RATE", "3600"))
+NEWS_FETCH_RATE = int(os.getenv("NEWS_FETCH_RATE", "1800"))  # Default 30 minutes
 NEWS_PIPELINE_QUEUE = os.getenv("NEWS_PIPELINE_QUEUE", QUEUE_NAMES["pipelines"])
+
+NSE_PIPELINE_ENABLED = os.getenv("NSE_PIPELINE_ENABLED", "true").lower() in {"1", "true", "yes"}
+NSE_PIPELINE_QUEUE = os.getenv("NSE_PIPELINE_QUEUE", QUEUE_NAMES["pipelines"])
 
 REBALANCE_ENABLED = os.getenv("PORTFOLIO_REBALANCE_ENABLED", "true").lower() in {"1", "true", "yes"}
 REBALANCE_HOUR = int(os.getenv("PORTFOLIO_REBALANCE_HOUR", "5"))
@@ -198,6 +207,14 @@ ORDER_MONITOR_QUEUE = os.getenv("ORDER_MONITOR_QUEUE", QUEUE_NAMES["orders"])
 
 # Initialize empty beat schedule
 celery_app.conf.beat_schedule = {}
+
+# NSE Pipeline - runs once on startup (long-running task)
+if NSE_PIPELINE_ENABLED:
+    celery_app.conf.beat_schedule["nse-filings-pipeline"] = {
+        "task": "pipeline.start",
+        "schedule": timedelta(seconds=60),  # Check every minute, but task has lock to prevent duplicates
+        "options": {"queue": NSE_PIPELINE_QUEUE},
+    }
 
 # Only enable news pipeline via Beat if explicitly configured
 if NEWS_PIPELINE_ENABLED:

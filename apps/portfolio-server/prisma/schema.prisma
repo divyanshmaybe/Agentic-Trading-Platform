@@ -17,14 +17,14 @@ model Objective {
   id                       String   @id @default(uuid())
   user_id                  String
   name                     String?
-  // raw                      Json?    @default("{}")
+  raw                      Json?    @default("{}")
   source                   String?
-  // structured_payload       Json?    @default("{}")
+  structured_payload       Json?    @default("{}")
   investable_amount        Decimal? @db.Decimal(20, 4)
   investment_horizon_years Int?
-  // investment_horizon_label String?
+  investment_horizon_label String?
   target_return            Decimal? @db.Decimal(9, 6)
-  // target_returns           Json?    @default("[]")
+  target_returns           Json?    @default("[]")
   risk_tolerance           String?
   risk_aversion_lambda     Decimal? @db.Decimal(9, 6)
   liquidity_needs          String?

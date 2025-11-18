@@ -299,18 +299,10 @@ to the user for making the final recommendations.
 
 
 def compute_technical_indicators(symbol: str) -> Optional[Dict[str, Optional[float]]]:
-    if get_market_data_service is None:
-        raise RuntimeError("Market data service is unavailable")
-
-    service = get_market_data_service()
-    adapter = getattr(service, "adapter", None)
-    if not adapter or not hasattr(adapter, "get_historical_candles"):
-        raise RuntimeError("Active market data adapter does not support historical candles")
-
-    normalized_symbol = adapter.normalize_symbol(symbol)
-    now = datetime.utcnow()
-    start_daily = (now - timedelta(days=120)).replace(hour=9, minute=15)
-    start_hourly = (now - timedelta(days=2)).replace(hour=9, minute=15)
+    # Don't use market_data service directly - return None to avoid WebSocket connections
+    # Technical indicators are optional and can be skipped
+    # This prevents the news pipeline from creating its own WebSocket connection to Angel One
+    return None
 
     def _fetch_range(start_dt: datetime, end_dt: datetime, interval: str) -> pd.DataFrame:
         candles = adapter.get_historical_candles(
@@ -580,9 +572,9 @@ def stock_recommender(sector_analysis: str, tech_json: str, *, gemini_api_key: O
     if isinstance(raw, (dict, list)):
         parsed = raw
     else:
-    try:
+        try:
             parsed = json.loads(raw)
-    except Exception:
+        except Exception:
             parsed = raw
     
     # Validate URLs against valid_urls if we have sentiment data

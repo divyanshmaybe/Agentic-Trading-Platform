@@ -198,44 +198,58 @@ class TradeExecutionService:
 
         client = await self._ensure_client()
         events: List[TradeExecutionEvent] = []
+        job_list = list(job_rows)  # Convert to list to get length
+        self.logger.info("💾 persist_and_publish: Processing %d job row(s)...", len(job_list))
 
-        for row in job_rows:
-            record = await self.create_trade_log(row, client=client)
-            metadata_json = row.get("metadata_json") or "{}"
+        for idx, row in enumerate(job_list, 1):
             try:
-                metadata = json.loads(metadata_json)
-                if not isinstance(metadata, dict):
-                    metadata = {}
-            except json.JSONDecodeError:
-                metadata = {"raw_metadata": metadata_json}
+                self.logger.debug("Creating trade log %d/%d: %s %s x %d", idx, len(job_list), row.get("symbol"), row.get("side"), row.get("quantity"))
+                record = await self.create_trade_log(row, client=client)
+                self.logger.debug("✅ Created trade log: %s", record.id)
+                
+                metadata_json = row.get("metadata_json") or "{}"
+                try:
+                    metadata = json.loads(metadata_json)
+                    if not isinstance(metadata, dict):
+                        metadata = {}
+                except json.JSONDecodeError:
+                    metadata = {"raw_metadata": metadata_json}
 
-            event = TradeExecutionEvent(
-                trade_id=record.id,
-                request_id=row["request_id"],
-                signal_id=row.get("signal_id", ""),
-                user_id=row["user_id"],
-                portfolio_id=row["portfolio_id"],
-                symbol=row["symbol"],
-                side=row["side"],
-                quantity=int(row["quantity"]),
-                allocated_capital=float(row["allocated_capital"]),
-                confidence=float(row["confidence"]),
-                reference_price=float(row["reference_price"]),
-                take_profit_pct=float(row["take_profit_pct"]),
-                stop_loss_pct=float(row["stop_loss_pct"]),
-                explanation=row.get("explanation", ""),
-                filing_time=row.get("filing_time", ""),
-                generated_at=row.get("generated_at", ""),
-                metadata=metadata,
-                status="pending",
-                agent_id=row.get("agent_id"),
-                agent_type=row.get("agent_type"),
-                agent_status=row.get("agent_status"),
-            )
-            events.append(event)
+                event = TradeExecutionEvent(
+                    trade_id=record.id,
+                    request_id=row["request_id"],
+                    signal_id=row.get("signal_id", ""),
+                    user_id=row["user_id"],
+                    portfolio_id=row["portfolio_id"],
+                    symbol=row["symbol"],
+                    side=row["side"],
+                    quantity=int(row["quantity"]),
+                    allocated_capital=float(row["allocated_capital"]),
+                    confidence=float(row["confidence"]),
+                    reference_price=float(row["reference_price"]),
+                    take_profit_pct=float(row["take_profit_pct"]),
+                    stop_loss_pct=float(row["stop_loss_pct"]),
+                    explanation=row.get("explanation", ""),
+                    filing_time=row.get("filing_time", ""),
+                    generated_at=row.get("generated_at", ""),
+                    metadata=metadata,
+                    status="pending",
+                    agent_id=row.get("agent_id"),
+                    agent_type=row.get("agent_type"),
+                    agent_status=row.get("agent_status"),
+                )
+                events.append(event)
+            except Exception as exc:
+                self.logger.error("❌ Failed to persist trade log for job row %d/%d: %s", idx, len(job_list), exc, exc_info=True)
+                continue
 
+        self.logger.info("✅ persist_and_publish: Created %d trade execution log(s) and %d event(s)", len(events), len(events))
+        
         if publish_kafka and events:
+            self.logger.info("📤 Publishing %d trade execution event(s) to Kafka...", len(events))
             publish_trade_execution_events(events, logger=self.logger)
+        elif not events:
+            self.logger.warning("⚠️ No events to publish to Kafka")
 
         return events
 

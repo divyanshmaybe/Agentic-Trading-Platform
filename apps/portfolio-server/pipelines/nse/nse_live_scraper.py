@@ -284,16 +284,16 @@ class NSEScraperSubject(ConnectorSubject):
         
         try:
             # Establish session (required by NSE)
-            print("[DEBUG] Establishing NSE session...")
+            print("[NSE-SCRAPER] Establishing NSE session...")
             session.get(NSE_BASE_URL, headers=headers, timeout=10)
             time.sleep(1)
             session.get(NSE_ANNOUNCEMENTS_URL, headers=headers, timeout=10)
             time.sleep(1)
             
             # Fetch from API
-            print(f"[DEBUG] Fetching from NSE API: {NSE_API_URL}")
+            print(f"[NSE-SCRAPER] Fetching from NSE API: {NSE_API_URL}")
             response = session.get(NSE_API_URL, headers=headers, timeout=15)
-            print(f"[DEBUG] API response status: {response.status_code}")
+            print(f"[NSE-SCRAPER] API response status: {response.status_code}")
             
             if response.status_code != 200:
                 print(f"[ERROR] API returned status {response.status_code}: {response.text[:200]}")
@@ -376,6 +376,7 @@ class NSEScraperSubject(ConnectorSubject):
         save_counter = 0
         SAVE_INTERVAL = 10
         
+        print(f"[NSE-SCRAPER] Starting polling loop (refresh interval: {self._refresh_interval}s)...")
         while True:
             try:
                 print(f"[INFO] Polling NSE API at {datetime.now()}")
@@ -493,17 +494,19 @@ class NSEScraperSubject(ConnectorSubject):
                         continue  # Continue with next announcement
                 
                 already_seen = sum(1 for ann in announcements if ann.get('seq_id', '') in self._seen_seq_ids)
-                print(f"[INFO] Poll summary: {len(announcements)} total, {new_count} new, {already_seen} already seen")
+                print(f"[NSE-SCRAPER] Poll summary: {len(announcements)} total, {new_count} new, {already_seen} already seen")
                 if emitted_count > 0:
-                    print(f"[INFO] ✓ Emitted {emitted_count} announcements to pipeline for processing")
+                    print(f"[NSE-SCRAPER] ✓ Emitted {emitted_count} announcements to pipeline for processing")
                 elif new_count > 0:
-                    print(f"[WARN] Found {new_count} new announcements but none were relevant or had PDFs")
+                    print(f"[NSE-SCRAPER] ⚠️ Found {new_count} new announcements but none were relevant or had PDFs")
+                else:
+                    print(f"[NSE-SCRAPER] ℹ️ No new announcements found in this poll")
                 
                 # Save processed IDs and files after each poll
                 save_processed_announcements(self._seen_seq_ids, self._processed_files)
                 
                 # Wait before next poll
-                print(f"[INFO] Waiting {self._refresh_interval} seconds before next poll...")
+                print(f"[NSE-SCRAPER] Waiting {self._refresh_interval} seconds before next poll...")
                 time.sleep(self._refresh_interval)
                 
             except KeyboardInterrupt:
