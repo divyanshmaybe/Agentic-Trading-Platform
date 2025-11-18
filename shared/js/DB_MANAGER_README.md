@@ -180,7 +180,7 @@ Execute a raw SQL command.
 
 ## Setup for Each Service
 
-1. **Create Prisma schema** in `apps/your-service/prisma/schema.prisma`
+1. **Create Prisma schema** in `apps/your-service/prisma/schema.prisma` or `shared/prisma/schema.prisma` (for shared schemas)
 
 2. **Install Prisma dependencies:**
    ```bash
@@ -190,11 +190,19 @@ Execute a raw SQL command.
 
 3. **Generate Prisma client:**
    ```bash
+   # For service-specific schema
+   pnpm --filter your-service prisma:generate
+   
+   # For shared schema, use --schema flag in package.json scripts
    pnpm --filter your-service prisma:generate
    ```
 
 4. **Run migrations:**
    ```bash
+   # For service-specific schema
+   pnpm --filter your-service prisma:migrate
+   
+   # For shared schema, use --schema flag in package.json scripts
    pnpm --filter your-service prisma:migrate
    ```
 
@@ -225,13 +233,14 @@ const prisma = db.getClient();
 
 ## Best Practices
 
-1. **One Prisma client per service** - Each service should have its own schema and generated client
-2. **Singleton pattern** - Always use `getInstance()` to get the database manager
-3. **Connection lifecycle** - Let BaseApp handle connect/disconnect, or manage manually
-4. **Error handling** - Always wrap database operations in try-catch blocks
-5. **Transactions** - Use `db.transaction()` for multi-step operations
+1. **Shared or service-specific schemas** - Schemas can be in `shared/prisma/` for shared models or `apps/your-service/prisma/` for service-specific models
+2. **One Prisma client per service** - Each service should use its own generated client instance
+3. **Singleton pattern** - Always use `getInstance()` to get the database manager
+4. **Connection lifecycle** - Let BaseApp handle connect/disconnect, or manage manually
+5. **Error handling** - Always wrap database operations in try-catch blocks
+6. **Transactions** - Use `db.transaction()` for multi-step operations
 
 ## Example: Auth Server
 
-See `apps/auth_server/lib/prisma.ts` for a complete example of how to set up the database manager in a service.
+See `apps/auth_server/lib/prisma.ts` for a complete example of how to set up the database manager in a service. The auth server uses a shared Prisma schema located in `shared/prisma/schema.prisma`.
 

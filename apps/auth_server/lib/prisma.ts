@@ -2,7 +2,7 @@
  * Prisma Client for Auth Server
  * 
  * This file provides direct access to Prisma client and the database manager.
- * The Prisma client is generated from apps/auth_server/prisma/schema.prisma
+ * The Prisma client is generated from shared/prisma/schema.prisma
  * 
  * Usage:
  * ```typescript

@@ -63,3 +63,4 @@ CREATE UNIQUE INDEX "users_organization_id_email_key" ON "users"("organization_i
 
 -- AddForeignKey
 ALTER TABLE "users" ADD CONSTRAINT "users_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+

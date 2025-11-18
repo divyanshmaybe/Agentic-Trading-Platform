@@ -47,6 +47,7 @@ REDIS_URL=redis://localhost:6379
 ```bash
 pnpm --filter auth_server prisma:generate
 ```
+Note: The Prisma schema is located in `shared/prisma/schema.prisma` and is shared across multiple servers.
 
 4. Run database migrations:
 ```bash

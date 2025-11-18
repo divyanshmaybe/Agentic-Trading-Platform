@@ -224,7 +224,7 @@ docker exec pathway-kafka kafka-console-consumer.sh --bootstrap-server localhost
 ### Database Migrations
 
 ```bash
-# Auth server migrations
+# Auth server migrations (schema located in shared/prisma/)
 pnpm --filter auth_server prisma:migrate
 
 # Portfolio server schema updates
