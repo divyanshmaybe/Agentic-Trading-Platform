@@ -148,6 +148,10 @@ class TradeEngine:
             )
         else:
             import json
+            # Provide defaults for required fields if not specified
+            exchange = payload.exchange or "NSE"
+            segment = payload.segment or "EQUITY"
+            
             trade = await self.prisma.trade.create(
                 data={
                     "organization_id": payload.organization_id,
@@ -155,8 +159,8 @@ class TradeEngine:
                     "customer_id": payload.customer_id,
                     "trade_type": payload.trade_type,
                     "symbol": payload.symbol,
-                    "exchange": payload.exchange,
-                    "segment": payload.segment,
+                    "exchange": exchange,
+                    "segment": segment,
                     "side": payload.side,
                     "order_type": payload.order_type,
                     "quantity": payload.quantity,
@@ -191,6 +195,10 @@ class TradeEngine:
         if payload.order_type in {"stop", "stop_loss", "take_profit"} and payload.trigger_price is None:
             raise ValueError("trigger_price required for stop/take-profit orders")
 
+        # Provide defaults for required fields if not specified
+        exchange = payload.exchange or "NSE"
+        segment = payload.segment or "EQUITY"
+
         trade = await self.prisma.trade.create(
             data={
                 "organization_id": payload.organization_id,
@@ -198,8 +206,8 @@ class TradeEngine:
                 "customer_id": payload.customer_id,
                 "trade_type": payload.trade_type,
                 "symbol": payload.symbol,
-                "exchange": payload.exchange,
-                "segment": payload.segment,
+                "exchange": exchange,
+                "segment": segment,
                 "side": payload.side,
                 "order_type": payload.order_type,
                 "quantity": payload.quantity,
@@ -239,13 +247,17 @@ class TradeEngine:
                 },
             )
         else:
+            # Provide defaults for required fields if not specified
+            exchange = payload.exchange or "NSE"
+            segment = payload.segment or "EQUITY"
+            
             await self.prisma.position.create(
                 data={
                     "portfolio_id": payload.portfolio_id,
                     "agent_id": None,
                     "symbol": payload.symbol,
-                    "exchange": payload.exchange,
-                    "segment": payload.segment,
+                    "exchange": exchange,
+                    "segment": segment,
                     "quantity": payload.quantity,
                     "average_buy_price": execution_price,
                     "current_price": execution_price,
