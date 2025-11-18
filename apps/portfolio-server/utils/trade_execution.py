@@ -45,13 +45,13 @@ def get_allocation(capital: float, confidence: float) -> float:
         return capital * fraction
     else:
         # Regular Python values
-    if confidence > 0.8:
-        fraction = 0.40
-    elif confidence > 0.49:
-        fraction = 0.25
-    else:
-        fraction = 0.0
-    return capital * fraction
+        if confidence > 0.8:
+            fraction = 0.40
+        elif confidence > 0.49:
+            fraction = 0.25
+        else:
+            fraction = 0.0
+        return capital * fraction
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:

@@ -114,9 +114,9 @@ def allocate_portfolios(
 
     logger.info("Executing portfolio allocation pipeline for %s request(s)", len(prepared))
     try:
-    results = run_portfolio_allocation_requests(prepared, logger=logger, write_to_path=audit_path)
-    logger.info("Portfolio allocation pipeline completed with %s result(s)", len(results))
-    return results
+        results = run_portfolio_allocation_requests(prepared, logger=logger, write_to_path=audit_path)
+        logger.info("Portfolio allocation pipeline completed with %s result(s)", len(results))
+        return results
     except Exception as exc:
         logger.error(f"Portfolio allocation pipeline failed: {exc}", exc_info=True)
         raise

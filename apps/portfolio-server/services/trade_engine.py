@@ -336,7 +336,7 @@ class TradeEngine:
             # Skip email for now - would need to call auth service to get user email
             # This is a non-critical feature, so we'll skip it silently
                 import logging
-            logging.getLogger(__name__).debug(
+                logging.getLogger(__name__).debug(
                 f"Trade execution email skipped (customer_id: {payload.customer_id})"
                 )
                 return
