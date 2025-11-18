@@ -74,7 +74,7 @@ class TradeExecutionService:
         # Add triggering agent information to metadata
         if "triggered_by" not in metadata:
             metadata["triggered_by"] = job_row.get("triggered_by", "high_risk_agent")
-        
+
         # Store agent_id and agent_type in metadata for fallback retrieval
         if job_row.get("agent_id"):
             metadata["agent_id"] = job_row["agent_id"]

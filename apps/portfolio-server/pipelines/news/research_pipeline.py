@@ -580,9 +580,9 @@ def stock_recommender(sector_analysis: str, tech_json: str, *, gemini_api_key: O
     if isinstance(raw, (dict, list)):
         parsed = raw
     else:
-        try:
+    try:
             parsed = json.loads(raw)
-        except Exception:
+    except Exception:
             parsed = raw
     
     # Validate URLs against valid_urls if we have sentiment data

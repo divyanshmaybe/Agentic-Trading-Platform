@@ -1,930 +1,99 @@
-from __future__ import annotations
-
-import os
-
-# Disable Pathway progress dashboard before importing pathway
-os.environ["PATHWAY_DISABLE_PROGRESS"] = "1"
-os.environ.setdefault("PATHWAY_PROGRESS_DISABLE", "1")
-os.environ.setdefault("PW_DISABLE_PROGRESS", "1")
-os.environ["PATHWAY_LOG_LEVEL"] = "warning"
+"""
+Simple Market Data Service
+Request → Subscribe → Return Price
+No Pathway, no complex threading - just simple async WebSocket
+"""
 
 import asyncio
-import contextlib
 import json
 import logging
-import random
-import threading
+import os
 import time
-from pathlib import Path
-from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
-
-import fcntl
-import tempfile
-
-import pathway as pw
-from pathway.io.python import ConnectorSubject
-from urllib.parse import urlencode, urlparse, parse_qs, urlunparse
-from websockets.exceptions import ConnectionClosedError, InvalidMessage, InvalidStatus
+from typing import Dict, Optional, Set
+import websockets
+from websockets.exceptions import ConnectionClosedError
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_WS_URL = os.getenv("MARKET_DATA_WS_URL", "wss://example.com/stream")
-DEFAULT_PROVIDER = "angelone"
-DEFAULT_RETRY_SECONDS = 5
 
-
-class MarketTickSchema(pw.Schema):
-    """Pathway schema for streaming market ticks."""
-
-    symbol: str = pw.column_definition(primary_key=True)
-    price: str
-    provider: str
-    raw: str
-    received_at: float
-
-
-@dataclass
-class WebsocketMessage:
-    symbol: str
-    price: Decimal
-    raw: Dict[str, Any]
-
-
-class WebsocketAdapter:
-    """Adapter interface for websocket market data providers."""
-
-    name: str
-
-    def __init__(self, name: str) -> None:
-        self.name = name
-
-    async def on_connect(self, ws, symbols: Iterable[str]) -> None:  # pragma: no cover - template
-        raise NotImplementedError
-
-    async def handle_message(self, message: str) -> Sequence[WebsocketMessage]:  # pragma: no cover - template
-        raise NotImplementedError
-
-    async def subscribe_symbol(self, ws, symbol: str) -> None:  # pragma: no cover - template
-        raise NotImplementedError
-
-    async def unsubscribe_symbol(self, ws, symbol: str) -> None:  # pragma: no cover - template
-        raise NotImplementedError
-
-    def normalize_symbol(self, symbol: str) -> str:
-        """Return provider-specific canonical symbol used for subscriptions."""
-        return symbol.upper()
-
-    def aliases_for(self, symbol: str) -> Sequence[str]:
-        canonical = self.normalize_symbol(symbol).upper()
-        display = symbol.upper()
-        if canonical == display:
-            return [canonical]
-        return [display, canonical]
-
-
-class GenericJSONAdapter(WebsocketAdapter):
-    """Adapter for generic JSON websocket feeds with {"symbol": ..., "price": ...}."""
-
-    def __init__(self) -> None:
-        super().__init__("generic-json")
-        self.ws_url = os.getenv("MARKET_DATA_WS_URL", DEFAULT_WS_URL)
-        self.subscribe_key = os.getenv("MARKET_DATA_SUBSCRIBE_KEY", "subscribe")
-        self.channel_key = os.getenv("MARKET_DATA_CHANNEL_KEY", "symbol")
-        self.price_key = os.getenv("MARKET_DATA_PRICE_KEY", "price")
-        self.symbol_key = os.getenv("MARKET_DATA_SYMBOL_KEY", "symbol")
-        self.payload_template = os.getenv("MARKET_DATA_SUBSCRIBE_TEMPLATE")
-        self.unsubscribe_template = os.getenv("MARKET_DATA_UNSUBSCRIBE_TEMPLATE")
-
-    async def on_connect(self, ws, symbols: Iterable[str]) -> None:
-        for symbol in symbols:
-            await self.subscribe_symbol(ws, symbol)
-
-    async def subscribe_symbol(self, ws, symbol: str) -> None:
-        payload = self._build_payload(symbol, subscribe=True)
-        if payload:
-            await ws.send(payload)
-
-    async def unsubscribe_symbol(self, ws, symbol: str) -> None:
-        payload = self._build_payload(symbol, subscribe=False)
-        if payload:
-            await ws.send(payload)
-
-    def _build_payload(self, symbol: str, subscribe: bool) -> Optional[str]:
-        if self.payload_template:
-            payload = self.payload_template.format(symbol=symbol, action=self.subscribe_key)
-            if not subscribe and self.unsubscribe_template:
-                payload = self.unsubscribe_template.format(symbol=symbol, action="unsubscribe")
-            return payload
-
-        message = {
-            self.subscribe_key: subscribe,
-            self.channel_key: symbol,
-        }
-        return json.dumps(message)
-
-    async def handle_message(self, message: str) -> Sequence[WebsocketMessage]:
-        try:
-            payload = json.loads(message)
-        except json.JSONDecodeError:
-            logger.debug("Market stream discarded non-JSON payload: %s", message)
-            return []
-
-        if isinstance(payload, dict):
-            symbol = payload.get(self.symbol_key)
-            price = payload.get(self.price_key)
-        else:
-            return []
-
-        if not symbol or price is None:
-            return []
-
-        try:
-            price_decimal = Decimal(str(price))
-        except Exception:  # pragma: no cover - defensive
-            logger.debug("Market stream received invalid price payload: %s", payload)
-            return []
-
-        return [WebsocketMessage(symbol=symbol.upper(), price=price_decimal, raw=payload)]
-
-
-class FinnhubAdapter(WebsocketAdapter):
-    """Adapter for the Finnhub trade websocket."""
-
-    def __init__(self) -> None:
-        super().__init__("finnhub")
-        base_url = os.getenv("MARKET_DATA_WS_URL") or os.getenv("FINNHUB_WS_URL") or "wss://ws.finnhub.io"
-        token = (
-            os.getenv("FINNHUB_API_TOKEN")
-            or os.getenv("FINNHUB_TOKEN")
-            or os.getenv("FINNHUB_API_KEY")
-        )
-
-        parsed = urlparse(base_url)
-        query = parse_qs(parsed.query, keep_blank_values=True)
-
-        existing_token = None
-        if "token" in query and query["token"]:
-            existing_token = query["token"][0]
-
-        if not existing_token and token:
-            query["token"] = [token]
-        elif existing_token:
-            query["token"] = [existing_token]
-
-        if query:
-            query_string = urlencode({key: value[0] for key, value in query.items()})
-            self.ws_url = urlunparse(parsed._replace(query=query_string))
-        else:
-            self.ws_url = base_url
-            if not token:
-                logger.warning(
-                    "Finnhub websocket URL has no token. Ensure your URL already includes ?token=..."
-                )
-
-    async def on_connect(self, ws, symbols: Iterable[str]) -> None:
-        for symbol in symbols:
-            await self.subscribe_symbol(ws, symbol)
-
-    async def subscribe_symbol(self, ws, symbol: str) -> None:
-        await ws.send(json.dumps({"type": "subscribe", "symbol": symbol}))
-
-    async def unsubscribe_symbol(self, ws, symbol: str) -> None:
-        await ws.send(json.dumps({"type": "unsubscribe", "symbol": symbol}))
-
-    async def handle_message(self, message: str) -> Sequence[WebsocketMessage]:
-        try:
-            payload = json.loads(message)
-        except json.JSONDecodeError:
-            logger.debug("Finnhub stream discarded non-JSON payload: %s", message)
-            return []
-
-        msg_type = payload.get("type")
-        if msg_type == "ping":
-            return []
-        if msg_type != "trade":
-            return []
-
-        data = payload.get("data") or []
-        messages: List[WebsocketMessage] = []
-        for entry in data:
-            symbol = entry.get("s")
-            price = entry.get("p")
-            if not symbol or price is None:
-                continue
-            try:
-                price_decimal = Decimal(str(price))
-            except Exception:
-                continue
-            messages.append(
-                WebsocketMessage(
-                    symbol=symbol.upper(),
-                    price=price_decimal,
-                    raw=entry,
-                )
-            )
-        return messages
-
-
-class AngelOneAdapter(WebsocketAdapter):
-    """Adapter for Angel One SmartAPI WebSocket 2.0 streaming."""
-
-    def __init__(self) -> None:
-        super().__init__("angelone")
-        self.base_ws_url = os.getenv("ANGELONE_WS_URL", "wss://smartapisocket.angelone.in/smart-stream")
+class MarketDataService:
+    """
+    Simple market data service that:
+    1. Maintains a single WebSocket connection
+    2. Subscribes to symbols on-demand
+    3. Caches prices in memory
+    4. Returns prices immediately when requested
+    """
+    
+    _instance: Optional["MarketDataService"] = None
+    _lock = asyncio.Lock()
+    
+    def __init__(self):
         self.client_code = os.getenv("ANGELONE_CLIENT_CODE")
         self.api_key = os.getenv("ANGELONE_API_KEY")
         self.password = os.getenv("ANGELONE_PASSWORD")
         self.totp_secret = os.getenv("ANGELONE_TOTP_SECRET")
         
-        # Pre-fetch configuration
-        # Disable Nifty-500 prefetch by default - it causes connection issues
-        # Enable only if explicitly set and you understand the implications
-        self.enable_nifty500_prefetch = os.getenv("ENABLE_NIFTY500_PREFETCH", "false").lower() in ("true", "1", "yes")
-        
         if not all([self.client_code, self.api_key, self.password, self.totp_secret]):
-            raise RuntimeError(
-                "Angel One requires: ANGELONE_CLIENT_CODE, ANGELONE_API_KEY, ANGELONE_PASSWORD, ANGELONE_TOTP_SECRET"
-            )
+            raise RuntimeError("Angel One credentials required")
         
-        # These will be set after login
-        self.jwt_token = None
-        self.feed_token = None
-        self.refresh_token = None
-        self._token_expiry: Optional[float] = None
+        # Simple in-memory cache
+        self._prices: Dict[str, Decimal] = {}
+        self._subscribed: Set[str] = set()
         
-        # Token cache file path
-        self.token_cache_file = os.path.join(
-            os.path.dirname(__file__),
-            "../../apps/portfolio-server/docs/angelone_tokens.json"
-        )
+        # WebSocket connection
+        self._ws: Optional[websockets.WebSocketServerProtocol] = None
+        self._ws_task: Optional[asyncio.Task] = None
+        self._connected = False
+        self._token_map: Dict[str, Dict[str, any]] = {}
+        self._init_done = False
         
-        # Token mapping: canonical symbol -> metadata
-        self._token_map: Dict[str, Dict[str, Any]] = {}
-        # Lookup maps for alias resolution
-        self._alias_to_symbol: Dict[str, str] = {}
-        self._symbol_to_alias: Dict[str, str] = {}
+        # Load token map (sync)
+        self._load_token_map()
         
-        # Load or generate token map
-        self._load_or_generate_token_map()
-        
-        # File-based lock to serialize logins across processes
-        lock_dir = Path(tempfile.gettempdir()) / "angelone_locks"
-        lock_dir.mkdir(parents=True, exist_ok=True)
-        self._login_lock_path = lock_dir / "login.lock"
-        self._prefetch_lock_path = lock_dir / "prefetch.lock"
-        self._prefetch_marker_path = lock_dir / "prefetch.marker"
-        self._prefetch_ttl_seconds = float(
-            os.getenv("ANGELONE_PREFETCH_TTL_SECONDS", "900")
-        )
-
-        # Perform login to get tokens
+        # Login to get tokens (sync)
         self._login()
         
-        # Build WebSocket URL with query params
-        self.ws_url = f"{self.base_ws_url}?clientCode={self.client_code}&feedToken={self.feed_token}&apiKey={self.api_key}"
-        
-        # Heartbeat tracking
-        self._last_heartbeat = time.time()
-        self._heartbeat_interval = 30
-        
-        # Rate limiter for historical candle API
-        # Angel One allows ~5 requests/second for historical data
-        self._historical_rate_limit = float(os.getenv("ANGELONE_HISTORICAL_RATE_LIMIT_SECONDS", "0.2"))  # 200ms = 5 req/s
-        self._last_historical_request = 0.0
-        self._historical_lock = threading.Lock()
-        
-        # Track subscribed symbols for market service filtering
-        self._subscribed_symbols: Set[str] = set()
+    async def _ensure_init(self):
+        """Ensure WebSocket is started"""
+        if not self._init_done:
+            self._init_done = True
+            await self._start_websocket()
     
-    def _load_or_generate_token_map(self) -> None:
-        """Load token map from cache file or use fallback."""
-        from angelone_token_generator import load_angelone_token_map, FALLBACK_TOKEN_MAP
-        
-        try:
-            # Try to load from cache
-            self._token_map = load_angelone_token_map(self.token_cache_file)
-            logger.info(f"✅ Loaded {len(self._token_map):,} Angel One tokens from cache")
-        except FileNotFoundError:
-            # Cache doesn't exist yet - use minimal fallback
-            # Celery worker will generate full map asynchronously
-            logger.warning(
-                f"⚠️  Angel One token cache not found at {self.token_cache_file}"
-            )
-            logger.info("📋 Using fallback token map (10 symbols). Full map will be generated by Celery worker.")
-            self._token_map = FALLBACK_TOKEN_MAP.copy()
-        except Exception as e:
-            logger.error(f"Failed to load token map: {e}")
-            logger.info("📋 Using fallback token map")
-            self._token_map = FALLBACK_TOKEN_MAP.copy()
-        
-        # Validate Nifty-500 list availability (for pre-fetch optimization)
-        self._validate_nifty500_availability()
-
-        self._inject_index_tokens()
-        self._build_aliases()
+    @classmethod
+    async def get_instance(cls) -> "MarketDataService":
+        """Get singleton instance"""
+        if cls._instance is None:
+            async with cls._lock:
+                if cls._instance is None:
+                    cls._instance = cls()
+        await cls._instance._ensure_init()
+        return cls._instance
     
-    def _validate_nifty500_availability(self) -> None:
-        """
-        Validate Nifty-500 symbol list is available for pre-fetching.
-        Logs helpful messages if missing, but doesn't block startup.
-        """
-        if not self.enable_nifty500_prefetch:
-            logger.info("ℹ️  Nifty-500 pre-fetch is disabled (ENABLE_NIFTY500_PREFETCH=false)")
-            return
-        
+    def _load_token_map(self):
+        """Load token map from cache file"""
         try:
-            from nifty500_symbols import get_nifty500_symbols, get_nifty500_count
-            
-            count = get_nifty500_count()
-            logger.info(f"✅ Nifty-500 list ready for pre-fetch ({count} symbols)")
-            
-        except ImportError:
-            logger.warning(
-                "⚠️  nifty500_symbols.py not found! Nifty-500 pre-fetch will be disabled.\n"
-                "   To enable pre-fetching:\n"
-                "   1. Run: generate_angelone_tokens_task Celery worker\n"
-                "   2. Or manually run: python -c 'from angelone_token_generator import generate_nifty500_symbols; generate_nifty500_symbols()'\n"
-                "   Pre-fetch benefits: Instant price lookups, no rate limits for Nifty-500 stocks"
+            from angelone_token_generator import load_angelone_token_map
+            token_file = os.path.join(
+                os.path.dirname(__file__),
+                "../../apps/portfolio-server/docs/angelone_tokens.json"
             )
+            self._token_map = load_angelone_token_map(token_file)
+            logger.info(f"✅ Loaded {len(self._token_map):,} tokens")
         except Exception as e:
-            logger.warning(f"⚠️  Failed to validate Nifty-500 list: {e}")
-
-
-    def _inject_index_tokens(self) -> None:
-        """Ensure important index symbols are present in the token map."""
-        index_overrides: Dict[str, Dict[str, Any]] = {
-            "NIFTY 50": {
-                "token": os.getenv("ANGELONE_TOKEN_NIFTY50", "99926000"),
-                "name": "NIFTY 50",
-                "tradingSymbol": "NIFTY 50",
-                "symbol": "NIFTY 50",
-                "exchange": "NSE",
-                "exchangeType": 1,
-                "instrumentType": "INDEX",
-            },
-            "NIFTY BANK": {
-                "token": os.getenv("ANGELONE_TOKEN_BANKNIFTY", "99926009"),
-                "name": "NIFTY BANK",
-                "tradingSymbol": "NIFTY BANK",
-                "symbol": "NIFTY BANK",
-                "exchange": "NSE",
-                "exchangeType": 1,
-                "instrumentType": "INDEX",
-            },
-        }
-
-        for canonical, details in index_overrides.items():
-            if canonical not in self._token_map:
-                self._token_map[canonical] = details
-
-        # Register alias overrides for index symbols so lookups succeed
-        alias_overrides = {
-            "^NSEI": "NIFTY 50",
-            "NSEI": "NIFTY 50",
-            "NIFTY50": "NIFTY 50",
-            "NIFTY_50": "NIFTY 50",
-            "^NSEBANK": "NIFTY BANK",
-            "BANKNIFTY": "NIFTY BANK",
-            "NIFTYBANK": "NIFTY BANK",
-        }
-
-        self._alias_overrides = getattr(self, "_alias_overrides", {})
-        self._alias_overrides.update(alias_overrides)
-
-    def _build_aliases(self) -> None:
-        """Create alias mappings for easier symbol lookup."""
-        self._alias_to_symbol.clear()
-        self._symbol_to_alias.clear()
-
-        for canonical, info in self._token_map.items():
-            canonical_upper = canonical.upper()
-            self._alias_to_symbol[canonical_upper] = canonical
-            self._symbol_to_alias[canonical] = canonical_upper
-
-            # Common NSE suffixes
-            stripped = canonical_upper
-            for suffix in ("-EQ", "-BE", "-BL", "-PP"):
-                if stripped.endswith(suffix):
-                    base = stripped.removesuffix(suffix)
-                    if base and base not in self._alias_to_symbol:
-                        self._alias_to_symbol[base] = canonical
-                    break
-
-            # Also register aliases without exchange separators
-            normalized = stripped.replace(" ", "")
-            if normalized not in self._alias_to_symbol:
-                self._alias_to_symbol[normalized] = canonical
-
-        for alias, canonical in getattr(self, "_alias_overrides", {}).items():
-            canonical_entry = canonical if canonical in self._token_map else canonical.upper()
-            self._alias_to_symbol[alias.upper()] = canonical_entry
-            if canonical_entry not in self._symbol_to_alias:
-                self._symbol_to_alias[canonical_entry] = canonical_entry.upper()
- 
-    def normalize_symbol(self, symbol: str) -> str:
-        upper = symbol.upper()
-        if upper.startswith("^"):
-            upper = upper[1:]
-        if upper in self._alias_to_symbol:
-            return self._alias_to_symbol[upper].upper()
-        if not upper.endswith("-EQ") and f"{upper}-EQ" in self._alias_to_symbol:
-            return self._alias_to_symbol[f"{upper}-EQ"].upper()
-        return upper
-
-    def aliases_for(self, symbol: str) -> Sequence[str]:
-        canonical = self.normalize_symbol(symbol)
-        aliases = {canonical.upper()}
-        display = canonical
-        if canonical.endswith("-EQ"):
-            display = canonical[:-3]
-            aliases.add(display.upper())
-        aliases.add(symbol.upper())
-        return list(aliases)
-
-    def _login(self) -> None:
-        """Login to Angel One API to get JWT and feed tokens."""
+            logger.warning(f"Failed to load token map: {e}")
+            self._token_map = {}
+    
+    def _login(self):
+        """Login to Angel One to get feed token"""
         import pyotp
         import httpx
 
-        # Serialize logins across processes to avoid reusing the same TOTP
-        with open(self._login_lock_path, "w") as lock_file:
-            fcntl.flock(lock_file, fcntl.LOCK_EX)
-            try:
-                # Reuse existing session if still valid
-                if self.jwt_token and self.feed_token and self._token_expiry and time.time() < self._token_expiry - 5:
-                    logger.debug("Reusing cached Angel One session tokens")
-                    return
-
-                login_url = "https://apiconnect.angelone.in/rest/auth/angelbroking/user/v1/loginByPassword"
-                headers = {
-                    "Content-Type": "application/json",
-                    "Accept": "application/json",
-                    "X-UserType": "USER",
-                    "X-SourceID": "WEB",
-                    "X-ClientLocalIP": "127.0.0.1",
-                    "X-ClientPublicIP": "127.0.0.1",
-                    "X-MACAddress": "00:00:00:00:00:00",
-                    "X-PrivateKey": self.api_key,
-                }
-
-                attempts = int(os.getenv("ANGELONE_LOGIN_RETRIES", "3"))
-                for attempt in range(attempts):
-                    totp = pyotp.TOTP(self.totp_secret).now()
-                    logger.info(f"Generated TOTP: {totp}")
-                    payload = {
-                        "clientcode": self.client_code,
-                        "password": self.password,
-                        "totp": totp,
-                    }
-
-                    try:
-                        with httpx.Client(timeout=30.0) as client:
-                            response = client.post(login_url, json=payload, headers=headers)
-                            response.raise_for_status()
-
-                        data = response.json()
-                        if not data.get("status"):
-                            raise RuntimeError(data.get("message", "Unknown error"))
-
-                        response_data = data.get("data", {})
-                        self.jwt_token = response_data.get("jwtToken")
-                        self.feed_token = response_data.get("feedToken")
-                        self.refresh_token = response_data.get("refreshToken")
-
-                        if not all([self.jwt_token, self.feed_token]):
-                            raise RuntimeError("Login response missing tokens")
-
-                        ttl = int(os.getenv("ANGELONE_SESSION_TTL_SECONDS", "300"))
-                        self._token_expiry = time.time() + ttl
-                        logger.info("✅ Angel One login successful! Feed token: %s...", self.feed_token[:10])
-                        break
-                    except httpx.HTTPStatusError as exc:
-                        status = exc.response.status_code
-                        logger.error("Angel One login failed with status %s: %s", status, exc)
-                        if status == 403 and attempt < attempts - 1:
-                            wait_for = max(2.0, 30.0 - (time.time() % 30.0))
-                            logger.warning(
-                                "Angel One rejected TOTP (attempt %s/%s); waiting %.1fs for next window",
-                                attempt + 1,
-                                attempts,
-                                wait_for,
-                            )
-                            time.sleep(wait_for)
-                            continue
-                        raise
-                else:
-                    raise RuntimeError("Angel One login failed after retries")
-            except ImportError:
-                logger.error("pyotp package not installed. Install: pip install pyotp")
-                raise RuntimeError("pyotp required for Angel One TOTP")
-            finally:
-                fcntl.flock(lock_file, fcntl.LOCK_UN)
+        totp = pyotp.TOTP(self.totp_secret).now()
         
-    def _load_token_map(self) -> None:
-        """Load token mapping from environment or file."""
-        # You can load from a JSON file or environment variable
-        # Format: {"RELIANCE": {"exchangeType": 1, "token": "2885"}, ...}
-        token_map_str = os.getenv("ANGELONE_TOKEN_MAP", "{}")
-        try:
-            self._token_map = json.loads(token_map_str)
-        except json.JSONDecodeError:
-            logger.warning("Failed to parse ANGELONE_TOKEN_MAP, using empty map")
-            self._token_map = {}
-    
-    def _get_token_info(self, symbol: str) -> Optional[Dict[str, Any]]:
-        """Get exchange type and token for a symbol."""
-        upper = symbol.upper()
-        if upper in self._token_map:
-            return self._token_map[upper]
-
-        canonical = self._alias_to_symbol.get(upper)
-        if canonical:
-            return self._token_map.get(canonical)
-
-        # Try with -EQ fallback if not already attempted
-        if not upper.endswith("-EQ"):
-            canonical = self._alias_to_symbol.get(f"{upper}-EQ")
-            if canonical:
-                return self._token_map.get(canonical)
-
-        return None
-    
-    async def on_connect(self, ws, symbols: Iterable[str]) -> None:
-        """Subscribe to initial symbols on connection."""
-        # Subscribe to requested symbols FIRST (fast path for single symbol lookups)
-        if symbols:
-            await self._batch_subscribe(ws, list(symbols), subscribe=True)
-        
-        # Pre-fetch Nifty 500 symbols ONLY if enabled AND no immediate symbols needed
-        # This prevents blocking single-symbol requests
-        if self.enable_nifty500_prefetch and not symbols:
-            # Run prefetch in background to not block connection
-            asyncio.create_task(self._prefetch_nifty500(ws))
-    
-    async def _prefetch_nifty500(self, ws) -> None:
-        """
-        Pre-fetch all Nifty 500 symbols, guarding against multiple processes
-        hammering the websocket and triggering 429s.
-        """
-        marker_path = self._prefetch_marker_path
-        ttl = self._prefetch_ttl_seconds
-        now = time.time()
-
-        try:
-            if marker_path.exists():
-                age = now - marker_path.stat().st_mtime
-                if age < ttl:
-                    logger.info(
-                        "⏭️  Skipping Nifty-500 pre-fetch; completed %.1fs ago in another worker.",
-                        age,
-                    )
-                    return
-        except FileNotFoundError:
-            pass
-
-        lock_file: Optional[Any] = None
-        try:
-            lock_file = open(self._prefetch_lock_path, "w")
-            fcntl.flock(lock_file, fcntl.LOCK_EX)
-
-            # Re-check once we hold the lock to avoid duplicate work
-            now = time.time()
-            try:
-                if marker_path.exists():
-                    age = now - marker_path.stat().st_mtime
-                    if age < ttl:
-                        logger.info(
-                            "⏭️  Another worker completed Nifty-500 pre-fetch %.1fs ago; skipping.",
-                            age,
-                        )
-                        return
-            except FileNotFoundError:
-                pass
-
-            await self._run_nifty500_prefetch(ws)
-            marker_path.write_text(str(int(time.time())))
-        finally:
-            if lock_file:
-                fcntl.flock(lock_file, fcntl.LOCK_UN)
-                lock_file.close()
-
-    async def _run_nifty500_prefetch(self, ws) -> None:
-        """
-        Actual implementation of the Nifty-500 streaming bootstrap.
-        """
-        try:
-            from nifty500_symbols import get_nifty500_symbols
-
-            nifty500 = get_nifty500_symbols()
-            batch_size = int(os.getenv("ANGELONE_SUBSCRIBE_BATCH_SIZE", "20"))
-            batch_delay = (
-                float(os.getenv("ANGELONE_SUBSCRIBE_DELAY_MS", "250")) / 1000
-            )  # Convert to seconds
-
-            logger.info(
-                "📊 Pre-fetching %s Nifty-500 symbols (%s symbols/batch, %.0fms delay)...",
-                len(nifty500),
-                batch_size,
-                batch_delay * 1000,
-            )
-
-            subscribed_symbols: List[str] = []
-
-            # Subscribe in batches with staggered delays to avoid rate limiting
-            for i in range(0, len(nifty500), batch_size):
-                batch = nifty500[i : i + batch_size]
-                await self._batch_subscribe(ws, batch, subscribe=True)
-                subscribed_symbols.extend(batch)
-
-                progress = min(i + batch_size, len(nifty500))
-                if progress % 100 == 0 or progress >= len(nifty500):
-                    logger.info("   ↳ Subscribed %s/%s symbols", progress, len(nifty500))
-
-                # Sleep between batches (except after last batch)
-                if progress < len(nifty500):
-                    await asyncio.sleep(batch_delay)
-
-            logger.info(
-                "✅ Nifty-500 pre-fetch complete! All %s symbols subscribed and streaming.",
-                len(nifty500),
-            )
-            if subscribed_symbols:
-                preview = ", ".join(subscribed_symbols[:10])
-                logger.info(
-                    "🎯 Subscribed symbols: %s%s",
-                    preview,
-                    f"... (+{len(subscribed_symbols) - 10} more)"
-                    if len(subscribed_symbols) > 10
-                    else "",
-                )
-
-            # Store subscribed symbols for market service to export
-            self._subscribed_symbols = set(subscribed_symbols)
-
-        except ImportError:
-            logger.warning(
-                "⚠️  nifty500_symbols module not found. "
-                "Nifty-500 pre-fetch disabled. Only on-demand symbol subscriptions will work."
-            )
-        except Exception as exc:
-            logger.error(
-                "❌ Failed to pre-fetch Nifty-500 symbols: %s", exc, exc_info=True
-            )
-
-    async def subscribe_symbol(self, ws, symbol: str) -> None:
-        """Subscribe to a single symbol and track it."""
-        await self._batch_subscribe(ws, [symbol], subscribe=True)
-        self._subscribed_symbols.add(symbol.upper())
-        logger.info(f"➕ Subscribed to {symbol} (total: {len(self._subscribed_symbols)} symbols)")
-    
-    async def unsubscribe_symbol(self, ws, symbol: str) -> None:
-        """Unsubscribe from a single symbol and remove from tracking."""
-        await self._batch_subscribe(ws, [symbol], subscribe=False)
-        self._subscribed_symbols.discard(symbol.upper())
-        logger.info(f"➖ Unsubscribed from {symbol} (total: {len(self._subscribed_symbols)} symbols)")
-    
-    def is_symbol_subscribed(self, symbol: str) -> bool:
-        """Check if a symbol is currently subscribed."""
-        return symbol.upper() in self._subscribed_symbols
-    
-    def get_subscribed_symbols(self) -> List[str]:
-        """Get list of all currently subscribed symbols."""
-        return sorted(list(self._subscribed_symbols))
-    
-    async def _batch_subscribe(self, ws, symbols: List[str], subscribe: bool) -> None:
-        """
-        Batch subscribe/unsubscribe to multiple symbols.
-        Angel One format:
-        {
-            "correlationID": "abcde12345",
-            "action": 1,  # 1=subscribe, 0=unsubscribe
-            "params": {
-                "mode": 1,  # 1=LTP, 2=Quote, 3=SnapQuote
-                "tokenList": [
-                    {
-                        "exchangeType": 1,  # 1=nse_cm, 2=nse_fo, 3=bse_cm, etc.
-                        "tokens": ["10626", "5290"]
-                    }
-                ]
-            }
-        }
-        """
-        # Group symbols by exchange type
-        exchange_groups: Dict[int, List[str]] = {}
-        
-        for symbol in symbols:
-            token_info = self._get_token_info(symbol)
-            if not token_info:
-                logger.warning(f"No token mapping found for {symbol}, skipping")
-                continue
-            
-            exchange_type = token_info.get("exchangeType", 1)  # Default to NSE CM
-            token = token_info.get("token")
-            
-            if not token:
-                logger.warning(f"No token found for {symbol}, skipping")
-                continue
-            
-            if exchange_type not in exchange_groups:
-                exchange_groups[exchange_type] = []
-            exchange_groups[exchange_type].append(token)
-        
-        if not exchange_groups:
-            return
-        
-        # Build tokenList
-        token_list = [
-            {"exchangeType": ex_type, "tokens": tokens}
-            for ex_type, tokens in exchange_groups.items()
-        ]
-        
-        # Build request
-        request = {
-            "correlationID": f"req_{int(time.time() * 1000)}",
-            "action": 1 if subscribe else 0,
-            "params": {
-                "mode": 1,  # LTP mode for now (can be configurable)
-                "tokenList": token_list
-            }
-        }
-        
-        await ws.send(json.dumps(request))
-        logger.info(f"{'Subscribed to' if subscribe else 'Unsubscribed from'} {len(symbols)} symbols")
-    
-    async def send_heartbeat(self, ws) -> None:
-        """Send heartbeat ping message."""
-        current_time = time.time()
-        if current_time - self._last_heartbeat >= self._heartbeat_interval:
-            await ws.send("ping")
-            self._last_heartbeat = current_time
-    
-    async def handle_message(self, message: str) -> Sequence[WebsocketMessage]:
-        """
-        Handle Angel One WebSocket messages.
-        - Text messages: "pong" (heartbeat response) or JSON error responses
-        - Binary messages: Market data in binary format (Little Endian)
-        """
-        # Handle text messages (heartbeat, errors)
-        if isinstance(message, str):
-            if message == "pong":
-                return []
-            
-            # Try to parse as JSON error
-            try:
-                error_data = json.loads(message)
-                if "errorCode" in error_data:
-                    logger.error(f"Angel One error: {error_data}")
-                return []
-            except json.JSONDecodeError:
-                return []
-        
-        # Handle binary data
-        if isinstance(message, bytes):
-            return self._parse_binary_message(message)
-        
-        return []
-    
-    def _parse_binary_message(self, data: bytes) -> Sequence[WebsocketMessage]:
-        """
-        Parse binary market data from Angel One.
-        
-        LTP Mode (51 bytes):
-        - Subscription Mode (1 byte) at index 0
-        - Exchange Type (1 byte) at index 1
-        - Token (25 bytes) at index 2-26
-        - Sequence Number (8 bytes) at index 27
-        - Exchange Timestamp (8 bytes) at index 35
-        - Last Traded Price (8 bytes) at index 43
-        """
-        try:
-            if len(data) < 51:
-                logger.debug(f"Binary packet too small: {len(data)} bytes")
-                return []
-            
-            # Parse subscription mode
-            subscription_mode = data[0]
-            
-            # Parse exchange type
-            exchange_type = data[1]
-            
-            # Parse token (25 bytes, null-terminated string)
-            token_bytes = data[2:27]
-            token = token_bytes.split(b'\x00')[0].decode('utf-8').strip()
-            
-            # Parse LTP (8 bytes at index 43, int64 little endian)
-            ltp_raw = int.from_bytes(data[43:51], byteorder='little', signed=True)
-            
-            # Convert price: divide by 100 for stocks (paise to rupees)
-            # For currencies, divide by 10000000.0 for 4 decimal places
-            if exchange_type == 5:  # MCX
-                price = Decimal(ltp_raw) / Decimal('10000000.0')
-            else:
-                price = Decimal(ltp_raw) / Decimal('100')
-            
-            # Find symbol from token
-            symbol = self._find_symbol_by_token(token, exchange_type)
-            if not symbol:
-                logger.debug(f"Symbol not found for token {token}, exchange {exchange_type}")
-                return []
-            
-            # Filter: Only export prices for subscribed symbols
-            symbol_upper = symbol.upper()
-            if symbol_upper not in self._subscribed_symbols:
-                logger.debug(f"Ignoring price for unsubscribed symbol: {symbol_upper}")
-                return []
-            
-            return [
-                WebsocketMessage(
-                    symbol=symbol_upper,
-                    price=price,
-                    raw={"token": token, "exchangeType": exchange_type, "mode": subscription_mode}
-                )
-            ]
-            
-        except Exception as e:
-            logger.error(f"Error parsing Angel One binary message: {e}")
-            return []
-    
-    def _find_symbol_by_token(self, token: str, exchange_type: int) -> Optional[str]:
-        """Find symbol name from token and exchange type."""
-        for symbol, info in self._token_map.items():
-            if info.get("token") == token and info.get("exchangeType") == exchange_type:
-                # Return preferred alias without NSE suffix if available
-                alias = self._symbol_to_alias.get(symbol, symbol)
-                if alias.endswith("-EQ"):
-                    return alias.removesuffix("-EQ")
-                return alias
-        return None
-    
-    def get_historical_candles(
-        self,
-        symbol: str,
-        interval: str,
-        fromdate: str,
-        todate: str,
-        exchange: str = "NSE"
-    ) -> Optional[List[Dict[str, Any]]]:
-        """
-        Fetch historical candle data from Angel One Historical API.
-        
-        Rate-limited to prevent HTTP 429/403 errors when multiple concurrent requests occur.
-        Uses thread-safe lock with configurable delay between requests.
-        
-        Args:
-            symbol: Stock symbol (e.g., "RELIANCE", "TCS")
-            interval: Candle interval - ONE_MINUTE, THREE_MINUTE, FIVE_MINUTE, 
-                     TEN_MINUTE, FIFTEEN_MINUTE, THIRTY_MINUTE, ONE_HOUR, ONE_DAY
-            fromdate: Start datetime in format "YYYY-MM-DD HH:MM"
-            todate: End datetime in format "YYYY-MM-DD HH:MM"
-            exchange: Exchange name (default: "NSE")
-        
-        Returns:
-            List of candle dictionaries with keys: timestamp, open, high, low, close, volume
-            Returns None if request fails or symbol not found
-        """
-        import httpx
-        
-        # Rate limiting: enforce minimum delay between requests
-        with self._historical_lock:
-            elapsed = time.time() - self._last_historical_request
-            if elapsed < self._historical_rate_limit:
-                sleep_time = self._historical_rate_limit - elapsed
-                logger.debug(f"Rate limiting: sleeping {sleep_time:.3f}s before fetching {symbol}")
-                time.sleep(sleep_time)
-            self._last_historical_request = time.time()
-        
-        # Normalize symbol and get token
-        normalized = self.normalize_symbol(symbol)
-        token_info = self._token_map.get(normalized)
-        
-        if not token_info:
-            logger.warning(f"Symbol {symbol} (normalized: {normalized}) not found in token map")
-            return None
-        
-        symbol_token = token_info.get("token")
-        if not symbol_token:
-            logger.warning(f"No token found for symbol {normalized}")
-            return None
-        
-        exchange = token_info.get("exchange", exchange)
-        
-        # Validate interval
-        valid_intervals = {
-            "ONE_MINUTE", "THREE_MINUTE", "FIVE_MINUTE", 
-            "TEN_MINUTE", "FIFTEEN_MINUTE", "THIRTY_MINUTE",
-            "ONE_HOUR", "ONE_DAY"
-        }
-        if interval not in valid_intervals:
-            logger.error(f"Invalid interval: {interval}. Must be one of {valid_intervals}")
-            return None
-        
-        # Prepare API request
-        url = "https://apiconnect.angelone.in/rest/secure/angelbroking/historical/v1/getCandleData"
-        
+        url = "https://apiconnect.angelone.in/rest/auth/angelbroking/user/v1/loginByPassword"
         headers = {
-            "Authorization": f"Bearer {self.jwt_token}",
             "Content-Type": "application/json",
             "Accept": "application/json",
             "X-UserType": "USER",
@@ -932,635 +101,341 @@ class AngelOneAdapter(WebsocketAdapter):
             "X-ClientLocalIP": "127.0.0.1",
             "X-ClientPublicIP": "127.0.0.1",
             "X-MACAddress": "00:00:00:00:00:00",
-            "X-PrivateKey": self.api_key
+            "X-PrivateKey": self.api_key,
         }
         
         payload = {
-            "exchange": exchange,
-            "symboltoken": symbol_token,
-            "interval": interval,
-            "fromdate": fromdate,
-            "todate": todate
+            "clientcode": self.client_code,
+            "password": self.password,
+            "totp": totp,
         }
         
-        retries = int(os.getenv("ANGELONE_HISTORICAL_RETRIES", "4"))
-        backoff = float(os.getenv("ANGELONE_HISTORICAL_BACKOFF_SECONDS", "2.0"))
-
-        for attempt in range(1, retries + 1):
+        response = httpx.post(url, json=payload, headers=headers, timeout=10)
+        response.raise_for_status()
+        
+        data = response.json()
+        if data.get("status") and data.get("data"):
+            self.feed_token = data["data"]["feedToken"]
+            self.jwt_token = data["data"]["jwtToken"]
+            logger.info("✅ Angel One login successful")
+        else:
+            raise RuntimeError(f"Login failed: {data}")
+    
+    def _normalize_symbol(self, symbol: str) -> str:
+        """Normalize symbol (strip .NS, handle aliases)"""
+        upper = symbol.upper()
+        if upper.endswith(".NS"):
+            upper = upper[:-3]
+        # Try to find in token map
+        if upper in self._token_map:
+            return upper
+        if f"{upper}-EQ" in self._token_map:
+            return f"{upper}-EQ"
+        return upper
+    
+    def _get_token_info(self, symbol: str) -> Optional[Dict]:
+        """Get token info for symbol"""
+        normalized = self._normalize_symbol(symbol)
+        return self._token_map.get(normalized)
+    
+    async def _start_websocket(self):
+        """Start WebSocket connection in background"""
+        if self._ws_task is None or self._ws_task.done():
+            self._ws_task = asyncio.create_task(self._websocket_loop())
+    
+    async def _websocket_loop(self):
+        """Main WebSocket connection loop"""
+        ws_url = f"wss://smartapisocket.angelone.in/smart-stream?clientCode={self.client_code}&feedToken={self.feed_token}&apiKey={self.api_key}"
+        
+        while True:
             try:
-                with httpx.Client(timeout=30.0) as client:
-                    response = client.post(url, json=payload, headers=headers)
-                    response.raise_for_status()
+                async with websockets.connect(
+                    ws_url,
+                    ping_interval=30,
+                    ping_timeout=10,
+                ) as ws:
+                    self._ws = ws
+                    self._connected = True
+                    logger.info("✅ WebSocket connected")
                     
-                    data = response.json()
+                    # Subscribe to already requested symbols
+                    if self._subscribed:
+                        await self._subscribe_batch(list(self._subscribed), ws)
                     
-                    if not data.get("status"):
-                        error_msg = data.get("message", "Unknown error")
-                        logger.error(f"Angel One candle API failed: {error_msg}")
-                        # Retry on transient rate-limit messages
-                        if attempt < retries and "try after sometime" in error_msg.lower():
-                            sleep_for = backoff * attempt
-                            logger.warning("Retrying historical fetch for %s in %.1fs", symbol, sleep_for)
-                            time.sleep(sleep_for)
-                            continue
-                        return None
-                    
-                    # Extract candle data
-                    candles_raw = data.get("data", [])
-                    
-                    if not candles_raw:
-                        logger.warning(f"No candle data returned for {symbol}")
-                        return None
-                    
-                    # Transform to standard format
-                    candles = []
-                    for candle in candles_raw:
-                        if len(candle) >= 6:
-                            candles.append({
-                                "timestamp": candle[0],  # ISO format timestamp
-                                "open": float(candle[1]),
-                                "high": float(candle[2]),
-                                "low": float(candle[3]),
-                                "close": float(candle[4]),
-                                "volume": int(candle[5]) if candle[5] is not None else 0,
-                            })
-                    
-                    logger.info(f"✅ Fetched {len(candles)} candles for {symbol} ({interval})")
-                    return candles
-            except httpx.HTTPStatusError as e:
-                status = e.response.status_code
-                body = e.response.text
-                logger.error(
-                    "HTTP error fetching candles for %s: %s - %s",
-                    symbol,
-                    status,
-                    body,
-                )
-                if status in (429, 403) and "exceeding access rate" in body.lower() and attempt < retries:
-                    sleep_for = backoff * attempt
-                    logger.warning("Rate limited by Angel One. Sleeping %.1fs before retrying %s", sleep_for, symbol)
-                    time.sleep(sleep_for)
-                    continue
-                return None
+                    # Listen for messages
+                    async for message in ws:
+                        await self._handle_message(message)
+                        
+            except ConnectionClosedError:
+                logger.warning("WebSocket closed, reconnecting...")
+                self._connected = False
+                await asyncio.sleep(5)
             except Exception as e:
-                logger.error(f"Error fetching candles for {symbol}: {e}")
-                if attempt < retries:
-                    sleep_for = backoff * attempt
-                    logger.warning("Retrying historical fetch for %s in %.1fs after exception", symbol, sleep_for)
-                    time.sleep(sleep_for)
-                    continue
-                return None
-
-        return None
-
-
-class FivePaisaAdapter(WebsocketAdapter):
-    """Adapter for 5paisa websocket price streams with configurable payloads."""
-
-    def __init__(self) -> None:
-        super().__init__("5paisa")
-        ws_url = os.getenv("MARKET_DATA_WS_URL") or os.getenv("FIVEPAISA_WS_URL")
-        if not ws_url:
-            raise RuntimeError("FIVEPAISA_WS_URL environment variable is required for 5paisa market data")
-        self.ws_url = ws_url
-        self.auth_message = os.getenv("FIVEPAISA_AUTH_MESSAGE")
-        self.subscribe_template = os.getenv("FIVEPAISA_SUBSCRIBE_TEMPLATE")
-        self.unsubscribe_template = os.getenv("FIVEPAISA_UNSUBSCRIBE_TEMPLATE")
-        self.symbol_key = os.getenv("FIVEPAISA_SYMBOL_KEY", "Symbol")
-        self.price_keys = [
-            key.strip()
-            for key in os.getenv("FIVEPAISA_PRICE_KEYS", "LastTradedPrice,LastRate,LTP,Price").split(",")
-            if key.strip()
-        ]
-        self.batch_key = os.getenv("FIVEPAISA_BATCH_KEY", "Data")
-
-    async def on_connect(self, ws, symbols: Iterable[str]) -> None:
-        if self.auth_message:
-            await ws.send(self.auth_message)
+                logger.error(f"WebSocket error: {e}, reconnecting...")
+                self._connected = False
+                await asyncio.sleep(5)
+    
+    async def _subscribe_batch(self, symbols: list, ws=None):
+        """Subscribe to batch of symbols"""
+        if ws is None:
+            ws = self._ws
+        if ws is None:
+            return
+        
+        # Group by exchange type
+        exchange_groups: Dict[int, list] = {}
+        
         for symbol in symbols:
-            await self.subscribe_symbol(ws, symbol)
-
-    async def subscribe_symbol(self, ws, symbol: str) -> None:
-        payload = self._build_subscription(symbol, subscribe=True)
-        if payload:
-            await ws.send(payload)
-
-    async def unsubscribe_symbol(self, ws, symbol: str) -> None:
-        payload = self._build_subscription(symbol, subscribe=False)
-        if payload:
-            await ws.send(payload)
-
-    def _build_subscription(self, symbol: str, subscribe: bool) -> Optional[str]:
-        template = self.subscribe_template if subscribe else self.unsubscribe_template
-        if template:
-            try:
-                return template.format(symbol=symbol)
-            except Exception:
-                logger.warning("5paisa subscription template formatting failed for symbol %s", symbol)
-                return None
-        default_payload = {
-            "Method": "SUBSCRIBE_L2" if subscribe else "UNSUBSCRIBE_L2",
-            "Instrument": [symbol],
+            token_info = self._get_token_info(symbol)
+            if not token_info:
+                logger.warning(f"No token for {symbol}, skipping")
+                continue
+            
+            ex_type = token_info.get("exchangeType", 1)
+            token = token_info.get("token")
+            if not token:
+                continue
+            
+            if ex_type not in exchange_groups:
+                exchange_groups[ex_type] = []
+            exchange_groups[ex_type].append(token)
+        
+        if not exchange_groups:
+            return
+        
+        token_list = [
+            {"exchangeType": ex_type, "tokens": tokens}
+            for ex_type, tokens in exchange_groups.items()
+        ]
+        
+        request = {
+            "correlationID": f"req_{int(time.time() * 1000)}",
+            "action": 1,  # subscribe
+            "params": {
+                "mode": 1,  # LTP mode
+                "tokenList": token_list
+            }
         }
-        return json.dumps(default_payload)
-
-    async def handle_message(self, message: str) -> Sequence[WebsocketMessage]:
-        try:
-            payload = json.loads(message)
-        except json.JSONDecodeError:
-            logger.debug("5paisa stream discarded non-JSON payload: %s", message)
-            return []
-
-        entries: List[Dict[str, Any]] = []
-        batch = payload.get(self.batch_key) or payload.get(self.batch_key.lower())
-        if isinstance(batch, list):
-            entries.extend(batch)
-        elif isinstance(payload, dict):
-            entries.append(payload)
-
-        messages: List[WebsocketMessage] = []
-        for entry in entries:
-            if not isinstance(entry, dict):
-                continue
-            symbol = entry.get(self.symbol_key) or entry.get(self.symbol_key.lower()) or entry.get("Token")
-            price = self._extract_price(entry)
-            if not symbol or price is None:
-                continue
-            messages.append(
-                WebsocketMessage(
-                    symbol=str(symbol).upper(),
-                    price=price,
-                    raw=entry,
-                )
-            )
-        return messages
-
-    def _extract_price(self, entry: Dict[str, Any]) -> Optional[Decimal]:
-        for key in self.price_keys:
-            value = entry.get(key) or entry.get(key.lower())
-            if value is None:
-                continue
+        
+        await ws.send(json.dumps(request))
+        logger.info(f"✅ Subscribed to {len(symbols)} symbols")
+    
+    async def _handle_message(self, message):
+        """Handle WebSocket message"""
+        if isinstance(message, str):
+            if message == "pong":
+                logger.debug("Received pong")
+                return
+            # Try to parse JSON error messages
             try:
-                return Decimal(str(value))
-            except Exception:
-                continue
+                error_data = json.loads(message)
+                if "errorCode" in error_data:
+                    logger.error(f"Angel One error: {error_data}")
+            except:
+                logger.debug(f"Received text message: {message[:100]}")
+            return
+        
+        if isinstance(message, bytes):
+            # Parse binary LTP message (51 bytes)
+            if len(message) < 51:
+                logger.debug(f"Binary message too short: {len(message)} bytes")
+                return
+            
+            token_bytes = message[2:27]
+            token = token_bytes.split(b'\x00')[0].decode('utf-8').strip()
+            exchange_type = message[1]
+            
+            # Parse LTP (8 bytes at index 43)
+            ltp_raw = int.from_bytes(message[43:51], byteorder='little', signed=True)
+            price = Decimal(ltp_raw) / Decimal('100')
+            
+            # Find symbol from token
+            symbol = self._find_symbol_by_token(token, exchange_type)
+            if symbol:
+                symbol_upper = symbol.upper()
+                # Store in multiple formats for easy lookup
+                self._prices[symbol_upper] = price
+                # Also store with -EQ suffix if it doesn't have it
+                if not symbol_upper.endswith("-EQ"):
+                    self._prices[f"{symbol_upper}-EQ"] = price
+                # Also store without -EQ if it has it
+                if symbol_upper.endswith("-EQ"):
+                    self._prices[symbol_upper[:-3]] = price
+                logger.info(f"💰 {symbol_upper}: {price}")
+            else:
+                logger.debug(f"Symbol not found for token {token}, exchange {exchange_type}")
+    
+    def _find_symbol_by_token(self, token: str, exchange_type: int) -> Optional[str]:
+        """Find symbol from token"""
+        for symbol, info in self._token_map.items():
+            if info.get("token") == token and info.get("exchangeType") == exchange_type:
+                # Return both with and without -EQ for cache lookup
+                if symbol.endswith("-EQ"):
+                    base = symbol[:-3]
+                    # Store in both formats
+                    return base  # Return base name
+                return symbol
         return None
+    
+    def register_symbol(self, symbol: str) -> None:
+        """Register symbol for subscription (compatibility method)"""
+        # Subscription happens automatically in get_price/await_price
+        pass
+    
+    def get_latest_price(self, symbol: str) -> Optional[Decimal]:
+        """Get cached price (synchronous, no wait)"""
+        normalized = self._normalize_symbol(symbol).upper()
+        # Try exact match first
+        price = self._prices.get(normalized)
+        if price is not None:
+            return price
+        # Try without -EQ suffix
+        if normalized.endswith("-EQ"):
+            return self._prices.get(normalized[:-3])
+        # Try with -EQ suffix
+        return self._prices.get(f"{normalized}-EQ")
+    
+    def get_or_fetch_price(self, symbol: str) -> Decimal:
+        """
+        Get price synchronously (blocks until price available or timeout).
+        For async contexts, use await_price() instead.
+        """
+        normalized = self._normalize_symbol(symbol).upper()
+        
+        # Fast path: check cache
+        if normalized in self._prices:
+            return self._prices[normalized]
+        
+        # Need to fetch - try to use existing event loop
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # Event loop is running - we can't block here
+                # Return cached price or raise error
+                raise RuntimeError(
+                    f"Price for {symbol} not in cache. Use await_price() in async context."
+                )
+            else:
+                # No running loop - we can run async code
+                return loop.run_until_complete(self._get_price_async(normalized, timeout=1.0))
+        except RuntimeError:
+            # No event loop - create one
+            return asyncio.run(self._get_price_async(normalized, timeout=1.0))
+    
+    async def await_price(self, symbol: str, timeout: float = 3.0) -> Decimal:
+        """Wait for price (async)"""
+        normalized = self._normalize_symbol(symbol).upper()
+        return await self._get_price_async(normalized, timeout)
+    
+    async def _get_price_async(self, normalized: str, timeout: float = 1.0) -> Decimal:
+        """
+        Internal async method to get price:
+        1. Check cache
+        2. If not cached, subscribe and wait
+        3. Return price
+        """
+        # Fast path: check cache (try multiple formats)
+        price = self._get_cached_price_multi(normalized)
+        if price is not None:
+            return price
+        
+        # Ensure WebSocket is running
+        await self._ensure_init()
+        
+        if self._ws_task is None or self._ws_task.done():
+            await self._start_websocket()
+            # Wait a bit for connection
+            await asyncio.sleep(0.5)
 
+        # Wait for connection
+        for _ in range(10):  # 1 second max
+            if self._connected and self._ws:
+                break
+            await asyncio.sleep(0.1)
+        
+        if not self._connected or not self._ws:
+            raise RuntimeError("WebSocket not connected")
+        
+        # Get the token map symbol for subscription (might be different format)
+        token_info = self._get_token_info(normalized)
+        if not token_info:
+            raise RuntimeError(f"Symbol {normalized} not found in token map")
+        
+        # Use the token map key for subscription
+        token_map_symbol = None
+        for sym, info in self._token_map.items():
+            if info.get("token") == token_info.get("token") and info.get("exchangeType") == token_info.get("exchangeType"):
+                token_map_symbol = sym
+                break
+        
+        if not token_map_symbol:
+            raise RuntimeError(f"Could not find token map symbol for {normalized}")
+        
+        # Subscribe if not already subscribed (use token map symbol)
+        if token_map_symbol not in self._subscribed:
+            self._subscribed.add(token_map_symbol)
+            await self._subscribe_batch([token_map_symbol], self._ws)
+        
+        # Wait for price (poll cache with multiple formats)
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            price = self._get_cached_price_multi(normalized)
+            if price is not None:
+                return price
+            await asyncio.sleep(0.05)  # 50ms polling
 
-class MarketPriceSubject(ConnectorSubject):
-    """Pathway connector subject managing a single websocket connection."""
+        # Check one more time
+        price = self._get_cached_price_multi(normalized)
+        if price is not None:
+            return price
 
-    def __init__(self, adapter: WebsocketAdapter, retry_seconds: int = DEFAULT_RETRY_SECONDS) -> None:
-        super().__init__()
-        self._adapter = adapter
-        self._retry_seconds = retry_seconds
-        self._max_backoff = float(os.getenv("MARKET_DATA_MAX_BACKOFF_SECONDS", "90"))
-        self._symbols: Set[str] = set()
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._symbol_queue: Optional[asyncio.Queue[str]] = None
-        self._pending: Set[str] = set()
-        self._lock = threading.Lock()
-
-    @property
-    def adapter(self) -> WebsocketAdapter:
-        return self._adapter
+        raise RuntimeError(f"Price for {normalized} not available (timeout {timeout}s)")
+    
+    def _get_cached_price_multi(self, normalized: str) -> Optional[Decimal]:
+        """Get cached price trying multiple symbol formats"""
+        # Try exact match first
+        price = self._prices.get(normalized)
+        if price is not None:
+            return price
+        # Try without -EQ suffix
+        if normalized.endswith("-EQ"):
+            price = self._prices.get(normalized[:-3])
+            if price is not None:
+                return price
+        # Try with -EQ suffix
+        if not normalized.endswith("-EQ"):
+            price = self._prices.get(f"{normalized}-EQ")
+            if price is not None:
+                return price
+        return None
     
     @property
-    def _deletions_enabled(self) -> bool:
-        """Disable deletions for better performance since we only add price updates."""
-        return False
-
-    def add_symbol(self, symbol: str) -> None:
-        normalized = self._adapter.normalize_symbol(symbol).upper()
-        with self._lock:
-            if normalized in self._symbols:
-                return
-            self._symbols.add(normalized)
-            if self._loop and self._loop.is_running() and self._symbol_queue is not None:
-                asyncio.run_coroutine_threadsafe(self._symbol_queue.put(normalized), self._loop)
-            else:
-                self._pending.add(normalized)
-
-    def run(self) -> None:
-        """Main entry point called by Pathway in dedicated thread."""
-        asyncio.run(self._run_forever())
-
-    async def _run_forever(self) -> None:
-        backoff = self._retry_seconds
-        while True:
-            try:
-                await self._run_single_connection()
-            except asyncio.CancelledError:  # pragma: no cover - shutdown path
-                raise
-            except InvalidStatus as exc:  # pragma: no cover - logging only
-                status_code = getattr(exc, "status_code", None)
-                if status_code == 429:
-                    wait = min(max(backoff, self._retry_seconds) * 2, self._max_backoff)
-                    jitter = random.uniform(0, wait * 0.25)
-                    logger.warning(
-                        "MarketPriceSubject hit Angel One websocket rate-limit (HTTP 429). "
-                        "Backing off for %.1fs before reconnect.",
-                        wait + jitter,
-                    )
-                    await asyncio.sleep(wait + jitter)
-                    backoff = min(wait * 2, self._max_backoff)
-                    continue
-                elif status_code in (502, 503, 504):
-                    # Gateway errors - wait longer before retry
-                    wait = min(backoff * 3, self._max_backoff)
-                    logger.warning(
-                        "MarketPriceSubject received HTTP %s (Bad Gateway/Service Unavailable). "
-                        "Retrying in %.1fs",
-                        status_code,
-                        wait,
-                    )
-                    await asyncio.sleep(wait)
-                    backoff = min(backoff * 1.5, self._max_backoff)
-                    continue
-
-                logger.error(
-                    "MarketPriceSubject received unexpected HTTP status %s. Retrying in %.1fs",
-                    status_code,
-                    backoff,
-                )
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, self._max_backoff)
-            except ConnectionClosedError as exc:  # pragma: no cover - logging only
-                logger.warning(
-                    "MarketPriceSubject websocket closed (%s). Retrying in %.1fs",
-                    exc,
-                    backoff,
-                )
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, self._max_backoff)
-            except InvalidMessage as exc:  # pragma: no cover - logging only
-                logger.warning(
-                    "MarketPriceSubject received invalid websocket payload (%s). Retrying in %.1fs",
-                    exc,
-                    backoff,
-                )
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, self._max_backoff)
-            except Exception as exc:  # pragma: no cover - logging only
-                logger.exception("MarketPriceSubject reconnect triggered: %s", exc)
-                jitter = random.uniform(0, backoff * 0.25)
-                await asyncio.sleep(min(backoff + jitter, self._max_backoff))
-                backoff = min(backoff * 2, self._max_backoff)
-            else:
-                backoff = self._retry_seconds
-
-    async def _run_single_connection(self) -> None:
-        import websockets
-
-        url = getattr(self._adapter, "ws_url", DEFAULT_WS_URL)
-        logger.info("Connecting to market data stream: %s", url)
-        
-        # Use reasonable ping settings to detect dead connections quickly
-        # But don't be too aggressive to avoid 502 errors
-        async with websockets.connect(
-            url, 
-            ping_interval=30,  # Send ping every 30 seconds
-            ping_timeout=10,   # Wait 10 seconds for pong
-            close_timeout=5    # Wait 5 seconds for clean close
-        ) as ws:
-            self._loop = asyncio.get_running_loop()
-            self._symbol_queue = asyncio.Queue()
-
-            # Add pending symbols to queue
-            for symbol in list(self._pending):
-                await self._symbol_queue.put(symbol)
-            self._pending.clear()
-
-            # Initial connection and subscription
-            await self._adapter.on_connect(ws, list(self._symbols))
-
-            # Run message consumer, subscription dispatcher, and heartbeat concurrently
-            consumer = asyncio.create_task(self._consume_messages(ws))
-            subscriber = asyncio.create_task(self._dispatch_subscriptions(ws, self._symbol_queue))
-            
-            # Create heartbeat task for Angel One
-            heartbeat = None
-            if isinstance(self._adapter, AngelOneAdapter):
-                heartbeat = asyncio.create_task(self._heartbeat_loop(ws))
-                logger.info("🫀 Created heartbeat task for Angel One websocket")
-            else:
-                logger.debug("No heartbeat task needed for adapter: %s", type(self._adapter).__name__)
-
-            tasks = {consumer, subscriber}
-            if heartbeat:
-                tasks.add(heartbeat)
-
-            done, pending = await asyncio.wait(
-                tasks,
-                return_when=asyncio.FIRST_EXCEPTION,
-            )
-
-            # Cancel pending tasks
-            for task in pending:
-                task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
-
-            # Re-raise exceptions
-            for task in done:
-                if task.exception():
-                    raise task.exception()
-                    
-        self._symbol_queue = None
-        self._loop = None
-
-    async def _heartbeat_loop(self, ws) -> None:
-        """Send Angel One heartbeat ping every 30 seconds."""
-        logger.info("🫀 Heartbeat loop started for Angel One websocket")
-        try:
-            while True:
-                await asyncio.sleep(30)
-                try:
-                    await ws.send("ping")
-                    logger.debug("📤 Sent Angel One heartbeat ping")
-                except Exception as e:
-                    logger.error(f"❌ Failed to send heartbeat ping: {e}")
-                    raise
-        except asyncio.CancelledError:
-            logger.info("🫀 Heartbeat loop cancelled")
-            raise
-        except Exception as e:
-            logger.error(f"❌ Heartbeat loop crashed: {e}", exc_info=True)
-            raise
-
-    async def _consume_messages(self, ws) -> None:
-        """Consume WebSocket messages and push to Pathway buffer."""
-        async for message in ws:
-            try:
-                parsed_messages = await self._adapter.handle_message(message)
-                if not parsed_messages:
-                    continue
-                    
-                # Send each parsed message to Pathway immediately
-                for parsed in parsed_messages:
-                    self.next(
-                        symbol=parsed.symbol.upper(),
-                        price=str(parsed.price),
-                        provider=self._adapter.name,
-                        raw=json.dumps(parsed.raw, default=str),
-                        received_at=time.time(),
-                    )
-            except Exception as exc:
-                logger.error(f"Error processing message: {exc}", exc_info=True)
-                continue
-
-    async def _dispatch_subscriptions(self, ws, queue: asyncio.Queue[str]) -> None:
-        """Handle dynamic symbol subscriptions."""
-        while True:
-            symbol = await queue.get()
-            try:
-                await self._adapter.subscribe_symbol(ws, symbol)
-                logger.info("Subscribed to %s", symbol)
-            except Exception as exc:
-                logger.error("Failed to subscribe %s: %s", symbol, exc)
-                self._pending.add(symbol)
-                await asyncio.sleep(self._retry_seconds)
+    def adapter(self):
+        """Return adapter info for compatibility"""
+        class Adapter:
+            name = "simple-angelone"
+        return Adapter()
 
 
-class MarketDataService:
-    """Singleton service exposing cached market prices sourced via Pathway stream."""
-
-    _instance: Optional["MarketDataService"] = None
-    _instance_lock = threading.Lock()
-
-    def __init__(self, adapter: Optional[WebsocketAdapter] = None) -> None:
-        os.environ.setdefault("PATHWAY_DISABLE_PROGRESS", "1")
-        os.environ.setdefault("PATHWAY_LOG_LEVEL", "warning")
-        self.adapter = adapter or self._select_adapter()
-        self.subject = MarketPriceSubject(self.adapter)
-        self._latest: Dict[str, Decimal] = {}
-        self._lock = threading.Lock()
-        self._started = threading.Event()
-        self._runner_thread = threading.Thread(target=self._run_pathway_runtime, daemon=True)
-        self._runner_thread.start()
-        self._started.wait(timeout=10)
-
-    @classmethod
-    def get_instance(cls) -> "MarketDataService":
-        with cls._instance_lock:
-            if cls._instance is None:
-                cls._instance = cls()
-            return cls._instance
-
-    def register_symbol(self, symbol: str) -> None:
-        normalized = self.adapter.normalize_symbol(symbol)
-        self.subject.add_symbol(normalized)
-
-    def get_latest_price(self, symbol: str) -> Optional[Decimal]:
-        normalized = symbol.upper()
-        with self._lock:
-            price = self._latest.get(normalized)
-            if price is not None:
-                return price
-            alt = self.adapter.normalize_symbol(symbol).upper()
-            if alt != normalized:
-                return self._latest.get(alt)
-            return None
-
-    def get_or_fetch_price(self, symbol: str) -> Decimal:
-        normalized = symbol.upper()
-        
-        # Fast path: check cache first (instant return if available)
-        price = self.get_latest_price(normalized)
-        if price is not None:
-            return price
-
-        # Register symbol and wait briefly for live price (only if WebSocket is active)
-        logger.debug("Price not in cache for %s, registering and waiting briefly", normalized)
-        self.register_symbol(normalized)
-
-        # Wait for live price with shorter timeout (2 seconds max)
-        # This ensures fast response when WebSocket is working
-        for _ in range(4):  # 4 * 0.5s = 2 seconds max wait
-            price = self.get_latest_price(normalized)
-            if price is not None:
-                return price
-            time.sleep(0.5)
-
-        # If live price unavailable, try Yahoo Finance first (fastest fallback)
-        logger.info("Live price for %s not in cache, trying Yahoo Finance fallback", normalized)
-        yahoo_price = None
-        try:
-            import yfinance as yf
-            
-            # Convert symbol to Yahoo format (NSE symbols need .NS suffix)
-            yahoo_symbol = f"{normalized}.NS"
-            ticker = yf.Ticker(yahoo_symbol)
-            
-            # Get latest price from Yahoo - try multiple methods
-            try:
-                # Method 1: Try history with short period (fastest)
-                hist = ticker.history(period="1d", timeout=5)
-                if not hist.empty:
-                    yahoo_price = Decimal(str(hist['Close'].iloc[-1]))
-            except:
-                # Method 2: Try info if history fails
-                try:
-                    info = ticker.info
-                    if 'regularMarketPrice' in info:
-                        yahoo_price = Decimal(str(info['regularMarketPrice']))
-                    elif 'currentPrice' in info:
-                        yahoo_price = Decimal(str(info['currentPrice']))
-                    elif 'previousClose' in info:
-                        yahoo_price = Decimal(str(info['previousClose']))
-                except:
-                    pass
-            
-            if yahoo_price is not None and yahoo_price > 0:
-                logger.info("✅ Using Yahoo Finance price %.2f for %s", yahoo_price, normalized)
-                # Cache this price for immediate use
-                with self._lock:
-                    self._latest[normalized] = yahoo_price
-                return yahoo_price
-        except ImportError:
-            logger.debug("yfinance not installed, skipping Yahoo Finance fallback")
-        except Exception as exc:
-            logger.debug("Yahoo Finance fallback failed for %s: %s", normalized, exc)
-
-        # If Yahoo Finance fails, try historical candles (slower, but more reliable for Indian stocks)
-        logger.info("Attempting Angel One historical candle fallback for %s", normalized)
-        try:
-            if isinstance(self.adapter, AngelOneAdapter):
-                from datetime import datetime, timedelta
-                # Get last 1 day of data (faster than 7 days)
-                to_date = datetime.now()
-                from_date = to_date - timedelta(days=1)
-                candles = self.adapter.get_historical_candles(
-                    normalized,
-                    interval="FIFTEEN_MINUTE",
-                    fromdate=from_date.strftime("%Y-%m-%d %H:%M"),
-                    todate=to_date.strftime("%Y-%m-%d %H:%M"),
-                )
-                if candles and len(candles) > 0:
-                    # Use the close price of the most recent candle
-                    last_candle = candles[-1]
-                    close_price = Decimal(str(last_candle.get("close", 0)))
-                    if close_price > 0:
-                        logger.info("Using historical candle close price %.2f for %s", close_price, normalized)
-                        # Cache this price for immediate use
-                        with self._lock:
-                            self._latest[normalized] = close_price
-                        return close_price
-        except Exception as exc:
-            logger.debug("Failed to fetch Angel One historical price for %s: %s", normalized, exc)
-
-        # If all fallbacks fail, return cached price if available (even if stale)
-        cached_price = self.get_latest_price(normalized)
-        if cached_price is not None:
-            logger.warning("Using stale cached price %.2f for %s (market may be closed)", cached_price, normalized)
-            return cached_price
-
-        raise RuntimeError(f"Unable to fetch price for {normalized}. Market may be closed or symbol not found.")
-
-    async def await_price(self, symbol: str, timeout: float = 3.0) -> Decimal:
-        """Wait for a price update for the given symbol with short timeout for responsiveness."""
-        normalized = symbol.upper()
-        
-        # Quick initial check (fast path - most common case)
-        price = self.get_latest_price(normalized)
-        if price is not None:
-            return price
-
-        # Register symbol and wait for live price
-        self.register_symbol(symbol)
-        deadline = time.time() + timeout
-
-        # Poll with short intervals for real-time responsiveness
-        while time.time() < deadline:
-            price = self.get_latest_price(normalized)
-            if price is not None:
-                return price
-            await asyncio.sleep(0.1)  # Poll every 100ms
-
-        # If timeout, fallback to get_or_fetch_price (which uses Yahoo Finance/historical)
-        logger.debug("Live price timeout for %s, using fallback", normalized)
-        try:
-            return self.get_or_fetch_price(normalized)
-        except RuntimeError:
-            raise RuntimeError(f"Timed out waiting for live price for {normalized}")
-
-    def _run_pathway_runtime(self) -> None:
-        """Run Pathway runtime with optimized settings for real-time streaming."""
-        try:
-            monitoring_level = getattr(pw, "MonitoringLevel", None)
-            if monitoring_level and hasattr(pw, "set_monitoring_config"):
-                pw.set_monitoring_config(monitoring_level=monitoring_level.NONE)
-        except Exception:
-            logger.debug("Unable to set Pathway monitoring configuration", exc_info=True)
-
-        # Read from the WebSocket subject
-        table = pw.io.python.read(
-            self.subject,
-            schema=MarketTickSchema,
-            autocommit_duration_ms=100,  # Commit every 100ms for near real-time updates
-            name="market_data_stream",
-        )
-
-        def on_tick(key, row, time, is_addition) -> None:
-            """Process each price update immediately."""
-            if not is_addition:
-                return
-            try:
-                price = Decimal(row["price"])
-            except Exception:
-                logger.debug("Skipping tick with invalid price: %s", row)
-                return
-            symbol = row["symbol"].upper()
-            aliases = self.adapter.aliases_for(symbol)
-            with self._lock:
-                for alias in aliases:
-                    old_price = self._latest.get(alias.upper())
-                    self._latest[alias.upper()] = price
-                    if old_price != price:
-                        logger.debug(f"💰 {alias}: {old_price} → {price}")
-
-        # Subscribe to table changes
-        pw.io.subscribe(table, on_tick)
-        
-        # Signal that we're ready to start
-        self._started.set()
-        
-        try:
-            monitoring_level = getattr(pw, "MonitoringLevel", None)
-            if monitoring_level is not None and hasattr(monitoring_level, "NONE"):
-                pw.run(monitoring_level=monitoring_level.NONE)
-            else:
-                pw.run()
-        finally:
-            logger.info("Pathway runtime shut down")
-
-    def _select_adapter(self) -> WebsocketAdapter:
-        provider = os.getenv("MARKET_DATA_PROVIDER", DEFAULT_PROVIDER).lower()
-        if provider == "finnhub":
-            return FinnhubAdapter()
-        if provider in {"angelone", "angel", "smartapi"}:
-            try:
-                return AngelOneAdapter()
-            except RuntimeError as exc:
-                raise RuntimeError(
-                    "Angel One adapter configuration is incomplete. "
-                    "Please set ANGELONE_CLIENT_CODE, ANGELONE_API_KEY, "
-                    "ANGELONE_PASSWORD, and ANGELONE_TOTP_SECRET."
-                ) from exc
-        if provider in {"5paisa", "fivepaisa"}:
-            return FivePaisaAdapter()
-        return GenericJSONAdapter()
+# Global instance
+_service: Optional[MarketDataService] = None
 
 
 def get_market_data_service() -> MarketDataService:
-    return MarketDataService.get_instance()
+    """Get market data service instance"""
+    global _service
+    if _service is None:
+        _service = MarketDataService()
+    return _service
 
 
 def get_live_price(symbol: str) -> Decimal:
+    """Get price (sync)"""
     service = get_market_data_service()
     return service.get_or_fetch_price(symbol)
 
 
 async def await_live_price(symbol: str, timeout: float = 10.0) -> Decimal:
+    """Get price (async)"""
     service = get_market_data_service()
     return await service.await_price(symbol, timeout=timeout)

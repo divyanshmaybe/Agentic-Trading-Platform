@@ -468,7 +468,7 @@ async def test_pipeline_service_process_trade_signals(monkeypatch: pytest.Monkey
         return {"status": "simulated_executed", "trade_id": trade_id}
     
     FakeTradeService.execute_trade = fake_execute_trade
-    
+
     monkeypatch.setattr("services.pipeline_service.TradeExecutionService", FakeTradeService, raising=False)
 
     dispatched: List[str] = []

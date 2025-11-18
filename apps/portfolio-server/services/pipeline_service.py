@@ -649,7 +649,7 @@ class PipelineService:
                     getattr(objective, "investable_amount", None) or
                     getattr(objective, "total_investment", None) or
                     0.0
-                )
+        )
         current_value = self._safe_float(portfolio.current_value, default=total_investable)
         drift_values = result.get("drift") or {}
 
@@ -672,7 +672,7 @@ class PipelineService:
             if existing_allocation and existing_allocation.allocated_amount and float(existing_allocation.allocated_amount) > 0:
                 allocated_amount_dec = self._to_decimal(float(existing_allocation.allocated_amount), places=4)
             else:
-                allocated_amount_dec = self._to_decimal(total_investable * weight, places=4)
+            allocated_amount_dec = self._to_decimal(total_investable * weight, places=4)
             
             current_value_dec = self._to_decimal(current_value * weight, places=4)
             drift_dec = self._to_decimal(drift, places=6)
@@ -1023,12 +1023,12 @@ class PipelineService:
             # Fallback: use a portion of portfolio investment if no allocation
             portfolio_investment = self._safe_float(getattr(portfolio, "investment_amount", 0.0))
             if allocation and hasattr(allocation, "target_weight"):
-                target_weight = self._safe_float(getattr(allocation, "target_weight", 0.0))
-                if target_weight > 0:
+            target_weight = self._safe_float(getattr(allocation, "target_weight", 0.0))
+            if target_weight > 0:
                     cash_available = portfolio_investment * target_weight
-                else:
-                    cash_available = portfolio_investment
             else:
+                    cash_available = portfolio_investment
+        else:
                 cash_available = portfolio_investment
             self.logger.debug(
                 "Using fallback cash_available %.2f for portfolio %s",
@@ -1288,24 +1288,24 @@ class PipelineService:
             
             if use_celery:
                 # Use Celery for async execution
-                try:
-                    from workers.trade_execution_tasks import execute_trade_job  # type: ignore
+            try:
+                from workers.trade_execution_tasks import execute_trade_job  # type: ignore
 
-                    for event in events:
-                        execute_trade_job.delay(event.trade_id)
-                        dispatched += 1
-                        self.logger.info(
+                for event in events:
+                    execute_trade_job.delay(event.trade_id)
+                    dispatched += 1
+                    self.logger.info(
                             "✅ Enqueued trade execution to Celery: Trade %s | Agent %s (%s) | %s %s x %d | Portfolio %s",
-                            event.trade_id,
-                            event.agent_id or "unknown",
-                            event.agent_type or "unknown",
-                            event.side,
-                            event.symbol,
-                            event.quantity,
-                            event.portfolio_id,
-                        )
-                except Exception as exc:  # pragma: no cover - defensive
-                    self.logger.error("Failed to enqueue trade execution workers: %s", exc)
+                        event.trade_id,
+                        event.agent_id or "unknown",
+                        event.agent_type or "unknown",
+                        event.side,
+                        event.symbol,
+                        event.quantity,
+                        event.portfolio_id,
+                    )
+            except Exception as exc:  # pragma: no cover - defensive
+                self.logger.error("Failed to enqueue trade execution workers: %s", exc)
             else:
                 # Execute trades immediately in simulation mode (paper trading)
                 for event in events:
@@ -1330,7 +1330,7 @@ class PipelineService:
             await client.disconnect()
         except:
             pass
-        
+
         return {
             "processed_signals": len(processed_signals),
             "payloads": len(payloads),

@@ -446,16 +446,16 @@ def allocate_new_portfolio_task(
                 try:
                     results = await asyncio.wait_for(
                         loop.run_in_executor(
-                            executor,
-                            functools.partial(
-                                allocate_portfolios,
-                                [request],
-                                logger=logger,
-                                audit_path=f"/tmp/portfolio_allocations_{portfolio_id}.jsonl"
-                            )
+                    executor,
+                    functools.partial(
+                        allocate_portfolios,
+                        [request],
+                        logger=logger,
+                        audit_path=f"/tmp/portfolio_allocations_{portfolio_id}.jsonl"
+                    )
                         ),
                         timeout=300.0  # 5 minute timeout
-                    )
+                )
                     logger.info(f"Allocation pipeline completed for portfolio {portfolio_id}")
                 except asyncio.TimeoutError:
                     logger.error(f"Allocation pipeline timed out after 5 minutes for portfolio {portfolio_id}")
@@ -541,7 +541,7 @@ def allocate_new_portfolio_task(
             
             allocations_created = []
             trading_agents_created = []
-            
+
             for allocation_type, weight in weights.items():
                 # Calculate allocated amount based on weight
                 allocated_amount = investable_amount * float(weight)
@@ -593,14 +593,14 @@ def allocate_new_portfolio_task(
                 # Create trading agent for this allocation
                 try:
                     agent_created = await _ensure_trading_agent(
-                        db,
-                        portfolio_id=portfolio_id,
-                        allocation=allocation_record,
-                        allocation_type=allocation_type,
-                        request_context=agent_context,
-                        objective_id=None,
-                        user_subscriptions=user_subscriptions,
-                    )
+                    db,
+                    portfolio_id=portfolio_id,
+                    allocation=allocation_record,
+                    allocation_type=allocation_type,
+                    request_context=agent_context,
+                    objective_id=None,
+                    user_subscriptions=user_subscriptions,
+                )
                     if agent_created is not False:
                         trading_agents_created.append(allocation_type)
                         logger.info(
@@ -724,9 +724,9 @@ def allocate_new_portfolio_task(
                 error_db = Prisma()
                 await error_db.connect()
                 await error_db.portfolio.update(
-                    where={"id": portfolio_id},
-                    data={"allocation_status": "failed"}
-                )
+                        where={"id": portfolio_id},
+                        data={"allocation_status": "failed"}
+                    )
                 await error_db.disconnect()
             except:
                 pass
@@ -853,16 +853,16 @@ def allocate_for_objective_task(
                 try:
                     results = await asyncio.wait_for(
                         loop.run_in_executor(
-                            executor,
-                            functools.partial(
-                                allocate_portfolios,
-                                [request],
-                                logger=logger,
-                                audit_path=f"/tmp/portfolio_allocations_{portfolio_id}_{objective_id}.jsonl"
-                            )
+                    executor,
+                    functools.partial(
+                        allocate_portfolios,
+                        [request],
+                        logger=logger,
+                        audit_path=f"/tmp/portfolio_allocations_{portfolio_id}_{objective_id}.jsonl"
+                    )
                         ),
                         timeout=300.0  # 5 minute timeout
-                    )
+                )
                     logger.info(f"Allocation pipeline completed for portfolio {portfolio_id}")
                 except asyncio.TimeoutError:
                     logger.error(f"Allocation pipeline timed out after 5 minutes for portfolio {portfolio_id}")
@@ -948,7 +948,7 @@ def allocate_for_objective_task(
             
             allocations_created = []
             trading_agents_created = []
-            
+
             for allocation_type, weight in weights.items():
                 # Calculate allocated amount based on weight
                 allocated_amount = investable_amount * float(weight)
@@ -1002,14 +1002,14 @@ def allocate_for_objective_task(
                 # Create trading agent for this allocation
                 try:
                     agent_created = await _ensure_trading_agent(
-                        db,
-                        portfolio_id=portfolio_id,
-                        allocation=allocation_record,
-                        allocation_type=allocation_type,
-                        request_context=agent_context,
-                        objective_id=objective_id,
-                        user_subscriptions=user_subscriptions,
-                    )
+                    db,
+                    portfolio_id=portfolio_id,
+                    allocation=allocation_record,
+                    allocation_type=allocation_type,
+                    request_context=agent_context,
+                    objective_id=objective_id,
+                    user_subscriptions=user_subscriptions,
+                )
                     if agent_created is not False:
                         trading_agents_created.append(allocation_type)
                         logger.info(
@@ -1142,9 +1142,9 @@ def allocate_for_objective_task(
                 error_db = Prisma()
                 await error_db.connect()
                 await error_db.portfolio.update(
-                    where={"id": portfolio_id},
-                    data={"allocation_status": "failed"}
-                )
+                        where={"id": portfolio_id},
+                        data={"allocation_status": "failed"}
+                    )
                 await error_db.disconnect()
             except:
                 pass

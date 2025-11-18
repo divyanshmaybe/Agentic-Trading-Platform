@@ -354,8 +354,8 @@ class KafkaPublisher:
             pathway_logger = logging.getLogger("pathway")
             original_level = pathway_logger.level
             pathway_logger.setLevel(logging.WARNING)
-            try:
-                pw.run(monitoring_level=pw.MonitoringLevel.NONE)
+        try:
+            pw.run(monitoring_level=pw.MonitoringLevel.NONE)
             finally:
                 pathway_logger.setLevel(original_level)
         finally:  # pragma: no cover - Pathway cleanup best effort
