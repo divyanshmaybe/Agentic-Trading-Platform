@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
+import Link from "next/link"
 import { Playfair_Display } from "next/font/google"
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader"
 import { NotificationCard } from "@/components/dashboard/NotificationCard"
@@ -17,6 +18,17 @@ import type { PortfolioSummary, StockItem } from "@/lib/dashboardTypes"
 import { getPortfolio, getPortfolioDashboard, getPositions, fetchMarketCandles, getPortfolioAllocations } from "@/lib/portfolio"
 import type { Portfolio } from "@/lib/portfolio"
 import { useLiveNewsFeed } from "@/hooks/useLiveNewsFeed"
+import { Button } from "@/components/ui/button"
+
+function isPortfolioNotFoundError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  const message = error.message.toLowerCase()
+  return (
+    message.includes("404") ||
+    message.includes("not found") ||
+    message.includes("portfolio not found")
+  )
+}
 
 export default function DashboardPage() {
   const params = useParams()
@@ -32,29 +44,86 @@ export default function DashboardPage() {
   const [stocks, setStocks] = useState<StockItem[]>(mockStocks)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [portfolioNotFound, setPortfolioNotFound] = useState(false)
+  const [allocationError, setAllocationError] = useState(false)
 
   useEffect(() => {
     async function fetchDashboardData() {
       try {
         setLoading(true)
         setError(null)
+        setPortfolioNotFound(false)
+        setAllocationError(false)
 
         // Fetch dashboard data (aggregated portfolio stats)
-        const dashboardData = await getPortfolioDashboard()
+        let dashboardData
+        try {
+          dashboardData = await getPortfolioDashboard()
+        } catch (err) {
+          if (isPortfolioNotFoundError(err)) {
+            setPortfolioNotFound(true)
+            setPortfolioSummary({
+              portfolioName: "No Portfolio",
+              totalValue: 0,
+              investmentAmount: 0,
+              changePct: 0,
+              changeValue: 0,
+              dailyPnL: 0,
+              riskTolerance: "N/A",
+              expectedReturn: 0,
+              investmentHorizon: 0,
+              liquidityNeeds: "N/A",
+              allocation: [],
+            })
+            setStocks([])
+            setLoading(false)
+            return
+          }
+          throw err
+        }
         
         // Fetch portfolio details for additional fields
-        const portfolioData = await getPortfolio()
-        setPortfolio(portfolioData)
+        let portfolioData
+        try {
+          portfolioData = await getPortfolio()
+          setPortfolio(portfolioData)
+        } catch (err) {
+          if (isPortfolioNotFoundError(err)) {
+            setPortfolioNotFound(true)
+            setPortfolioSummary({
+              portfolioName: "No Portfolio",
+              totalValue: 0,
+              investmentAmount: 0,
+              changePct: 0,
+              changeValue: 0,
+              dailyPnL: 0,
+              riskTolerance: "N/A",
+              expectedReturn: 0,
+              investmentHorizon: 0,
+              liquidityNeeds: "N/A",
+              allocation: [],
+            })
+            setStocks([])
+            setLoading(false)
+            return
+          }
+          throw err
+        }
 
         // Fetch positions for stocks watchlist
-        const positionsData = await getPositions(1, 10)
+        let positionsData
+        try {
+          positionsData = await getPositions(1, 10)
+        } catch (err) {
+          if (isPortfolioNotFoundError(err)) {
+            setStocks([])
+            return
+          }
+          throw err
+        }
         
         // Fetch allocations to build allocation chart
-        let allocation = [
-          { label: "Algorithmic Strategies", value: 45 },
-          { label: "Long-Term Strategies", value: 32 },
-          { label: "Intraday Strategies", value: 23 },
-        ]
+        let allocation: Array<{ label: string; value: number }> = []
         
         try {
           const allocationsData = await getPortfolioAllocations()
@@ -102,7 +171,7 @@ export default function DashboardPage() {
           }
         } catch (err) {
           console.error("Error fetching allocations:", err)
-          // Keep default allocation on error
+          setAllocationError(true)
         }
         
         // Calculate portfolio summary from dashboard data
@@ -162,8 +231,8 @@ export default function DashboardPage() {
                 
                 prices = filteredCandles.map((c) => parseFloat(c.close))
               } else {
-                // Fallback to generated history if no candles available
-                prices = generatePriceHistory(avgBuyPrice, currentPrice, 7)
+                // No price data available
+                prices = []
                 pricesError = true
               }
               
@@ -180,8 +249,8 @@ export default function DashboardPage() {
           } catch (err) {
             console.error("Error fetching candle data:", err)
             
-            // Fallback to generated history on error
-            const stockItems: StockItem[] = positionsData.items.map((pos) => {
+            // Create stock items without price history when candle fetch fails
+            const stockItemsWithoutPrices: StockItem[] = positionsData.items.map((pos) => {
               const currentPrice = parseFloat(pos.current_price)
               const avgBuyPrice = parseFloat(pos.average_buy_price)
               const changePct = ((currentPrice - avgBuyPrice) / avgBuyPrice) * 100
@@ -190,12 +259,12 @@ export default function DashboardPage() {
                 symbol: pos.symbol,
                 name: pos.symbol,
                 changePct: changePct,
-                prices: generatePriceHistory(avgBuyPrice, currentPrice, 7),
+                prices: [],
                 pricesError: true,
               }
             })
             
-            setStocks(stockItems)
+            setStocks(stockItemsWithoutPrices)
           }
         } else {
           // Clear stocks if no positions
@@ -204,8 +273,27 @@ export default function DashboardPage() {
         
       } catch (err) {
         console.error("Error fetching dashboard data:", err)
-        setError(err instanceof Error ? err.message : "Failed to load dashboard data")
-        // Keep mock data on error
+        
+        if (isPortfolioNotFoundError(err)) {
+          setPortfolioNotFound(true)
+          setPortfolioSummary({
+            portfolioName: "No Portfolio",
+            totalValue: 0,
+            investmentAmount: 0,
+            changePct: 0,
+            changeValue: 0,
+            dailyPnL: 0,
+            riskTolerance: "N/A",
+            expectedReturn: 0,
+            investmentHorizon: 0,
+            liquidityNeeds: "N/A",
+            allocation: [],
+          })
+          setStocks([])
+        } else {
+          const errorMessage = err instanceof Error ? err.message : "Failed to load dashboard data"
+          setError(errorMessage)
+        }
       } finally {
         setLoading(false)
       }
@@ -213,28 +301,6 @@ export default function DashboardPage() {
 
     fetchDashboardData()
   }, [])
-
-  // Generate simple price history for sparkline
-  function generatePriceHistory(startPrice: number, endPrice: number, points: number): number[] {
-    const prices: number[] = []
-    const totalChange = endPrice - startPrice
-    
-    for (let i = 0; i < points; i++) {
-      const progress = i / (points - 1)
-      const basePrice = startPrice + totalChange * progress
-
-      // Add some realistic volatility (±1.5% random variation)
-      const variation = basePrice * (Math.random() * 0.03 - 0.015)
-      const price = basePrice + variation
-
-      prices.push(parseFloat(price.toFixed(2)))
-    }
-    
-    // Ensure last price is exactly the end price
-    prices[points - 1] = endPrice
-    
-    return prices
-  }
 
   // Show loading state while auth is being verified
   if (authLoading || !authUser) {
@@ -258,14 +324,42 @@ export default function DashboardPage() {
           </div>
         )}
 
+        {allocationError && !portfolioNotFound && (
+          <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-amber-400">
+            <p className="font-semibold">Portfolio Allocation Unavailable</p>
+            <p className="mt-1">
+              We're currently balancing your investments between long-term, intraday, and algorithmic trading strategies based on your objectives. 
+              Allocation details will be available once the portfolio setup is complete.
+            </p>
+          </div>
+        )}
+
         <main className="grid gap-6 lg:grid-cols-4 xl:grid-cols-5">
           <div className="flex">
             <NotificationCard notifications={activeNotifications} />
           </div>
 
           <div className="flex flex-col gap-6 lg:col-span-2 xl:col-span-3">
-            <PortfolioOverviewCard summary={portfolioSummary} loading={loading} />
-            <StocksWatchlistCard stocks={stocks} loading={loading} />
+            {portfolioNotFound ? (
+              <div className="card-glass rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_32px_70px_-45px_rgba(0,0,0,0.95)] backdrop-blur p-8">
+                <div className="flex flex-col items-center justify-center text-center space-y-4">
+                  <h3 className="text-2xl font-semibold text-[#fafafa]">No Portfolio Found</h3>
+                  <p className="text-white/60 max-w-md">
+                    You don't have a portfolio set up yet. Set your investment objectives to create your portfolio and start trading.
+                  </p>
+                  <Button asChild className="mt-4 bg-gradient-to-r from-[#1E1E3F] to-[#2B6CB0] text-white hover:opacity-90">
+                    <Link href={`/dashboard/${username}/objectives`}>
+                      Set Investment Objectives
+                    </Link>
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <PortfolioOverviewCard summary={portfolioSummary} loading={loading} />
+                <StocksWatchlistCard stocks={stocks} loading={loading} />
+              </>
+            )}
           </div>
 
           <div className="flex">

@@ -15,6 +15,7 @@ type PortfolioOverviewCardProps = {
 }
 
 export function PortfolioOverviewCard({ summary, loading = false }: PortfolioOverviewCardProps) {
+  const hasAllocations = summary.allocation && summary.allocation.length > 0
   const allocationChart = useMemo(() => createAllocationChartData(summary.allocation), [summary.allocation])
   const formatted = useMemo(() => {
     const changePositive = summary.changeValue >= 0
@@ -107,9 +108,22 @@ export function PortfolioOverviewCard({ summary, loading = false }: PortfolioOve
           </div>
         </div>
         <div className="flex items-center justify-center">
-          <div className="w-full max-w-xs">
-            <Pie data={allocationChart} options={allocationChartOptions} plugins={[pieDepthPlugin]} />
-          </div>
+          {loading ? (
+            <div className="w-full max-w-xs">
+              <div className="h-64 w-64 animate-pulse rounded-full bg-white/10" />
+            </div>
+          ) : hasAllocations ? (
+            <div className="w-full max-w-xs">
+              <Pie data={allocationChart} options={allocationChartOptions} plugins={[pieDepthPlugin]} />
+            </div>
+          ) : (
+            <div className="flex w-full max-w-xs flex-col items-center justify-center rounded-xl border border-amber-500/20 bg-amber-500/5 p-6 text-center">
+              <h4 className="mb-2 text-sm font-semibold text-amber-400">Balancing Portfolio</h4>
+              <p className="text-xs text-white/60 leading-relaxed">
+                We're currently balancing your investments between long-term, intraday, and algorithmic trading strategies based on your goals and objectives.
+              </p>
+            </div>
+          )}
         </div>
       </CardContent>
     </Card>
