@@ -41,8 +41,7 @@ from kafka_service import (  # type: ignore  # noqa: E402
     default_kafka_bus,
 )
 from celery_app import celery_app  # type: ignore  # noqa: E402
-from market_data import get_market_data_service  # type: ignore  # noqa: E402
-from utils.backtesting import resolve_intraday_window  # type: ignore  # noqa: E402
+from market_data import get_live_price  # type: ignore  # noqa: E402
 
 # LLM imports
 from pathway.xpacks.llm import llms
@@ -66,9 +65,11 @@ else:
 MAX_TOKENS = 1024
 TARGET = 0.03  # +3% profit target
 STOPLOSS = 0.01  # -1% stoploss
-HOLDING_HOURS = 1  # maximum hold time (1 hour)
 MARKET_OPEN = (9, 15)
 MARKET_CLOSE = (15, 30)
+MARKET_CLOSE_BUFFER_MINUTES = int(os.getenv("NSE_FILINGS_MARKET_CLOSE_BUFFER_MINUTES", "15"))
+AUTO_SELL_WINDOW_MINUTES = int(os.getenv("NSE_FILINGS_AUTO_SELL_WINDOW_MINUTES", "15"))
+LLM_MODEL = os.getenv("NSE_FILINGS_LLM_MODEL", "gemini-2.5-flash")
 
 
 # API Keys
@@ -356,12 +357,7 @@ def download_and_parse_pdf(url: str, filename: str) -> str:
 
 @pw.udf
 def fetch_stock_data(symbol: str, filing_time: str) -> str:
-    """Fetch stock technical data for the past hour"""
-    try:
-        import pandas as pd
-    except Exception:
-        pd = None  # type: ignore
-
+    """Fetch current stock price using market_data service"""
     try:
         filing_dt = datetime.strptime(filing_time, "%Y-%m-%d %H:%M:%S")
     except Exception:
@@ -369,8 +365,8 @@ def fetch_stock_data(symbol: str, filing_time: str) -> str:
 
     # Check if we're within market hours (NSE: 9:15 AM - 3:30 PM IST)
     current_time = filing_dt.time()
-    market_open_time = datetime.strptime(f"{MARKET_OPEN[0]}:{MARKET_OPEN[1]}", "%H:%M").time()
-    market_close_time = datetime.strptime(f"{MARKET_CLOSE[0]}:{MARKET_CLOSE[1]}", "%H:%M").time()
+    market_open_time = datetime.strptime(f"{MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d}", "%H:%M").time()
+    market_close_time = datetime.strptime(f"{MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d}", "%H:%M").time()
     
     is_market_hours = market_open_time <= current_time <= market_close_time
     
@@ -379,46 +375,13 @@ def fetch_stock_data(symbol: str, filing_time: str) -> str:
         return f"Market closed (NSE hours: {MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d} - {MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST). Filing time: {filing_time}"
 
     try:
-        service = get_market_data_service()
-        adapter = getattr(service, "adapter", None)
-        if not adapter or not hasattr(adapter, "get_historical_candles"):
-            raise RuntimeError("Active market adapter does not support historical candles.")
-
-        start_dt, end_dt = resolve_intraday_window(
-            filing_dt,
-            holding_hours=HOLDING_HOURS,
-            market_open=MARKET_OPEN,
-            market_close=MARKET_CLOSE,
-            lookback_minutes=60,
-        )
-        candles = adapter.get_historical_candles(
-            symbol=adapter.normalize_symbol(symbol),
-            interval="FIFTEEN_MINUTE",
-            fromdate=start_dt.strftime("%Y-%m-%d %H:%M"),
-            todate=end_dt.strftime("%Y-%m-%d %H:%M"),
-            exchange="NSE",
-        )
-        if not candles:
-            return "No data available from market service"
-
-        if pd is None:
-            import pandas as pd  # type: ignore
-
-        df = pd.DataFrame(candles)
-        if df.empty:
-            return "No data available from market service"
-
-        df["timestamp"] = pd.to_datetime(df["timestamp"]).astype(str)
-        return df.to_json(orient="records")
+        # Get current live price using market_data service
+        price = get_live_price(symbol)
+        return f"Current price: {price}, timestamp: {filing_time}"
     except Exception as exc:
         error_msg = str(exc)
-        # Check if error is due to market closure
-        if "Something Went Wrong" in error_msg or "market" in error_msg.lower() or "closed" in error_msg.lower():
-            print(f"[INFO] Market data unavailable for {symbol} (likely market closed or API issue): {error_msg[:100]}")
-            return f"Market data unavailable (market may be closed or API issue)"
-        else:
-            print(f"[WARN] Market service candle fetch failed for {symbol}: {exc}")
-            return f"Error fetching data: {exc}"
+        print(f"[WARN] Market service price fetch failed for {symbol}: {exc}")
+        return f"Error fetching price: {error_msg[:200]}"
 
 
 # ============================================================================
@@ -544,6 +507,9 @@ RETURN EXACTLY THIS STRUCTURED OUTPUT AND NOTHING ELSE.
         from langchain_google_genai import ChatGoogleGenerativeAI
         import time
         
+        # Get LLM model from env var (default: gemini-2.5-flash)
+        model_name = os.getenv("NSE_FILINGS_LLM_MODEL", LLM_MODEL)
+        
         # langchain_google_genai uses GOOGLE_API_KEY env var, so set it
         original_google_key = os.environ.get("GOOGLE_API_KEY", None)
         os.environ["GOOGLE_API_KEY"] = api_key
@@ -551,7 +517,7 @@ RETURN EXACTLY THIS STRUCTURED OUTPUT AND NOTHING ELSE.
         try:
             # Create model - it will use GOOGLE_API_KEY from environment
             trading_model = ChatGoogleGenerativeAI(
-                model="gemini-2.5-flash",
+                model=model_name,
                 temperature=0.7,
                 api_key=api_key  # Explicitly pass as well (original notebook format)
             )
@@ -737,20 +703,31 @@ def create_nse_filings_pipeline(
         output_path: Path to write trading signals
     """
     
-    # Step 1: Download PDFs and extract filenames
-    print("[SENTIMENT] Step 1: Processing filings from scraper...")
+    from datetime import datetime, time as dt_time
+    current_time = datetime.now().time()
+    close_buffer_time = dt_time(
+        MARKET_CLOSE[0],
+        max(0, MARKET_CLOSE[1] - MARKET_CLOSE_BUFFER_MINUTES)
+    )
     
-    # Add logging to see if we're receiving data
-    filings_count = filings_source.select(count=pw.reducers.count())
+    if current_time >= close_buffer_time:
+        print(f"[SENTIMENT] Market closing soon (within {MARKET_CLOSE_BUFFER_MINUTES} min of close). Skipping new signal processing.")
+        return filings_source.select(
+            symbol=pw.this.symbol,
+            filing_time=pw.this.sort_date if hasattr(pw.this, 'sort_date') else "",
+            signal=pw.apply(lambda: 0, pw.this.symbol),
+            explanation=pw.apply(lambda: "Market closing soon - skipping new trades", pw.this.symbol),
+            confidence=pw.apply(lambda: 0.0, pw.this.symbol),
+        ).filter(pw.apply(lambda: False, pw.this.symbol))
+    
+    print("[SENTIMENT] Step 1: Processing filings from scraper...")
     
     filings_with_paths = filings_source.select(
         *pw.this,
         filename=pw.apply(lambda url: url.split("/")[-1] if url else "", pw.this.attchmntFile),
     )
     
-    # Step 2: Download and parse PDFs
     print("[SENTIMENT] Step 2: Downloading and parsing PDFs...")
-    print("[SENTIMENT] Waiting for announcements from scraper...")
     
     filings_with_text = filings_with_paths.select(
         symbol=pw.this.symbol,
@@ -762,8 +739,6 @@ def create_nse_filings_pipeline(
     ).filter(pw.this.text != "")
     
     print("[SENTIMENT] Step 2 complete: PDFs parsed, proceeding to sentiment analysis...")
-    
-    # Step 3: Get impact scenarios and stock data
     print("[SENTIMENT] Step 3: Fetching impact scenarios and stock data...")
     filings_enriched = filings_with_text.select(
         *pw.this,
@@ -772,10 +747,7 @@ def create_nse_filings_pipeline(
         stocktechdata=fetch_stock_data(pw.this.symbol, pw.this.sort_date)
     )
     
-    # Step 4: Generate trading signals using LLM
     print("[SENTIMENT] Step 4: Generating trading signals with LLM...")
-    
-    # Check if Gemini API key is available
     if not GEMINI_API_KEY or not GEMINI_API_KEY.strip():
         print("[WARN] GEMINI_API_KEY not set - trading signals will fail!")
     
@@ -790,7 +762,6 @@ def create_nse_filings_pipeline(
         )
     )
     
-    # Step 5: Parse trading signals
     print("[SENTIMENT] Step 5: Parsing trading signals...")
     trading_signals = filings_with_responses.select(
         symbol=pw.this.symbol,
@@ -800,7 +771,6 @@ def create_nse_filings_pipeline(
         confidence=parse_trading_signal_confidence(pw.this.llm_response),
     )
  
-    # Step 6: Publish to Kafka and output results
     print("[SENTIMENT] Step 6: Publishing signals to Kafka and writing to disk...")
     signals_with_kafka = trading_signals.select(
         symbol=pw.this.symbol,

@@ -1352,7 +1352,6 @@ class PipelineService:
             sys.path.insert(0, nse_dir)
 
             import pathway as pw
-            from nse_backtest import compute_backtest_metrics, create_backtest_pipeline
             from nse_filings_sentiment import create_nse_filings_pipeline
             from nse_live_scraper import create_nse_scraper_input
 
@@ -1363,8 +1362,6 @@ class PipelineService:
             refresh_interval = int(os.getenv("NSE_REFRESH_INTERVAL", "60"))
             static_data_path = "staticdata.csv"
             signals_output = "trading_signals.jsonl"
-            backtest_output = "backtest_results.jsonl"
-            metrics_output = "backtest_metrics.jsonl"
 
             if not os.path.exists(static_data_path):
                 self.logger.info(
@@ -1383,13 +1380,6 @@ class PipelineService:
                 output_path=signals_output,
             )
 
-            self.logger.info("Building backtest pipeline...")
-            backtest_results = create_backtest_pipeline(trading_signals)
-            backtest_metrics = compute_backtest_metrics(backtest_results)
-
-            pw.io.jsonlines.write(backtest_results, backtest_output)
-            pw.io.jsonlines.write(backtest_metrics, metrics_output)
-
             def on_new_signal(key, row, time, is_addition, **_):
                 if is_addition:
                     symbol = row.get("symbol", "N/A")
@@ -1406,27 +1396,10 @@ class PipelineService:
                         explanation,
                     )
 
-            def on_new_backtest(key, row, time, is_addition, **_):
-                del key, time
-                if is_addition:
-                    symbol = row.get("symbol", "N/A")
-                    pnl = row.get("pnl", 0)
-                    exit_reason = row.get("exit_reason", "N/A")
-                    self.logger.info(
-                        "[PIPELINE] ✓ Backtest result: %s - PnL: %.4f - Exit: %s",
-                        symbol,
-                        pnl,
-                        exit_reason,
-                    )
-
             def on_signal_end():
                 self.logger.info("[PIPELINE] Signal stream ended")
 
-            def on_backtest_end():
-                self.logger.info("[PIPELINE] Backtest stream ended")
-
             pw.io.subscribe(trading_signals, on_new_signal, on_signal_end)
-            pw.io.subscribe(backtest_results, on_new_backtest, on_backtest_end)
 
             self.logger.info("✓ Pipeline built successfully!")
             self._update_status("running")
@@ -1535,4 +1508,179 @@ class PipelineService:
             return data.get("state") == "running"
         except Exception:
             return False
+    
+    async def sell_all_high_risk_positions(self) -> Dict[str, Any]:
+        """Sell all open positions for high_risk trading agents at market close (3:15 PM IST)."""
+        self.logger.info("🔄 Starting to sell all high_risk positions before market close...")
+        
+        try:
+            db_manager = get_db_manager()
+            if not db_manager.is_connected():
+                await db_manager.connect()
+            
+            client = db_manager.get_client()
+            
+            # Find all high_risk agents
+            agents = client.tradingagent.find_many(
+                where={
+                    "agent_type": "high_risk",
+                    "status": "active",
+                },
+                include={
+                    "portfolio": True,
+                }
+            )
+            
+            if not agents:
+                self.logger.info("No active high_risk agents found - nothing to sell")
+                return {
+                    "status": "completed",
+                    "agents_checked": 0,
+                    "positions_sold": 0,
+                    "errors": 0,
+                }
+            
+            self.logger.info("Found %d active high_risk agent(s)", len(agents))
+            
+            trade_service = TradeExecutionService(logger=self.logger)
+            positions_sold = 0
+            errors = 0
+            
+            # For each agent, find all open positions and sell them
+            for agent in agents:
+                try:
+                    portfolio_id = str(getattr(agent, "portfolio_id", ""))
+                    if not portfolio_id:
+                        continue
+                    
+                    # Find all open positions for this portfolio
+                    positions = client.position.find_many(
+                        where={
+                            "portfolio_id": portfolio_id,
+                            "status": "open",
+                        }
+                    )
+                    
+                    if not positions:
+                        continue
+                    
+                    self.logger.info(
+                        "Found %d open position(s) for high_risk agent %s (portfolio %s)",
+                        len(positions),
+                        getattr(agent, "id", "unknown"),
+                        portfolio_id,
+                    )
+                    
+                    # Sell each position
+                    for position in positions:
+                        try:
+                            symbol = str(getattr(position, "symbol", ""))
+                            quantity = int(getattr(position, "quantity", 0))
+                            
+                            if not symbol or quantity == 0:
+                                continue
+                            
+                            # Get current live price
+                            try:
+                                from market_data import get_live_price  # type: ignore
+                                current_price = get_live_price(symbol)
+                                reference_price = float(current_price)
+                            except Exception as price_exc:
+                                self.logger.warning(
+                                    "Could not fetch live price for %s, using average_buy_price: %s",
+                                    symbol,
+                                    price_exc,
+                                )
+                                reference_price = float(getattr(position, "average_buy_price", 0))
+                            
+                            if reference_price == 0:
+                                self.logger.warning("Skipping %s: invalid price", symbol)
+                                continue
+                            
+                            # Get portfolio to get user_id
+                            portfolio = client.portfolio.find_unique(where={"id": portfolio_id})
+                            if not portfolio:
+                                continue
+                            
+                            user_id = str(getattr(portfolio, "customer_id", ""))
+                            if not user_id:
+                                continue
+                            
+                            # Create SELL trade execution log
+                            import uuid
+                            import json
+                            from decimal import Decimal
+                            
+                            sell_log = client.tradeexecutionlog.create(
+                                data={
+                                    "request_id": f"market_close_sell_{uuid.uuid4().hex[:12]}",
+                                    "user_id": user_id,
+                                    "portfolio_id": portfolio_id,
+                                    "symbol": symbol,
+                                    "side": "SELL",
+                                    "quantity": quantity,
+                                    "reference_price": Decimal(str(reference_price)),
+                                    "status": "pending",
+                                    "agent_id": str(getattr(agent, "id", "")),
+                                    "agent_type": "high_risk",
+                                    "metadata": json.dumps({
+                                        "order_type": "market_close_sell",
+                                        "triggered_by": "market_close_worker",
+                                        "position_id": str(getattr(position, "id", "")),
+                                    }),
+                                },
+                            )
+                            
+                            # Execute the sell
+                            result = await trade_service.execute_trade(sell_log.id, simulate=True)
+                            
+                            if result.get("status") in ["simulated_executed", "executed"]:
+                                positions_sold += 1
+                                self.logger.info(
+                                    "✅ Sold position: SELL %s x %d @ ₹%.2f (market close)",
+                                    symbol,
+                                    quantity,
+                                    result.get("executed_price", reference_price),
+                                )
+                            else:
+                                errors += 1
+                                self.logger.error(
+                                    "❌ Failed to sell position %s: %s",
+                                    symbol,
+                                    result,
+                                )
+                        
+                        except Exception as pos_exc:
+                            errors += 1
+                            self.logger.error(
+                                "❌ Error selling position: %s",
+                                pos_exc,
+                                exc_info=True,
+                            )
+                
+                except Exception as agent_exc:
+                    errors += 1
+                    self.logger.error(
+                        "❌ Error processing agent %s: %s",
+                        getattr(agent, "id", "unknown"),
+                        agent_exc,
+                        exc_info=True,
+                    )
+            
+            self.logger.info(
+                "✅ Market close sell completed: %d positions sold, %d errors",
+                positions_sold,
+                errors,
+            )
+            
+            return {
+                "status": "completed",
+                "agents_checked": len(agents),
+                "positions_sold": positions_sold,
+                "errors": errors,
+            }
+        
+        except Exception as exc:
+            self.logger.error("❌ Failed to sell high-risk positions: %s", exc, exc_info=True)
+            raise
 

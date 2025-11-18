@@ -113,7 +113,8 @@ class TradeEngine:
             metadata=trade.metadata,
         )
 
-        await self._execute_market_order(payload, price, existing_trade_id=trade.id)
+        updated_trade = await self._execute_market_order(payload, price, existing_trade_id=trade.id)
+        await self._create_trade_execution_log(updated_trade.dict(), payload)
         portfolio_snapshot = await self._build_portfolio_snapshot(trade.portfolio_id)
 
         return True
@@ -183,7 +184,8 @@ class TradeEngine:
         else:
             await self._apply_sell_execution(payload, execution_price)
 
-        # Send email notification asynchronously
+        await self._create_trade_execution_log(trade, payload)
+
         await self._send_execution_email(trade.dict(), payload)
 
         return trade.dict()
@@ -341,20 +343,45 @@ class TradeEngine:
 
             logging.getLogger(__name__).exception("Failed to enqueue pending trade %s", trade_id)
 
+    async def _create_trade_execution_log(self, trade, payload: TradeCreate) -> None:
+        """Create minimal trade execution log for manual trades."""
+        import uuid
+        import json
+        from decimal import Decimal
+        
+        try:
+            executed_price = trade.get("executed_price") or trade.get("price") or 0
+            await self.prisma.tradeexecutionlog.create(
+                data={
+                    "request_id": f"manual_{uuid.uuid4().hex[:12]}",
+                    "user_id": payload.customer_id,
+                    "portfolio_id": payload.portfolio_id,
+                    "symbol": payload.symbol,
+                    "side": payload.side,
+                    "quantity": payload.quantity,
+                    "reference_price": Decimal(str(executed_price)),
+                    "status": trade.get("status", "executed"),
+                    "executed_price": Decimal(str(executed_price)),
+                    "executed_quantity": trade.get("executed_quantity", payload.quantity),
+                    "metadata": json.dumps({
+                        "source": payload.source or "manual",
+                        "trade_id": trade.get("id"),
+                        "order_type": payload.order_type,
+                    }),
+                },
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Failed to create trade execution log: {e}")
+
     async def _send_execution_email(self, trade_dict: Dict, payload: TradeCreate) -> None:
         """Send email notification for trade execution."""
         try:
-            # Get user email from auth service (customer_id is user_id in this system)
-            # Skip email for now - would need to call auth service to get user email
-            # This is a non-critical feature, so we'll skip it silently
-                import logging
-                logging.getLogger(__name__).debug(
+            import logging
+            logging.getLogger(__name__).debug(
                 f"Trade execution email skipped (customer_id: {payload.customer_id})"
-                )
-                return
-            
+            )
+            return
         except Exception as e:
             import logging
-            logging.getLogger(__name__).warning(
-                f"Failed to send trade execution email: {e}"
-            )
+            logging.getLogger(__name__).warning(f"Failed to send trade execution email: {e}")

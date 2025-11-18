@@ -82,6 +82,7 @@ celery_app = Celery(
         "workers.trade_execution_tasks",
         "workers.pipeline_tasks",
         "workers.snapshot_tasks",
+        "workers.auto_sell_worker",
     ],
 )
 
@@ -146,6 +147,9 @@ celery_app.conf.task_routes = {
     # Order monitoring
     "order_monitor.start_continuous_monitoring": {"queue": QUEUE_NAMES["orders"]},
     "order_monitor.check_pending_orders_once": {"queue": QUEUE_NAMES["orders"]},
+    # Auto-sell worker
+    "trades.auto_sell_expired_trades": {"queue": QUEUE_NAMES["trading"]},
+    "pipeline.sell_high_risk_before_close": {"queue": QUEUE_NAMES["trading"]},
 }
 
 ANNOTATED_TASKS = [
@@ -242,6 +246,29 @@ if SNAPSHOT_ENABLED:
         "task": "snapshot.capture_portfolio_snapshots",
         "schedule": crontab(hour="*/3", minute=5),  # Every 3 hours (offset by 5 minutes)
         "options": {"queue": SNAPSHOT_QUEUE},
+    }
+
+# Auto-sell worker - runs every minute to sell trades past their 15-minute window
+AUTO_SELL_ENABLED = os.getenv("AUTO_SELL_ENABLED", "true").lower() in {"1", "true", "yes"}
+AUTO_SELL_QUEUE = os.getenv("AUTO_SELL_QUEUE", QUEUE_NAMES["trading"])
+
+if AUTO_SELL_ENABLED:
+    celery_app.conf.beat_schedule["auto-sell-expired-trades"] = {
+        "task": "trades.auto_sell_expired_trades",
+        "schedule": timedelta(minutes=1),  # Every minute
+        "options": {"queue": AUTO_SELL_QUEUE},
+    }
+
+# Market closing task - sells all high_risk positions at 3:15 PM IST (9:45 AM UTC)
+# IST is UTC+5:30, so 3:15 PM IST = 9:45 AM UTC
+MARKET_CLOSE_SELL_ENABLED = os.getenv("MARKET_CLOSE_SELL_ENABLED", "true").lower() in {"1", "true", "yes"}
+MARKET_CLOSE_SELL_QUEUE = os.getenv("MARKET_CLOSE_SELL_QUEUE", QUEUE_NAMES["trading"])
+
+if MARKET_CLOSE_SELL_ENABLED:
+    celery_app.conf.beat_schedule["sell-high-risk-before-close"] = {
+        "task": "pipeline.sell_high_risk_before_close",
+        "schedule": crontab(hour=9, minute=45, day_of_week="mon-fri"),  # 3:15 PM IST = 9:45 AM UTC
+        "options": {"queue": MARKET_CLOSE_SELL_QUEUE},
     }
 
 __all__ = ["celery_app"]

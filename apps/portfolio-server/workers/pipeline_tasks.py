@@ -280,3 +280,26 @@ def process_trade_signal(self, signal_payload: dict) -> dict:
     summary = service.process_nse_trade_signals([signal_payload])
     task_logger.info("Trade signal processed: %s", summary)
     return summary
+
+
+@celery_app.task(
+    bind=True,
+    name="pipeline.sell_high_risk_before_close",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_kwargs={"max_retries": 3},
+)
+def sell_high_risk_before_close(self) -> dict:
+    """Sell all high_risk agent positions before market close (3:15 PM IST)."""
+    import asyncio
+    
+    server_dir = Path(__file__).resolve().parents[1]
+    service = PipelineService(str(server_dir), logger=task_logger)
+    
+    try:
+        result = asyncio.run(service.sell_all_high_risk_positions())
+        task_logger.info("High-risk positions sold before market close: %s", result)
+        return result
+    except Exception as exc:
+        task_logger.error("Failed to sell high-risk positions: %s", exc, exc_info=True)
+        raise

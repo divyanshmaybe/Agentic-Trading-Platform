@@ -11,7 +11,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -22,6 +22,47 @@ from pipelines.nse.trade_execution_pipeline import (  # type: ignore  # noqa: E4
     TradeExecutionEvent,
     publish_trade_execution_events,
 )
+
+
+def _parse_metadata(metadata):
+    """Parse metadata from string or dict."""
+    if not metadata:
+        return {}
+    if isinstance(metadata, str):
+        try:
+            return json.loads(metadata)
+        except:
+            return {}
+    return dict(metadata) if isinstance(metadata, dict) else {}
+
+
+def _calculate_auto_sell_at(record, execution_time, logger, trade_id):
+    """Calculate auto_sell_at timestamp for high-risk NSE pipeline trades."""
+    metadata = _parse_metadata(getattr(record, "metadata", None))
+    triggered_by = metadata.get("triggered_by", "")
+    agent_type = getattr(record, "agent_type", None) or metadata.get("agent_type", "")
+    
+    is_nse_trade = (
+        triggered_by == "nse_filings_pipeline" or
+        agent_type == "high_risk" or
+        "nse" in triggered_by.lower() or
+        "nse_filings" in triggered_by.lower()
+    )
+    
+    if not is_nse_trade:
+        return None
+    
+    auto_sell_window_minutes = int(os.getenv("NSE_FILINGS_AUTO_SELL_WINDOW_MINUTES", "15"))
+    auto_sell_at = execution_time + timedelta(minutes=auto_sell_window_minutes)
+    
+    if auto_sell_at.hour > 15 or (auto_sell_at.hour == 15 and auto_sell_at.minute > 30):
+        logger.warning(
+            "Auto-sell time %s would be after market close, skipping auto-sell for trade %s",
+            auto_sell_at, trade_id
+        )
+        return None
+    
+    return auto_sell_at
 
 
 @dataclass
@@ -87,21 +128,28 @@ class TradeExecutionService:
             "symbol": job_row["symbol"],
             "side": job_row["side"],
             "quantity": int(job_row["quantity"]),
-            "allocated_capital": self._as_decimal(job_row["allocated_capital"]),
             "reference_price": self._as_decimal(job_row["reference_price"]),
-            "confidence": self._as_decimal(job_row["confidence"], "0.000001"),
-            "take_profit_pct": self._as_decimal(job_row["take_profit_pct"], "0.000001"),
-            "stop_loss_pct": self._as_decimal(job_row["stop_loss_pct"], "0.000001"),
             "status": "pending",
-            "signal_id": job_row.get("signal_id"),
             "metadata": json.dumps(metadata),
         }
         
-        # Only add portfolio_id if it exists
         if job_row.get("portfolio_id"):
             data["portfolio_id"] = job_row["portfolio_id"]
         if job_row.get("agent_id"):
             data["agent_id"] = job_row["agent_id"]
+        if job_row.get("agent_type"):
+            data["agent_type"] = job_row["agent_type"]
+        if job_row.get("signal_id"):
+            data["signal_id"] = job_row["signal_id"]
+        
+        if job_row.get("allocated_capital"):
+            data["allocated_capital"] = self._as_decimal(job_row["allocated_capital"])
+        if job_row.get("confidence"):
+            data["confidence"] = self._as_decimal(job_row["confidence"], "0.000001")
+        if job_row.get("take_profit_pct"):
+            data["take_profit_pct"] = self._as_decimal(job_row["take_profit_pct"], "0.000001")
+        if job_row.get("stop_loss_pct"):
+            data["stop_loss_pct"] = self._as_decimal(job_row["stop_loss_pct"], "0.000001")
 
         record = await client.tradeexecutionlog.create(data=data)
         
@@ -278,18 +326,29 @@ class TradeExecutionService:
         if simulate:
             executed_price = float(record.reference_price)
             executed_quantity = int(record.quantity)
+            execution_time = datetime.utcnow()
             
-            # Update trade log status
+            auto_sell_at = _calculate_auto_sell_at(record, execution_time, self.logger, trade_id)
+            
+            update_data = {"simulation": True}
+            if auto_sell_at:
+                update_data["auto_sell_at"] = auto_sell_at.isoformat()
+            
             await self.update_status(
                 trade_id,
                 status="simulated_executed",
                 executed_price=executed_price,
                 executed_quantity=executed_quantity,
-                metadata={"simulation": True},
+                metadata=update_data,
             )
             
-            # Log trade execution with agent information
-            # agent_id should already be set from above check
+            if auto_sell_at:
+                client = await self._ensure_client()
+                await client.tradeexecutionlog.update(
+                    where={"id": trade_id},
+                    data={"auto_sell_at": auto_sell_at},
+                )
+            
             agent_type = getattr(record, "agent_type", None)
             if not agent_type and agent_id:
                 # Try to get agent_type from metadata
@@ -445,11 +504,7 @@ class TradeExecutionService:
                     "symbol": symbol,
                     "side": tp_side,
                     "quantity": executed_quantity,
-                    "allocated_capital": self._as_decimal(executed_price * executed_quantity),
                     "reference_price": self._as_decimal(tp_price),
-                    "confidence": self._as_decimal(0.9, "0.000001"),
-                    "take_profit_pct": self._as_decimal(0, "0.000001"),
-                    "stop_loss_pct": self._as_decimal(0, "0.000001"),
                     "status": "pending",
                     "metadata": json.dumps(tp_metadata),
                 }
@@ -480,11 +535,7 @@ class TradeExecutionService:
                     "symbol": symbol,
                     "side": sl_side,
                     "quantity": executed_quantity,
-                    "allocated_capital": self._as_decimal(executed_price * executed_quantity),
                     "reference_price": self._as_decimal(sl_price),
-                    "confidence": self._as_decimal(0.9, "0.000001"),
-                    "take_profit_pct": self._as_decimal(0, "0.000001"),
-                    "stop_loss_pct": self._as_decimal(0, "0.000001"),
                     "status": "pending",
                     "metadata": json.dumps(sl_metadata),
                 }
@@ -775,6 +826,15 @@ class TradeExecutionService:
             taxes = Decimal("0.0")
             net_amount = Decimal(str(executed_price * executed_quantity))
             
+            auto_sell_at = None
+            if hasattr(trade_record, "auto_sell_at") and trade_record.auto_sell_at:
+                auto_sell_at = trade_record.auto_sell_at
+            elif isinstance(metadata, dict) and "auto_sell_at" in metadata:
+                try:
+                    auto_sell_at = datetime.fromisoformat(metadata["auto_sell_at"])
+                except:
+                    pass
+            
             # Create Trade record
             trade_data = {
                 "organization_id": organization_id,
@@ -805,6 +865,9 @@ class TradeExecutionService:
                     "allocated_capital": float(getattr(trade_record, "allocated_capital", 0)),
                 }),
             }
+            
+            if auto_sell_at:
+                trade_data["auto_sell_at"] = auto_sell_at
             
             trade_record_db = await client.trade.create(data=trade_data)
             self.logger.info(
