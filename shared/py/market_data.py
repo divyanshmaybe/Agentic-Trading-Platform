@@ -212,7 +212,7 @@ class MarketDataService:
             "correlationID": f"req_{int(time.time() * 1000)}",
             "action": 1,  # subscribe
             "params": {
-                "mode": 1,  # LTP mode
+                "mode": 1,  # LTP mode (can upgrade to mode 2 for Quote later)
                 "tokenList": token_list
             }
         }
@@ -409,6 +409,66 @@ class MarketDataService:
                 return price
         return None
     
+    async def subscribe_nifty500(self) -> int:
+        """
+        Subscribe to all Nifty 500 symbols in bulk.
+        Returns the number of symbols successfully subscribed.
+        """
+        try:
+            from nifty500_symbols import get_nifty500_symbols
+            symbols = get_nifty500_symbols()
+            logger.info(f"📊 Subscribing to {len(symbols)} Nifty 500 symbols...")
+        except ImportError:
+            logger.warning("nifty500_symbols module not found, skipping Nifty 500 subscription")
+            return 0
+        except Exception as e:
+            logger.error(f"Failed to load Nifty 500 symbols: {e}")
+            return 0
+        
+        if not symbols:
+            logger.warning("No Nifty 500 symbols found")
+            return 0
+        
+        # Ensure WebSocket is running
+        await self._ensure_init()
+        
+        if self._ws_task is None or self._ws_task.done():
+            await self._start_websocket()
+            # Wait for connection
+            await asyncio.sleep(1.0)
+        
+        # Wait for connection to be ready
+        for _ in range(20):  # 2 seconds max
+            if self._connected and self._ws:
+                break
+            await asyncio.sleep(0.1)
+        
+        if not self._connected or not self._ws:
+            logger.error("WebSocket not connected, cannot subscribe to Nifty 500")
+            return 0
+        
+        # Filter symbols that exist in token map
+        valid_symbols = []
+        for symbol in symbols:
+            normalized = self._normalize_symbol(symbol)
+            if self._get_token_info(normalized):
+                valid_symbols.append(normalized)
+                # Mark as subscribed
+                self._subscribed.add(normalized)
+        
+        if not valid_symbols:
+            logger.warning("No valid symbols found in token map for Nifty 500")
+            return 0
+        
+        # Subscribe in bulk (all at once - Angel One supports up to 1000)
+        try:
+            await self._subscribe_batch(valid_symbols, self._ws)
+            logger.info(f"✅ Successfully subscribed to {len(valid_symbols)} Nifty 500 symbols")
+            return len(valid_symbols)
+        except Exception as e:
+            logger.error(f"Failed to subscribe to Nifty 500 symbols: {e}")
+            return 0
+    
     @property
     def adapter(self):
         """Return adapter info for compatibility"""
@@ -439,3 +499,13 @@ async def await_live_price(symbol: str, timeout: float = 10.0) -> Decimal:
     """Get price (async)"""
     service = get_market_data_service()
     return await service.await_price(symbol, timeout=timeout)
+
+
+async def subscribe_nifty500_on_startup():
+    """Subscribe to all Nifty 500 symbols at startup (background task)"""
+    try:
+        service = get_market_data_service()
+        count = await service.subscribe_nifty500()
+        logger.info(f"🎯 Nifty 500 subscription complete: {count} symbols")
+    except Exception as e:
+        logger.error(f"Failed to subscribe to Nifty 500 on startup: {e}")

@@ -4,6 +4,7 @@ Portfolio Server - FastAPI server with NSE pipeline integration
 
 import sys
 import os
+import asyncio
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -86,6 +87,18 @@ def create_lifespan(base_app_instance, pipeline_service_instance):
         base_app_instance.logger.info(
             "📋 Pipelines configured. News: hourly via Beat + startup, NSE: continuous polling (60s interval)"
         )
+        
+        # Subscribe to Nifty 500 symbols on startup (if enabled)
+        nifty500_subscribe = os.getenv("ENABLE_NIFTY500_SUBSCRIPTION", "false").lower() in {"1", "true", "yes"}
+        if nifty500_subscribe:
+            try:
+                base_app_instance.logger.info("📊 Starting Nifty 500 subscription...")
+                from market_data import subscribe_nifty500_on_startup  # type: ignore
+                # Run in background task
+                asyncio.create_task(subscribe_nifty500_on_startup())
+                base_app_instance.logger.info("✅ Nifty 500 subscription task started")
+            except Exception as exc:
+                base_app_instance.logger.error(f"❌ Failed to start Nifty 500 subscription: {exc}")
         
         # Capture portfolio snapshots on startup
         snapshot_on_startup = os.getenv("SNAPSHOT_CAPTURE_ON_STARTUP", "true").lower() in {"1", "true", "yes"}
