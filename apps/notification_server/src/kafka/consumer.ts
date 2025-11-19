@@ -156,12 +156,11 @@ function parseDateTime(value: any): Date | undefined {
 
 function normalizeStockRecommendation(
   topic: string,
-  key: string | null,
   payload: any,
   partition: number,
   offset: string
 ): NormalizedNotification {
-  const kafkaKey = key ? `${topic}-${key}` : `${topic}-${partition}-${offset}`;
+  const kafkaKey = `${topic}-${partition}-${offset}`;
 
   return {
     kafkaKey,
@@ -180,12 +179,11 @@ function normalizeStockRecommendation(
 
 function normalizeSentimentArticle(
   topic: string,
-  key: string | null,
   payload: any,
   partition: number,
   offset: string
 ): NormalizedNotification {
-  const kafkaKey = key ? `${topic}-${key}` : `${topic}-${partition}-${offset}`;
+  const kafkaKey = `${topic}-${partition}-${offset}`;
 
   return {
     kafkaKey,
@@ -203,12 +201,11 @@ function normalizeSentimentArticle(
 
 function normalizeFilingSignal(
   topic: string,
-  key: string | null,
   payload: any,
   partition: number,
   offset: string
 ): NormalizedNotification {
-  const kafkaKey = key ? `${topic}-${key}` : `${topic}-${partition}-${offset}`;
+  const kafkaKey = `${topic}-${partition}-${offset}`;
 
   return {
     kafkaKey,
@@ -226,12 +223,11 @@ function normalizeFilingSignal(
 
 function normalizeSectorAnalysis(
   topic: string,
-  key: string | null,
   payload: any,
   partition: number,
   offset: string
 ): NormalizedNotification {
-  const kafkaKey = key ? `${topic}-${key}` : `${topic}-${partition}-${offset}`;
+  const kafkaKey = `${topic}-${partition}-${offset}`;
 
   return {
     kafkaKey,
@@ -239,7 +235,7 @@ function normalizeSectorAnalysis(
     category: "sector_analysis",
     title: "Sector Analysis",
     summary: payload.analysis || undefined,
-    sector: key || undefined,
+    sector: payload.sector || undefined,
     rawPayload: payload,
     eventTime: parseDateTime(payload.generated_at),
   };
@@ -247,7 +243,6 @@ function normalizeSectorAnalysis(
 
 function normalizeEvent(
   topic: string,
-  key: string | null,
   payload: any,
   partition: number,
   offset: string
@@ -255,19 +250,19 @@ function normalizeEvent(
   const topicLower = topic.toLowerCase();
 
   if (topicLower.includes("stock") && topicLower.includes("recomendation")) {
-    return normalizeStockRecommendation(topic, key, payload, partition, offset);
+    return normalizeStockRecommendation(topic, payload, partition, offset);
   }
 
   if (topicLower.includes("sentiment") && topicLower.includes("article")) {
-    return normalizeSentimentArticle(topic, key, payload, partition, offset);
+    return normalizeSentimentArticle(topic, payload, partition, offset);
   }
 
   if (topicLower.includes("nse") && topicLower.includes("filing") && topicLower.includes("signal")) {
-    return normalizeFilingSignal(topic, key, payload, partition, offset);
+    return normalizeFilingSignal(topic, payload, partition, offset);
   }
 
   if (topicLower.includes("sector") && topicLower.includes("analysis")) {
-    return normalizeSectorAnalysis(topic, key, payload, partition, offset);
+    return normalizeSectorAnalysis(topic, payload, partition, offset);
   }
 
   console.warn(`[Kafka] Unknown topic format: ${topic}`);
@@ -358,7 +353,6 @@ export class NotificationConsumer {
   private async processMessage(payload: EachMessagePayload): Promise<void> {
     const { topic, partition, message } = payload;
     const offset = message.offset;
-    const key = message.key ? message.key.toString("utf8") : null;
 
     try {
       let rawPayload: any = parseJsonSafely(message.value);
@@ -369,7 +363,7 @@ export class NotificationConsumer {
 
       rawPayload = normalizePayload(rawPayload);
 
-      const normalized = normalizeEvent(topic, key, rawPayload, partition, offset);
+      const normalized = normalizeEvent(topic, rawPayload, partition, offset);
       if (!normalized) {
         console.warn(`[Kafka] Could not normalize event from topic: ${topic}`);
         return;

@@ -155,19 +155,13 @@ export async function getNotificationsFromDB(
   console.log(`[getNotificationsFromDB] Total stock_recommendation notifications (all users, all states): ${stockRecTotal}`);
   console.log(`[getNotificationsFromDB] Total news_sentiment notifications (all users, all states): ${newsSentTotal}`);
 
-  // Build query filter:
-  // 1. Exclude dismissed notifications (where dismiss state DOESN'T exist for this userId + notificationId)
-  // 2. For dashboard channel: Only include "stock_recommendation" and "news_sentiment" categories
+  // Build query filter to exclude dismissed notifications only
+  // Category filtering is done at the route level (like intraday does)
   const queryFilter: any = {};
   
-  // Filter out dismissed notifications
+  // Filter out dismissed notifications (where dismiss state DOESN'T exist for this userId + notificationId)
   if (dismissedIds.size > 0) {
     queryFilter.id = { notIn: Array.from(dismissedIds) };
-  }
-  
-  // For dashboard channel, only include stock_recommendation and news_sentiment
-  if (channel === "dashboard") {
-    queryFilter.category = { in: ["stock_recommendation", "news_sentiment"] };
   }
   
   console.log(`[getNotificationsFromDB] Query filter:`, JSON.stringify(queryFilter));
