@@ -75,7 +75,26 @@ export async function getAuthenticatedUser(
 }
 
 /**
- * Get Prisma client instance
+ * Prisma Client Singleton
+ * 
+ * CRITICAL: This singleton pattern prevents connection pool exhaustion.
+ * Each PrismaClient instance creates its own connection pool (~10 connections).
+ * Without a singleton, each request would create a new client, quickly exhausting
+ * the database connection limit.
+ * 
+ * The global object persists across hot reloads in Next.js development,
+ * ensuring we reuse the same client instance.
+ */
+declare global {
+  // eslint-disable-next-line no-var
+  var __prisma: PrismaClient | undefined;
+}
+
+/**
+ * Get Prisma client instance (singleton pattern)
+ * 
+ * Reuses existing client or creates a new one if needed.
+ * This ensures only ONE connection pool exists across all requests.
  */
 export function getPrismaClient(): PrismaClient {
   // Check if DATABASE_URL is set
@@ -87,11 +106,25 @@ export function getPrismaClient(): PrismaClient {
     throw new Error("DATABASE_URL environment variable is required but not set");
   }
 
-  // Prisma automatically reads DATABASE_URL from environment
-  // We don't need to explicitly pass it unless we want to override
-  return new PrismaClient({
+  // Reuse existing client if available (singleton pattern)
+  // In Next.js, global object persists across hot reloads
+  if (global.__prisma) {
+    return global.__prisma;
+  }
+
+  // Create new client - Prisma manages its own connection pool internally
+  const prisma = new PrismaClient({
     log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
   });
+
+  // Store in global for reuse across requests and hot reloads
+  global.__prisma = prisma;
+
+  if (process.env.NODE_ENV === "development") {
+    console.log("[getPrismaClient] ✅ Created Prisma client singleton (should only see this once)");
+  }
+
+  return prisma;
 }
 
 /**
@@ -118,10 +151,6 @@ export async function getNotificationsFromDB(
         where: { userId },
         select: { notificationId: true },
       });
-      console.log(`[getNotificationsFromDB] Found ${dismissedNotificationIds.length} dismissed notifications for user ${userId} in channel ${channel}`);
-      if (dismissedNotificationIds.length > 0) {
-        console.log(`[getNotificationsFromDB] Sample dismissed IDs:`, dismissedNotificationIds.slice(0, 5).map(d => d.notificationId));
-      }
     } catch (error) {
       // If tables don't exist yet (migrations not run), just return all notifications
       console.warn(`[getNotificationsFromDB] State table for ${channel} may not exist yet:`, error);
@@ -135,27 +164,7 @@ export async function getNotificationsFromDB(
     dismissedNotificationIds.map((d: { notificationId: string }) => d.notificationId)
   );
 
-  console.log(`[getNotificationsFromDB] User ID: ${userId}, Channel: ${channel}`);
-  console.log(`[getNotificationsFromDB] Dismissed notification IDs count: ${dismissedIds.size}`);
-  if (dismissedIds.size > 0) {
-    console.log(`[getNotificationsFromDB] Sample dismissed IDs:`, Array.from(dismissedIds).slice(0, 5));
-  }
-
-  // First, check total notifications in DB
-  const totalNotifications = await prisma.notification.count();
-  console.log(`[getNotificationsFromDB] Total notifications in DB: ${totalNotifications}`);
-  
-  // Check if stock_recommendation and news_sentiment notifications exist AT ALL (regardless of dismissal)
-  const stockRecTotal = await prisma.notification.count({
-    where: { category: "stock_recommendation" }
-  });
-  const newsSentTotal = await prisma.notification.count({
-    where: { category: "news_sentiment" }
-  });
-  console.log(`[getNotificationsFromDB] Total stock_recommendation notifications (all users, all states): ${stockRecTotal}`);
-  console.log(`[getNotificationsFromDB] Total news_sentiment notifications (all users, all states): ${newsSentTotal}`);
-
-  // Build query filter to exclude dismissed notifications only
+  // Build query filter to exclude dismissed notifications
   // Category filtering is done at the route level (like intraday does)
   const queryFilter: any = {};
   
@@ -163,28 +172,15 @@ export async function getNotificationsFromDB(
   if (dismissedIds.size > 0) {
     queryFilter.id = { notIn: Array.from(dismissedIds) };
   }
-  
-  console.log(`[getNotificationsFromDB] Query filter:`, JSON.stringify(queryFilter));
 
+  // OPTIMIZED: Single query to get notifications (removed 3 unnecessary count queries)
+  // This reduces connection usage from 5 queries per request to 2 queries per request
   const notifications = await prisma.notification.findMany({
     where: queryFilter,
     orderBy: {
       createdAt: "desc",
     },
   });
-
-  console.log(`[getNotificationsFromDB] Notifications returned: ${notifications.length}`);
-  if (notifications.length > 0) {
-    const categoryCounts = notifications.reduce((acc, n) => {
-      acc[n.category] = (acc[n.category] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
-    console.log(`[getNotificationsFromDB] Category counts:`, categoryCounts);
-    console.log(`[getNotificationsFromDB] All categories:`, Object.keys(categoryCounts));
-    console.log(`[getNotificationsFromDB] stock_recommendation count:`, categoryCounts["stock_recommendation"] || 0);
-    console.log(`[getNotificationsFromDB] news_sentiment count:`, categoryCounts["news_sentiment"] || 0);
-    console.log(`[getNotificationsFromDB] Sample notification categories:`, notifications.slice(0, 10).map(n => ({ id: n.id, category: n.category, title: n.title })));
-  }
 
   // Convert Date objects to ISO strings for NotificationDTO
   return notifications.map((n) => ({
