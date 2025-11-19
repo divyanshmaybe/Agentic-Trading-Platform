@@ -16,7 +16,6 @@ import { portfolioSummary as mockPortfolioSummary, stocks as mockStocks } from "
 import type { PortfolioSummary, StockItem } from "@/lib/dashboardTypes"
 import { getPortfolio, getPortfolioDashboard, getPositions, fetchMarketCandles, getPortfolioAllocations } from "@/lib/portfolio"
 import type { Portfolio } from "@/lib/portfolio"
-import { useLiveNewsFeed } from "@/hooks/useLiveNewsFeed"
 import { Button } from "@/components/ui/button"
 
 function isPortfolioNotFoundError(error: unknown): boolean {
@@ -33,8 +32,6 @@ export default function DashboardPage() {
   const params = useParams()
   const username = params.username as string
   const { stockRecommendations, newsSentiments, dismiss } = useDashboardNotifications()
-  const { news: liveNews, statusMessage: newsStatusMessage } = useLiveNewsFeed()
-
   // SECURE: Get user data from server-validated token, NOT localStorage
   const { user: authUser, loading: authLoading } = useAuth()
 
@@ -333,8 +330,8 @@ export default function DashboardPage() {
           </div>
         )}
 
-        <main className="grid gap-6 lg:grid-cols-4 xl:grid-cols-5">
-          <div className="flex">
+        <main className="grid gap-6 lg:grid-cols-4 xl:grid-cols-5 items-stretch">
+          <div className="flex flex-col max-h-screen h-screen overflow-hidden">
             <NotificationCard 
               notifications={stockRecommendations} 
               title="Live Notifications"
@@ -366,7 +363,7 @@ export default function DashboardPage() {
             )}
           </div>
 
-          <div className="flex">
+          <div className="flex flex-col max-h-screen h-screen overflow-hidden">
             <NotificationCard 
               notifications={newsSentiments} 
               title="Top Headlines"

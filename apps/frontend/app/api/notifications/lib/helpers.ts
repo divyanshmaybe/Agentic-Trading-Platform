@@ -78,12 +78,19 @@ export async function getAuthenticatedUser(
  * Get Prisma client instance
  */
 export function getPrismaClient(): PrismaClient {
+  // Check if DATABASE_URL is set
+  const databaseUrl = process.env.DATABASE_URL;
+  
+  if (!databaseUrl) {
+    console.error("[getPrismaClient] ERROR: DATABASE_URL environment variable is not set!");
+    console.error("[getPrismaClient] Please set DATABASE_URL in your .env file or environment variables.");
+    throw new Error("DATABASE_URL environment variable is required but not set");
+  }
+
+  // Prisma automatically reads DATABASE_URL from environment
+  // We don't need to explicitly pass it unless we want to override
   return new PrismaClient({
-    datasources: {
-      db: {
-        url: process.env.DATABASE_URL,
-      },
-    },
+    log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
   });
 }
 
@@ -111,28 +118,79 @@ export async function getNotificationsFromDB(
         where: { userId },
         select: { notificationId: true },
       });
+      console.log(`[getNotificationsFromDB] Found ${dismissedNotificationIds.length} dismissed notifications for user ${userId} in channel ${channel}`);
+      if (dismissedNotificationIds.length > 0) {
+        console.log(`[getNotificationsFromDB] Sample dismissed IDs:`, dismissedNotificationIds.slice(0, 5).map(d => d.notificationId));
+      }
     } catch (error) {
       // If tables don't exist yet (migrations not run), just return all notifications
-      console.warn(`[Notifications] State table for ${channel} may not exist yet:`, error);
+      console.warn(`[getNotificationsFromDB] State table for ${channel} may not exist yet:`, error);
       dismissedNotificationIds = [];
     }
+  } else {
+    console.warn(`[getNotificationsFromDB] State model for channel ${channel} is null/undefined`);
   }
 
   const dismissedIds = new Set(
     dismissedNotificationIds.map((d: { notificationId: string }) => d.notificationId)
   );
 
-  // Fetch all notifications and filter out dismissed ones
+  console.log(`[getNotificationsFromDB] User ID: ${userId}, Channel: ${channel}`);
+  console.log(`[getNotificationsFromDB] Dismissed notification IDs count: ${dismissedIds.size}`);
+  if (dismissedIds.size > 0) {
+    console.log(`[getNotificationsFromDB] Sample dismissed IDs:`, Array.from(dismissedIds).slice(0, 5));
+  }
+
+  // First, check total notifications in DB
+  const totalNotifications = await prisma.notification.count();
+  console.log(`[getNotificationsFromDB] Total notifications in DB: ${totalNotifications}`);
+  
+  // Check if stock_recommendation and news_sentiment notifications exist AT ALL (regardless of dismissal)
+  const stockRecTotal = await prisma.notification.count({
+    where: { category: "stock_recommendation" }
+  });
+  const newsSentTotal = await prisma.notification.count({
+    where: { category: "news_sentiment" }
+  });
+  console.log(`[getNotificationsFromDB] Total stock_recommendation notifications (all users, all states): ${stockRecTotal}`);
+  console.log(`[getNotificationsFromDB] Total news_sentiment notifications (all users, all states): ${newsSentTotal}`);
+
+  // Build query filter:
+  // 1. Exclude dismissed notifications (where dismiss state DOESN'T exist for this userId + notificationId)
+  // 2. For dashboard channel: Only include "stock_recommendation" and "news_sentiment" categories
+  const queryFilter: any = {};
+  
+  // Filter out dismissed notifications
+  if (dismissedIds.size > 0) {
+    queryFilter.id = { notIn: Array.from(dismissedIds) };
+  }
+  
+  // For dashboard channel, only include stock_recommendation and news_sentiment
+  if (channel === "dashboard") {
+    queryFilter.category = { in: ["stock_recommendation", "news_sentiment"] };
+  }
+  
+  console.log(`[getNotificationsFromDB] Query filter:`, JSON.stringify(queryFilter));
+
   const notifications = await prisma.notification.findMany({
-    where: {
-      id: {
-        notIn: dismissedIds.size > 0 ? Array.from(dismissedIds) : [],
-      },
-    },
+    where: queryFilter,
     orderBy: {
       createdAt: "desc",
     },
   });
+
+  console.log(`[getNotificationsFromDB] Notifications returned: ${notifications.length}`);
+  if (notifications.length > 0) {
+    const categoryCounts = notifications.reduce((acc, n) => {
+      acc[n.category] = (acc[n.category] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+    console.log(`[getNotificationsFromDB] Category counts:`, categoryCounts);
+    console.log(`[getNotificationsFromDB] All categories:`, Object.keys(categoryCounts));
+    console.log(`[getNotificationsFromDB] stock_recommendation count:`, categoryCounts["stock_recommendation"] || 0);
+    console.log(`[getNotificationsFromDB] news_sentiment count:`, categoryCounts["news_sentiment"] || 0);
+    console.log(`[getNotificationsFromDB] Sample notification categories:`, notifications.slice(0, 10).map(n => ({ id: n.id, category: n.category, title: n.title })));
+  }
 
   // Convert Date objects to ISO strings for NotificationDTO
   return notifications.map((n) => ({
@@ -156,7 +214,7 @@ export async function getNotificationsFromDB(
 
 /**
  * Check if notification should be forwarded to dashboard
- * Dashboard only receives: stock_recommendation, news_sentiment
+ * Dashboard receives: stock_recommendation, news_sentiment
  */
 export function shouldForwardToDashboard(notification: NotificationDTO | Notification): boolean {
   return (

@@ -22,6 +22,20 @@ export function useIntradayNotifications(): UseIntradayNotificationsReturn {
   const dismissManyTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const pendingDismissIdsRef = useRef<Set<string>>(new Set());
 
+  // Helper function to merge notifications and deduplicate by ID
+  const mergeNotifications = useCallback((existing: Notification[], incoming: Notification[]): Notification[] => {
+    const map = new Map<string, Notification>();
+    
+    // Add all existing notifications to map
+    existing.forEach(n => map.set(n.id, n));
+    
+    // Add or update with incoming notifications (incoming takes precedence for same ID)
+    incoming.forEach(n => map.set(n.id, n));
+    
+    // Convert map values to array and sort by createdAt descending
+    return Array.from(map.values()).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  }, []);
+
   // Fetch initial notifications
   useEffect(() => {
     let cancelled = false;
@@ -36,18 +50,24 @@ export function useIntradayNotifications(): UseIntradayNotificationsReturn {
           throw new Error(`Failed to fetch notifications: ${response.statusText}`);
         }
 
-        const data: NotificationDTO[] = await response.json();
+        const data = await response.json();
+        
+        // Handle both direct array and wrapped response formats
+        const notificationsData: NotificationDTO[] = Array.isArray(data) ? data : (data.notifications || []);
 
         if (!cancelled) {
           // Intraday shows ALL notifications (no filtering)
           // Convert NotificationDTO (ISO strings) to Notification (Date objects)
-          const notifications = data.map(dtoToNotification);
+          const notifications = notificationsData.map(dtoToNotification);
 
           // Sort by createdAt descending (newest first)
           notifications.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
-          setNotifications(notifications);
-          data.forEach((n) => seenIdsRef.current.add(n.id));
+          // Merge with existing notifications (in case SSE already added some)
+          setNotifications((prev) => mergeNotifications(prev, notifications));
+          
+          // Mark all fetched notifications as seen
+          notificationsData.forEach((n) => seenIdsRef.current.add(n.id));
           setLoading(false);
         }
       } catch (error) {
@@ -63,7 +83,7 @@ export function useIntradayNotifications(): UseIntradayNotificationsReturn {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [mergeNotifications]);
 
   // SSE connection
   useEffect(() => {
@@ -82,27 +102,15 @@ export function useIntradayNotifications(): UseIntradayNotificationsReturn {
       try {
         const dto: NotificationDTO = JSON.parse(event.data);
 
-        // Skip if already seen
-        if (seenIdsRef.current.has(dto.id)) {
-          return;
-        }
-
         // Intraday shows ALL notifications (no filtering)
+        // Mark as seen (even if we merge, this prevents duplicate processing)
         seenIdsRef.current.add(dto.id);
 
         // Convert NotificationDTO to Notification (Date objects)
         const notification = dtoToNotification(dto);
 
-        setNotifications((prev) => {
-          // Check if already in list (avoid duplicates)
-          if (prev.some((n) => n.id === notification.id)) {
-            return prev;
-          }
-          // Add to beginning and sort by createdAt descending
-          const updated = [notification, ...prev];
-          updated.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-          return updated;
-        });
+        // Merge with existing notifications (handles deduplication by ID)
+        setNotifications((prev) => mergeNotifications(prev, [notification]));
       } catch (err) {
         console.warn("[Intraday Notifications] Failed to parse notification:", err);
       }
@@ -137,7 +145,7 @@ export function useIntradayNotifications(): UseIntradayNotificationsReturn {
       eventSourceRef.current = null;
       setStatus("closed");
     };
-  }, []);
+  }, [mergeNotifications]);
 
   // Dismiss single notification
   const dismiss = useCallback(async (id: string) => {

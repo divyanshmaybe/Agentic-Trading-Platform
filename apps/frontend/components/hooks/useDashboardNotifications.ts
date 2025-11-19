@@ -21,6 +21,8 @@ export function useDashboardNotifications(): UseDashboardNotificationsReturn {
   const [status, setStatus] = useState<ConnectionStatus>("connecting");
 
   // Filter notifications into two arrays based on category
+  // stock_recommendation goes to stockRecommendations
+  // news_sentiment goes to newsSentiments
   const stockRecommendations = notifications.filter(
     (n) => n.category === "stock_recommendation"
   );
@@ -28,10 +30,31 @@ export function useDashboardNotifications(): UseDashboardNotificationsReturn {
     (n) => n.category === "news_sentiment"
   );
 
+  // Debug: Log filtered arrays
+  useEffect(() => {
+    console.log("[Dashboard Notifications] State update - Total notifications:", notifications.length);
+    console.log("[Dashboard Notifications] Stock recommendations:", stockRecommendations.length);
+    console.log("[Dashboard Notifications] News sentiments:", newsSentiments.length);
+  }, [notifications, stockRecommendations, newsSentiments]);
+
   const eventSourceRef = useRef<EventSource | null>(null);
   const seenIdsRef = useRef<Set<string>>(new Set());
   const dismissManyTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const pendingDismissIdsRef = useRef<Set<string>>(new Set());
+
+  // Helper function to merge notifications and deduplicate by ID
+  const mergeNotifications = useCallback((existing: Notification[], incoming: Notification[]): Notification[] => {
+    const map = new Map<string, Notification>();
+    
+    // Add all existing notifications to map
+    existing.forEach(n => map.set(n.id, n));
+    
+    // Add or update with incoming notifications (incoming takes precedence for same ID)
+    incoming.forEach(n => map.set(n.id, n));
+    
+    // Convert map values to array and sort by createdAt descending
+    return Array.from(map.values()).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  }, []);
 
   // Fetch initial notifications
   useEffect(() => {
@@ -47,13 +70,38 @@ export function useDashboardNotifications(): UseDashboardNotificationsReturn {
           throw new Error(`Failed to fetch notifications: ${response.statusText}`);
         }
 
-        const data: NotificationDTO[] = await response.json();
+        const data = await response.json();
+        
+        console.log("[Dashboard Notifications] Raw API response:", data);
+        console.log("[Dashboard Notifications] Raw API response type:", Array.isArray(data) ? "Array" : typeof data);
+        console.log("[Dashboard Notifications] Raw API response length:", Array.isArray(data) ? data.length : "N/A");
+        
+        // Handle both direct array and wrapped response formats
+        const notificationsData: NotificationDTO[] = Array.isArray(data) ? data : (data.notifications || []);
+
+        console.log("[Dashboard Notifications] Parsed notifications data:", notificationsData);
+        console.log("[Dashboard Notifications] Count:", notificationsData.length);
+        
+        if (notificationsData.length > 0) {
+          console.log("[Dashboard Notifications] Sample notification categories:", notificationsData.slice(0, 5).map(n => ({ id: n.id, category: n.category })));
+          console.log("[Dashboard Notifications] All unique categories in response:", [...new Set(notificationsData.map(n => n.category))]);
+        }
 
         if (!cancelled) {
           // Filter by category (client-side safety check)
-          const filtered = data.filter((n) =>
+          const filtered = notificationsData.filter((n) =>
             DASHBOARD_ALLOWED_CATEGORIES.includes(n.category)
           );
+
+          console.log("[Dashboard Notifications] After category filter:", filtered);
+          console.log("[Dashboard Notifications] Filtered count:", filtered.length);
+          console.log("[Dashboard Notifications] Allowed categories:", DASHBOARD_ALLOWED_CATEGORIES);
+          
+          if (notificationsData.length > 0 && filtered.length === 0) {
+            console.error("[Dashboard Notifications] ERROR: Notifications exist in API response but none match category filter!");
+            console.error("[Dashboard Notifications] API returned categories:", [...new Set(notificationsData.map(n => n.category))]);
+            console.error("[Dashboard Notifications] Expected categories:", DASHBOARD_ALLOWED_CATEGORIES);
+          }
 
           // Convert NotificationDTO (ISO strings) to Notification (Date objects)
           const notifications = filtered.map(dtoToNotification);
@@ -61,7 +109,16 @@ export function useDashboardNotifications(): UseDashboardNotificationsReturn {
           // Sort by createdAt descending (newest first)
           notifications.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
-          setNotifications(notifications);
+          console.log("[Dashboard Notifications] Final notifications to set:", notifications);
+
+          // Merge with existing notifications (in case SSE already added some)
+          setNotifications((prev) => {
+            const merged = mergeNotifications(prev, notifications);
+            console.log("[Dashboard Notifications] Merged notifications:", merged);
+            return merged;
+          });
+          
+          // Mark all fetched notifications as seen
           filtered.forEach((n) => seenIdsRef.current.add(n.id));
           setLoading(false);
         }
@@ -78,7 +135,7 @@ export function useDashboardNotifications(): UseDashboardNotificationsReturn {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [mergeNotifications]);
 
   // SSE connection
   useEffect(() => {
@@ -97,31 +154,19 @@ export function useDashboardNotifications(): UseDashboardNotificationsReturn {
       try {
         const dto: NotificationDTO = JSON.parse(event.data);
 
-        // Skip if already seen
-        if (seenIdsRef.current.has(dto.id)) {
-          return;
-        }
-
         // Filter by category (client-side safety check)
         if (!DASHBOARD_ALLOWED_CATEGORIES.includes(dto.category)) {
           return;
         }
 
+        // Mark as seen (even if we merge, this prevents duplicate processing)
         seenIdsRef.current.add(dto.id);
 
         // Convert NotificationDTO to Notification (Date objects)
         const notification = dtoToNotification(dto);
 
-        setNotifications((prev) => {
-          // Check if already in list (avoid duplicates)
-          if (prev.some((n) => n.id === notification.id)) {
-            return prev;
-          }
-          // Add to beginning and sort by createdAt descending
-          const updated = [notification, ...prev];
-          updated.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-          return updated;
-        });
+        // Merge with existing notifications (handles deduplication by ID)
+        setNotifications((prev) => mergeNotifications(prev, [notification]));
       } catch (err) {
         console.warn("[Dashboard Notifications] Failed to parse notification:", err);
       }
@@ -156,7 +201,7 @@ export function useDashboardNotifications(): UseDashboardNotificationsReturn {
       eventSourceRef.current = null;
       setStatus("closed");
     };
-  }, []);
+  }, [mergeNotifications]);
 
   // Dismiss single notification
   const dismiss = useCallback(async (id: string) => {
@@ -192,7 +237,7 @@ export function useDashboardNotifications(): UseDashboardNotificationsReturn {
       clearTimeout(dismissManyTimeoutRef.current);
     }
 
-    // Debounce: wait 300ms before sending
+    // Debounce: wait 1s before sending
     dismissManyTimeoutRef.current = setTimeout(async () => {
       const idsToDismiss = Array.from(pendingDismissIdsRef.current);
       pendingDismissIdsRef.current.clear();
@@ -223,7 +268,7 @@ export function useDashboardNotifications(): UseDashboardNotificationsReturn {
         console.error("[Dashboard Notifications] Failed to dismiss many:", error);
         throw error;
       }
-    }, 300);
+    }, 1000);
   }, []);
 
   // Dismiss all notifications
