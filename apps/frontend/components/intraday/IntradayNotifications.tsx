@@ -103,14 +103,14 @@ export function IntradayNotifications() {
   }, [loading, notifications.length])
 
   return (
-    <Card className="card-glass flex h-full flex-col rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_28px_65px_-38px_rgba(0,0,0,0.9)] backdrop-blur">
-      <CardHeader className="gap-1">
+    <Card className="card-glass flex max-h-[100vh] w-full flex-col rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_28px_65px_-38px_rgba(0,0,0,0.9)] backdrop-blur">
+      <CardHeader className="shrink-0 gap-1">
         <CardDescription className="text-xs uppercase tracking-[0.3em] text-white/45">
           Intraday alerts in real time
         </CardDescription>
         <CardTitle className="h-title text-xl text-[#fafafa]">Notifications</CardTitle>
       </CardHeader>
-      <CardContent className="flex-1 overflow-y-auto">
+      <CardContent className="min-h-0 flex-1 overflow-y-auto">
         {statusMessage ? (
           <div className="mb-4 rounded-xl border border-white/10 bg-black/25 px-4 py-3 text-sm text-white/60">
             {statusMessage}
