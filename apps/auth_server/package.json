@@ -4,7 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "tsx --test tests/subscriptions.test.ts",
+    "test": "tsx --test tests/*.test.ts",
+    "test:watch": "tsx --test --watch tests/*.test.ts",
+    "test:cov": "tsx --test tests/*.test.ts --coverage",
     "dev": "npx tsx watch --require tsconfig-paths/register server.ts",
     "build": "prisma generate --schema ../../shared/prisma/schema.prisma && tsc",
     "start": "node -r tsconfig-paths/register dist/apps/auth_server/server.js",

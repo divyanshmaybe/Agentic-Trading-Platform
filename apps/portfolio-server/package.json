@@ -9,8 +9,11 @@
 		"prisma:studio": "prisma studio",
 		"dev": "PYTHONPATH=../..:../../shared/py:../../middleware:../../middleware/py python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000",
 		"celery": "PYTHONPATH=../..:../../shared/py:../../middleware:../../middleware/py celery -A celery_app:celery_app worker --loglevel=info",
-		"test": "PYTHONPATH=../..:../../shared/py:../../middleware:../../middleware/py pytest tests/ -v --tb=short",
-		"test:cov": "PYTHONPATH=../..:../../shared/py:../../middleware:../../middleware/py pytest tests/ -v --tb=short --cov=. --cov-report=term-missing --cov-report=html",
+		"test": "python -c \"import sys; sys.path.insert(0, '../../shared/py'); sys.path.insert(0, '../../middleware/py'); sys.path.insert(0, '../..'); import pytest; pytest.main(['tests/', '-v', '--tb=short'])\"",
+		"test:cov": "python -c \"import sys; sys.path.insert(0, '../../shared/py'); sys.path.insert(0, '../../middleware/py'); sys.path.insert(0, '../..'); import pytest; pytest.main(['tests/', '-v', '--tb=short', '--cov=.', '--cov-report=term-missing', '--cov-report=html'])\"",
+		"test:watch": "python -c \"import sys; sys.path.insert(0, '../../shared/py'); sys.path.insert(0, '../../middleware/py'); sys.path.insert(0, '../..'); import pytest; pytest.main(['tests/', '-v', '--tb=short', '--watch'])\"",
+		"test:unit": "python -c \"import sys; sys.path.insert(0, '../../shared/py'); sys.path.insert(0, '../../middleware/py'); sys.path.insert(0, '../..'); import pytest; pytest.main(['tests/', '-v', '--tb=short', '-m', 'not integration'])\"",
+		"test:integration": "python -c \"import sys; sys.path.insert(0, '../../shared/py'); sys.path.insert(0, '../../middleware/py'); sys.path.insert(0, '../..'); import pytest; pytest.main(['tests/', '-v', '--tb=short', '-m', 'integration'])\"",
 		"studio": "prisma studio --port 5555"
 	},
 	"dependencies": {},
