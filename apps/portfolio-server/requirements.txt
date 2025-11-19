@@ -1,3 +1,4 @@
+aiohttp==3.10.10
 celery==5.5.3
 celery-redbeat==2.2.0
 confluent-kafka==2.12.2

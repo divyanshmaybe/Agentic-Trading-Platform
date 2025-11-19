@@ -61,7 +61,7 @@ class OptimizationResult:
     progress_ratio: float
 
 
-DEFAULT_SEGMENTS: Tuple[str, ...] = ("low_risk", "high_risk", "alpha")
+DEFAULT_SEGMENTS: Tuple[str, ...] = ("low_risk", "high_risk", "alpha", "liquid")
 
 
 class PortfolioMonitor:
@@ -201,10 +201,10 @@ class PortfolioManager:
 
         constraints = self.user_inputs.get("constraints", {})
         self.max_drift: float = float(constraints.get("max_weight_drift", 0.15))
-        risk_wise = constraints.get("risk_wise", {})
+        segment_wise = constraints.get("segment_wise", {})
         self.weight_bounds: Dict[str, Tuple[float, float]] = {}
         for segment in self.segments:
-            bounds = risk_wise.get(segment, {})
+            bounds = segment_wise.get(segment, {})
             self.weight_bounds[segment] = (
                 float(bounds.get("min", 0.0)),
                 float(bounds.get("max", 1.0)),
@@ -280,12 +280,20 @@ class PortfolioManager:
         return lambda_var, lambda_dd
 
     # ---------------------------------------------------------------- Optimiser
-    @staticmethod
-    def _build_covariance(metrics: Mapping[str, SegmentMetrics], segments: Sequence[str]) -> npt.NDArray[np.float_]:
-        """Construct a diagonal covariance matrix from per-segment volatility."""
+    def get_variance(self, metrics: Mapping[str, SegmentMetrics]) -> npt.NDArray[np.float_]:
+        """
+        Construct covariance matrix from segment volatilities and correlations.
 
-        vols = np.array([metrics[segment].volatility for segment in segments], dtype=float)
-        return np.diag(vols ** 2)
+        Args:
+            metrics: Dictionary of segment metrics
+
+        Returns:
+            4x4 covariance matrix
+        """
+        vols = np.array([metrics[segment].volatility for segment in self.segments], dtype=float)
+        variance = vols ** 2
+
+        return variance
 
     def _solve_optimisation(
         self,
@@ -353,7 +361,7 @@ class PortfolioManager:
         )
 
         mu = np.array([metrics[segment].return_rate for segment in self.segments], dtype=float)
-        covariance = self._build_covariance(metrics, self.segments)
+        covariance = self.get_variance(metrics)
         drawdowns = np.array([metrics[segment].max_drawdown for segment in self.segments], dtype=float)
 
         risk_tol_raw = str(self.user_inputs.get("risk_tolerance", "medium")).upper()

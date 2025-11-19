@@ -5,11 +5,266 @@ objectives from transcripts or pre-structured JSON payloads.
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
+import aiohttp
 from pydantic import BaseModel, Field, ValidationError, field_validator
+
+
+# LLM Extractor Classes
+class ExtractionResult(BaseModel):
+    success: bool
+    data: Optional[Dict[str, Any]] = None
+    missing_fields: List[str] = Field(default_factory=list)
+    validation_errors: List[str] = Field(default_factory=list)
+    raw_llm_response: Optional[str] = None
+
+
+class InvestmentObjective(BaseModel):
+    investment_amount: Optional[float] = None
+    investment_horizon_years: Optional[int] = None
+    expected_return_target: Optional[float] = None
+    risk_tolerance: Optional[str] = None
+    allocation_strategy: Optional[Dict[str, float]] = None
+    constraints: Optional[Dict[str, Any]] = None
+    generic_notes: Optional[List[str]] = None
+
+
+class InvestmentObjectiveExtractor:
+    def __init__(self, api_key: str, model: str = "llama-3.1-8b-instant"):
+        self.api_key = api_key
+        self.model = model
+        self.api_url = "https://api.groq.com/openai/v1/chat/completions"
+    
+    def _create_extraction_prompt(self, transcript: str) -> str:
+        """Create a few-shot prompt for extracting investment objectives."""
+        
+        prompt = f"""You are an expert financial data extractor. Your task is to extract investment objectives from a conversation transcript between a user and an investment professional.
+
+Extract the following information and return ONLY a valid JSON object (no markdown, no explanation, no extra text):
+
+Fields to extract (only include if mentioned in transcript):
+- investment_amount: Total amount user wants to invest (number)
+- investment_horizon_years: Investment duration in years (integer)
+- expected_return_target: Expected return as decimal (e.g., 0.25 for 25%)
+- risk_tolerance: Must be one of: "low", "medium", or "high"
+- allocation_strategy: Object with low_risk, high_risk, alpha, liquid percentages (decimals that sum to 1.0)
+- constraints: Object containing investment constraints (min_allocation, max_allocation, max_weight_drift, segment wise constraints)
+- generic_notes: Any additional preferences or notes
+
+Keep in mind that the objective might be complex and span multiple parts of the conversation. Synthesize the information to create a coherent investment objective.
+
+IMPORTANT: Do NOT include fields that are not mentioned in the transcript. Only extract what is explicitly stated or clearly implied.
+
+
+EXAMPLES:
+
+Example 1:
+Transcript: "Hi, I'm John. I want to invest 500,000 rupees for my daughter's education in 5 years. I can't afford to lose much, so I prefer safe options."
+Output:
+{{
+  "investment_amount": 500000,
+  "investment_horizon_years": 5,
+  "risk_tolerance": "low",
+  "generic_notes": ["Investment for daughter's education, prefers safe options"]
+}}
+
+Example 2:
+Transcript: "Professional: How much are you looking to invest? User: Around 2 million. Professional: What's your timeline? User: 10 years, retirement planning. Professional: Risk appetite? User: I'm okay with moderate risk, aiming for 15% annual returns. Professional: Any preferences? User: No tobacco or alcohol companies please."
+Output:
+{{
+  "investment_amount": 2000000,
+  "investment_horizon_years": 10,
+  "expected_return_target": 0.15,
+  "risk_tolerance": "medium",
+  "constraints": {{
+    "ESG_exclusions": ["tobacco", "alcohol"]
+  }},
+  "generic_notes": ["Retirement planning, ESG-conscious investor"]
+}}
+
+Example 3:
+Transcript: "User: I have 10 lakhs. Professional: Timeline? User: 3 years. Professional: Risk level? User: High, I want aggressive growth. Target 30% returns. I want 60% in high-risk stocks, 25% in moderate, 10% in alternatives, 5% cash."
+Output:
+{{
+  "investment_amount": 1000000,
+  "investment_horizon_years": 3,
+  "expected_return_target": 0.30,
+  "risk_tolerance": "high",
+  "allocation_strategy": {{
+    "low_risk": 0.25,
+    "high_risk": 0.60,
+    "alpha": 0.10,
+    "liquid": 0.05
+  }},
+  "generic_notes": ["Seeking aggressive growth strategy"]
+}}
+
+NOW EXTRACT FROM THIS TRANSCRIPT:
+
+Transcript: "{transcript}"
+
+Return ONLY the JSON object, no other text:"""
+        
+        return prompt
+    
+    async def extract_from_transcript(self, transcript: str) -> ExtractionResult:
+        try:
+            prompt = self._create_extraction_prompt(transcript)
+
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            payload = {
+                "model": self.model,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You are a financial data extraction expert. Extract investment information and return ONLY valid JSON with no additional text or markdown."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                "temperature": 0.1,
+                "max_tokens": 1024
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    self.api_url, 
+                    headers=headers, 
+                    json=payload
+                ) as response:
+                    if response.status != 200:
+                        error_text = await response.text()
+                        return ExtractionResult(
+                            success=False,
+                            validation_errors=[f"API Error {response.status}: {error_text}"]
+                        )
+                    
+                    result = await response.json()
+                    llm_response = result["choices"][0]["message"]["content"]
+            
+            # Parse and validate the response
+            return self._parse_and_validate(llm_response)
+            
+        except Exception as e:
+            return ExtractionResult(
+                success=False,
+                validation_errors=[f"Extraction error: {str(e)}"]
+            )
+    
+    def _parse_and_validate(self, llm_response: str) -> ExtractionResult:
+        """
+        Parse LLM response and validate against schema
+        """
+        try:
+            cleaned_response = llm_response.strip()
+            if cleaned_response.startswith("```"):
+                cleaned_response = re.sub(r'^```(?:json)?\n?', '', cleaned_response)
+                cleaned_response = re.sub(r'\n?```$', '', cleaned_response)
+            
+
+            raw_data = json.loads(cleaned_response)
+            investment_obj = InvestmentObjective(**raw_data)
+            
+            # Identify missing fields
+            missing_fields = self._identify_missing_fields(investment_obj)
+            
+            # Additional validation
+            validation_errors = self._additional_validations(investment_obj)
+            
+            return ExtractionResult(
+                success=len(validation_errors) == 0,
+                data=investment_obj.model_dump() if investment_obj else None,
+                missing_fields=missing_fields,
+                validation_errors=validation_errors,
+                raw_llm_response=llm_response
+            )
+            
+        except json.JSONDecodeError as e:
+            return ExtractionResult(
+                success=False,
+                validation_errors=[f"JSON parsing error: {str(e)}"],
+                raw_llm_response=llm_response
+            )
+        except ValidationError as e:
+            return ExtractionResult(
+                success=False,
+                validation_errors=[f"Validation error: {str(e)}"],
+                raw_llm_response=llm_response
+            )
+        except Exception as e:
+            return ExtractionResult(
+                success=False,
+                validation_errors=[f"Unknown error: {str(e)}"],
+                raw_llm_response=llm_response
+            )
+    
+    def _identify_missing_fields(self, obj: InvestmentObjective) -> List[str]:
+        """Identify which critical fields are missing."""
+        missing = []
+        
+        critical_fields = {
+            "investment_amount": obj.investment_amount,
+            "expected_return_target": obj.expected_return_target,
+            "investment_horizon_years": obj.investment_horizon_years,
+            "risk_tolerance": obj.risk_tolerance
+        }
+        
+        for field_name, field_value in critical_fields.items():
+            if field_value is None:
+                missing.append(field_name)
+        
+        return missing
+    
+    def _additional_validations(self, obj: InvestmentObjective) -> List[str]:
+        """Perform additional business logic validations."""
+        errors = []
+        
+        # Validate allocation strategy sums to 1
+        if obj.allocation_strategy:
+            total = sum(obj.allocation_strategy.values())
+            if abs(total - 1.0) > 0.01:
+                errors.append(
+                    f"Allocation strategy must sum to 1.0, got {total:.2f}"
+                )
+        
+        # Validate expected return is reasonable
+        if obj.expected_return_target and obj.expected_return_target > 1.0:
+            errors.append(
+                f"Expected return target seems unrealistic: {obj.expected_return_target*100}%"
+            )
+        
+        return errors
+
+
+def extract_investment_objectives_sync(
+    transcript: str, 
+    api_key: str,
+    model: str = "llama-3.1-8b-instant"
+) -> ExtractionResult:
+    import asyncio
+    
+    extractor = InvestmentObjectiveExtractor(api_key, model)
+
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # If already in async context, create new loop
+            import nest_asyncio
+            nest_asyncio.apply()
+    except RuntimeError:
+        pass
+    
+    return asyncio.run(extractor.extract_from_transcript(transcript))
 
 
 MANDATORY_FIELDS = [
@@ -54,7 +309,12 @@ class RiskTolerance(BaseModel):
 
     @field_validator("category")
     def _normalise_category(cls, v: str) -> str:
-        return v.strip().lower()
+        if not isinstance(v, str):
+            raise ValueError("Risk tolerance category must be a string")
+        normalised = v.strip().lower()
+        if normalised not in ["low", "medium", "high"]:
+            raise ValueError(f"Risk tolerance category must be 'low', 'medium', or 'high', got '{normalised}'")
+        return normalised
 
 
 class Constraints(BaseModel):
@@ -74,21 +334,21 @@ class Preferences(BaseModel):
 
 class InvestmentParameters(BaseModel):
     investable_amount: float = Field(..., description="Capital to allocate (mandatory)")
-    investment_horizon: Union[str, int] = Field(
-        ..., description="Investment timeframe (mandatory)"
-    )
-    target_return: float = Field(..., description="Target annual return percentage")
+    investment_horizon: Union[str, int] = Field(..., description="Investment timeframe (mandatory)")
+    target_return: float = Field(..., description="Target annual return percentage (mandatory)")
     risk_tolerance: RiskTolerance = Field(..., description="Risk tolerance (mandatory)")
     liquidity_needs: str = Field(..., description="Liquidity requirements (mandatory)")
-    constraints: Constraints = Field(default_factory=Constraints)
-    preferences: Preferences = Field(default_factory=Preferences)
-    generic_notes: List[str] = Field(default_factory=list)
+    constraints: Constraints = Field(default_factory=Constraints, description="Investment constraints")
+    preferences: Preferences = Field(default_factory=Preferences, description="Investment preferences")
+    generic_notes: List[str] = Field(default_factory=list, description="Additional notes")
 
     @field_validator("liquidity_needs")
     def _validate_liquidity(cls, v: str) -> str:
+        if not isinstance(v, str):
+            raise ValueError("Liquidity needs must be a string")
         valid_options = {"immediate", "3-12 months", "long"}
         if v not in valid_options:
-            raise ValueError(f"liquidity_needs must be one of {sorted(valid_options)}")
+            raise ValueError(f"liquidity_needs must be one of {sorted(valid_options)}, got '{v}'")
         return v
 
 
@@ -132,6 +392,136 @@ def _search_first(patterns: Iterable[str], text: str) -> Optional[re.Match[str]]
 
 
 def extract_from_transcript(transcript: str) -> Dict[str, Any]:
+    """
+    Extract investment objectives from transcript using LLM-based extraction.
+    Falls back to regex-based extraction if LLM fails or returns invalid data.
+    """
+    import os
+    
+    # Try LLM extraction first
+    api_key = os.getenv("GROQ_API_KEY")
+    if api_key:
+        try:
+            result = extract_investment_objectives_sync(transcript, api_key)
+            if result.success and result.data:
+                try:
+                    return _map_llm_output_to_system_format(result.data)
+                except ValueError as e:
+                    # LLM returned data but it was invalid - log and fall back
+                    print(f"LLM returned invalid data: {e}")
+        except Exception as e:
+            # LLM extraction failed completely - log and fall back
+            print(f"LLM extraction failed: {e}")
+    
+    # Fallback to regex-based extraction
+    return _extract_from_transcript_regex(transcript)
+
+
+def _map_llm_output_to_system_format(llm_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Map LLM extractor output to the format expected by the objective intake system.
+    Raises ValueError for missing critical fields.
+    """
+    if not isinstance(llm_data, dict):
+        raise ValueError("LLM data must be a dictionary")
+    
+    extraction: Dict[str, Any] = {
+        "risk_tolerance": {},
+        "constraints": {"sector_limits": {}, "ESG_exclusions": []},
+        "preferences": {},
+        "generic_notes": [],
+    }
+    
+    # Critical fields that must be present
+    critical_fields = ["investment_amount", "investment_horizon_years", "expected_return_target", "risk_tolerance"]
+    missing_critical = []
+    
+    for field in critical_fields:
+        if field not in llm_data or llm_data[field] is None:
+            missing_critical.append(field)
+    
+    if missing_critical:
+        raise ValueError(f"Missing critical fields from LLM output: {missing_critical}")
+    
+    # Map investment amount
+    investment_amount = llm_data.get("investment_amount")
+    if not isinstance(investment_amount, (int, float)) or investment_amount <= 0:
+        raise ValueError(f"Invalid investment_amount: {investment_amount}")
+    extraction["investable_amount"] = float(investment_amount)
+    
+    # Map investment horizon
+    horizon_years = llm_data.get("investment_horizon_years")
+    if not isinstance(horizon_years, int) or horizon_years <= 0:
+        raise ValueError(f"Invalid investment_horizon_years: {horizon_years}")
+    
+    if horizon_years <= 3:
+        extraction["investment_horizon"] = "short"
+    elif horizon_years <= 7:
+        extraction["investment_horizon"] = "medium"
+    else:
+        extraction["investment_horizon"] = "long"
+    
+    # Map expected return target
+    expected_return = llm_data.get("expected_return_target")
+    if not isinstance(expected_return, (int, float)) or not (0 < expected_return < 1):
+        raise ValueError(f"Invalid expected_return_target: {expected_return}. Must be between 0 and 1.")
+    extraction["target_return"] = expected_return * 100  # Convert to percentage
+    
+    # Map risk tolerance
+    risk_tolerance = llm_data.get("risk_tolerance")
+    if not isinstance(risk_tolerance, str) or risk_tolerance.lower() not in ["low", "medium", "high"]:
+        raise ValueError(f"Invalid risk_tolerance: {risk_tolerance}. Must be 'low', 'medium', or 'high'")
+    extraction["risk_tolerance"]["category"] = risk_tolerance.lower()
+    
+    # Map allocation strategy to preferences (if available)
+    if "allocation_strategy" in llm_data:
+        allocation_strategy = llm_data["allocation_strategy"]
+        if isinstance(allocation_strategy, dict):
+            # Validate that allocation sums to 1.0
+            total = sum(allocation_strategy.values())
+            if abs(total - 1.0) > 0.01:
+                raise ValueError(f"Allocation strategy must sum to 1.0, got {total}")
+            extraction["preferences"]["allocation_strategy"] = allocation_strategy
+    
+    # Map constraints
+    if "constraints" in llm_data:
+        llm_constraints = llm_data["constraints"]
+        if isinstance(llm_constraints, dict):
+            # Map ESG exclusions
+            if "ESG_exclusions" in llm_constraints:
+                esg_exclusions = llm_constraints["ESG_exclusions"]
+                if isinstance(esg_exclusions, list):
+                    extraction["constraints"]["ESG_exclusions"] = esg_exclusions
+            
+            # Map other constraints with validation
+            for key, value in llm_constraints.items():
+                if key not in ["ESG_exclusions"]:
+                    if isinstance(value, (int, float)):
+                        extraction["constraints"][key] = float(value)
+                    elif isinstance(value, (list, dict)):
+                        extraction["constraints"][key] = value
+    
+    # Map generic notes
+    if "generic_notes" in llm_data:
+        generic_notes = llm_data["generic_notes"]
+        if isinstance(generic_notes, list):
+            extraction["generic_notes"] = generic_notes
+        elif isinstance(generic_notes, str):
+            extraction["generic_notes"] = [generic_notes]
+    
+    # Set liquidity needs based on horizon (required field)
+    horizon = extraction.get("investment_horizon")
+    if horizon == "short":
+        extraction["liquidity_needs"] = "3-12 months"
+    elif horizon == "medium":
+        extraction["liquidity_needs"] = "3-12 months"
+    else:
+        extraction["liquidity_needs"] = "long"
+    
+    return extraction
+
+
+def _extract_from_transcript_regex(transcript: str) -> Dict[str, Any]:
     extraction: Dict[str, Any] = {
         "risk_tolerance": {},
         "constraints": {"sector_limits": {}, "ESG_exclusions": []},
@@ -438,6 +828,16 @@ def extract_from_transcript(transcript: str) -> Dict[str, Any]:
         ):
             if not any(re.search(pattern, lower_line) for pattern in amount_patterns):
                 extraction["generic_notes"].append(line.strip())
+
+    # Set liquidity needs based on horizon if not already set
+    if not extraction.get("liquidity_needs"):
+        horizon = extraction.get("investment_horizon")
+        if horizon == "short":
+            extraction["liquidity_needs"] = "3-12 months"
+        elif horizon == "medium":
+            extraction["liquidity_needs"] = "3-12 months"
+        else:
+            extraction["liquidity_needs"] = "long"
 
     return extraction
 

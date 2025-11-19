@@ -12,6 +12,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -69,10 +70,18 @@ def _calculate_auto_sell_at(record, execution_time, logger, trade_id):
         trade_id, auto_sell_at, auto_sell_window_minutes
     )
     
-    if auto_sell_at.hour > 15 or (auto_sell_at.hour == 15 and auto_sell_at.minute > 30):
+    # Compare against market close time in Asia/Kolkata timezone (15:30 IST)
+    try:
+        ist = ZoneInfo("Asia/Kolkata")
+        local_auto_sell = auto_sell_at.astimezone(ist)
+    except Exception:
+        # If timezone conversion is not possible, fall back to naive comparison
+        local_auto_sell = auto_sell_at
+
+    if local_auto_sell.hour > 15 or (local_auto_sell.hour == 15 and local_auto_sell.minute > 30):
         logger.warning(
-            "⚠️ Auto-sell time %s would be after market close (>15:30), skipping auto-sell for trade %s",
-            auto_sell_at, trade_id
+            "⚠️ Auto-sell time %s (local %s) would be after market close (>15:30 IST), skipping auto-sell for trade %s",
+            auto_sell_at, local_auto_sell, trade_id
         )
         return None
     
