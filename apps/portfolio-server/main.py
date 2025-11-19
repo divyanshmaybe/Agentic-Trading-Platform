@@ -54,39 +54,39 @@ def create_lifespan(base_app_instance, pipeline_service_instance):
         # Run base startup
         await base_app_instance._startup()
         
-        # # Check if pipelines should run on startup
-        # news_on_startup = os.getenv("NEWS_PIPELINE_RUN_ON_STARTUP", "true").lower() in {"1", "true", "yes"}
-        # nse_on_startup = os.getenv("NSE_PIPELINE_RUN_ON_STARTUP", "true").lower() in {"1", "true", "yes"}
+        # Check if pipelines should run on startup
+        news_on_startup = os.getenv("NEWS_PIPELINE_RUN_ON_STARTUP", "true").lower() in {"1", "true", "yes"}
+        nse_on_startup = os.getenv("NSE_PIPELINE_RUN_ON_STARTUP", "true").lower() in {"1", "true", "yes"}
         
-        # # Initialize pipeline status tracking
-        # app.state.pipeline_status = "not_started"
-        # app.state.pipeline_job_id = None
-        # app.state.news_pipeline_job_id = None
+        # Initialize pipeline status tracking
+        app.state.pipeline_status = "not_started"
+        app.state.pipeline_job_id = None
+        app.state.news_pipeline_job_id = None
         
-        # # Dispatch news pipeline on startup if configured
-        # if news_on_startup:
-        #     try:
-        #         base_app_instance.logger.info("🚀 Dispatching news sentiment pipeline at startup...")
-        #         result = run_news_sentiment_pipeline.delay()
-        #         app.state.news_pipeline_job_id = result.id
-        #         base_app_instance.logger.info(f"✅ News pipeline started: task_id={result.id}")
-        #     except Exception as exc:
-        #         base_app_instance.logger.error(f"❌ Failed to dispatch news pipeline: {exc}")
+        # Dispatch news pipeline on startup if configured
+        if news_on_startup:
+            try:
+                base_app_instance.logger.info("🚀 Dispatching news sentiment pipeline at startup...")
+                result = run_news_sentiment_pipeline.delay()
+                app.state.news_pipeline_job_id = result.id
+                base_app_instance.logger.info(f"✅ News pipeline started: task_id={result.id}")
+            except Exception as exc:
+                base_app_instance.logger.error(f"❌ Failed to dispatch news pipeline: {exc}")
         
-        # # Dispatch NSE pipeline on startup if configured
-        # if nse_on_startup:
-        #     try:
-        #         base_app_instance.logger.info("🚀 Dispatching NSE pipeline at startup...")
-        #         result = start_nse_pipeline.delay()
-        #         app.state.pipeline_job_id = result.id
-        #         app.state.pipeline_status = "running"
-        #         base_app_instance.logger.info(f"✅ NSE pipeline started: task_id={result.id}")
-        #     except Exception as exc:
-        #         base_app_instance.logger.error(f"❌ Failed to dispatch NSE pipeline: {exc}")
+        # Dispatch NSE pipeline on startup if configured
+        if nse_on_startup:
+            try:
+                base_app_instance.logger.info("🚀 Dispatching NSE pipeline at startup...")
+                result = start_nse_pipeline.delay()
+                app.state.pipeline_job_id = result.id
+                app.state.pipeline_status = "running"
+                base_app_instance.logger.info(f"✅ NSE pipeline started: task_id={result.id}")
+            except Exception as exc:
+                base_app_instance.logger.error(f"❌ Failed to dispatch NSE pipeline: {exc}")
         
-        # base_app_instance.logger.info(
-        #     "📋 Pipelines configured. News: hourly via Beat + startup, NSE: continuous polling (60s interval)"
-        # )
+        base_app_instance.logger.info(
+            "📋 Pipelines configured. News: hourly via Beat + startup, NSE: continuous polling (60s interval)"
+        )
         
         # Subscribe to Nifty 500 symbols on startup (if enabled)
         nifty500_subscribe = os.getenv("ENABLE_NIFTY500_SUBSCRIPTION", "false").lower() in {"1", "true", "yes"}
