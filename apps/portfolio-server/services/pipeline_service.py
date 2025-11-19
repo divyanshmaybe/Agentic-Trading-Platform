@@ -1719,23 +1719,41 @@ class PipelineService:
                             if not user_id:
                                 continue
                             
-                            # Create SELL trade execution log
+                            # Create SELL trade record first
                             import uuid
                             import json
                             from decimal import Decimal
-                            
-                            sell_log = client.tradeexecutionlog.create(
+
+                            sell_trade_data = {
+                                "portfolio_id": portfolio_id,
+                                "organization_id": getattr(portfolio, "organization_id", None),
+                                "customer_id": user_id,
+                                "trade_type": "auto",
+                                "symbol": symbol,
+                                "exchange": "NSE",
+                                "segment": "EQUITY",
+                                "side": "SELL",
+                                "order_type": "market",
+                                "quantity": quantity,
+                                "price": Decimal(str(reference_price)),
+                                "status": "pending",
+                                "source": "market_close_worker",
+                                "agent_id": str(getattr(agent, "id", "")),
+                                "metadata": json.dumps({
+                                    "order_type": "market_close_sell",
+                                    "triggered_by": "market_close_worker",
+                                    "position_id": str(getattr(position, "id", "")),
+                                }),
+                            }
+
+                            sell_trade = await client.trade.create(data=sell_trade_data)
+
+                            # Create SELL trade execution log
+                            sell_log = await client.tradeexecutionlog.create(
                                 data={
+                                    "trade_id": sell_trade.id,
                                     "request_id": f"market_close_sell_{uuid.uuid4().hex[:12]}",
-                                    "user_id": user_id,
-                                    "portfolio_id": portfolio_id,
-                                    "symbol": symbol,
-                                    "side": "SELL",
-                                    "quantity": quantity,
-                                    "reference_price": Decimal(str(reference_price)),
                                     "status": "pending",
-                                    "agent_id": str(getattr(agent, "id", "")),
-                                    "agent_type": "high_risk",
                                     "metadata": json.dumps({
                                         "order_type": "market_close_sell",
                                         "triggered_by": "market_close_worker",

@@ -85,7 +85,6 @@ model Portfolio {
   rebalance_runs RebalanceRun[]
 
   objective         Objective?          @relation(fields: [objective_id], references: [id], onDelete: SetNull)
-  TradeExecutionLog TradeExecutionLog[]
 
   @@index([organization_id])
   @@index([customer_id])
@@ -190,12 +189,21 @@ model Trade {
   realized_pnl      Decimal?  @db.Decimal(20, 4)
   source            String?
   auto_sell_at      DateTime?
+
+  // NSE Pipeline specific fields
+  signal_id         String?
+  confidence        Decimal?  @db.Decimal(9, 6)
+  take_profit_pct   Decimal?  @db.Decimal(9, 6)
+  stop_loss_pct     Decimal?  @db.Decimal(9, 6)
+  allocated_capital Decimal?  @db.Decimal(20, 4)
+
   metadata          Json?     @default("{}")
   created_at        DateTime  @default(now())
   updated_at        DateTime  @updatedAt
 
-  portfolio Portfolio     @relation(fields: [portfolio_id], references: [id], onDelete: Cascade)
-  agent     TradingAgent? @relation(fields: [agent_id], references: [id])
+  portfolio Portfolio            @relation(fields: [portfolio_id], references: [id], onDelete: Cascade)
+  agent     TradingAgent?        @relation(fields: [agent_id], references: [id])
+  executions TradeExecutionLog[]
 
   @@index([organization_id])
   @@index([portfolio_id])
@@ -325,37 +333,23 @@ model AllocationSnapshot {
 
 model TradeExecutionLog {
   id                String   @id @default(uuid())
+  trade_id          String   // Link to main Trade record
   request_id        String   @unique
-  user_id           String
-  portfolio_id      String?
-  symbol            String
-  side              String
-  quantity          Int
-  reference_price   Decimal  @db.Decimal(20, 4)
-  status            String   @default("pending")
+  status            String   @default("pending") // 'pending' | 'executed' | 'failed' | 'cancelled'
   executed_price    Decimal? @db.Decimal(20, 4)
   executed_quantity Int      @default(0)
-  agent_id          String?
-  agent_type        String?
-  signal_id         String?
   broker_order_id   String?
   error_message     String?
-  auto_sell_at      DateTime?
-  allocated_capital Decimal? @db.Decimal(20, 4)
-  confidence        Decimal? @db.Decimal(9, 6)
-  take_profit_pct   Decimal? @db.Decimal(9, 6)
-  stop_loss_pct     Decimal? @db.Decimal(9, 6)
+  execution_time    DateTime?
   metadata          Json?    @default("{}")
   created_at        DateTime @default(now())
   updated_at        DateTime @updatedAt
 
-  portfolio Portfolio? @relation(fields: [portfolio_id], references: [id], onDelete: SetNull)
+  trade Trade @relation(fields: [trade_id], references: [id], onDelete: Cascade)
 
-  @@index([user_id])
+  @@index([trade_id])
   @@index([status])
-  @@index([portfolio_id])
-  @@index([agent_id])
-  @@index([auto_sell_at])
+  @@index([request_id])
   @@map("trade_execution_logs")
 }
 

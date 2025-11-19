@@ -114,7 +114,11 @@ class TradeExecutionService:
         *,
         client: Optional[Any] = None,
     ) -> TradeExecutionRecord:
-        """Persist a trade execution job into the database."""
+        """Persist a trade execution job into the database.
+
+        Creates both a Trade record (containing all trade details) and a TradeExecutionLog
+        record (tracking execution attempts) linked by trade_id.
+        """
 
         client = client or await self._ensure_client()
 
@@ -136,85 +140,123 @@ class TradeExecutionService:
         if job_row.get("agent_type"):
             metadata["agent_type"] = job_row["agent_type"]
 
-        data = {
-            "request_id": job_row["request_id"],
-            "user_id": job_row["user_id"],
-            "symbol": job_row["symbol"],
-            "side": job_row["side"],
-            "quantity": int(job_row["quantity"]),
-            "reference_price": self._as_decimal(job_row["reference_price"]),
-            "status": "pending",
-            "metadata": json.dumps(metadata),
-        }
-        
-        # Verify portfolio exists before setting portfolio_id to avoid foreign key constraint errors
+        # Get portfolio information for Trade record creation
         portfolio_id = job_row.get("portfolio_id")
+        portfolio = None
         if portfolio_id:
             try:
                 portfolio = await client.portfolio.find_unique(where={"id": portfolio_id})
-                if portfolio:
-                    data["portfolio_id"] = portfolio_id
-                else:
+                if not portfolio:
                     self.logger.warning(
-                        "⚠️ Portfolio %s not found in database, creating trade log without portfolio_id",
+                        "⚠️ Portfolio %s not found in database, creating trade without portfolio relation",
                         portfolio_id
                     )
             except Exception as portfolio_check_exc:
                 self.logger.warning(
-                    "⚠️ Failed to verify portfolio %s exists: %s, creating trade log without portfolio_id",
+                    "⚠️ Failed to verify portfolio %s exists: %s, creating trade without portfolio relation",
                     portfolio_id, portfolio_check_exc
                 )
-        if job_row.get("agent_id"):
-            data["agent_id"] = job_row["agent_id"]
-        if job_row.get("agent_type"):
-            data["agent_type"] = job_row["agent_type"]
-        if job_row.get("signal_id"):
-            data["signal_id"] = job_row["signal_id"]
-        
-        if job_row.get("allocated_capital"):
-            data["allocated_capital"] = self._as_decimal(job_row["allocated_capital"])
-        if job_row.get("confidence"):
-            data["confidence"] = self._as_decimal(job_row["confidence"], "0.000001")
-        if job_row.get("take_profit_pct"):
-            data["take_profit_pct"] = self._as_decimal(job_row["take_profit_pct"], "0.000001")
-        if job_row.get("stop_loss_pct"):
-            data["stop_loss_pct"] = self._as_decimal(job_row["stop_loss_pct"], "0.000001")
 
-        record = await client.tradeexecutionlog.create(data=data)
-        
+        # Prepare Trade record data (contains all trade details)
+        trade_data = {
+            "portfolio_id": portfolio_id,
+            "organization_id": getattr(portfolio, "organization_id", None) if portfolio else None,
+            "customer_id": getattr(portfolio, "customer_id", None) if portfolio else None,
+            "trade_type": "auto",  # NSE pipeline trades are auto-trades
+            "symbol": job_row["symbol"],
+            "exchange": "NSE",
+            "segment": "EQUITY",
+            "side": job_row["side"],
+            "order_type": "market",
+            "quantity": int(job_row["quantity"]),
+            "price": self._as_decimal(job_row["reference_price"]),
+            "status": "pending",
+            "source": "nse_pipeline",
+            "metadata": json.dumps(metadata),
+        }
+
+        # Add NSE-specific fields to Trade record
+        if job_row.get("signal_id"):
+            trade_data["signal_id"] = job_row["signal_id"]
+        if job_row.get("allocated_capital"):
+            trade_data["allocated_capital"] = self._as_decimal(job_row["allocated_capital"])
+        if job_row.get("confidence"):
+            trade_data["confidence"] = self._as_decimal(job_row["confidence"], "0.000001")
+        if job_row.get("take_profit_pct"):
+            trade_data["take_profit_pct"] = self._as_decimal(job_row["take_profit_pct"], "0.000001")
+        if job_row.get("stop_loss_pct"):
+            trade_data["stop_loss_pct"] = self._as_decimal(job_row["stop_loss_pct"], "0.000001")
+
+        # Set agent relation if available
+        if job_row.get("agent_id"):
+            trade_data["agent_id"] = job_row["agent_id"]
+
+        # Create Trade record first
+        trade_record = await client.trade.create(data=trade_data)
+        self.logger.debug("✅ Created Trade record: %s", trade_record.id)
+
+        # Prepare TradeExecutionLog data (minimal execution tracking)
+        execution_log_data = {
+            "trade_id": trade_record.id,
+            "request_id": job_row["request_id"],
+            "status": "pending",
+            "metadata": json.dumps(metadata),
+            # Include trade fields for easier access in tests and operations
+            "symbol": job_row["symbol"],
+            "side": job_row["side"],
+            "quantity": int(job_row["quantity"]),
+            "reference_price": self._as_decimal(job_row["reference_price"]),
+            "allocated_capital": self._as_decimal(job_row["allocated_capital"]),
+            "confidence": self._as_decimal(job_row["confidence"], "0.000001"),
+            "take_profit_pct": self._as_decimal(job_row["take_profit_pct"], "0.000001"),
+            "stop_loss_pct": self._as_decimal(job_row["stop_loss_pct"], "0.000001"),
+            "user_id": job_row["user_id"],
+            "portfolio_id": job_row["portfolio_id"],
+            "agent_id": job_row.get("agent_id"),
+            "agent_type": job_row.get("agent_type"),
+            "agent_status": job_row.get("agent_status"),
+        }
+
+        # Create TradeExecutionLog record
+        execution_record = await client.tradeexecutionlog.create(data=execution_log_data)
+        self.logger.debug("✅ Created TradeExecutionLog record: %s", execution_record.id)
+
         # Extract agent information for logging
         agent_id = job_row.get("agent_id")
         agent_type = job_row.get("agent_type")
         agent_status = job_row.get("agent_status")
-        
+
         if agent_id:
             self.logger.info(
-                "✅ Logged trade request %s for portfolio %s | Agent %s (%s, %s) | %s %s x %d | Triggered by %s",
-                record.id,
-                data.get("portfolio_id", "unknown"),
+                "✅ Logged trade request %s (Trade: %s) for portfolio %s | Agent %s (%s, %s) | %s %s x %d | Triggered by %s",
+                execution_record.id,
+                trade_record.id,
+                portfolio_id or "unknown",
                 agent_id,
                 agent_type or "unknown",
                 agent_status or "unknown",
-                data["side"],
-                data["symbol"],
-                data["quantity"],
+                trade_data["side"],
+                trade_data["symbol"],
+                trade_data["quantity"],
                 metadata.get("triggered_by", "unknown"),
             )
         else:
             self.logger.info(
-                "✅ Logged trade request %s for portfolio %s (%s %s x %s) - triggered by %s (no agent)",
-                record.id,
-                data.get("portfolio_id", "unknown"),
-                data["side"],
-                data["symbol"],
-                data["quantity"],
+                "✅ Logged trade request %s (Trade: %s) for portfolio %s (%s %s x %s) - triggered by %s (no agent)",
+                execution_record.id,
+                trade_record.id,
+                portfolio_id or "unknown",
+                trade_data["side"],
+                trade_data["symbol"],
+                trade_data["quantity"],
                 metadata.get("triggered_by", "unknown"),
             )
+
         return TradeExecutionRecord(
-            id=record.id,
-            request_id=data["request_id"],
-            status=record.status,
-            broker_order_id=record.broker_order_id if hasattr(record, "broker_order_id") else None,
+            id=execution_record.id,
+            request_id=execution_log_data["request_id"],
+            status=execution_record.status,
+            broker_order_id=getattr(execution_record, "broker_order_id", None),
         )
 
     async def persist_and_publish(
@@ -244,8 +286,14 @@ class TradeExecutionService:
                 except json.JSONDecodeError:
                     metadata = {"raw_metadata": metadata_json}
 
+                # Get the TradeExecutionLog to access the trade_id
+                execution_log = await client.tradeexecutionlog.find_unique(
+                    where={"id": record.id},
+                    include={"trade": True}
+                )
+                
                 event = TradeExecutionEvent(
-                    trade_id=record.id,
+                    trade_id=execution_log.trade_id,  # Use Trade ID from TradeExecutionLog
                     request_id=row["request_id"],
                     signal_id=row.get("signal_id", ""),
                     user_id=row["user_id"],
@@ -293,7 +341,10 @@ class TradeExecutionService:
         executed_quantity: Optional[int] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Update persisted trade log with execution results."""
+        """Update persisted trade execution log with execution results.
+
+        Updates both TradeExecutionLog and corresponding Trade record.
+        """
 
         client = await self._ensure_client()
         data: Dict[str, Any] = {
@@ -310,11 +361,36 @@ class TradeExecutionService:
         if metadata:
             data["metadata"] = json.dumps(metadata)
 
-        await client.tradeexecutionlog.update(
+        # Update TradeExecutionLog
+        execution_record = await client.tradeexecutionlog.update(
             where={"id": trade_id},
             data=data,
         )
-        self.logger.info("Updated trade %s -> status=%s", trade_id, status)
+
+        # Also update corresponding Trade record if execution was successful
+        if status in ["executed", "simulated_executed"] and (executed_price is not None or executed_quantity is not None):
+            trade_update_data = {"status": "executed"}
+            if executed_price is not None:
+                trade_update_data["executed_price"] = self._as_decimal(executed_price)
+                trade_update_data["price"] = self._as_decimal(executed_price)  # Update price to executed price
+            if executed_quantity is not None:
+                trade_update_data["executed_quantity"] = executed_quantity
+            if executed_price is not None and executed_quantity is not None:
+                trade_update_data["execution_time"] = datetime.utcnow()
+                # Calculate net amount
+                net_amount = Decimal(str(executed_price * executed_quantity))
+                trade_update_data["net_amount"] = net_amount
+
+            try:
+                await client.trade.update(
+                    where={"id": execution_record.trade_id},
+                    data=trade_update_data,
+                )
+                self.logger.debug("Updated Trade %s status to executed", execution_record.trade_id)
+            except Exception as trade_update_exc:
+                self.logger.warning("Failed to update Trade record %s: %s", execution_record.trade_id, trade_update_exc)
+
+        self.logger.info("Updated trade execution %s -> status=%s", trade_id, status)
 
     async def fetch_trade_log(self, trade_id: str) -> Optional[Any]:
         client = await self._ensure_client()
@@ -481,43 +557,46 @@ class TradeExecutionService:
     ) -> None:
         """
         Create take-profit and stop-loss orders for an executed trade.
-        
+
         This creates pending orders that will be monitored by the order monitor worker.
         The TP/SL percentages come from the original trade record.
-        
+
         Args:
             trade_record: The executed trade log record
             executed_price: Price at which the trade was executed
             executed_quantity: Quantity that was executed
         """
-        
+
         client = await self._ensure_client()
-        
+
         # Extract fields from trade record
         user_id = str(getattr(trade_record, "user_id", ""))
         portfolio_id = str(getattr(trade_record, "portfolio_id", ""))
         symbol = str(getattr(trade_record, "symbol", ""))
         side = str(getattr(trade_record, "side", "BUY"))
-        
+
         # Get TP/SL percentages (they are stored as decimals like 0.03 for 3%)
         tp_pct_raw = getattr(trade_record, "take_profit_pct", Decimal("0.03"))
         sl_pct_raw = getattr(trade_record, "stop_loss_pct", Decimal("0.01"))
         tp_pct = float(tp_pct_raw)
         sl_pct = float(sl_pct_raw)
-        
+
         self.logger.debug(
             "TP/SL percentages for %s: TP=%.4f (%.1f%%), SL=%.4f (%.1f%%)",
             symbol, tp_pct, tp_pct * 100, sl_pct, sl_pct * 100
         )
-        
+
         if not user_id or not portfolio_id or not symbol:
             self.logger.warning(
                 "Cannot create TP/SL orders: missing required fields for trade %s",
                 getattr(trade_record, "id", ""),
             )
             return
-        
+
         try:
+            # Get portfolio for organization/customer info
+            portfolio = await client.portfolio.find_unique(where={"id": portfolio_id})
+
             # Calculate TP/SL prices
             if side == "BUY":
                 # For long positions
@@ -531,7 +610,7 @@ class TradeExecutionService:
                 sl_price = executed_price * (1 + sl_pct)
                 tp_side = "BUY"
                 sl_side = "BUY"
-            
+
             # Create Take-Profit Order
             tp_metadata = {
                 "order_type": "take_profit",
@@ -539,30 +618,72 @@ class TradeExecutionService:
                 "triggered_by": "nse_pipeline_tp",
                 "target_pct": tp_pct,
             }
-            
-            tp_order = await client.tradeexecutionlog.create(
+
+            # Create TP Trade record first
+            tp_trade_data = {
+                "portfolio_id": portfolio_id,
+                "organization_id": getattr(portfolio, "organization_id", None) if portfolio else None,
+                "customer_id": getattr(portfolio, "customer_id", None) if portfolio else None,
+                "trade_type": "auto",
+                "symbol": symbol,
+                "exchange": "NSE",
+                "segment": "EQUITY",
+                "side": tp_side,
+                "order_type": "limit",  # TP/SL are limit orders
+                "quantity": executed_quantity,
+                "price": self._as_decimal(tp_price),
+                "status": "pending",
+                "source": "nse_pipeline_tp_sl",
+                "metadata": json.dumps(tp_metadata),
+            }
+
+            # Copy NSE fields from parent trade if available
+            agent_id = None
+            if hasattr(trade_record, "trade") and trade_record.trade:
+                parent_trade = trade_record.trade
+                if hasattr(parent_trade, "signal_id") and parent_trade.signal_id:
+                    tp_trade_data["signal_id"] = parent_trade.signal_id
+                if hasattr(parent_trade, "allocated_capital"):
+                    tp_trade_data["allocated_capital"] = parent_trade.allocated_capital
+                if hasattr(parent_trade, "confidence"):
+                    tp_trade_data["confidence"] = parent_trade.confidence
+                if hasattr(parent_trade, "take_profit_pct"):
+                    tp_trade_data["take_profit_pct"] = parent_trade.take_profit_pct
+                if hasattr(parent_trade, "stop_loss_pct"):
+                    tp_trade_data["stop_loss_pct"] = parent_trade.stop_loss_pct
+                if hasattr(parent_trade, "agent_id") and parent_trade.agent_id:
+                    tp_trade_data["agent_id"] = parent_trade.agent_id
+                    agent_id = parent_trade.agent_id
+
+            tp_trade_record = await client.trade.create(data=tp_trade_data)
+
+            # Create TP TradeExecutionLog
+            tp_execution_record = await client.tradeexecutionlog.create(
                 data={
+                    "trade_id": tp_trade_record.id,
                     "request_id": f"tp_{uuid.uuid4().hex[:12]}",
-                    "user_id": user_id,
-                    "portfolio_id": portfolio_id,
+                    "status": "pending",
+                    "metadata": json.dumps(tp_metadata),
+                    # Include trade fields for test access
                     "symbol": symbol,
                     "side": tp_side,
                     "quantity": executed_quantity,
-                    "reference_price": self._as_decimal(tp_price),
-                    "status": "pending",
-                    "metadata": json.dumps(tp_metadata),
+                    "price": self._as_decimal(tp_price),
+                    "portfolio_id": portfolio_id,
+                    "agent_id": agent_id,
                 }
             )
-            
+
             self.logger.info(
-                "✅ Created TP order %s: %s %s @ ₹%.2f (%.1f%% profit)",
-                tp_order.id,
+                "✅ Created TP order %s (Trade: %s): %s %s @ ₹%.2f (%.1f%% profit)",
+                tp_execution_record.id,
+                tp_trade_record.id,
                 tp_side,
                 symbol,
                 tp_price,
                 tp_pct * 100,
             )
-            
+
             # Create Stop-Loss Order
             sl_metadata = {
                 "order_type": "stop_loss",
@@ -570,30 +691,70 @@ class TradeExecutionService:
                 "triggered_by": "nse_pipeline_sl",
                 "target_pct": sl_pct,
             }
-            
-            sl_order = await client.tradeexecutionlog.create(
+
+            # Create SL Trade record first
+            sl_trade_data = {
+                "portfolio_id": portfolio_id,
+                "organization_id": getattr(portfolio, "organization_id", None) if portfolio else None,
+                "customer_id": getattr(portfolio, "customer_id", None) if portfolio else None,
+                "trade_type": "auto",
+                "symbol": symbol,
+                "exchange": "NSE",
+                "segment": "EQUITY",
+                "side": sl_side,
+                "order_type": "stop",  # SL is a stop order
+                "quantity": executed_quantity,
+                "price": self._as_decimal(sl_price),
+                "status": "pending",
+                "source": "nse_pipeline_tp_sl",
+                "metadata": json.dumps(sl_metadata),
+            }
+
+            # Copy NSE fields from parent trade if available
+            if hasattr(trade_record, "trade") and trade_record.trade:
+                parent_trade = trade_record.trade
+                if hasattr(parent_trade, "signal_id") and parent_trade.signal_id:
+                    sl_trade_data["signal_id"] = parent_trade.signal_id
+                if hasattr(parent_trade, "allocated_capital"):
+                    sl_trade_data["allocated_capital"] = parent_trade.allocated_capital
+                if hasattr(parent_trade, "confidence"):
+                    sl_trade_data["confidence"] = parent_trade.confidence
+                if hasattr(parent_trade, "take_profit_pct"):
+                    sl_trade_data["take_profit_pct"] = parent_trade.take_profit_pct
+                if hasattr(parent_trade, "stop_loss_pct"):
+                    sl_trade_data["stop_loss_pct"] = parent_trade.stop_loss_pct
+                if hasattr(parent_trade, "agent_id") and parent_trade.agent_id:
+                    sl_trade_data["agent_id"] = parent_trade.agent_id
+
+            sl_trade_record = await client.trade.create(data=sl_trade_data)
+
+            # Create SL TradeExecutionLog
+            sl_execution_record = await client.tradeexecutionlog.create(
                 data={
+                    "trade_id": sl_trade_record.id,
                     "request_id": f"sl_{uuid.uuid4().hex[:12]}",
-                    "user_id": user_id,
-                    "portfolio_id": portfolio_id,
+                    "status": "pending",
+                    "metadata": json.dumps(sl_metadata),
+                    # Include trade fields for test access
                     "symbol": symbol,
                     "side": sl_side,
                     "quantity": executed_quantity,
-                    "reference_price": self._as_decimal(sl_price),
-                    "status": "pending",
-                    "metadata": json.dumps(sl_metadata),
+                    "price": self._as_decimal(sl_price),
+                    "portfolio_id": portfolio_id,
+                    "agent_id": agent_id,
                 }
             )
-            
+
             self.logger.info(
-                "✅ Created SL order %s: %s %s @ ₹%.2f (%.1f%% loss)",
-                sl_order.id,
+                "✅ Created SL order %s (Trade: %s): %s %s @ ₹%.2f (%.1f%% loss)",
+                sl_execution_record.id,
+                sl_trade_record.id,
                 sl_side,
                 symbol,
                 sl_price,
                 sl_pct * 100,
             )
-            
+
         except Exception as exc:
             self.logger.error(
                 "Failed to create TP/SL orders for trade %s: %s",
@@ -863,15 +1024,24 @@ class TradeExecutionService:
                 executed_price,
             )
             
-            # Create Trade record (like manual trades do)
-            organization_id = getattr(portfolio, "organization_id", None)
-            customer_id = getattr(portfolio, "customer_id", None)
-            
+            # Update existing Trade record (created in create_trade_log)
+            # The trade_record parameter is a TradeExecutionLog, get the associated Trade
+            trade_id = getattr(trade_record, "trade_id", None)
+            if not trade_id:
+                self.logger.warning("No trade_id found in TradeExecutionLog %s, cannot update Trade record", getattr(trade_record, "id", ""))
+                return
+
+            # Fetch the existing Trade record
+            existing_trade = await client.trade.find_unique(where={"id": trade_id})
+            if not existing_trade:
+                self.logger.warning("Trade record %s not found for TradeExecutionLog %s", trade_id, getattr(trade_record, "id", ""))
+                return
+
             # Calculate fees and taxes (simulation mode - minimal fees)
             fees = Decimal("0.0")
             taxes = Decimal("0.0")
             net_amount = Decimal(str(executed_price * executed_quantity))
-            
+
             # Use auto_sell_at from parameter if provided, otherwise check record
             if auto_sell_at is None:
                 if hasattr(trade_record, "auto_sell_at") and trade_record.auto_sell_at:
@@ -881,81 +1051,78 @@ class TradeExecutionService:
                         auto_sell_at = datetime.fromisoformat(metadata["auto_sell_at"])
                     except:
                         pass
-            
+
             if auto_sell_at:
                 self.logger.info(
                     "⏰ Setting auto_sell_at for Trade record: %s (from %s)",
                     auto_sell_at,
                     "parameter" if auto_sell_at else "trade_record/metadata"
                 )
-            
-            # Get agent_id and agent_type - try record first, then metadata
-            agent_id = getattr(trade_record, "agent_id", None)
-            agent_type = getattr(trade_record, "agent_type", None)
-            
-            # Fallback to metadata if not in record
-            if not agent_id or not agent_type:
-                if hasattr(trade_record, "metadata") and trade_record.metadata:
-                    meta = trade_record.metadata
-                    if isinstance(meta, str):
-                        try:
-                            meta = json.loads(meta)
-                        except:
-                            meta = {}
-                    if isinstance(meta, dict):
-                        if not agent_id and "agent_id" in meta:
-                            agent_id = meta["agent_id"]
-                        if not agent_type and "agent_type" in meta:
-                            agent_type = meta["agent_type"]
-            
-            # Create Trade record
-            trade_data = {
-                "organization_id": organization_id,
-                "portfolio_id": portfolio_id,
-                "customer_id": customer_id,
-                "trade_type": "auto",  # Auto-trade from pipeline
-                "symbol": symbol,
-                "exchange": "NSE",
-                "segment": "EQUITY",
-                "side": side,
-                "order_type": "market",
-                "quantity": executed_quantity,
+
+            # Update Trade record with execution details
+            trade_update_data = {
                 "status": "executed",
-                "price": executed_price,
                 "executed_price": executed_price,
                 "executed_quantity": executed_quantity,
                 "execution_time": datetime.utcnow(),
                 "fees": fees,
                 "taxes": taxes,
                 "net_amount": net_amount,
-                "source": "nse_pipeline_auto_trade",
-                "metadata": json.dumps({
-                    "trade_log_id": str(getattr(trade_record, "id", "")),
-                    "agent_id": agent_id,
-                    "agent_type": agent_type,
-                    "triggered_by": metadata.get("triggered_by", "high_risk_agent"),
-                    "confidence": float(getattr(trade_record, "confidence", 0)),
-                    "allocated_capital": float(getattr(trade_record, "allocated_capital", 0)),
-                }),
             }
-            
-            # Set agent_id for database relation if available
-            if agent_id:
-                trade_data["agent_id"] = agent_id
-            
+
             if auto_sell_at:
-                trade_data["auto_sell_at"] = auto_sell_at
-            
-            trade_record_db = await client.trade.create(data=trade_data)
+                trade_update_data["auto_sell_at"] = auto_sell_at
+
+            # Update metadata to include execution details
+            existing_metadata = {}
+            if hasattr(existing_trade, "metadata") and existing_trade.metadata:
+                if isinstance(existing_trade.metadata, str):
+                    try:
+                        existing_metadata = json.loads(existing_trade.metadata)
+                    except json.JSONDecodeError:
+                        existing_metadata = {}
+                elif isinstance(existing_trade.metadata, dict):
+                    existing_metadata = existing_trade.metadata
+
+            # Add execution details to metadata
+            existing_metadata.update({
+                "executed_at": str(datetime.utcnow()),
+                "execution_price": executed_price,
+                "execution_quantity": executed_quantity,
+            })
+
+            trade_update_data["metadata"] = json.dumps(existing_metadata)
+
+            await client.trade.update(
+                where={"id": trade_id},
+                data=trade_update_data
+            )
+
             self.logger.info(
-                "✅ Created Trade record %s: %s %s x %d @ ₹%.2f",
-                trade_record_db.id,
+                "✅ Updated Trade record %s: %s %s x %d @ ₹%.2f",
+                trade_id,
                 side,
                 symbol,
                 executed_quantity,
                 executed_price,
             )
-            
+
+            # Get agent_id and agent_type from the existing Trade record
+            agent_id = getattr(existing_trade, "agent_id", None)
+            agent_type = None
+
+            # Try to get agent_type from metadata if not in record
+            if not agent_type:
+                if hasattr(existing_trade, "metadata") and existing_trade.metadata:
+                    meta = existing_trade.metadata
+                    if isinstance(meta, str):
+                        try:
+                            meta = json.loads(meta)
+                        except:
+                            meta = {}
+                    if isinstance(meta, dict) and "agent_type" in meta:
+                        agent_type = meta["agent_type"]
+
             if agent_id:
                 try:
                     # Get current agent to update trades array
@@ -987,7 +1154,7 @@ class TradeExecutionService:
                     
                     # Add new trade to agent's trades array
                     trade_entry = {
-                        "trade_id": str(trade_record_db.id),  # Trade record ID
+                        "trade_id": str(trade_id),  # Trade record ID
                         "trade_log_id": str(getattr(trade_record, "id", "")),  # TradeExecutionLog ID
                         "symbol": symbol,
                         "side": side,

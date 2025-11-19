@@ -114,7 +114,6 @@ class TradeEngine:
         )
 
         updated_trade = await self._execute_market_order(payload, price, existing_trade_id=trade.id)
-        await self._create_trade_execution_log(updated_trade.dict(), payload)
         portfolio_snapshot = await self._build_portfolio_snapshot(trade.portfolio_id)
 
         return True
@@ -348,24 +347,18 @@ class TradeEngine:
         import uuid
         import json
         from decimal import Decimal
-        
+
         try:
             executed_price = trade.get("executed_price") or trade.get("price") or 0
             await self.prisma.tradeexecutionlog.create(
                 data={
+                    "trade_id": trade.get("id"),  # Reference to the Trade record
                     "request_id": f"manual_{uuid.uuid4().hex[:12]}",
-                    "user_id": payload.customer_id,
-                    "portfolio_id": payload.portfolio_id,
-                    "symbol": payload.symbol,
-                    "side": payload.side,
-                    "quantity": payload.quantity,
-                    "reference_price": Decimal(str(executed_price)),
                     "status": trade.get("status", "executed"),
                     "executed_price": Decimal(str(executed_price)),
                     "executed_quantity": trade.get("executed_quantity", payload.quantity),
                     "metadata": json.dumps({
                         "source": payload.source or "manual",
-                        "trade_id": trade.get("id"),
                         "order_type": payload.order_type,
                     }),
                 },

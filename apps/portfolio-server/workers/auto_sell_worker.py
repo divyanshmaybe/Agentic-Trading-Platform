@@ -118,18 +118,39 @@ async def _sell_trade(trade, trade_service: TradeExecutionService, client, logge
     if hasattr(trade, "agent") and trade.agent:
         agent_type = getattr(trade.agent, "agent_type", None)
     
-    sell_log = client.tradeexecutionlog.create(
+    # Create Trade record first for auto-sell
+    trade_data = {
+        "portfolio_id": portfolio_id,
+        "organization_id": getattr(portfolio, "organization_id", None),
+        "customer_id": user_id,
+        "trade_type": "auto",
+        "symbol": symbol,
+        "exchange": "NSE",
+        "segment": "EQUITY",
+        "side": "SELL",
+        "order_type": "market",
+        "quantity": executed_quantity,
+        "price": Decimal(str(reference_price)),
+        "status": "pending",
+        "source": "auto_sell_worker",
+        "agent_id": getattr(trade, "agent_id", None),
+        "metadata": json.dumps({
+            "order_type": "auto_sell",
+            "parent_trade_id": str(trade.id),
+            "triggered_by": "auto_sell_worker",
+            "original_buy_price": executed_price,
+            "original_buy_time": str(getattr(trade, "execution_time", "")),
+        }),
+    }
+
+    sell_trade = await client.trade.create(data=trade_data)
+
+    # Create TradeExecutionLog record
+    sell_log = await client.tradeexecutionlog.create(
         data={
+            "trade_id": sell_trade.id,
             "request_id": f"auto_sell_{uuid.uuid4().hex[:12]}",
-            "user_id": user_id,
-            "portfolio_id": portfolio_id,
-            "symbol": symbol,
-            "side": "SELL",
-            "quantity": executed_quantity,
-            "reference_price": Decimal(str(reference_price)),
             "status": "pending",
-            "agent_id": getattr(trade, "agent_id", None),
-            "agent_type": agent_type,
             "metadata": json.dumps({
                 "order_type": "auto_sell",
                 "parent_trade_id": str(trade.id),
@@ -194,18 +215,39 @@ async def _sell_trade_log(trade_log, trade_service: TradeExecutionService, clien
         logger.error("❌ No user_id found for Portfolio %s", portfolio_id)
         return
     
-    sell_log = client.tradeexecutionlog.create(
+    # Create Trade record first for auto-sell
+    trade_data = {
+        "portfolio_id": portfolio_id,
+        "organization_id": getattr(portfolio, "organization_id", None),
+        "customer_id": user_id,
+        "trade_type": "auto",
+        "symbol": symbol,
+        "exchange": "NSE",
+        "segment": "EQUITY",
+        "side": "SELL",
+        "order_type": "market",
+        "quantity": executed_quantity,
+        "price": Decimal(str(reference_price)),
+        "status": "pending",
+        "source": "auto_sell_worker",
+        "agent_id": getattr(trade_log, "agent_id", None),
+        "metadata": json.dumps({
+            "order_type": "auto_sell",
+            "parent_trade_log_id": str(trade_log.id),
+            "triggered_by": "auto_sell_worker",
+            "original_buy_price": executed_price,
+            "original_buy_time": str(getattr(trade_log, "created_at", "")),
+        }),
+    }
+
+    sell_trade = await client.trade.create(data=trade_data)
+
+    # Create TradeExecutionLog record
+    sell_log = await client.tradeexecutionlog.create(
         data={
+            "trade_id": sell_trade.id,
             "request_id": f"auto_sell_{uuid.uuid4().hex[:12]}",
-            "user_id": user_id,
-            "portfolio_id": portfolio_id,
-            "symbol": symbol,
-            "side": "SELL",
-            "quantity": executed_quantity,
-            "reference_price": Decimal(str(reference_price)),
             "status": "pending",
-            "agent_id": getattr(trade_log, "agent_id", None),
-            "agent_type": getattr(trade_log, "agent_type", None),
             "metadata": json.dumps({
                 "order_type": "auto_sell",
                 "parent_trade_log_id": str(trade_log.id),

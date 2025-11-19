@@ -146,14 +146,14 @@ class OrderMonitorWorker:
         # Fetch from Trade model (manual API trades)
         trade_orders = await prisma.trade.find_many(
             where={"status": "pending"},
-            order_by={"created_at": "asc"},
+            order={"created_at": "asc"},
             take=BATCH_SIZE
         )
         
         # Fetch from TradeExecutionLog model (NSE pipeline TP/SL orders)
         execution_log_orders = await prisma.tradeexecutionlog.find_many(
             where={"status": "pending"},
-            order_by={"created_at": "asc"},
+            order={"created_at": "asc"},
             take=BATCH_SIZE
         )
         

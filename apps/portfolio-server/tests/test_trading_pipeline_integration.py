@@ -72,11 +72,24 @@ class FakeTradeExecutionLog:
         row["updated_at"] = datetime.now(timezone.utc)
         return SimpleNamespace(**row)
 
-    async def find_unique(self, where: Dict[str, Any]) -> Any:
+    async def find_unique(self, where: Dict[str, Any], include: Optional[Dict[str, Any]] = None) -> Any:
         trade_id = where.get("id")
         if not trade_id:
             return None
         row = self.rows.get(trade_id)
+        if not row:
+            return None
+        
+        # Handle include parameter for trade relation
+        if include and "trade" in include:
+            # Add trade relation if it exists
+            if "trade_id" in row and row["trade_id"]:
+                # Create a fake trade object
+                trade_obj = SimpleNamespace(id=row["trade_id"])
+                row_copy = dict(row)
+                row_copy["trade"] = trade_obj
+                return SimpleNamespace(**row_copy)
+        
         return SimpleNamespace(**row) if row else None
 
     async def find_many(self, where: Optional[Dict[str, Any]] = None, **kwargs) -> List[Any]:
@@ -735,8 +748,8 @@ async def test_complete_trading_pipeline_flow(monkeypatch: pytest.MonkeyPatch) -
     
     # Verify TP/SL prices are correct
     buy_price = float(updated_log.executed_price)
-    tp_price = float(tp_order.reference_price)
-    sl_price = float(sl_order.reference_price)
+    tp_price = float(tp_order.price)
+    sl_price = float(sl_order.price)
     
     expected_tp = buy_price * (1 + float(updated_log.take_profit_pct))
     expected_sl = buy_price * (1 - float(updated_log.stop_loss_pct))
@@ -892,17 +905,22 @@ async def test_complete_trading_pipeline_flow(monkeypatch: pytest.MonkeyPatch) -
             }
         )
         
-        # Create auto-sell orders
+        # Create auto-sell orders as Trade records with TradeExecutionLog entries
         for trade in expired_trades:
             agent_id = getattr(trade, "agent_id", None)
-            await fake_client.tradeexecutionlog.create({
-                "request_id": f"auto_sell_{trade.id}",
-                "user_id": getattr(trade, "user_id", "test-user-1"),
+            # Create Trade record first
+            auto_sell_trade = await fake_client.trade.create({
+                "organization_id": "test-org-1",
                 "portfolio_id": portfolio.id,
+                "customer_id": "test-user-1",
+                "trade_type": "auto",
                 "symbol": getattr(trade, "symbol", test_symbol),
+                "exchange": "NSE",
+                "segment": "EQUITY",
                 "side": "SELL",
+                "order_type": "market",
                 "quantity": getattr(trade, "executed_quantity", 100),
-                "reference_price": Decimal(str(getattr(trade, "executed_price", 100.0))),
+                "price": Decimal(str(getattr(trade, "executed_price", 100.0))),
                 "status": "pending",
                 "agent_id": agent_id,
                 "metadata": json.dumps({
@@ -911,16 +929,38 @@ async def test_complete_trading_pipeline_flow(monkeypatch: pytest.MonkeyPatch) -
                     "triggered_by": "auto_sell_worker",
                 }),
             })
+            # Create TradeExecutionLog entry
+            await fake_client.tradeexecutionlog.create({
+                "trade_id": auto_sell_trade.id,
+                "request_id": f"auto_sell_{trade.id}",
+                "status": "pending",
+                "metadata": json.dumps({
+                    "order_type": "auto_sell",
+                    "parent_trade_id": str(trade.id),
+                    "triggered_by": "auto_sell_worker",
+                }),
+                "symbol": getattr(trade, "symbol", test_symbol),
+                "side": "SELL",
+                "quantity": getattr(trade, "executed_quantity", 100),
+                "price": getattr(trade, "executed_price", Decimal("100.00")),
+                "portfolio_id": portfolio.id,
+                "agent_id": getattr(trade, "agent_id", agent.id),
+            })
         
         for log in expired_logs:
-            await fake_client.tradeexecutionlog.create({
-                "request_id": f"auto_sell_{log.id}",
-                "user_id": "test-user-1",
+            # Create Trade record first
+            auto_sell_trade = await fake_client.trade.create({
+                "organization_id": "test-org-1",
                 "portfolio_id": portfolio.id,
+                "customer_id": "test-user-1",
+                "trade_type": "auto",
                 "symbol": log.symbol,
+                "exchange": "NSE",
+                "segment": "EQUITY",
                 "side": "SELL",
+                "order_type": "market",
                 "quantity": log.executed_quantity,
-                "reference_price": Decimal(str(log.executed_price)),
+                "price": Decimal(str(log.executed_price)),
                 "status": "pending",
                 "agent_id": log.agent_id,
                 "metadata": json.dumps({
@@ -928,6 +968,23 @@ async def test_complete_trading_pipeline_flow(monkeypatch: pytest.MonkeyPatch) -
                     "parent_trade_log_id": str(log.id),
                     "triggered_by": "auto_sell_worker",
                 }),
+            })
+            # Create TradeExecutionLog entry
+            await fake_client.tradeexecutionlog.create({
+                "trade_id": auto_sell_trade.id,
+                "request_id": f"auto_sell_{log.id}",
+                "status": "pending",
+                "metadata": json.dumps({
+                    "order_type": "auto_sell",
+                    "parent_trade_log_id": str(log.id),
+                    "triggered_by": "auto_sell_worker",
+                }),
+                "symbol": log.symbol,
+                "side": "SELL",
+                "quantity": log.executed_quantity,
+                "price": log.executed_price,
+                "portfolio_id": portfolio.id,
+                "agent_id": log.agent_id,
             })
         
         return {"status": "completed", "sold_count": len(expired_trades) + len(expired_logs), "error_count": 0}
@@ -996,6 +1053,10 @@ async def test_auto_sell_time_calculation(monkeypatch: pytest.MonkeyPatch) -> No
     
     # Test the calculation logic
     from services.trade_execution_service import _calculate_auto_sell_at
+    import logging
+    
+    # Create a logger for the test
+    logger = logging.getLogger("test_logger")
     
     metadata = {
         "triggered_by": "nse_filings_pipeline",
@@ -1007,7 +1068,7 @@ async def test_auto_sell_time_calculation(monkeypatch: pytest.MonkeyPatch) -> No
         agent_type="high_risk",
     )
     
-    auto_sell_at = _calculate_auto_sell_at(record, execution_time, None, "test-trade-1")
+    auto_sell_at = _calculate_auto_sell_at(record, execution_time, logger, "test-trade-1")
     
     assert auto_sell_at is not None, "auto_sell_at should be calculated"
     assert auto_sell_at == expected_auto_sell, f"Should be 15 minutes from execution: {expected_auto_sell}"

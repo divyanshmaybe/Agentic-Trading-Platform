@@ -109,6 +109,7 @@ class FakePrisma:
         self.portfolio = InMemoryModel("id")
         self.position = InMemoryModel("id")
         self.trade = InMemoryModel("id")
+        self.tradeexecutionlog = InMemoryModel("id")
 
 
 @dataclass
@@ -209,6 +210,22 @@ async def test_market_buy_creates_position(fake_env: Dict[str, Any]) -> None:
     assert position.quantity == 10
     assert Decimal(str(position.average_buy_price)) == Decimal("110.25")
 
+    # Verify Trade record was created
+    trade_record = await db.trade.find_first({"portfolio_id": "pf-1", "symbol": "TCS"})
+    assert trade_record is not None
+    assert trade_record.status == "executed"
+    assert trade_record.side == "BUY"
+    assert trade_record.quantity == 10
+
+    # Verify TradeExecutionLog record was created and linked to Trade
+    execution_logs = await db.tradeexecutionlog.find_many()
+    assert len(execution_logs) == 1
+    execution_log = execution_logs[0]
+    assert execution_log.trade_id == trade_record.id
+    assert execution_log.status == "executed"
+    assert execution_log.executed_price == Decimal("110.25")
+    assert execution_log.executed_quantity == 10
+
 
 @pytest.mark.asyncio
 async def test_market_sell_reduces_position(fake_env: Dict[str, Any]) -> None:
@@ -256,6 +273,20 @@ async def test_market_sell_reduces_position(fake_env: Dict[str, Any]) -> None:
     assert updated is not None
     assert updated.quantity == 10
 
+    # Verify Trade record was created
+    trade_record = await db.trade.find_first({"portfolio_id": "pf-1", "symbol": "TCS", "side": "SELL"})
+    assert trade_record is not None
+    assert trade_record.status == "executed"
+    assert trade_record.side == "SELL"
+    assert trade_record.quantity == 5
+
+    # Verify TradeExecutionLog record was created and linked to Trade
+    execution_logs = await db.tradeexecutionlog.find_many()
+    assert len(execution_logs) == 1
+    execution_log = execution_logs[0]
+    assert execution_log.trade_id == trade_record.id
+    assert execution_log.status == "executed"
+
 
 @pytest.mark.asyncio
 async def test_limit_order_creates_pending_trade(fake_env: Dict[str, Any]) -> None:
@@ -285,6 +316,10 @@ async def test_limit_order_creates_pending_trade(fake_env: Dict[str, Any]) -> No
     assert trade_record is not None
     assert trade_record.status == "pending"
     assert trade_record.limit_price == Decimal("95.00")
+
+    # Pending orders don't create TradeExecutionLog records until executed
+    execution_logs = await db.tradeexecutionlog.find_many()
+    assert len(execution_logs) == 0
 
 
 @pytest.mark.asyncio
@@ -336,6 +371,15 @@ async def test_process_pending_limit_trade_executes(fake_env: Dict[str, Any]) ->
     assert updated_trade.status == "executed"
     assert updated_trade.executed_quantity == 10
     assert Decimal(str(updated_trade.executed_price)) == Decimal("94.50")
+
+    # Verify TradeExecutionLog record was created and linked to Trade
+    execution_logs = await db.tradeexecutionlog.find_many()
+    assert len(execution_logs) == 1
+    execution_log = execution_logs[0]
+    assert execution_log.trade_id == trade.id
+    assert execution_log.status == "executed"
+    assert execution_log.executed_quantity == 10
+    assert Decimal(str(execution_log.executed_price)) == Decimal("94.50")
 
 
 @pytest.mark.asyncio
@@ -401,6 +445,13 @@ async def test_stop_loss_sell_triggers_on_price_drop(fake_env: Dict[str, Any]) -
     remaining = await db.position.find_first({"portfolio_id": "pf-1", "symbol": "RELIANCE"})
     assert remaining.quantity == 10
 
+    # Verify TradeExecutionLog record was created and linked to Trade
+    execution_logs = await db.tradeexecutionlog.find_many()
+    assert len(execution_logs) == 1
+    execution_log = execution_logs[0]
+    assert execution_log.trade_id == pending.id
+    assert execution_log.status == "executed"
+
 
 @pytest.mark.asyncio
 async def test_take_profit_executes_on_target(fake_env: Dict[str, Any]) -> None:
@@ -464,3 +515,10 @@ async def test_take_profit_executes_on_target(fake_env: Dict[str, Any]) -> None:
     assert executed is True
     remaining = await db.position.find_first({"portfolio_id": "pf-1", "symbol": "INFY"})
     assert remaining.quantity == 6
+
+    # Verify TradeExecutionLog record was created and linked to Trade
+    execution_logs = await db.tradeexecutionlog.find_many()
+    assert len(execution_logs) == 1
+    execution_log = execution_logs[0]
+    assert execution_log.trade_id == pending.id
+    assert execution_log.status == "executed"

@@ -5,7 +5,8 @@ import json
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
+import uuid
 
 import pytest
 
@@ -47,7 +48,7 @@ def make_trade_signal(confidence: float = 0.85) -> trade_utils.TradeSignal:
         explanation="Positive filing",
         filing_time="2025-11-11 09:15:00",
         generated_at=datetime(2025, 11, 11, 9, 15, 30),
-        metadata={"source": "unit-test"},
+        metadata={"source": "unit-test", "reference_price": 200.0},
     )
 
 
@@ -73,7 +74,18 @@ def make_portfolio_snapshot() -> trade_utils.PortfolioSnapshot:
 def test_prepare_trade_execution_payloads(monkeypatch: pytest.MonkeyPatch) -> None:
     prices = {"RELIANCE": Decimal("200")}
     stub_service = StubMarketDataService(prices)
-    monkeypatch.setattr(trade_utils, "get_market_data_service", lambda: stub_service)
+    monkeypatch.setattr("market_data.get_market_data_service", lambda: stub_service)
+
+    # Mock the HTTP call to return the expected price
+    import httpx
+    def mock_get(url, params=None, headers=None, timeout=None):
+        class MockResponse:
+            status_code = 200
+            def json(self):
+                return {"data": [{"price": 200.0}]}
+        return MockResponse()
+    
+    monkeypatch.setattr(httpx.Client, "get", mock_get)
 
     payloads = trade_utils.prepare_trade_execution_payloads(
         [make_trade_signal()],
@@ -115,7 +127,7 @@ def test_prepare_trade_execution_payloads_skips_without_active_agent(
 ) -> None:
     prices = {"RELIANCE": Decimal("200")}
     stub_service = StubMarketDataService(prices)
-    monkeypatch.setattr(trade_utils, "get_market_data_service", lambda: stub_service)
+    monkeypatch.setattr("market_data.get_market_data_service", lambda: stub_service)
 
     snapshot = trade_utils.PortfolioSnapshot(
         portfolio_id="pf-1",
@@ -150,6 +162,15 @@ class FakeTradeExecutionLog:
         row.setdefault("id", row.get("request_id"))
         row.setdefault("created_at", datetime.utcnow())
         row.setdefault("updated_at", datetime.utcnow())
+        # Add agent_id from metadata if available
+        if "metadata" in row and isinstance(row["metadata"], str):
+            try:
+                import json
+                metadata = json.loads(row["metadata"])
+                if "agent_id" in metadata:
+                    row["agent_id"] = metadata["agent_id"]
+            except:
+                pass
         self.rows[row["id"]] = row
         return SimpleNamespace(**row)
 
@@ -160,15 +181,54 @@ class FakeTradeExecutionLog:
         row["updated_at"] = datetime.utcnow()
         return SimpleNamespace(**row)
 
-    async def find_unique(self, where: Dict[str, Any]) -> Any:
+    async def find_unique(self, where: Dict[str, Any], include: Optional[Dict[str, Any]] = None) -> Any:
         trade_id = where["id"]
         row = self.rows.get(trade_id)
+        if row and include:
+            # Add trade relation if requested
+            if "trade" in include and row.get("trade_id"):
+                result = SimpleNamespace(**row)
+                result.trade = SimpleNamespace(id=row["trade_id"])
+                return result
+        return SimpleNamespace(**row) if row else None
+
+
+class FakeTrade:
+    def __init__(self) -> None:
+        self.rows: Dict[str, Dict[str, Any]] = {}
+
+    async def create(self, data: Dict[str, Any]) -> Any:
+        row = dict(data)
+        row.setdefault("id", str(uuid.uuid4()))
+        row.setdefault("created_at", datetime.utcnow())
+        row.setdefault("updated_at", datetime.utcnow())
+        self.rows[row["id"]] = row
+        return SimpleNamespace(**row)
+
+    async def update(self, where: Dict[str, Any], data: Dict[str, Any]) -> Any:
+        trade_id = where["id"]
+        row = self.rows[trade_id]
+        row.update(data)
+        row["updated_at"] = datetime.utcnow()
+        return SimpleNamespace(**row)
+
+    async def find_unique(self, where: Dict[str, Any], include: Optional[Dict[str, Any]] = None) -> Any:
+        trade_id = where["id"]
+        row = self.rows.get(trade_id)
+        if row and include:
+            # Add trade relation if requested
+            if "trade" in include and row.get("trade_id"):
+                result = SimpleNamespace(**row)
+                result.trade = SimpleNamespace(id=row["trade_id"])
+                return result
         return SimpleNamespace(**row) if row else None
 
 
 class FakeClient:
     def __init__(self) -> None:
         self.tradeexecutionlog = FakeTradeExecutionLog()
+        self.trade = FakeTrade()
+        self.portfolio = None  # Add portfolio attribute for schema compatibility
 
 
 class FakeDBManager:
@@ -230,7 +290,7 @@ async def test_trade_execution_service_persist_and_execute(monkeypatch: pytest.M
     assert record.status == "pending"
     assert record.agent_id == "agent-1"
 
-    result = await service.execute_trade(events[0].trade_id, simulate=True)
+    result = await service.execute_trade(events[0].request_id, simulate=True)
     assert result["status"] == "simulated_executed"
     updated = await fake_manager.get_client().tradeexecutionlog.find_unique({"id": "req-1"})
     assert updated.status == "simulated_executed"
@@ -294,6 +354,7 @@ async def test_pipeline_service_process_trade_signals(monkeypatch: pytest.Monkey
             self.status = "active"
             self.strategy_config = {"auto_trade": True}
             self.metadata = {"source": "unit-test"}
+            self.portfolio_id = "pf-1"  # Add portfolio_id attribute
             self.portfolio = SimpleNamespace(
                 id="pf-1",
                 user_id="user-1",
@@ -503,35 +564,60 @@ async def test_pipeline_service_process_trade_signals(monkeypatch: pytest.Monkey
 
 
 @pytest.mark.asyncio
-async def test_pipeline_service_skips_portfolios_without_active_agent(
+async def test_pipeline_service_skips_portfolios_with_inactive_agents(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    portfolio = SimpleNamespace(
-        id="pf-1",
-        portfolio_name="High Risk Sleeve",
-        user_id="user-1",
-        organization_id="org-1",
-        customer_id="cust-1",
-        current_value=Decimal("150000"),
-        investment_amount=Decimal("120000"),
-        metadata={"cash": 250_000.0},
-        agents=[
-            SimpleNamespace(
-                id="agent-1",
-                agent_type="high_risk",
-                status="paused",
-                strategy_config={"auto_trade": True},
-                metadata={},
+    """Test that portfolios with paused/inactive high_risk agents are skipped."""
+    
+    # Mock Prisma client - the service creates a new Prisma() instance
+    class FakeTradingAgent:
+        def __init__(self):
+            self.id = "test-agent-1"
+            self.agent_type = "high_risk"
+            self.status = "paused"  # Agent is paused, not active
+            self.strategy_config = {"auto_trade": True}
+            self.metadata = {"source": "test"}
+            self.portfolio_id = "test-portfolio-1"
+            self.portfolio = SimpleNamespace(
+                id="test-portfolio-1",
+                user_id="test-user-1",
+                portfolio_name="Test High Risk Portfolio",
             )
-        ],
-        objective_id="obj-1",
-    )
+            self.allocation = SimpleNamespace(
+                allocated_amount=Decimal("250000"),
+            )
 
-    fake_manager = FakePipelineManager([portfolio])
-    monkeypatch.setattr("services.pipeline_service.get_db_manager", lambda: fake_manager, raising=False)
+    class FakePrisma:
+        def __init__(self):
+            pass
+        
+        async def connect(self):
+            pass
+        
+        async def disconnect(self):
+            pass
+        
+        @property
+        def tradingagent(self):
+            class TradingAgentModel:
+                async def find_many(self, where=None, include=None):
+                    # Return the paused agent - should be filtered out
+                    return [FakeTradingAgent()]
+            return TradingAgentModel()
+        
+        @property
+        def portfolio(self):
+            class PortfolioModel:
+                async def find_many(self, where=None, include=None):
+                    return []  # No portfolios should be processed
+            return PortfolioModel()
+
+    monkeypatch.setattr("prisma.Prisma", FakePrisma)
     monkeypatch.setattr(PipelineService, "_load_environment", lambda self: None, raising=False)
 
-    summary = await PipelineService(str(PORTFOLIO_SERVER_ROOT), logger=None)._process_nse_trade_signals_async(
+    service = PipelineService(str(PORTFOLIO_SERVER_ROOT), logger=None)
+
+    summary = await service._process_nse_trade_signals_async(
         signals=[{"symbol": "RELIANCE", "signal": 1, "confidence": 0.85}],
         publish_kafka=True,
     )
