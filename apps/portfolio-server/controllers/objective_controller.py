@@ -169,15 +169,10 @@ class ObjectiveController:
         # Dispatch allocation to Celery worker instead of running synchronously
         try:
             from workers.allocation_tasks import allocate_for_objective_task
+            from utils.user_inputs_helper import extract_user_inputs_from_objective
             
-            # Build user inputs for allocation
-            user_inputs = {
-                "risk_tolerance": payload.risk_tolerance or "medium",
-                "investment_horizon_years": payload.investment_horizon_years or 1,
-                "liquidity_needs": payload.liquidity_needs or "medium",
-                "expected_return_target": float(payload.expected_return_target) if payload.expected_return_target else 0.1,
-                "rebalancing_frequency": payload.rebalancing_frequency or "quarterly",
-            }
+            # Build user inputs from objective (matching transcript.py format)
+            user_inputs = extract_user_inputs_from_objective(objective)
             
             # Dispatch to Celery worker
             task = allocate_for_objective_task.apply_async(
@@ -368,15 +363,10 @@ class ObjectiveController:
         # Dispatch allocation to Celery worker instead of running synchronously
         try:
             from workers.allocation_tasks import allocate_for_objective_task
+            from utils.user_inputs_helper import extract_user_inputs_from_objective
             
-            # Build user inputs for allocation
-            user_inputs = {
-                "risk_tolerance": payload.risk_tolerance or "medium",
-                "investment_horizon_years": payload.investment_horizon_years or 1,
-                "liquidity_needs": payload.liquidity_needs or "medium",
-                "expected_return_target": float(payload.expected_return_target) if payload.expected_return_target else 0.1,
-                "rebalancing_frequency": payload.rebalancing_frequency or "quarterly",
-            }
+            # Build user inputs from updated objective (matching transcript.py format)
+            user_inputs = extract_user_inputs_from_objective(updated_objective)
             
             # Dispatch to Celery worker
             task = allocate_for_objective_task.apply_async(

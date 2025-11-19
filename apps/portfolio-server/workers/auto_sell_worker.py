@@ -151,6 +151,7 @@ async def _sell_trade(trade, trade_service: TradeExecutionService, client, logge
             "trade_id": sell_trade.id,
             "request_id": f"auto_sell_{uuid.uuid4().hex[:12]}",
             "status": "pending",
+            "order_type": "market",
             "metadata": json.dumps({
                 "order_type": "auto_sell",
                 "parent_trade_id": str(trade.id),
@@ -248,6 +249,7 @@ async def _sell_trade_log(trade_log, trade_service: TradeExecutionService, clien
             "trade_id": sell_trade.id,
             "request_id": f"auto_sell_{uuid.uuid4().hex[:12]}",
             "status": "pending",
+            "order_type": "market",
             "metadata": json.dumps({
                 "order_type": "auto_sell",
                 "parent_trade_log_id": str(trade_log.id),

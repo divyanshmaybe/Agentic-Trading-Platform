@@ -176,14 +176,10 @@ class PortfolioController:
             # Trigger portfolio allocation via Celery
             try:
                 from workers.allocation_tasks import allocate_new_portfolio_task
+                from utils.user_inputs_helper import extract_user_inputs_from_portfolio
                 
-                user_inputs = {
-                    "risk_tolerance": portfolio.risk_tolerance,
-                    "investment_horizon_years": portfolio.investment_horizon_years,
-                    "liquidity_needs": portfolio.liquidity_needs or "medium",
-                    "expected_return_target": float(portfolio.expected_return_target),
-                    "rebalancing_frequency": "quarterly",  # Default frequency
-                }
+                # Build user inputs from portfolio (matching transcript.py format)
+                user_inputs = extract_user_inputs_from_portfolio(portfolio)
                 
                 task = allocate_new_portfolio_task.delay(
                     portfolio_id=portfolio.id,
@@ -241,7 +237,7 @@ class PortfolioController:
             average_buy_price=position.average_buy_price,
             current_price=position.current_price,
             current_value=position.current_value,
-            pnl=position.pnl,
+            pnl=position.realized_pnl,
             pnl_percentage=position.pnl_percentage,
             position_type=position.position_type,
             status=position.status,
@@ -318,7 +314,7 @@ class PortfolioController:
                 average_buy_price=record.average_buy_price,
                 current_price=record.current_price,
                 current_value=record.current_value,
-                pnl=record.pnl,
+                pnl=record.realized_pnl,
                 pnl_percentage=record.pnl_percentage,
                 position_type=record.position_type,
                 status=record.status,
@@ -680,7 +676,7 @@ class PortfolioController:
                 average_buy_price=pos.average_buy_price,
                 current_price=pos.current_price,
                 current_value=pos.current_value,
-                pnl=pos.pnl,
+                pnl=pos.realized_pnl,
                 pnl_percentage=pos.pnl_percentage,
                 position_type=pos.position_type,
                 status=pos.status,

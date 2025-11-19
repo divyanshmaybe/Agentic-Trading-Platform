@@ -171,116 +171,185 @@ class PortfolioMonitor:
 
 
 class PortfolioManager:
-    """Dynamic allocator orchestrating segment weights based on adaptive factors."""
+    """
+    Manages dynamic portfolio allocation across risk segments with adaptive optimization.
 
-    def __init__(
-        self,
-        *,
-        user_inputs: Mapping[str, Any],
-        monitor: PortfolioMonitor,
-        segments: Sequence[str] = DEFAULT_SEGMENTS,
-    ) -> None:
-        self.user_inputs = dict(user_inputs)
+    This manager implements a sophisticated optimization strategy that adapts to:
+    - Market regimes (bull, bear, sideways, high volatility)
+    - User risk tolerance
+    - Progress toward target returns
+
+    Optimization Objective:
+        maximize: E[R] - λ_a * σ² - λ_b * MDD
+
+    where:
+        - E[R] is expected return
+        - σ² is portfolio variance
+        - MDD is maximum drawdown (only active in high volatility regime)
+        - λ_a, λ_b are adaptive hyperparameters
+    """
+
+    def __init__(self, user_inputs: Dict[str, Any], monitor: PortfolioMonitor, segments: Sequence[str] = DEFAULT_SEGMENTS):
+        self.segments = tuple(segments)
+        self.user_inputs = user_inputs
         self.monitor = monitor
-        self.segments: Tuple[str, ...] = tuple(segments)
-        allocation = self.user_inputs.get("allocation_strategy", {})
-        weights = np.array(
-            [float(allocation.get(segment, 1.0 / len(self.segments))) for segment in self.segments],
-            dtype=float,
-        )
-        if weights.sum() <= 0:
-            weights = np.full_like(weights, 1.0 / len(weights))
-        self.current_weights: npt.NDArray[np.float_] = weights / weights.sum()
+        self.default_weights = {
+        'low_risk': 0.6,
+        'high_risk': 0.2,
+        'alpha': 0.2,
+        'liquid': 0
+        }
 
+        # Initialize current weights from user allocation strategy
+        allocation = user_inputs.get('allocation_strategy', {})
+        self.current_weights = np.array([
+            allocation.get(seg, self.default_weights[seg]) for seg in self.segments
+        ], dtype=float)
+        # Normalize to ensure sum = 1
+        self.current_weights /= self.current_weights.sum()
+
+        # Extract constraints
         self._setup_constraints()
+
+        # Setup hyperparameter configuration
         self._setup_hyperparameters()
-
-    # ------------------------------------------------------------- Configuration
+        
     def _setup_constraints(self) -> None:
-        """Extract risk-wise constraints and drift tolerances from user preferences."""
+        """Extract and organize constraints from user inputs."""
+        constraints = self.user_inputs.get('constraints', {})
+        print(f"DEBUG: Raw constraints: {constraints}")
 
-        constraints = self.user_inputs.get("constraints", {})
-        self.max_drift: float = float(constraints.get("max_weight_drift", 0.15))
-        segment_wise = constraints.get("segment_wise", {})
-        self.weight_bounds: Dict[str, Tuple[float, float]] = {}
+        # Maximum drift per rebalancing
+        self.max_drift = constraints.get('max_weight_drift', 0.15)
+        print(f"DEBUG: max_drift: {self.max_drift}")
+
+        # Per-segment bounds
+        segment_wise = constraints.get('segment_wise', {})
+        print(f"DEBUG: segment_wise: {segment_wise}")
+        self.weight_bounds = {}
         for segment in self.segments:
-            bounds = segment_wise.get(segment, {})
+            seg_bounds = segment_wise.get(segment, {})
             self.weight_bounds[segment] = (
-                float(bounds.get("min", 0.0)),
-                float(bounds.get("max", 1.0)),
+                seg_bounds.get('min', 0.0),
+                seg_bounds.get('max', 1.0)
             )
-        self.min_weights = np.array([self.weight_bounds[segment][0] for segment in self.segments], dtype=float)
-        self.max_weights = np.array([self.weight_bounds[segment][1] for segment in self.segments], dtype=float)
+        print(f"DEBUG: weight_bounds: {self.weight_bounds}")
+
+        # Convert to arrays for optimization
+        self.min_weights = np.array([self.weight_bounds[seg][0] for seg in self.segments])
+        self.max_weights = np.array([self.weight_bounds[seg][1] for seg in self.segments])
+        print(f"DEBUG: min_weights: {self.min_weights}")
+        print(f"DEBUG: max_weights: {self.max_weights}")
 
     def _setup_hyperparameters(self) -> None:
-        """Define optimisation hyperparameters and adaptive scaling rules."""
+        """Setup base hyperparameters and scaling factors."""
+        # Base penalty weights (before scaling)
+        self.base_lambda_variance = 2.0
+        self.base_lambda_drawdown = 1.5
 
-        self.base_lambda_variance: float = 2.0
-        self.base_lambda_drawdown: float = 1.5
+        # Risk tolerance multipliers (higher tolerance = lower penalty)
+        self.risk_tolerance_scales = {
+            RiskTolerance.LOW: 2.0,      # Very risk averse
+            RiskTolerance.MEDIUM: 1.0,   # Balanced
+            RiskTolerance.HIGH: 0.5      # Risk seeking
+        }
 
-        self.risk_tolerance_scales: Dict[RiskTolerance, float] = {
-            RiskTolerance.LOW: 2.0,
-            RiskTolerance.MEDIUM: 1.0,
-            RiskTolerance.HIGH: 0.5,
+        # Regime-specific multipliers for penalties
+        self.regime_scales = {
+            MarketRegime.BULL: {
+                'variance': 0.6,    # Less concerned about volatility
+                'drawdown': 0.4     # Less concerned about drawdowns
+            },
+            MarketRegime.BEAR: {
+                'variance': 1.8,    # More risk averse
+                'drawdown': 1.5     # Highly concerned about drawdowns
+            },
+            MarketRegime.SIDEWAYS: {
+                'variance': 1.0,    # Neutral stance
+                'drawdown': 0.8     # Moderate concern
+            },
+            MarketRegime.HIGH_VOLATILITY: {
+                'variance': 2.5,    # Very risk averse
+                'drawdown': 3.0     # Maximum drawdown concern
+            }
         }
-        self.regime_scales: Dict[MarketRegime, Dict[str, float]] = {
-            MarketRegime.BULL: {"variance": 0.6, "drawdown": 0.4},
-            MarketRegime.BEAR: {"variance": 1.8, "drawdown": 1.5},
-            MarketRegime.SIDEWAYS: {"variance": 1.0, "drawdown": 0.8},
-            MarketRegime.HIGH_VOLATILITY: {"variance": 2.5, "drawdown": 3.0},
-        }
+
+        # Progress adjustment parameters
         self.progress_adjustment = {
-            "behind_aggression": 0.6,
-            "ahead_conservation": 0.4,
+            'behind_aggression': 0.6,  # Reduce penalty when behind target
+            'ahead_conservation': 0.4   # Increase penalty when ahead of target
         }
-
-    # ----------------------------------------------------------------- Utilities
     def compute_progress_ratio(self) -> float:
-        """Progress ratio relative to the client's target return trajectory."""
+        """
+        Calculate progress ratio relative to target return path.
 
+        Progress > 1.0: Ahead of target
+        Progress < 1.0: Behind target
+        Progress ≈ 1.0: On track
+
+        Returns:
+            Progress ratio
+        """
         cumulative_return = self.monitor.get_cumulative_return()
-        annual_target = float(self.user_inputs.get("expected_return_target", 0.08))
-        horizon_years = float(self.user_inputs.get("investment_horizon_years", 1.0))
+
+        # Calculate expected cumulative return to date
+        annual_target = self.user_inputs.get('expected_return_target')
+        horizon_years = self.user_inputs.get('investment_horizon_years')
         quarters_elapsed = max(1, self.monitor.time_quarters)
-        fraction_elapsed = quarters_elapsed / (4.0 * max(horizon_years, 1e-6))
-        target_cumulative = (1.0 + annual_target) ** fraction_elapsed - 1.0
+
+        # Target cumulative return for this point in time
+        fraction_elapsed = quarters_elapsed / (4.0 * horizon_years)
+        target_cumulative = (1 + annual_target) ** fraction_elapsed - 1
+
+        # Progress ratio
         if target_cumulative <= 0:
             return 1.0
-        progress = (1.0 + cumulative_return) / (1.0 + target_cumulative)
-        return float(max(0.05, min(3.0, progress)))
 
-    def compute_adaptive_penalties(
-        self,
-        *,
-        regime: MarketRegime,
-        progress_ratio: float,
-        risk_tolerance: RiskTolerance,
-    ) -> Tuple[float, float]:
-        """Combine risk tolerance, market regime and progress into penalty weights."""
+        progress = (1 + cumulative_return) / (1 + target_cumulative)
+        return max(0.05, min(3.0, progress)) # clip it between some range
 
-        base_scale = self.risk_tolerance_scales[risk_tolerance]
-        lambda_var = self.base_lambda_variance * base_scale
-        lambda_dd = self.base_lambda_drawdown * base_scale
+    def compute_adaptive_penalties(self,
+                                   regime: MarketRegime,
+                                   progress_ratio: float) -> Tuple[float, float]:
+        """
+        Calculate adaptive penalty weights based on regime, risk tolerance, and progress.
 
-        regime_scale = self.regime_scales.get(regime, self.regime_scales[MarketRegime.SIDEWAYS])
-        lambda_var *= regime_scale["variance"]
-        lambda_dd *= regime_scale["drawdown"]
+        Args:
+            regime: Current market regime
+            progress_ratio: Progress toward target return
 
+        Returns:
+            Tuple of (lambda_variance, lambda_drawdown)
+        """
+        # Get risk tolerance
+        risk_tol_str = self.user_inputs.get('risk_tolerance').lower()
+        risk_tol = RiskTolerance[risk_tol_str.upper()]
+
+        # Base penalties scaled by risk tolerance
+        risk_scale = self.risk_tolerance_scales[risk_tol]
+        lambda_var = self.base_lambda_variance * risk_scale
+        lambda_dd = self.base_lambda_drawdown * risk_scale
+
+        # Apply regime multipliers
+        regime_scale = self.regime_scales[regime]
+        lambda_var *= regime_scale['variance']
+        lambda_dd *= regime_scale['drawdown']
+
+        # Adjust based on progress toward target
         if progress_ratio < 1.0:
-            adjustment = 1.0 - self.progress_adjustment["behind_aggression"] * (1.0 - progress_ratio)
-            scaling = max(0.3, adjustment)
-            lambda_var *= scaling
-            lambda_dd *= scaling
+            # Behind target: be more aggressive (reduce penalties)
+            adjustment = 1.0 - self.progress_adjustment['behind_aggression'] * (1.0 - progress_ratio)
+            lambda_var *= max(0.3, adjustment)
+            lambda_dd *= max(0.3, adjustment)
         else:
-            adjustment = 1.0 + self.progress_adjustment["ahead_conservation"] * (progress_ratio - 1.0)
-            scaling = min(2.0, adjustment)
-            lambda_var *= scaling
-            lambda_dd *= scaling
+            # Ahead of target: be more conservative (increase penalties)
+            adjustment = 1.0 + self.progress_adjustment['ahead_conservation'] * (progress_ratio - 1.0)
+            lambda_var *= min(2.0, adjustment)
+            lambda_dd *= min(2.0, adjustment)
 
         return lambda_var, lambda_dd
 
-    # ---------------------------------------------------------------- Optimiser
-    def get_variance(self, metrics: Mapping[str, SegmentMetrics]) -> npt.NDArray[np.float_]:
+    def get_variance(self, metrics: Dict[str, SegmentMetrics]) -> np.ndarray:
         """
         Construct covariance matrix from segment volatilities and correlations.
 
@@ -290,139 +359,181 @@ class PortfolioManager:
         Returns:
             4x4 covariance matrix
         """
-        vols = np.array([metrics[segment].volatility for segment in self.segments], dtype=float)
+        vols = np.array([metrics[seg].volatility for seg in self.segments])
         variance = vols ** 2
 
         return variance
 
-    def _solve_optimisation(
-        self,
-        *,
-        expected_returns: npt.NDArray[np.float_],
-        covariance: npt.NDArray[np.float_],
-        drawdowns: npt.NDArray[np.float_],
-        lambda_var: float,
-        lambda_dd: float,
-        activate_drawdown_penalty: bool,
-    ) -> Optional[npt.NDArray[np.float_]]:
-        """Solve the convex optimisation problem using cvxpy."""
+    def solve_optimization(self,
+                          expected_returns: np.ndarray,
+                          variance: np.ndarray,
+                          drawdowns: np.ndarray,
+                          lambda_var: float,
+                          lambda_dd: float,
+                          activate_dd_penalty: bool) -> Optional[np.ndarray]:
+        """
+        Solve the portfolio optimization problem using cvxpy.
 
+        Args:
+            expected_returns: Expected return vector for each segment
+            covariance: Covariance matrix
+            drawdowns: Maximum drawdown vector
+            lambda_var: Variance penalty weight
+            lambda_dd: Drawdown penalty weight
+            activate_dd_penalty: Whether to activate drawdown penalty
+
+        Returns:
+            Optimal weight vector, or None if optimization fails
+        """
         import cvxpy as cp  # Imported lazily to limit worker initialisation costs.
+
+        print(f"DEBUG: solve_optimization called with:")
+        print(f"  expected_returns: {expected_returns}")
+        print(f"  variance: {variance}")
+        print(f"  drawdowns: {drawdowns}")
+        print(f"  lambda_var: {lambda_var}, lambda_dd: {lambda_dd}")
+        print(f"  activate_dd_penalty: {activate_dd_penalty}")
+        print(f"  current_weights: {self.current_weights}")
+        print(f"  min_weights: {self.min_weights}")
+        print(f"  max_weights: {self.max_weights}")
+        print(f"  max_drift: {self.max_drift}")
 
         n = len(self.segments)
         w = cp.Variable(n)
 
+        # Objective components
         portfolio_return = expected_returns @ w
-        portfolio_variance = cp.quad_form(w, covariance)
-        drawdown_penalty = drawdowns @ w if activate_drawdown_penalty else 0
+        portfolio_variance = w @ variance
+        drawdown_penalty = drawdowns @ w if activate_dd_penalty else 0
 
+        print(f"DEBUG: portfolio_return: {portfolio_return}")
+        print(f"DEBUG: portfolio_variance: {portfolio_variance}")
+        print(f"DEBUG: drawdown_penalty: {drawdown_penalty}")
+
+        # Maximize: E[R] - λ_a * σ² - λ_b * MDD
+        # cvxpy minimizes, so negate
         objective = cp.Maximize(
-            portfolio_return - lambda_var * portfolio_variance - lambda_dd * drawdown_penalty
+            portfolio_return
+            - lambda_var * portfolio_variance
+            - lambda_dd * drawdown_penalty
         )
 
+        # Constraints
         constraints = [
-            cp.sum(w) == 1.0,
-            w >= self.min_weights,
-            w <= self.max_weights,
-            w - self.current_weights <= self.max_drift,
-            self.current_weights - w <= self.max_drift,
+            cp.sum(w) == 1,                                    # Fully invested
+            w >= self.min_weights,                             # Lower bounds
+            w <= self.max_weights,                             # Upper bounds
+            w - self.current_weights <= self.max_drift,       # Max increase per segment
+            self.current_weights - w <= self.max_drift        # Max decrease per segment
         ]
 
+        print(f"DEBUG: Constraints:")
+        for i, constraint in enumerate(constraints):
+            print(f"  {i}: {constraint}")
+
+        # Solve
         problem = cp.Problem(objective, constraints)
+
         try:
             problem.solve(solver=cp.OSQP, warm_start=True, eps_abs=1e-6, eps_rel=1e-6)
-        except Exception:
+            print(f"DEBUG: Problem status: {problem.status}")
+            print(f"DEBUG: Problem value: {problem.value}")
+
+            if problem.status in [cp.OPTIMAL, cp.OPTIMAL_INACCURATE]:
+                result = np.array(w.value).flatten()
+                print(f"DEBUG: Optimal weights: {result}")
+                return result
+            else:
+                print(f"DEBUG: Optimization failed with status: {problem.status}")
+                return None
+
+        except Exception as e:
+            print(f"Optimization failed: {e}")
             return None
 
-        if problem.status not in (cp.OPTIMAL, cp.OPTIMAL_INACCURATE):
-            return None
-        if w.value is None:
-            return None
-        return np.asarray(w.value, dtype=float).flatten()
+    def rebalance(self,
+                  current_regime: str,
+                  use_rolling_metrics: bool = True,
+                  lookback_quarters: int = 4) -> OptimizationResult:
+        """
+        Compute optimal portfolio weights for the next period.
 
-    def rebalance(
-        self,
-        *,
-        current_regime: str,
-        use_rolling_metrics: bool = True,
-        lookback_quarters: int = 4,
-    ) -> OptimizationResult:
-        """Compute the next allocation vector."""
+        Args:
+            current_regime: Current market regime as string
+            use_rolling_metrics: Whether to use rolling average metrics
+            lookback_quarters: Number of quarters for rolling average
 
+        Returns:
+            OptimizationResult containing new weights and diagnostic information
+        """
+        # Parse regime
         try:
             regime = MarketRegime(current_regime.lower())
         except ValueError:
             regime = MarketRegime.SIDEWAYS
 
-        metrics = (
-            self.monitor.get_rolling_metrics(lookback_quarters=lookback_quarters)
-            if use_rolling_metrics and self.monitor.time_quarters >= 2
-            else self.monitor.get_latest_metrics()
-        )
+        # Get metrics
+        if use_rolling_metrics and self.monitor.time_quarters >= 2:
+            metrics = self.monitor.get_rolling_metrics(lookback_quarters)
+        else:
+            metrics = self.monitor.get_latest_metrics()
 
-        mu = np.array([metrics[segment].return_rate for segment in self.segments], dtype=float)
-        covariance = self.get_variance(metrics)
-        drawdowns = np.array([metrics[segment].max_drawdown for segment in self.segments], dtype=float)
+        # Build optimization inputs
+        mu = np.array([metrics[seg].return_rate for seg in self.segments])
+        sigma = self.get_variance(metrics)
+        mdd = np.array([metrics[seg].max_drawdown for seg in self.segments])
 
-        risk_tol_raw = str(self.user_inputs.get("risk_tolerance", "medium")).upper()
-        risk_tolerance = RiskTolerance[risk_tol_raw] if risk_tol_raw in RiskTolerance.__members__ else RiskTolerance.MEDIUM
-        progress_ratio = self.compute_progress_ratio()
-        lambda_var, lambda_dd = self.compute_adaptive_penalties(
-            regime=regime,
-            progress_ratio=progress_ratio,
-            risk_tolerance=risk_tolerance,
-        )
-        activate_dd = regime == MarketRegime.HIGH_VOLATILITY
+        # Compute adaptive penalties
+        progress = self.compute_progress_ratio()
+        lambda_var, lambda_dd = self.compute_adaptive_penalties(regime, progress)
 
-        optimal_weights = self._solve_optimisation(
-            expected_returns=mu,
-            covariance=covariance,
-            drawdowns=drawdowns,
-            lambda_var=lambda_var,
-            lambda_dd=lambda_dd,
-            activate_drawdown_penalty=activate_dd,
+        # Activate drawdown penalty only in high volatility regime
+        activate_dd = (regime == MarketRegime.HIGH_VOLATILITY)
+
+        # Solve optimization
+        optimal_weights = self.solve_optimization(
+            mu, sigma, mdd, lambda_var, lambda_dd, activate_dd
         )
 
         if optimal_weights is None:
-            expected_return = float(mu @ self.current_weights)
-            current_risk = float(math.sqrt(self.current_weights @ covariance @ self.current_weights))
+            # Fallback: keep current weights
             return OptimizationResult(
-                weights={segment: float(self.current_weights[i]) for i, segment in enumerate(self.segments)},
-                expected_return=expected_return,
-                expected_risk=current_risk,
-                objective_value=expected_return - lambda_var * (self.current_weights @ covariance @ self.current_weights),
-                drift_from_previous={segment: 0.0 for segment in self.segments},
+                weights={seg: float(self.current_weights[i]) for i, seg in enumerate(self.segments)},
+                expected_return=float(mu @ self.current_weights),
+                expected_risk=float(np.sqrt(self.current_weights @ sigma)),
+                objective_value=0.0,
+                drift_from_previous={seg: 0.0 for seg in self.segments},
                 success=False,
-                message="Optimisation failed; retaining existing weights",
+                message="Optimization failed, keeping current weights",
                 regime=regime.value,
-                progress_ratio=progress_ratio,
+                progress_ratio=progress
             )
 
+        # Enforce bounds and normalize (safety check)
         optimal_weights = np.clip(optimal_weights, self.min_weights, self.max_weights)
-        if optimal_weights.sum() <= 0:
-            optimal_weights = np.full_like(optimal_weights, 1.0 / len(optimal_weights))
         optimal_weights = optimal_weights / optimal_weights.sum()
 
+        # Calculate diagnostics
         drift = optimal_weights - self.current_weights
         expected_return = float(mu @ optimal_weights)
-        portfolio_variance = float(optimal_weights @ covariance @ optimal_weights)
-        expected_risk = float(math.sqrt(max(portfolio_variance, 0.0)))
-        objective_value = expected_return - lambda_var * portfolio_variance
+        expected_risk = float(np.sqrt(optimal_weights @ sigma))
+        objective_value = expected_return - lambda_var * (optimal_weights @ sigma)
         if activate_dd:
-            objective_value -= lambda_dd * float(drawdowns @ optimal_weights)
+            objective_value -= lambda_dd * (mdd @ optimal_weights)
 
+        # Update current weights
         self.current_weights = optimal_weights
 
         return OptimizationResult(
-            weights={segment: float(optimal_weights[i]) for i, segment in enumerate(self.segments)},
+            weights={seg: float(optimal_weights[i]) for i, seg in enumerate(self.segments)},
             expected_return=expected_return,
             expected_risk=expected_risk,
-            objective_value=objective_value,
-            drift_from_previous={segment: float(drift[i]) for i, segment in enumerate(self.segments)},
+            objective_value=float(objective_value),
+            drift_from_previous={seg: float(drift[i]) for i, seg in enumerate(self.segments)},
             success=True,
-            message=f"Optimisation successful in {regime.value} regime (progress={progress_ratio:.2f})",
+            message=f"Optimization successful in {regime.value} regime (progress: {progress:.2f})",
             regime=regime.value,
-            progress_ratio=progress_ratio,
+            progress_ratio=progress
         )
 
 
@@ -453,6 +564,70 @@ def ensure_segment_metrics(
                 )
             )
     return segment_metrics
+
+
+async def calculate_segment_metrics_from_db(portfolio_id: str, lookback_quarters: int = 4) -> Dict[str, SegmentMetrics]:
+    """
+    Calculate SegmentMetrics from DB snapshots for a given portfolio.
+
+    Args:
+        portfolio_id: The portfolio ID to calculate metrics for
+        lookback_quarters: Number of recent quarters to use for calculation
+
+    Returns:
+        Dictionary mapping segment names to their metrics
+    """
+    from prisma import Prisma
+    
+    client = Prisma()
+    await client.connect()
+    
+    try:
+        # Use allocation snapshots to calculate segment metrics
+        snapshots = await client.allocationsnapshot.find_many(
+            where={
+                "rebalance_run": {
+                    "portfolio_id": portfolio_id
+                }
+            },
+            order={"created_at": "desc"},
+            take=lookback_quarters * 4  # Assuming ~4 snapshots per quarter
+        )
+
+        # Group by allocation_type (segment)
+        segment_data = {}
+        for snap in snapshots:
+            segment = snap.portfolio_allocation.allocation_type if hasattr(snap, 'portfolio_allocation') else None
+            if not segment:
+                continue
+            if segment not in segment_data:
+                segment_data[segment] = []
+            segment_data[segment].append({
+                "return_rate": float(snap.metadata.get("return_rate", 0.0)) if snap.metadata else 0.0,
+                "volatility": float(snap.metadata.get("volatility", 0.0)) if snap.metadata else 0.0,
+                "max_drawdown": float(snap.metadata.get("max_drawdown", 0.0)) if snap.metadata else 0.0,
+                "sharpe_ratio": float(snap.metadata.get("sharpe_ratio", 0.0)) if snap.metadata else 0.0
+            })
+
+        # Calculate metrics for each segment
+        metrics = {}
+        for segment, data in segment_data.items():
+            if not data:
+                continue
+            returns = [d["return_rate"] for d in data]
+            volatilities = [d["volatility"] for d in data]
+            drawdowns = [d["max_drawdown"] for d in data]
+            sharpes = [d["sharpe_ratio"] for d in data]
+            metrics[segment] = SegmentMetrics(
+                return_rate=returns[-1] if returns else 0.0,
+                volatility=np.mean(volatilities) if volatilities else 0.0,
+                max_drawdown=max(drawdowns) if drawdowns else 0.0,
+                sharpe_ratio=np.mean(sharpes) if sharpes else 0.0
+            )
+        return metrics
+    
+    finally:
+        await client.disconnect()
 
 
 def initial_weight_vector(segments: Sequence[str], allocation: Optional[Mapping[str, Any]] = None) -> Dict[str, float]:
