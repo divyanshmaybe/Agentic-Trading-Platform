@@ -1016,13 +1016,27 @@ class PipelineService:
         allocation = None
         if agent:
             allocation = getattr(agent, "allocation", None) or getattr(agent, "portfolioAllocation", None)
+        
+        self.logger.info(
+            "🔍 ALLOCATION DEBUG: agent=%s, allocation=%s, has_allocation=%s",
+            getattr(agent, "id", "none") if agent else "no_agent",
+            allocation,
+            allocation is not None
+        )
+        
         allocation_amount = self._safe_float(getattr(allocation, "allocated_amount", 0.0)) if allocation else 0.0
+        
+        self.logger.info(
+            "🔍 ALLOCATION AMOUNT DEBUG: allocation_amount=%.2f, allocated_amount_raw=%s",
+            allocation_amount,
+            getattr(allocation, "allocated_amount", "NO_ATTR") if allocation else "NO_ALLOCATION"
+        )
         
         # Use allocation amount as cash_available for trading (this is the capital_base)
         if allocation_amount > 0:
             cash_available = allocation_amount
-            self.logger.debug(
-                "Using allocation amount %.2f as cash_available for portfolio %s (agent %s)",
+            self.logger.info(
+                "✅ Using allocation amount %.2f as cash_available for portfolio %s (agent %s)",
                 allocation_amount,
                 getattr(portfolio, "id", "unknown"),
                 getattr(agent, "id", "unknown") if agent else "none",
@@ -1065,7 +1079,7 @@ class PipelineService:
                 },
             }
 
-        return PortfolioSnapshot(
+        snapshot = PortfolioSnapshot(
             portfolio_id=str(getattr(portfolio, "id")),
             portfolio_name=str(getattr(portfolio, "portfolio_name", "Portfolio")),
             user_id=str(user_id),
@@ -1081,6 +1095,17 @@ class PipelineService:
             agent_metadata=agent_metadata_dict,
             agent_config=agent_config_dict,
         )
+        
+        self.logger.info(
+            "📸 SNAPSHOT CREATED: portfolio=%s, cash_available=%.2f, current_value=%.2f, investment_amount=%.2f, capital_base=%.2f",
+            snapshot.portfolio_id,
+            snapshot.cash_available,
+            snapshot.current_value,
+            snapshot.investment_amount,
+            snapshot.capital_base
+        )
+        
+        return snapshot
 
     def _build_trade_signal(self, payload: Mapping[str, Any]) -> Optional[TradeSignal]:
         symbol = payload.get("symbol")
@@ -1088,11 +1113,16 @@ class PipelineService:
             return None
 
         try:
-            signal_value = int(payload.get("signal", 0))
+            # NSE pipeline sends "trading_signal", but also support "signal" for compatibility
+            signal_value = int(payload.get("trading_signal") or payload.get("signal", 0))
         except (TypeError, ValueError):
             return None
 
-        confidence = self._safe_float(payload.get("confidence"), default=0.0)
+        # NSE pipeline sends "confidence_score", but also support "confidence" for compatibility
+        confidence = self._safe_float(
+            payload.get("confidence_score") or payload.get("confidence"),
+            default=0.0
+        )
         if confidence <= 0:
             confidence = 0.0
 
@@ -1154,19 +1184,52 @@ class PipelineService:
 
         trade_service = TradeExecutionService(logger=self.logger)
 
-        high_risk_users = await self._fetch_high_risk_user_ids(client)
-        if not high_risk_users:
-            self.logger.info("No high-risk subscribers available for trade automation")
+        # DIRECTLY query for active high_risk agents with auto_trade enabled
+        # No need for user filtering bullshit
+        agents = await client.tradingagent.find_many(
+            where={
+                "agent_type": "high_risk",
+                "status": "active",
+            },
+            include={
+                "portfolio": True,
+                "allocation": True,
+            }
+        )
+        
+        if not agents:
+            self.logger.warning("⚠️ No active high_risk trading agents found")
             return {
                 "processed_signals": len(processed_signals),
                 "payloads": 0,
                 "jobs": 0,
                 "dispatched": 0,
             }
-
+        
+        # Filter agents with auto_trade enabled
+        auto_trade_agents = []
+        for agent in agents:
+            config = self._clean_json(getattr(agent, "strategy_config", None)) or {}
+            if bool(config.get("auto_trade", False)):
+                auto_trade_agents.append(agent)
+        
+        if not auto_trade_agents:
+            self.logger.warning("⚠️ Found %d high_risk agents but NONE have auto_trade enabled", len(agents))
+            return {
+                "processed_signals": len(processed_signals),
+                "payloads": 0,
+                "jobs": 0,
+                "dispatched": 0,
+            }
+        
+        self.logger.info("✅ Found %d active high_risk agents with auto_trade enabled", len(auto_trade_agents))
+        
+        # Get unique portfolio IDs from these agents
+        portfolio_ids = list(set([str(agent.portfolio_id) for agent in auto_trade_agents if agent.portfolio_id]))
+        
         portfolios = await client.portfolio.find_many(
             where={
-                "user_id": {"in": high_risk_users},
+                "id": {"in": portfolio_ids},
                 "status": "active",
             },
             include={"agents": {"include": {"allocation": True}}},

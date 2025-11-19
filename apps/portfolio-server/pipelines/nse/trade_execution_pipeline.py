@@ -131,34 +131,62 @@ def _parse_payload(payload_json: str) -> Dict[str, Any]:
 
 @pw.udf
 def _payload_field_float(payload_json: str, field: str, default: float = 0.0) -> float:
-    data = _parse_payload(payload_json)
-    value = data.get(field, default)
+    # Parse JSON directly inside UDF (can't use other UDFs that return Pathway expressions)
     try:
-        return float(value)
-    except (TypeError, ValueError):
+        import json
+        data = json.loads(payload_json)
+        if isinstance(data, dict):
+            value = data.get(field, default)
+            try:
+                result = float(value)
+                if field == "reference_price" and result == 0.0:
+                    LOGGER.warning("⚠️ reference_price is 0.0 in payload! Payload keys: %s", list(data.keys()))
+                return result
+            except (TypeError, ValueError):
+                if field == "reference_price":
+                    LOGGER.warning("⚠️ Failed to convert reference_price to float: %s (type: %s)", value, type(value))
+                return default
+    except (json.JSONDecodeError, TypeError, AttributeError) as e:
+        if field == "reference_price":
+            LOGGER.warning("⚠️ Failed to parse JSON payload for reference_price: %s", e)
         return default
+    return default
 
 
 @pw.udf
 def _payload_field_int(payload_json: str, field: str, default: int = 0) -> int:
-    data = _parse_payload(payload_json)
-    value = data.get(field, default)
+    # Parse JSON directly inside UDF (can't use other UDFs that return Pathway expressions)
     try:
-        return int(value)
-    except (TypeError, ValueError):
-        try:
-            return int(float(value))
-        except (TypeError, ValueError):
-            return default
+        import json
+        data = json.loads(payload_json)
+        if isinstance(data, dict):
+            value = data.get(field, default)
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                try:
+                    return int(float(value))
+                except (TypeError, ValueError):
+                    return default
+    except (json.JSONDecodeError, TypeError, AttributeError):
+        return default
+    return default
 
 
 @pw.udf
 def _payload_field_str(payload_json: str, field: str, default: str = "") -> str:
-    data = _parse_payload(payload_json)
-    value = data.get(field, default)
-    if value is None:
+    # Parse JSON directly inside UDF (can't use other UDFs that return Pathway expressions)
+    try:
+        import json
+        data = json.loads(payload_json)
+        if isinstance(data, dict):
+            value = data.get(field, default)
+            if value is None:
+                return default
+            return str(value)
+    except (json.JSONDecodeError, TypeError, AttributeError):
         return default
-    return str(value)
+    return default
 
 
 @pw.udf
@@ -227,18 +255,29 @@ def _resolve_quantity(payload_json: str, allocation: float) -> int:
         data = json.loads(payload_json)
         price = float(data.get("reference_price", 0.0))
     except (TypeError, ValueError, KeyError):
+        LOGGER.warning("⚠️ Failed to parse reference_price from payload")
         return 0
     
     # Convert allocation to float if needed (it might be a Pathway expression)
     try:
         alloc_value = float(allocation)
     except (TypeError, ValueError):
+        LOGGER.warning("⚠️ Failed to convert allocation to float: %s", allocation)
         return 0
     
     # Use scalar conditional logic
-    if alloc_value <= 0 or price <= 0:
+    if alloc_value <= 0:
+        LOGGER.warning("⚠️ Allocation is 0 or negative: %.2f", alloc_value)
         return 0
+    if price <= 0:
+        LOGGER.warning("⚠️ Reference price is 0 or negative: %.2f", price)
+        return 0
+    
     quantity = int(alloc_value // price)
+    if quantity <= 0:
+        LOGGER.warning("⚠️ Calculated quantity is 0: allocation=%.2f, price=%.2f, quantity=%d", alloc_value, price, quantity)
+    else:
+        LOGGER.info("✅ Quantity calculation: allocation=%.2f, price=%.2f, quantity=%d", alloc_value, price, quantity)
     return quantity if quantity > 0 else 0
 
 
@@ -289,12 +328,31 @@ def build_trade_execution_pipeline(
         quantity=_resolve_quantity(pw.this.payload, pw.this.allocation),
     )
 
+    # Debug: Log filter conditions
     actionable = enriched.filter(
         (pw.this.side != "HOLD")
         & (pw.this.quantity > 0)
         & (pw.this.reference_price > 0)
         & (pw.this.allocation > 0)
     )
+    
+    # Add debug logging to see what's being filtered
+    def _log_filter_debug(key, row, time, is_addition):
+        if is_addition:
+            row_dict = dict(row)
+            side = row_dict.get("side", "unknown")
+            quantity = row_dict.get("quantity", 0)
+            ref_price = row_dict.get("reference_price", 0.0)
+            allocation = row_dict.get("allocation", 0.0)
+            LOGGER.info(
+                "🔍 Filter check: side=%s, quantity=%d, ref_price=%.2f, allocation=%.2f | "
+                "Passes: side!=HOLD=%s, qty>0=%s, price>0=%s, alloc>0=%s",
+                side, quantity, ref_price, allocation,
+                side != "HOLD", quantity > 0, ref_price > 0, allocation > 0
+            )
+    
+    # Subscribe to enriched table to see what's being filtered
+    pw.io.subscribe(enriched, _log_filter_debug)
 
     return actionable.select(
         request_id=pw.this.request_id,
@@ -364,7 +422,9 @@ def run_trade_execution_requests(
     stop_event = threading.Event()
     subject = _TradeSubject(str(uuid.uuid4()), event_queue, stop_event)
 
-    results_table = build_trade_execution_pipeline(subject)
+    # Use unique name for each pipeline run to avoid Pathway name conflicts
+    pipeline_name = f"trade_execution_pipeline_{uuid.uuid4().hex[:8]}"
+    results_table = build_trade_execution_pipeline(subject, name=pipeline_name)
     collector = _TradeCollector(logger=logger)
     pw.io.subscribe(results_table, collector)
 

@@ -12,7 +12,8 @@ from decimal import Decimal
 from typing import Any, Iterable, List, Mapping, Optional, Sequence
 
 import json
-from market_data import get_market_data_service  # type: ignore
+import httpx
+import os
 
 DEFAULT_TAKE_PROFIT_PCT = 0.03
 DEFAULT_STOP_LOSS_PCT = 0.01
@@ -205,15 +206,25 @@ def prepare_trade_execution_payloads(
     """
 
     logger = logger or logging.getLogger(__name__)
-    market_service = get_market_data_service()
     payloads: List[TradeExecutionPayload] = []
 
     eligible_portfolios = list(portfolios)
+    logger.info(
+        "📋 prepare_trade_execution_payloads called with %d signal(s) and %d portfolio(s)",
+        len(list(signals)) if hasattr(signals, '__len__') else 'unknown',
+        len(eligible_portfolios)
+    )
     if not eligible_portfolios:
         logger.info("No eligible portfolios for trade execution")
         return []
 
     for signal in signals:
+        logger.info(
+            "🔄 Processing signal: symbol=%s, signal=%d, confidence=%.2f",
+            signal.symbol,
+            signal.signal,
+            signal.confidence
+        )
         if signal.signal not in (1, -1):
             logger.debug("Skipping non-directional signal %s", signal.signal_id)
             continue
@@ -221,18 +232,29 @@ def prepare_trade_execution_payloads(
             logger.debug("Skipping signal %s with non-positive confidence", signal.signal_id)
             continue
 
+        # Fetch price via HTTP API instead of direct WebSocket connection
+        reference_price = 0.0
         try:
-            market_service.register_symbol(signal.symbol)
-        except Exception:
-            logger.debug("Symbol %s registration failed; continuing", signal.symbol, exc_info=True)
-
-        try:
-            price = market_service.get_latest_price(signal.symbol)
-            if price is None:
-                price = market_service.get_or_fetch_price(signal.symbol)
-            reference_price = _normalise_price(price)
+            portfolio_server_url = os.getenv("PORTFOLIO_SERVER_URL", "http://localhost:8000")
+            internal_secret = os.getenv("INTERNAL_SERVICE_SECRET", "agentinvest-secret")
+            
+            url = f"{portfolio_server_url}/api/market/quotes"
+            params = {"symbols": signal.symbol}
+            headers = {
+                "X-Internal-Service": "true",
+                "X-Service-Secret": internal_secret,
+            }
+            
+            with httpx.Client(timeout=price_fetch_timeout) as client:
+                response = client.get(url, params=params, headers=headers)
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get("data") and len(data["data"]) > 0:
+                        price = data["data"][0].get("price")
+                        if price:
+                            reference_price = _normalise_price(price)
         except Exception as exc:  # pragma: no cover - defensive logging
-            logger.warning("Failed to fetch price for %s: %s", signal.symbol, exc)
+            logger.warning("Failed to fetch price for %s via HTTP API: %s", signal.symbol, exc)
             reference_price = 0.0
 
         # Fallback: Use a default price if fetch fails (for testing/development)
@@ -256,6 +278,15 @@ def prepare_trade_execution_payloads(
                 reference_price = 100.0  # Default fallback price for testing
 
         for portfolio in eligible_portfolios:
+            logger.info(
+                "🔍 Checking portfolio %s: agent_id=%s, agent_status=%s, capital_base=%.2f, auto_trade=%s",
+                portfolio.portfolio_id,
+                portfolio.agent_id,
+                portfolio.agent_status,
+                portfolio.capital_base,
+                dict(portfolio.agent_config or {}).get("auto_trade", True),
+            )
+            
             if not portfolio.agent_id:
                 logger.debug(
                     "Skipping portfolio %s: no trading agent registered",
@@ -283,11 +314,21 @@ def prepare_trade_execution_payloads(
 
             capital = portfolio.capital_base
             if capital <= 0:
-                logger.debug(
-                    "Skipping portfolio %s due to non-positive capital base",
+                logger.warning(
+                    "⚠️ Skipping portfolio %s: capital_base=%.2f (non-positive). "
+                    "Check portfolio allocation.allocated_amount and portfolio.investment_amount",
                     portfolio.portfolio_id,
+                    capital,
                 )
                 continue
+
+            logger.info(
+                "✅ PORTFOLIO PASSED ALL CHECKS! Creating payload for portfolio %s, capital=%.2f, symbol=%s, signal=%d",
+                portfolio.portfolio_id,
+                capital,
+                signal.symbol,
+                signal.signal
+            )
 
             payloads.append(
                 TradeExecutionPayload(

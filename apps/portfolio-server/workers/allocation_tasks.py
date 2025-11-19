@@ -280,8 +280,7 @@ async def _ensure_trading_agent(
     subscription_key = ALLOCATION_SUBSCRIPTION_MAP.get(normalized_type, normalized_type)
     subscriptions = user_subscriptions or set()
     auto_trade_enabled = subscription_key in subscriptions
-    status = "active" if auto_trade_enabled else "paused"
-
+    
     agent_name = " ".join(part.capitalize() for part in normalized_type.replace("_", " ").split())
     if agent_name and "agent" not in agent_name.lower():
         agent_name = f"{agent_name} Agent"
@@ -298,6 +297,23 @@ async def _ensure_trading_agent(
     existing_agent = await db.tradingagent.find_first(
         where={"portfolio_allocation_id": getattr(allocation, "id", None)}
     )
+    
+    # PRESERVE status if agent is already active with auto_trade enabled
+    # Only pause agents if they're being explicitly disabled or if this is a subscription sync event
+    existing_status = str(getattr(existing_agent, "status", "")).lower() if existing_agent else ""
+    existing_config_raw = _json_to_dict(getattr(existing_agent, "strategy_config", None) if existing_agent else None)
+    existing_auto_trade = bool(existing_config_raw.get("auto_trade", False)) if existing_config_raw else False
+    
+    trigger = str(request_context.get("trigger", "")).lower()
+    is_subscription_sync = "subscription" in trigger or "sync" in trigger
+    
+    # If this is NOT a subscription sync, and agent is already active with auto_trade, keep it active
+    # Don't let rebalancing or other operations pause active trading agents
+    if not is_subscription_sync and existing_status == "active" and existing_auto_trade:
+        status = "active"
+    else:
+        # Only update status for subscription syncs or when creating new agents
+        status = "active" if auto_trade_enabled else "paused"
 
     existing_metadata = _json_to_dict(getattr(existing_agent, "metadata", None) if existing_agent else None)
     trading_metadata = {

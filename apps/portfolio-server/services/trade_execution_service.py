@@ -133,8 +133,23 @@ class TradeExecutionService:
             "metadata": json.dumps(metadata),
         }
         
-        if job_row.get("portfolio_id"):
-            data["portfolio_id"] = job_row["portfolio_id"]
+        # Verify portfolio exists before setting portfolio_id to avoid foreign key constraint errors
+        portfolio_id = job_row.get("portfolio_id")
+        if portfolio_id:
+            try:
+                portfolio = await client.portfolio.find_unique(where={"id": portfolio_id})
+                if portfolio:
+                    data["portfolio_id"] = portfolio_id
+                else:
+                    self.logger.warning(
+                        "⚠️ Portfolio %s not found in database, creating trade log without portfolio_id",
+                        portfolio_id
+                    )
+            except Exception as portfolio_check_exc:
+                self.logger.warning(
+                    "⚠️ Failed to verify portfolio %s exists: %s, creating trade log without portfolio_id",
+                    portfolio_id, portfolio_check_exc
+                )
         if job_row.get("agent_id"):
             data["agent_id"] = job_row["agent_id"]
         if job_row.get("agent_type"):
