@@ -32,7 +32,7 @@ function isPortfolioNotFoundError(error: unknown): boolean {
 export default function DashboardPage() {
   const params = useParams()
   const username = params.username as string
-  const { stockRecommendations, newsSentiments } = useDashboardNotifications()
+  const { stockRecommendations, newsSentiments, dismiss } = useDashboardNotifications()
   const { news: liveNews, statusMessage: newsStatusMessage } = useLiveNewsFeed()
 
   // SECURE: Get user data from server-validated token, NOT localStorage
@@ -339,6 +339,7 @@ export default function DashboardPage() {
               notifications={stockRecommendations} 
               title="Live Notifications"
               description="Keep up with your AI"
+              onDismiss={dismiss}
             />
           </div>
 
@@ -370,6 +371,7 @@ export default function DashboardPage() {
               notifications={newsSentiments} 
               title="Top Headlines"
               description="News sentiment analysis"
+              onDismiss={dismiss}
             />
           </div>
         </main>

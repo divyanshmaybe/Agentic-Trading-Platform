@@ -1,4 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion"
+import { X } from "lucide-react"
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
@@ -8,6 +9,7 @@ type NotificationCardProps = {
   notifications: Notification[]
   title?: string
   description?: string
+  onDismiss?: (id: string) => void
 }
 
 /**
@@ -25,7 +27,8 @@ function formatTimestamp(date: Date): string {
 export function NotificationCard({ 
   notifications, 
   title = "Live Notifications",
-  description = "Keep up with your AI"
+  description = "Keep up with your AI",
+  onDismiss
 }: NotificationCardProps) {
   if (!notifications || !notifications.length) {
     return null
@@ -50,8 +53,19 @@ export function NotificationCard({
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -20 }}
                 transition={{ duration: 0.45, ease: [0.21, 0.61, 0.35, 1] }}
-                className="group relative rounded-xl border border-white/10 bg-black/30 p-4 shadow-[0_8px_24px_-8px_rgba(0,0,0,0.6)] backdrop-blur-sm"
+                className="group relative rounded-xl border border-white/1 p-4 pt-6 pr-10 shadow-[0_8px_24px_-8px_rgba(0,0,0,0.6)] backdrop-blur-sm"
               >
+                {onDismiss && (
+                  <div className="absolute top-3 right-3 z-20">
+                    <button
+                      onClick={() => onDismiss(notification.id)}
+                      className="p-1.5 rounded-full bg-black/30 hover:bg-black/50 transition flex items-center justify-center backdrop-blur-sm"
+                      aria-label="Dismiss notification"
+                    >
+                      <X className="h-3.5 w-3.5 text-white/70 hover:text-white" strokeWidth={2} />
+                    </button>
+                  </div>
+                )}
                 <div className="mb-2 flex items-center justify-between gap-3">
                   <span className="text-xs font-medium uppercase tracking-wide text-white/45">
                     {formatTimestamp(notification.createdAt)}
