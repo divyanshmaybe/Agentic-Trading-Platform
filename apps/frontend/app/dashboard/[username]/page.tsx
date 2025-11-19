@@ -6,14 +6,13 @@ import Link from "next/link"
 import { Playfair_Display } from "next/font/google"
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader"
 import { NotificationCard } from "@/components/dashboard/NotificationCard"
-import { NewsFeedCard } from "@/components/dashboard/NewsFeedCard"
 import { PortfolioOverviewCard } from "@/components/dashboard/PortfolioOverviewCard"
 import { StocksWatchlistCard } from "@/components/dashboard/StocksWatchlistCard"
 import { Container } from "@/components/shared/Container"
-import { useRotatingList } from "@/hooks/useRotatingItem"
 import { useAuth } from "@/hooks/useAuth"
+import { useDashboardNotifications } from "@/components/hooks/useDashboardNotifications"
 import "@/lib/chart"
-import { notificationItems, portfolioSummary as mockPortfolioSummary, stocks as mockStocks } from "../data"
+import { portfolioSummary as mockPortfolioSummary, stocks as mockStocks } from "../data"
 import type { PortfolioSummary, StockItem } from "@/lib/dashboardTypes"
 import { getPortfolio, getPortfolioDashboard, getPositions, fetchMarketCandles, getPortfolioAllocations } from "@/lib/portfolio"
 import type { Portfolio } from "@/lib/portfolio"
@@ -33,7 +32,7 @@ function isPortfolioNotFoundError(error: unknown): boolean {
 export default function DashboardPage() {
   const params = useParams()
   const username = params.username as string
-  const activeNotifications = useRotatingList(notificationItems, 5500, 3)
+  const { stockRecommendations, newsSentiments } = useDashboardNotifications()
   const { news: liveNews, statusMessage: newsStatusMessage } = useLiveNewsFeed()
 
   // SECURE: Get user data from server-validated token, NOT localStorage
@@ -336,7 +335,11 @@ export default function DashboardPage() {
 
         <main className="grid gap-6 lg:grid-cols-4 xl:grid-cols-5">
           <div className="flex">
-            <NotificationCard notifications={activeNotifications} />
+            <NotificationCard 
+              notifications={stockRecommendations} 
+              title="Live Notifications"
+              description="Keep up with your AI"
+            />
           </div>
 
           <div className="flex flex-col gap-6 lg:col-span-2 xl:col-span-3">
@@ -363,7 +366,11 @@ export default function DashboardPage() {
           </div>
 
           <div className="flex">
-            <NewsFeedCard news={liveNews} statusMessage={newsStatusMessage} />
+            <NotificationCard 
+              notifications={newsSentiments} 
+              title="Top Headlines"
+              description="News sentiment analysis"
+            />
           </div>
         </main>
       </Container>

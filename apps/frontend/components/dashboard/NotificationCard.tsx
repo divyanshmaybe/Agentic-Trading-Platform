@@ -2,13 +2,31 @@ import { AnimatePresence, motion } from "framer-motion"
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
-import type { NotificationItem } from "@/lib/dashboardTypes"
+import type { Notification } from "@/lib/types/notifications"
 
 type NotificationCardProps = {
-  notifications: NotificationItem[]
+  notifications: Notification[]
+  title?: string
+  description?: string
 }
 
-export function NotificationCard({ notifications }: NotificationCardProps) {
+/**
+ * Format Date to timestamp string for display
+ */
+function formatTimestamp(date: Date): string {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date)
+}
+
+export function NotificationCard({ 
+  notifications, 
+  title = "Live Notifications",
+  description = "Keep up with your AI"
+}: NotificationCardProps) {
   if (!notifications || !notifications.length) {
     return null
   }
@@ -17,9 +35,9 @@ export function NotificationCard({ notifications }: NotificationCardProps) {
     <Card className="card-glass flex h-full flex-col rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_28px_65px_-38px_rgba(0,0,0,0.9)] backdrop-blur">
       <CardHeader className="gap-1">
         <CardDescription className="text-xs uppercase tracking-[0.3em] text-white/45">
-			Keep up with your AI
+          {description}
         </CardDescription>
-        <CardTitle className="h-title text-xl text-[#fafafa]">Live Notifications</CardTitle>
+        <CardTitle className="h-title text-xl text-[#fafafa]">{title}</CardTitle>
       </CardHeader>
       <CardContent className="flex-1 overflow-y-auto">
         <div className="space-y-3 pr-2">
@@ -36,29 +54,46 @@ export function NotificationCard({ notifications }: NotificationCardProps) {
               >
                 <div className="mb-2 flex items-center justify-between gap-3">
                   <span className="text-xs font-medium uppercase tracking-wide text-white/45">
-                    {notification.timestamp}
+                    {formatTimestamp(notification.createdAt)}
                   </span>
-                  <span className="rounded-md bg-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white/50">
-                    Alert
-                  </span>
+                  <div className="flex items-center gap-2">
+                    {notification.symbol && (
+                      <span className="rounded-md bg-blue-500/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-blue-300">
+                        {notification.symbol}
+                      </span>
+                    )}
+                    {notification.signal && (
+                      <span className={`rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+                        notification.signal.toLowerCase() === "buy"
+                          ? "bg-emerald-500/20 text-emerald-300"
+                          : notification.signal.toLowerCase() === "sell"
+                          ? "bg-red-500/20 text-red-300"
+                          : "bg-white/10 text-white/50"
+                      }`}>
+                        {notification.signal}
+                      </span>
+                    )}
+                    {!notification.symbol && !notification.signal && (
+                      <span className="rounded-md bg-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white/50">
+                        Alert
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <h3 className="mb-1.5 text-base font-semibold text-[#fafafa]">{notification.title}</h3>
-                <p className="text-sm leading-relaxed text-white/70">{notification.body}</p>
-                
-                {notification.actions && notification.actions.length > 0 && (
-                  <div className="mt-4 flex gap-2">
-                    {notification.actions.map((action, idx) => (
-                      <button
-                        key={`${notification.id}-${action.value}`}
-                        className={`flex-1 rounded-lg px-4 py-2 text-sm font-semibold transition-all duration-200 ${
-                          idx === 0
-                            ? "bg-gradient-to-r from-emerald-500/20 to-green-500/20 text-emerald-300 hover:from-emerald-500/30 hover:to-green-500/30 border border-emerald-500/30 hover:border-emerald-400/50"
-                            : "bg-white/5 text-white/70 hover:bg-white/10 border border-white/10 hover:border-white/20"
-                        }`}
-                      >
-                        {action.label}
-                      </button>
-                    ))}
+                <h3 className="mb-1.5 text-base font-semibold text-[#fafafa]">
+                  {notification.title || notification.category.replace(/_/g, " ")}
+                </h3>
+                <p className="text-sm leading-relaxed text-white/70">
+                  {notification.summary ?? notification.title ?? "No details available"}
+                </p>
+                {notification.sentiment && (
+                  <div className="mt-2 text-xs text-white/50">
+                    Sentiment: <span className="font-medium text-white/70">{notification.sentiment}</span>
+                  </div>
+                )}
+                {notification.confidence !== null && notification.confidence !== undefined && (
+                  <div className="mt-1 text-xs text-white/50">
+                    Confidence: <span className="font-medium text-white/70">{(notification.confidence * 100).toFixed(0)}%</span>
                   </div>
                 )}
               </motion.div>

@@ -76,6 +76,9 @@ model Notification {
   createdAt    DateTime @default(now())
   eventTime    DateTime?
 
+  dashboardStates DashboardNotificationState[]
+  intradayStates  IntradayNotificationState[]
+
   @@index([topic])
   @@index([category])
   @@index([symbol])
@@ -83,3 +86,32 @@ model Notification {
   @@map("notifications")
 }
 
+model DashboardNotificationState {
+  id             String      @id @default(uuid())
+  userId         String
+  notificationId String
+  dismissedAt    DateTime    @default(now())
+
+  notification   Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, notificationId])
+  @@index([userId])
+  @@index([notificationId])
+  @@index([dismissedAt])
+  @@map("dashboard_notification_states")
+}
+
+model IntradayNotificationState {
+  id             String      @id @default(uuid())
+  userId         String
+  notificationId String
+  dismissedAt    DateTime    @default(now())
+
+  notification   Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, notificationId])
+  @@index([userId])
+  @@index([notificationId])
+  @@index([dismissedAt])
+  @@map("intraday_notification_states")
+}
