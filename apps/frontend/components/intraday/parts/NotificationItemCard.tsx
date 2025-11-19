@@ -125,25 +125,27 @@ export function NotificationItemCard({
         <button
           type="button"
           onClick={() => onDismiss(notification.id)}
-          className="absolute right-3 top-3 z-10 rounded-full border border-white/10 bg-white/5 p-1.5 text-white/60 transition hover:border-white/20 hover:bg-white/15 hover:text-white"
+          className="absolute right-4 top-4 z-10 rounded-full border border-white/10 bg-white/5 p-1.5 text-white/60 transition hover:border-white/20 hover:bg-white/15 hover:text-white"
           aria-label="Dismiss notification"
         >
           <X className="size-3.5" />
         </button>
       )}
-      <NotificationHeader
-        notification={notification}
-        icon={icon}
-        title={title}
-        iconWrapperClass={iconWrapperClass}
-        badgeClass={badgeClass}
-      />
-      <NotificationBody notification={notification} />
-      <NotificationActions
-        actions={notification.actions}
-        signal={signal}
-        notification={notification}
-      />
+      <div className="pr-8">
+        <NotificationHeader
+          notification={notification}
+          icon={icon}
+          title={title}
+          iconWrapperClass={iconWrapperClass}
+          badgeClass={badgeClass}
+        />
+        <NotificationBody notification={notification} />
+        <NotificationActions
+          actions={notification.actions}
+          signal={signal}
+          notification={notification}
+        />
+      </div>
     </article>
   )
 }

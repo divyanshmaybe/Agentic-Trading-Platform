@@ -1,3 +1,8 @@
+/**
+ * @deprecated This file contains legacy Kafka notification utilities.
+ * New notification system uses NotificationDTO/Notification types from @/lib/types/notifications.
+ * These utilities are kept for backwards compatibility with NotificationItemCard and other legacy components.
+ */
 import type { KafkaNotification, KafkaNotificationAction } from "./types"
 
 export function coerceNotification(input: unknown): KafkaNotification | null {

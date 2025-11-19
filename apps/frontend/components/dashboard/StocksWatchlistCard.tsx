@@ -51,6 +51,7 @@ type StockSparklineRowProps = {
 function StockSparklineRow({ stock }: StockSparklineRowProps) {
 	const { data, options, plugins } = useMemo(() => createSparklineChart(stock), [stock])
 	const positive = stock.changePct >= 0
+	const hasPriceData = stock.prices && stock.prices.length > 0 && !stock.pricesError
 
 	return (
 		<div className="grid grid-cols-1 items-center gap-4 rounded-xl border border-white/10 bg-white/7 px-4 py-3 text-white/70 transition hover:border-white/20 hover:bg-white/10 sm:grid-cols-[1fr_auto]">
@@ -60,9 +61,6 @@ function StockSparklineRow({ stock }: StockSparklineRowProps) {
 					<span className="rounded-md bg-black/60 px-2 py-0.5 text-xs uppercase tracking-wide text-white/50">
 						{stock.symbol}
 					</span>
-					{stock.pricesError && (
-						<span className="text-xs text-white/30" title="Using fallback data">⚠</span>
-					)}
 				</div>
 				<span className={cn("text-sm font-semibold", positive ? "text-[#22c55e]" : "text-[#dc2626]")}>
 					{positive ? "+" : ""}
@@ -70,7 +68,15 @@ function StockSparklineRow({ stock }: StockSparklineRowProps) {
 				</span>
 			</div>
 			<div className="h-16 min-w-[120px] sm:h-16">
-				<Line data={data} options={options} plugins={plugins} />
+				{hasPriceData ? (
+					<Line data={data} options={options} plugins={plugins} />
+				) : (
+					<div className="flex h-full w-full items-center justify-center rounded-lg border border-amber-500/20 bg-amber-500/5">
+						<div className="flex flex-col items-center gap-1 text-center">
+							<span className="text-[10px] text-amber-400/70">Price data unavailable</span>
+						</div>
+					</div>
+				)}
 			</div>
 		</div>
 	)

@@ -1,91 +1,130 @@
 "use client"
 
-import { useMemo, useState, useCallback } from "react"
+import { useMemo, useCallback } from "react"
 import { AnimatePresence, motion } from "framer-motion"
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { useNotificationStream } from "@/hooks/useNotificationStream"
-import { coerceNotification } from "@/components/intraday/notification-utils"
+import { useIntradayNotifications as useIntradayNotificationsHook } from "@/components/hooks/useIntradayNotifications"
+import type { Notification } from "@/lib/types/notifications"
 import type { KafkaNotification } from "@/components/intraday/types"
 import { NotificationItemCard } from "@/components/intraday/parts/NotificationItemCard"
 
+/**
+ * Convert new Notification type to KafkaNotification format for NotificationItemCard
+ * This is a temporary adapter until NotificationItemCard is updated
+ */
+function notificationToKafkaFormat(notification: Notification): KafkaNotification {
+  // Map category to type
+  // filing_signal is treated as nse-signal (trading signal) for proper UI rendering
+  const categoryToType: Record<string, string> = {
+    stock_recommendation: "news-stock-recommendation",
+    news_sentiment: "news-sentiment-article",
+    nse_signal: "nse-signal",
+    filing_signal: "nse-signal", // Filing signals are trading signals
+    portfolio_risk_alert: "portfolio-risk-alert",
+    sector_analysis: "news-sector-analysis",
+  }
+  
+  const type = categoryToType[notification.category] || "generic"
+  
+  // Format timestamp
+  const timestamp = new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(notification.createdAt)
 
-function useIntradayNotifications(): {
-  notifications: KafkaNotification[]
-  statusMessage: string | null
-} {
-  const {
-    notifications: rawNotifications,
-    status,
-    error,
-  } = useNotificationStream({
-    maxItems: 20,
-  })
+  // Prepare data object with signal information for nse-signal type
+  const data: Record<string, any> = {
+    ...(notification.rawPayload || {}),
+  }
 
-  const notifications = useMemo(() => {
-    return rawNotifications
-      .map((item) => coerceNotification(item))
-      .filter((item): item is KafkaNotification => Boolean(item))
-  }, [rawNotifications])
+  // Ensure signal value is available in data for nse-signal type
+  if (type === "nse-signal" && notification.signal !== null && notification.signal !== undefined) {
+    // Convert signal string to number if needed (signal can be "1", "-1", "0")
+    const signalValue = typeof notification.signal === "string" 
+      ? parseInt(notification.signal, 10) 
+      : notification.signal
+    if (!isNaN(signalValue)) {
+      data.signal = signalValue
+    }
+  }
 
-  const statusMessage = useMemo(() => {
-    if (error) {
-      return error
-    }
-    if (status === "connecting") {
-      return "Connecting to intraday notification stream..."
-    }
-    if (status === "open" && notifications.length === 0) {
-      return "Listening for live intraday signals."
-    }
-    if (status === "error") {
-      return "Attempting to reconnect to the notification stream."
-    }
-    return null
-  }, [error, status, notifications.length])
+  // Include symbol if available
+  if (notification.symbol) {
+    data.symbol = notification.symbol
+  }
 
-  return { notifications, statusMessage }
+  // Include confidence if available
+  if (notification.confidence !== null && notification.confidence !== undefined) {
+    data.confidence = notification.confidence
+  }
+
+  return {
+    id: notification.id,
+    type,
+    topic: notification.topic,
+    timestamp,
+    title: notification.title || undefined,
+    body: notification.summary || notification.title || undefined,
+    data,
+    actions: undefined, // Actions can be derived from signal if needed
+  }
 }
 
 export function IntradayNotifications() {
-  const { notifications, statusMessage } = useIntradayNotifications()
-  const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set())
+  const { notifications, loading, dismiss } = useIntradayNotificationsHook()
 
-  const handleDismiss = useCallback((id: string) => {
-    setDismissedIds((prev) => {
-      const next = new Set(prev)
-      next.add(id)
-      return next
-    })
-  }, [])
+  // Convert to KafkaNotification format for NotificationItemCard
+  const kafkaNotifications = useMemo(() => {
+    return notifications.map(notificationToKafkaFormat)
+  }, [notifications])
 
-  const visibleNotifications = useMemo(() => {
-    return notifications.filter((notification) => !dismissedIds.has(notification.id))
-  }, [notifications, dismissedIds])
+  const handleDismiss = useCallback(
+    async (id: string) => {
+      try {
+        await dismiss(id)
+      } catch (error) {
+        console.error("[Intraday Notifications] Failed to dismiss:", error)
+      }
+    },
+    [dismiss]
+  )
+
+  const statusMessage = useMemo(() => {
+    if (loading) {
+      return "Loading notifications..."
+    }
+    if (notifications.length === 0) {
+      return "Listening for live intraday signals."
+    }
+    return null
+  }, [loading, notifications.length])
 
   return (
-    <Card className="card-glass flex h-full flex-col rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_28px_65px_-38px_rgba(0,0,0,0.9)] backdrop-blur">
-      <CardHeader className="gap-1">
+    <Card className="card-glass flex max-h-[100vh] w-full flex-col rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_28px_65px_-38px_rgba(0,0,0,0.9)] backdrop-blur">
+      <CardHeader className="shrink-0 gap-1">
         <CardDescription className="text-xs uppercase tracking-[0.3em] text-white/45">
           Intraday alerts in real time
         </CardDescription>
         <CardTitle className="h-title text-xl text-[#fafafa]">Notifications</CardTitle>
       </CardHeader>
-      <CardContent className="flex-1 overflow-y-auto">
+      <CardContent className="min-h-0 flex-1 overflow-y-auto">
         {statusMessage ? (
           <div className="mb-4 rounded-xl border border-white/10 bg-black/25 px-4 py-3 text-sm text-white/60">
             {statusMessage}
           </div>
         ) : null}
 
-        {visibleNotifications.length === 0 ? (
+        {kafkaNotifications.length === 0 ? (
           <div className="flex h-40 items-center justify-center rounded-xl border border-dashed border-white/10 bg-black/20 text-sm text-white/50">
-            Waiting for the next intraday trigger.
+            {loading ? "Loading notifications..." : "Waiting for the next intraday trigger."}
           </div>
         ) : (
           <div className="space-y-4 pr-2">
             <AnimatePresence initial={false} mode="popLayout">
-              {visibleNotifications.map((notification) => (
+              {kafkaNotifications.map((notification) => (
                 <motion.div
                   key={notification.id}
                   layout

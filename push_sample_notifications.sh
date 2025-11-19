@@ -104,31 +104,26 @@ TOPICS = {
 SETTINGS = KafkaSettings()
 BUS = KafkaEventBus(SETTINGS)
 
+# Ensure BUS is ready (publishers will auto-start when registered)
+# Give a moment for any existing publishers to initialize
+time.sleep(0.5)
+
 
 def ensure_publisher(name: str, topic: str, model: type[BaseModel], headers: Optional[dict] = None) -> KafkaPublisher:
     try:
-        return BUS.register_publisher(
+        publisher = BUS.register_publisher(
             name,
             topic=topic,
             value_model=model,
             default_headers=headers or {},
+            auto_start=True,
         )
+        return publisher
     except PublisherAlreadyRegistered:
-        return BUS.get_publisher(name)
-
-
-def create_kafka_message_wrapper(inner_payload: dict, partition_key: str, source_header: str) -> dict:
-    """Create the Kafka message wrapper structure with the payload as a JSON string in value.value."""
-    import time as time_module
-    return {
-        "key": partition_key,
-        "value": json.dumps(inner_payload, separators=(",", ":"), default=str),
-        "headers": {
-            "source": source_header
-        },
-        "diff": 1,
-        "time": int(time_module.time() * 1000)
-    }
+        publisher = BUS.get_publisher(name)
+        # Ensure publisher is started (idempotent)
+        publisher.start()
+        return publisher
 
 
 def publish_event(
@@ -143,23 +138,35 @@ def publish_event(
     # Get source header from headers or use default based on topic
     source_header = (headers or {}).get("source", "news_pipeline" if "news" in topic_key else "nse_filings")
     
-    # Create publisher without model validation
-    publisher = ensure_publisher(publisher_name, topic, None, None)
+    # Create publisher with model validation
+    default_headers = {"source": source_header}
+    publisher = ensure_publisher(publisher_name, topic, model, default_headers)
 
+    # Ensure publisher is started and ready
+    if not publisher._started.is_set():
+        publisher.start()
+        time.sleep(0.2)  # Give publisher a moment to initialize
+
+    # Create event instance and publish directly
+    event = model(**payload)
+    
+    # Publish using the proper API
     try:
-        event = model(**payload)
-        inner_payload = event.model_dump(mode="json")
-        
-        message_wrapper = create_kafka_message_wrapper(inner_payload, partition_key or "", source_header)
-        
-
-        publisher._queue.put(message_wrapper, block=True, timeout=5.0)
-        
-        print(f"✓ Published {publisher_name} event to topic '{topic}':")
-        print(json.dumps(message_wrapper, indent=2))
-        time.sleep(0.5)  # allow pipeline to flush
-    finally:
-        publisher.stop()
+        publisher.publish(
+            event,
+            key=partition_key,
+            headers=headers,
+            block=True,
+            timeout=5.0,
+        )
+    except Exception as e:
+        print(f"✗ Failed to publish {publisher_name} event: {e}")
+        raise
+    
+    print(f"✓ Published {publisher_name} event to topic '{topic}':")
+    print(json.dumps(event.model_dump(mode="json"), indent=2))
+    # Give Pathway pipeline time to process and send the message
+    time.sleep(1.0)  # allow pipeline to flush
 
 
 now_ts = utc_timestamp()
@@ -256,4 +263,10 @@ publish_event(
 )
 
 print("\nAll sample notifications published successfully.")
+print("Waiting for messages to be flushed to Kafka...")
+time.sleep(2.0)  # Final wait to ensure all messages are sent
+
+# Stop all publishers gracefully
+BUS.stop_all()
+print("Publishers stopped.")
 PY

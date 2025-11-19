@@ -1,33 +1,32 @@
 {
-  "name": "auth_server",
+  "name": "notification_server",
   "version": "1.0.0",
-  "description": "",
+  "description": "Kafka ingestion service for notifications",
   "main": "index.js",
   "scripts": {
-    "test": "tsx --test tests/subscriptions.test.ts",
-    "dev": "npx tsx watch --require tsconfig-paths/register server.ts",
+    "dev": "npx tsx watch --require tsconfig-paths/register src/index.ts",
     "build": "prisma generate --schema ../../shared/prisma/schema.prisma && tsc",
-    "start": "node -r tsconfig-paths/register dist/apps/auth_server/server.js",
+    "start": "node -r tsconfig-paths/register dist/apps/notification_server/src/index.js",
     "prisma:generate": "prisma generate --schema ../../shared/prisma/schema.prisma",
     "prisma:migrate": "prisma migrate dev --schema ../../shared/prisma/schema.prisma",
     "prisma:push": "prisma db push --schema ../../shared/prisma/schema.prisma",
-    "prisma:studio": "prisma studio --schema ../../shared/prisma/schema.prisma",
-    "studio": "prisma studio --schema ../../shared/prisma/schema.prisma"
+    "prisma:studio": "prisma studio --schema ../../shared/prisma/schema.prisma"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
     "@prisma/client": "5.22.0",
-    "bcryptjs": "^3.0.3",
-    "google-auth-library": "^10.5.0",
-    "jsonwebtoken": "^9.0.2",
+    "dotenv": "^17.2.3",
+    "ioredis": "^5.8.2",
+    "kafkajs": "^2.2.4",
     "tsconfig-paths": "^4.2.0"
   },
   "devDependencies": {
-    "@types/bcryptjs": "^3.0.0",
-    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^24.10.0",
     "prisma": "5.22.0",
-    "tsx": "^4.20.6"
+    "tsx": "^4.20.6",
+    "typescript": "5.9.2"
   }
 }
+

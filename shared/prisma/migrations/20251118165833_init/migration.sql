@@ -33,11 +33,33 @@ CREATE TABLE "users" (
     "two_factor_enabled" BOOLEAN NOT NULL DEFAULT false,
     "two_factor_secret" TEXT,
     "metadata" JSONB DEFAULT '{}',
+    "subscriptions" TEXT[] DEFAULT ARRAY[]::TEXT[],
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,
     "deleted_at" TIMESTAMP(3),
 
     CONSTRAINT "users_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "notifications" (
+    "id" TEXT NOT NULL,
+    "kafkaKey" TEXT,
+    "topic" TEXT NOT NULL,
+    "category" TEXT NOT NULL,
+    "title" TEXT,
+    "summary" TEXT,
+    "symbol" TEXT,
+    "sector" TEXT,
+    "sentiment" TEXT,
+    "signal" TEXT,
+    "confidence" DOUBLE PRECISION,
+    "url" TEXT,
+    "rawPayload" JSONB NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "eventTime" TIMESTAMP(3),
+
+    CONSTRAINT "notifications_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateIndex
@@ -60,6 +82,21 @@ CREATE INDEX "users_status_idx" ON "users"("status");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "users_organization_id_email_key" ON "users"("organization_id", "email");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "notifications_kafkaKey_key" ON "notifications"("kafkaKey");
+
+-- CreateIndex
+CREATE INDEX "notifications_topic_idx" ON "notifications"("topic");
+
+-- CreateIndex
+CREATE INDEX "notifications_category_idx" ON "notifications"("category");
+
+-- CreateIndex
+CREATE INDEX "notifications_symbol_idx" ON "notifications"("symbol");
+
+-- CreateIndex
+CREATE INDEX "notifications_createdAt_idx" ON "notifications"("createdAt");
 
 -- AddForeignKey
 ALTER TABLE "users" ADD CONSTRAINT "users_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;

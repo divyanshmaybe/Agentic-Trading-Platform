@@ -16,6 +16,7 @@ FROM pnpm-base AS deps
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.json turbo.json ./
 COPY packages ./packages
 COPY shared/js ./shared/js
+COPY shared/prisma ./shared/prisma
 COPY types ./types
 COPY middleware ./middleware
 COPY apps/auth_server/package.json ./apps/auth_server/package.json
@@ -30,6 +31,7 @@ COPY --from=deps /pnpm /pnpm
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.json turbo.json ./
 COPY packages ./packages
 COPY shared/js ./shared/js
+COPY shared/prisma ./shared/prisma
 COPY types ./types
 COPY middleware ./middleware
 COPY apps/auth_server ./apps/auth_server
@@ -54,6 +56,7 @@ WORKDIR /app
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/packages ./packages
 COPY --from=builder /app/shared/js ./shared/js
+COPY --from=builder /app/shared/prisma ./shared/prisma
 COPY --from=builder /app/types ./types
 COPY --from=builder /app/middleware ./middleware
 COPY --from=builder /app/apps/auth_server ./apps/auth_server

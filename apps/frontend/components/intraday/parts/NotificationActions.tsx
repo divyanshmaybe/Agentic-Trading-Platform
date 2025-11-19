@@ -23,7 +23,7 @@ export function NotificationActions({
 
   return (
     <>
-      <footer className="mt-4 flex flex-wrap gap-2">
+      <footer className="mt-4 flex flex-wrap items-center gap-2">
         {signal === 1 && (
           <button
             type="button"
