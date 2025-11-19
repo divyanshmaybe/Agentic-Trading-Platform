@@ -5,8 +5,8 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider          = "postgresql"
+  url               = env("DATABASE_URL")
   shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
 
@@ -32,13 +32,13 @@ model Objective {
   constraints              Json?    @default("{}")
   sector_constraints       Json?    @default("{}")
 
-  preferences              Json?    @default("{}")
-  generic_notes            Json?    @default("[]")
-  missing_fields           Json?    @default("[]")
-  completion_status        String   @default("pending")
-  status                   String   @default("active")
-  created_at               DateTime @default(now())
-  updated_at               DateTime @updatedAt
+  preferences       Json?    @default("{}")
+  generic_notes     Json?    @default("[]")
+  missing_fields    Json?    @default("[]")
+  completion_status String   @default("pending")
+  status            String   @default("active")
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
 
   portfolios Portfolio[]
 
@@ -84,7 +84,7 @@ model Portfolio {
   agents         TradingAgent[]
   rebalance_runs RebalanceRun[]
 
-  objective         Objective?          @relation(fields: [objective_id], references: [id], onDelete: SetNull)
+  objective Objective? @relation(fields: [objective_id], references: [id], onDelete: SetNull)
 
   @@index([organization_id])
   @@index([customer_id])
@@ -145,8 +145,8 @@ model TradingAgent {
   created_at              DateTime  @default(now())
   updated_at              DateTime  @updatedAt
 
-  portfolio  Portfolio?          @relation(fields: [portfolio_id], references: [id], onDelete: Cascade)
-  allocation PortfolioAllocation @relation("AllocationAgent", fields: [portfolio_allocation_id], references: [id], onDelete: Cascade)
+  portfolio  Portfolio?             @relation(fields: [portfolio_id], references: [id], onDelete: Cascade)
+  allocation PortfolioAllocation    @relation("AllocationAgent", fields: [portfolio_allocation_id], references: [id], onDelete: Cascade)
   trades     Trade[]
   positions  Position[]
   snapshots  TradingAgentSnapshot[]
@@ -192,17 +192,17 @@ model Trade {
 
   // NSE Pipeline specific fields
   signal_id         String?
-  confidence        Decimal?  @db.Decimal(9, 6)
-  take_profit_pct   Decimal?  @db.Decimal(9, 6)
-  stop_loss_pct     Decimal?  @db.Decimal(9, 6)
-  allocated_capital Decimal?  @db.Decimal(20, 4)
+  confidence        Decimal? @db.Decimal(9, 6)
+  take_profit_pct   Decimal? @db.Decimal(9, 6)
+  stop_loss_pct     Decimal? @db.Decimal(9, 6)
+  allocated_capital Decimal? @db.Decimal(20, 4)
 
-  metadata          Json?     @default("{}")
-  created_at        DateTime  @default(now())
-  updated_at        DateTime  @updatedAt
+  metadata   Json?    @default("{}")
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
 
-  portfolio Portfolio            @relation(fields: [portfolio_id], references: [id], onDelete: Cascade)
-  agent     TradingAgent?        @relation(fields: [agent_id], references: [id])
+  portfolio  Portfolio           @relation(fields: [portfolio_id], references: [id], onDelete: Cascade)
+  agent      TradingAgent?       @relation(fields: [agent_id], references: [id])
   executions TradeExecutionLog[]
 
   @@index([organization_id])
@@ -227,7 +227,7 @@ model Position {
   average_buy_price Decimal   @db.Decimal(20, 4)
   current_price     Decimal   @db.Decimal(20, 4)
   current_value     Decimal   @db.Decimal(20, 4)
-  pnl               Decimal   @default(0) @db.Decimal(20, 4)
+  realized_pnl      Decimal   @default(0) @db.Decimal(20, 4)
   pnl_percentage    Decimal   @default(0) @db.Decimal(9, 6)
   position_type     String
   status            String    @default("open")
@@ -263,35 +263,10 @@ model RebalanceRun {
   updated_at               DateTime @updatedAt
 
   portfolio            Portfolio            @relation(fields: [portfolio_id], references: [id], onDelete: Cascade)
-  segment_snapshots    SegmentSnapshot[]
   allocation_snapshots AllocationSnapshot[]
 
   @@index([portfolio_id])
   @@map("rebalance_runs")
-}
-
-/// --------------------
-/// Segment snapshot
-/// --------------------
-model SegmentSnapshot {
-  id               String   @id @default(uuid())
-  rebalance_run_id String
-  segment_key      String
-  allocated_amount Decimal  @db.Decimal(20, 4)
-  liquid_amount    Decimal  @db.Decimal(20, 4)
-  invested_amount  Decimal  @db.Decimal(20, 4)
-  return_pct       Decimal  @db.Decimal(9, 6)
-  volatility       Decimal  @db.Decimal(9, 6)
-  max_drawdown     Decimal  @db.Decimal(9, 6)
-  sharpe_ratio     Decimal? @db.Decimal(9, 6)
-  metrics          Json?    @default("{}")
-  created_at       DateTime @default(now())
-
-  rebalance_run RebalanceRun @relation(fields: [rebalance_run_id], references: [id], onDelete: Cascade)
-
-  @@index([rebalance_run_id])
-  @@index([segment_key])
-  @@map("segment_snapshots")
 }
 
 /// --------------------
@@ -332,24 +307,24 @@ model AllocationSnapshot {
 }
 
 model TradeExecutionLog {
-  id                String   @id @default(uuid())
-  trade_id          String   // Link to main Trade record
-  request_id        String   @unique
-  status            String   @default("pending") // 'pending' | 'executed' | 'failed' | 'cancelled'
-  executed_price    Decimal? @db.Decimal(20, 4)
-  executed_quantity Int      @default(0)
-  broker_order_id   String?
-  error_message     String?
-  execution_time    DateTime?
-  metadata          Json?    @default("{}")
-  created_at        DateTime @default(now())
-  updated_at        DateTime @updatedAt
+  id              String    @id @default(uuid())
+  trade_id        String // Link to main Trade record
+  request_id      String    @unique
+  status          String    @default("pending") // 'pending' | 'executed' | 'failed' | 'cancelled'
+  order_type      String // 'market' | 'limit' | 'take_profit' | 'stop_loss'
+  broker_order_id String?
+  error_message   String?
+  execution_time  DateTime?
+  metadata        Json?     @default("{}")
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
 
   trade Trade @relation(fields: [trade_id], references: [id], onDelete: Cascade)
 
   @@index([trade_id])
   @@index([status])
   @@index([request_id])
+  @@index([order_type])
   @@map("trade_execution_logs")
 }
 

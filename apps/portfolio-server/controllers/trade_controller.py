@@ -127,8 +127,6 @@ class TradeController:
                 status=trade_dict["status"],
                 quantity=trade_dict["quantity"],
                 price=trade_dict.get("price"),
-                executed_quantity=trade_dict.get("executed_quantity"),
-                executed_price=trade_dict.get("executed_price"),
                 execution_time=trade_dict.get("execution_time"),
             )
             for trade_dict in trades

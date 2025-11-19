@@ -113,6 +113,7 @@ class TradeEngine:
             metadata=trade.metadata,
         )
 
+        # Create payload for execution (will create/update TradeExecutionLog)
         updated_trade = await self._execute_market_order(payload, price, existing_trade_id=trade.id)
         portfolio_snapshot = await self._build_portfolio_snapshot(trade.portfolio_id)
 
@@ -200,6 +201,17 @@ class TradeEngine:
         exchange = payload.exchange or "NSE"
         segment = payload.segment or "EQUITY"
 
+        # For pending orders, don't set price to limit_price - it should be None or current market price
+        # The price will be set when the order is executed
+        trade_price = None
+        if payload.order_type == "limit" and payload.limit_price:
+            # For limit orders, we can optionally set price to limit_price for reference
+            # but it won't cause immediate execution
+            trade_price = payload.limit_price
+        elif payload.order_type in {"stop", "stop_loss", "take_profit"} and payload.trigger_price:
+            # For stop/take-profit, price should be None until triggered
+            trade_price = None
+        
         trade = await self.prisma.trade.create(
             data={
                 "organization_id": payload.organization_id,
@@ -213,15 +225,21 @@ class TradeEngine:
                 "order_type": payload.order_type,
                 "quantity": payload.quantity,
                 "limit_price": payload.limit_price,
-                "price": payload.limit_price,
+                "price": trade_price,  # None for stop/take-profit, limit_price for limit (reference only)
                 "trigger_price": payload.trigger_price,
-                "status": "pending",
+                "status": "pending",  # Always pending for non-market orders
                 "source": payload.source,
                 "metadata": json.dumps(payload.metadata) if payload.metadata else "{}",
             }
         )
 
-        self._enqueue_pending_trade(trade.id)
+        # Create TradeExecutionLog for pending manual trades
+        await self._create_trade_execution_log(trade, payload, status="pending")
+
+        # DO NOT enqueue pending trades immediately - let the order monitoring service handle them
+        # The order monitoring service will check and execute when conditions are met
+        # self._enqueue_pending_trade(trade.id)  # REMOVED - let order monitor handle it
+        
         return trade.dict()
 
     async def _apply_buy_execution(self, payload: TradeCreate, execution_price: Decimal) -> None:
@@ -263,8 +281,10 @@ class TradeEngine:
                     "average_buy_price": execution_price,
                     "current_price": execution_price,
                     "current_value": total_cost,
+                    "realized_pnl": Decimal(0),
                     "position_type": "long",
                     "status": "open",
+                    "opened_at": datetime.utcnow(),
                 }
             )
 
@@ -277,16 +297,51 @@ class TradeEngine:
         if not position or position.quantity < payload.quantity:
             raise ValueError("Insufficient holdings to execute sell order")
 
+        # Calculate realized PnL: (sell_price - average_buy_price) * quantity_sold
+        quantity_sold = Decimal(payload.quantity)
+        average_buy_price = Decimal(str(position.average_buy_price))
+        realized_pnl = (execution_price - average_buy_price) * quantity_sold
+        realized_pnl = realized_pnl.quantize(FOUR_DP)
+
+        # Get current realized_pnl (default to 0 if None)
+        current_realized_pnl = Decimal(str(position.realized_pnl)) if position.realized_pnl else Decimal(0)
+        new_realized_pnl = current_realized_pnl + realized_pnl
+
         remaining = position.quantity - payload.quantity
+        
+        # Update portfolio's realized_pnl
+        portfolio = await self.prisma.portfolio.find_unique(where={"id": payload.portfolio_id})
+        if portfolio:
+            portfolio_current_realized_pnl = Decimal(str(portfolio.realized_pnl)) if portfolio.realized_pnl else Decimal(0)
+            portfolio_new_realized_pnl = portfolio_current_realized_pnl + realized_pnl
+            
+            await self.prisma.portfolio.update(
+                where={"id": payload.portfolio_id},
+                data={"realized_pnl": portfolio_new_realized_pnl},
+            )
+
         if remaining == 0:
-            await self.prisma.position.delete(where={"id": position.id})
+            # Mark position as closed instead of deleting
+            await self.prisma.position.update(
+                where={"id": position.id},
+                data={
+                    "quantity": 0,
+                    "current_price": execution_price,
+                    "current_value": Decimal(0),
+                    "realized_pnl": new_realized_pnl,
+                    "status": "closed",
+                    "closed_at": datetime.utcnow(),
+                },
+            )
         else:
+            # Keep position open, update quantity and realized_pnl
             await self.prisma.position.update(
                 where={"id": position.id},
                 data={
                     "quantity": remaining,
                     "current_price": execution_price,
                     "current_value": (execution_price * Decimal(remaining)).quantize(FOUR_DP),
+                    "realized_pnl": new_realized_pnl,
                     "status": "open",
                 },
             )
@@ -342,27 +397,61 @@ class TradeEngine:
 
             logging.getLogger(__name__).exception("Failed to enqueue pending trade %s", trade_id)
 
-    async def _create_trade_execution_log(self, trade, payload: TradeCreate) -> None:
-        """Create minimal trade execution log for manual trades."""
+    async def _create_trade_execution_log(
+        self, 
+        trade, 
+        payload: TradeCreate, 
+        status: Optional[str] = None
+    ) -> None:
+        """Create trade execution log for manual trades.
+        
+        Args:
+            trade: Trade record (dict or Prisma model)
+            payload: TradeCreate payload
+            status: Optional status override (defaults to trade.status)
+        """
         import uuid
         import json
         from decimal import Decimal
 
         try:
-            executed_price = trade.get("executed_price") or trade.get("price") or 0
-            await self.prisma.tradeexecutionlog.create(
-                data={
-                    "trade_id": trade.get("id"),  # Reference to the Trade record
-                    "request_id": f"manual_{uuid.uuid4().hex[:12]}",
-                    "status": trade.get("status", "executed"),
-                    "executed_price": Decimal(str(executed_price)),
-                    "executed_quantity": trade.get("executed_quantity", payload.quantity),
-                    "metadata": json.dumps({
-                        "source": payload.source or "manual",
-                        "order_type": payload.order_type,
-                    }),
-                },
+            # Handle both dict and Prisma model objects
+            if isinstance(trade, dict):
+                trade_id = trade.get("id")
+                trade_status = status or trade.get("status", "executed")
+            else:
+                # Prisma model object - use attribute access
+                trade_id = getattr(trade, "id", None)
+                trade_status = status or getattr(trade, "status", "executed")
+            
+            # Check if log already exists for this trade
+            existing_log = await self.prisma.tradeexecutionlog.find_first(
+                where={"trade_id": trade_id}
             )
+            
+            if existing_log:
+                # Update existing log (e.g., when pending trade is executed)
+                await self.prisma.tradeexecutionlog.update(
+                    where={"id": existing_log.id},
+                    data={
+                        "status": trade_status,
+                        "execution_time": datetime.utcnow() if trade_status == "executed" else None,
+                    }
+                )
+            else:
+                # Create new log entry
+                await self.prisma.tradeexecutionlog.create(
+                    data={
+                        "trade_id": trade_id,  # Reference to the Trade record
+                        "request_id": f"manual_{uuid.uuid4().hex[:12]}",
+                        "status": trade_status,
+                        "order_type": payload.order_type,
+                        "metadata": json.dumps({
+                            "source": payload.source or "manual",
+                            "order_type": payload.order_type,
+                        }),
+                    },
+                )
         except Exception as e:
             import logging
             logging.getLogger(__name__).warning(f"Failed to create trade execution log: {e}")

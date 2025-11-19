@@ -115,19 +115,6 @@ class FakeAllocationSnapshotModel:
         return FakeRecord(**row)
 
 
-class FakeSegmentSnapshotModel:
-    def __init__(self) -> None:
-        self.rows: List[Dict[str, Any]] = []
-        self.counter = 0
-
-    async def create(self, data: Dict[str, Any]) -> Any:
-        self.counter += 1
-        snapshot_id = data.get("id") or f"segment-snapshot-{self.counter}"
-        row = {**data, "id": snapshot_id}
-        self.rows.append(row)
-        return FakeRecord(**row)
-
-
 class FakePrismaClient:
     def __init__(self) -> None:
         self.objective = FakeObjectiveModel()
@@ -137,7 +124,6 @@ class FakePrismaClient:
         self.tradingagent = FakeTradingAgentModel()
         self.rebalancerun = FakeRebalanceRunModel()
         self.allocationsnapshot = FakeAllocationSnapshotModel()
-        self.segmentsnapshot = FakeSegmentSnapshotModel()
         self.user_subscriptions: Dict[str, List[str]] = {}
 
     async def query_raw(self, query: str, *params: Any, **kwargs: Any) -> List[Dict[str, Any]]:

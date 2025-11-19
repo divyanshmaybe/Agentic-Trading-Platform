@@ -205,10 +205,14 @@ class TradeExecutionService:
         self.logger.debug("✅ Created Trade record: %s", trade_record.id)
 
         # Prepare TradeExecutionLog data (minimal execution tracking)
+        # Determine order_type from metadata or default to "market"
+        order_type = metadata.get("order_type") or trade_data.get("order_type") or "market"
+        
         execution_log_data = {
             "trade_id": trade_record.id,
             "request_id": job_row["request_id"],
             "status": "pending",
+            "order_type": order_type,
             "metadata": json.dumps(metadata),
             # Include trade fields for easier access in tests and operations
             "symbol": job_row["symbol"],
@@ -353,6 +357,8 @@ class TradeExecutionService:
         """Update persisted trade execution log with execution results.
 
         Updates both TradeExecutionLog and corresponding Trade record.
+        Note: executed_price and executed_quantity are only used to update Trade record,
+        not TradeExecutionLog (which doesn't store these fields).
         """
 
         client = await self._ensure_client()
@@ -363,10 +369,8 @@ class TradeExecutionService:
             data["broker_order_id"] = broker_order_id
         if error_message:
             data["error_message"] = error_message
-        if executed_price is not None:
-            data["executed_price"] = self._as_decimal(executed_price)
-        if executed_quantity is not None:
-            data["executed_quantity"] = int(executed_quantity)
+        # Note: executed_price and executed_quantity removed from TradeExecutionLog
+        # They are only used to update the Trade record below
         if metadata:
             data["metadata"] = json.dumps(metadata)
 
@@ -672,6 +676,7 @@ class TradeExecutionService:
                     "trade_id": tp_trade_record.id,
                     "request_id": f"tp_{uuid.uuid4().hex[:12]}",
                     "status": "pending",
+                    "order_type": "take_profit",
                     "metadata": json.dumps(tp_metadata),
                     # Include trade fields for test access
                     "symbol": symbol,
@@ -743,6 +748,7 @@ class TradeExecutionService:
                     "trade_id": sl_trade_record.id,
                     "request_id": f"sl_{uuid.uuid4().hex[:12]}",
                     "status": "pending",
+                    "order_type": "stop_loss",
                     "metadata": json.dumps(sl_metadata),
                     # Include trade fields for test access
                     "symbol": symbol,

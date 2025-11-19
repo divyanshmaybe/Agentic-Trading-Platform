@@ -523,17 +523,22 @@ def allocate_new_portfolio_task(
                     f"No weights found in allocation result for portfolio {portfolio_id}. "
                     f"Result keys: {list(allocation_result.keys())}. "
                     f"Result sample: {str(allocation_result)[:500]}. "
-                    f"Using default equal allocation."
+                    f"Using defaults from transcript.py."
                 )
-                # Use default equal allocation across segments
-                from pipelines.portfolio.portfolio_manager import DEFAULT_SEGMENTS
-                if DEFAULT_SEGMENTS:
-                    default_weight = 1.0 / len(DEFAULT_SEGMENTS)
-                    weights = {segment: default_weight for segment in DEFAULT_SEGMENTS}
-                else:
-                    # Fallback to common segments
-                    weights = {"high_risk": 0.33, "low_risk": 0.33, "alpha": 0.34}
-                logger.info(f"Using default weights: {weights}")
+                # Use defaults from transcript.py (single source of truth)
+                from utils.user_inputs_helper import create_user_inputs
+                default_user_inputs = create_user_inputs(
+                    investment_horizon_years=15,  # Default value
+                    expected_return_target=0.18,  # Default value
+                    risk_tolerance="medium"  # Default value
+                )
+                weights = default_user_inputs.get("allocation_strategy", {
+                    "low_risk": 0.6,
+                    "high_risk": 0.2,
+                    "alpha": 0.2,
+                    "liquid": 0.0
+                })
+                logger.info(f"Using default weights from transcript.py: {weights}")
             
             # Validate weights sum to approximately 1.0
             if weights:
@@ -544,6 +549,9 @@ def allocate_new_portfolio_task(
                         f"Normalizing weights."
                     )
                     weights = {k: v / weight_sum for k, v in weights.items()}
+
+            # Ensure downstream consumers receive the resolved weights payload
+            allocation_result["weights"] = weights
             
             # Get investable amount from portfolio or initial_value
             portfolio_record = await db.portfolio.find_unique(where={"id": portfolio_id})
@@ -700,10 +708,17 @@ def allocate_new_portfolio_task(
                 )
                 # Don't fail the entire task if snapshot creation fails
             
-            # Calculate initial rebalancing date based on frequency
-            rebalancing_date = _calculate_next_rebalance_date(
-                user_inputs.get("rebalancing_frequency", "quarterly")
-            )
+            # Calculate initial rebalancing date based on frequency from portfolio
+            # Note: rebalancing_frequency is NOT in user_inputs (transcript.py format)
+            # It comes from portfolio model, not user_inputs
+            rebalancing_freq = "quarterly"  # Default
+            if portfolio and portfolio.rebalancing_frequency:
+                if isinstance(portfolio.rebalancing_frequency, dict):
+                    rebalancing_freq = portfolio.rebalancing_frequency.get("frequency", "quarterly")
+                elif isinstance(portfolio.rebalancing_frequency, str):
+                    rebalancing_freq = portfolio.rebalancing_frequency
+            
+            rebalancing_date = _calculate_next_rebalance_date(rebalancing_freq)
             
             # Mark portfolio as ready
             portfolio_metadata = {
@@ -930,17 +945,22 @@ def allocate_for_objective_task(
                     f"No weights found in allocation result for portfolio {portfolio_id}. "
                     f"Result keys: {list(allocation_result.keys())}. "
                     f"Result sample: {str(allocation_result)[:500]}. "
-                    f"Using default equal allocation."
+                    f"Using defaults from transcript.py."
                 )
-                # Use default equal allocation across segments
-                from pipelines.portfolio.portfolio_manager import DEFAULT_SEGMENTS
-                if DEFAULT_SEGMENTS:
-                    default_weight = 1.0 / len(DEFAULT_SEGMENTS)
-                    weights = {segment: default_weight for segment in DEFAULT_SEGMENTS}
-                else:
-                    # Fallback to common segments
-                    weights = {"high_risk": 0.33, "low_risk": 0.33, "alpha": 0.34}
-                logger.info(f"Using default weights: {weights}")
+                # Use defaults from transcript.py (single source of truth)
+                from utils.user_inputs_helper import create_user_inputs
+                default_user_inputs = create_user_inputs(
+                    investment_horizon_years=15,  # Default value
+                    expected_return_target=0.18,  # Default value
+                    risk_tolerance="medium"  # Default value
+                )
+                weights = default_user_inputs.get("allocation_strategy", {
+                    "low_risk": 0.6,
+                    "high_risk": 0.2,
+                    "alpha": 0.2,
+                    "liquid": 0.0
+                })
+                logger.info(f"Using default weights from transcript.py: {weights}")
             
             # Validate weights sum to approximately 1.0
             if weights:
@@ -951,6 +971,9 @@ def allocate_for_objective_task(
                         f"Normalizing weights."
                     )
                     weights = {k: v / weight_sum for k, v in weights.items()}
+
+            # Ensure downstream consumers receive the resolved weights payload
+            allocation_result["weights"] = weights
             
             # Get investable amount from portfolio or initial_value
             portfolio_record = await db.portfolio.find_unique(where={"id": portfolio_id})
@@ -1109,10 +1132,17 @@ def allocate_for_objective_task(
                 )
                 # Don't fail the entire task if snapshot creation fails
             
-            # Calculate next rebalancing date
-            rebalancing_date = _calculate_next_rebalance_date(
-                user_inputs.get("rebalancing_frequency", "quarterly")
-            )
+            # Calculate next rebalancing date based on frequency from portfolio
+            # Note: rebalancing_frequency is NOT in user_inputs (transcript.py format)
+            # It comes from portfolio model, not user_inputs
+            rebalancing_freq = "quarterly"  # Default
+            if portfolio and portfolio.rebalancing_frequency:
+                if isinstance(portfolio.rebalancing_frequency, dict):
+                    rebalancing_freq = portfolio.rebalancing_frequency.get("frequency", "quarterly")
+                elif isinstance(portfolio.rebalancing_frequency, str):
+                    rebalancing_freq = portfolio.rebalancing_frequency
+            
+            rebalancing_date = _calculate_next_rebalance_date(rebalancing_freq)
             
             # Mark portfolio as ready
             portfolio_metadata = {
@@ -1253,13 +1283,9 @@ def daily_rebalancing_sweep_task(self) -> Dict[str, Any]:
             portfolio_map = {}
             
             for portfolio in portfolios_to_rebalance:
-                # Build user inputs from portfolio settings
-                user_inputs = {
-                    "risk_tolerance": portfolio.risk_tolerance,
-                    "investment_horizon_years": portfolio.investment_horizon_years,
-                    "liquidity_needs": portfolio.liquidity_needs or "medium",
-                    "expected_return_target": float(portfolio.expected_return_target),
-                }
+                # Build user inputs from portfolio (matching transcript.py format)
+                from utils.user_inputs_helper import extract_user_inputs_from_portfolio
+                user_inputs = extract_user_inputs_from_portfolio(portfolio)
                 
                 # Get historical allocation data
                 allocations = portfolio.allocations if hasattr(portfolio, "allocations") else []

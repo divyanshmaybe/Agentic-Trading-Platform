@@ -230,16 +230,18 @@ class OrderMonitorWorker:
         
         # Determine order type and trigger conditions based on source model
         if source_model == "trade_execution_log":
-            # For TradeExecutionLog: check metadata for order_type
-            metadata = order.get("metadata", {})
-            if isinstance(metadata, str):
-                import json
-                try:
-                    metadata = json.loads(metadata)
-                except:
-                    metadata = {}
-            
-            order_type = metadata.get("order_type", "limit")
+            # For TradeExecutionLog: use direct order_type field (preferred) or fallback to metadata
+            order_type = order.get("order_type")
+            if not order_type:
+                # Fallback to metadata for backward compatibility
+                metadata = order.get("metadata", {})
+                if isinstance(metadata, str):
+                    import json
+                    try:
+                        metadata = json.loads(metadata)
+                    except:
+                        metadata = {}
+                order_type = metadata.get("order_type", "limit")
             side = order["side"]
             reference_price = Decimal(str(order.get("reference_price", 0)))
             

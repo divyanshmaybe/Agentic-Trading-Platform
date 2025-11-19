@@ -493,9 +493,25 @@ def _map_llm_output_to_system_format(llm_data: Dict[str, Any]) -> Dict[str, Any]
                 if isinstance(esg_exclusions, list):
                     extraction["constraints"]["ESG_exclusions"] = esg_exclusions
             
+            # Map segment_wise constraints (ensure 'cash' is converted to 'liquid')
+            if "segment_wise" in llm_constraints:
+                segment_wise = llm_constraints["segment_wise"]
+                if isinstance(segment_wise, dict):
+                    # Convert 'cash' to 'liquid' if present
+                    if "cash" in segment_wise:
+                        segment_wise["liquid"] = segment_wise.pop("cash")
+                    extraction["constraints"]["segment_wise"] = segment_wise
+            elif "risk_wise" in llm_constraints:
+                # Backward compatibility: map risk_wise to segment_wise
+                risk_wise = llm_constraints["risk_wise"]
+                if isinstance(risk_wise, dict):
+                    if "cash" in risk_wise:
+                        risk_wise["liquid"] = risk_wise.pop("cash")
+                    extraction["constraints"]["segment_wise"] = risk_wise
+            
             # Map other constraints with validation
             for key, value in llm_constraints.items():
-                if key not in ["ESG_exclusions"]:
+                if key not in ["ESG_exclusions", "segment_wise", "risk_wise"]:
                     if isinstance(value, (int, float)):
                         extraction["constraints"][key] = float(value)
                     elif isinstance(value, (list, dict)):
@@ -537,23 +553,31 @@ def _extract_from_transcript_regex(transcript: str) -> Dict[str, Any]:
         r"([\d,]+)\s*(?:lakh|lakhs|cr|crore|crores|rupees)",
     ]
     if amount_match := _search_first(amount_patterns, user_text):
-        amount_str = amount_match.group(1).replace(",", "")
-        base_amount = float(amount_str)
-        context = user_text[
-            max(0, amount_match.start() - 50) : amount_match.end() + 10
-        ]
-        if "lakh" in context:
-            extraction["investable_amount"] = base_amount * 100_000
-        elif "cr" in context or "crore" in context:
-            extraction["investable_amount"] = base_amount * 10_000_000
-        elif "thousand" in context:
-            extraction["investable_amount"] = base_amount * 1_000
-        elif "hundred" in context:
-            extraction["investable_amount"] = base_amount * 100
-        elif "million" in context:
-            extraction["investable_amount"] = base_amount * 1_000_000
+        amount_str = amount_match.group(1).replace(",", "").strip()
+        if not amount_str:
+            # Regex matched but captured empty string - skip
+            pass
         else:
-            extraction["investable_amount"] = base_amount
+            try:
+                base_amount = float(amount_str)
+                context = user_text[
+                    max(0, amount_match.start() - 50) : amount_match.end() + 10
+                ]
+                if "lakh" in context:
+                    extraction["investable_amount"] = base_amount * 100_000
+                elif "cr" in context or "crore" in context:
+                    extraction["investable_amount"] = base_amount * 10_000_000
+                elif "thousand" in context:
+                    extraction["investable_amount"] = base_amount * 1_000
+                elif "hundred" in context:
+                    extraction["investable_amount"] = base_amount * 100
+                elif "million" in context:
+                    extraction["investable_amount"] = base_amount * 1_000_000
+                else:
+                    extraction["investable_amount"] = base_amount
+            except ValueError:
+                # Invalid number format - skip
+                pass
 
     horizon_patterns = {
         "short": [

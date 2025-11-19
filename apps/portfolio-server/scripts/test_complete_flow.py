@@ -122,13 +122,10 @@ async def test_complete_flow():
     print(f"   Found {len(runs)} rebalance runs")
     
     total_alloc_snaps = 0
-    total_seg_snaps = 0
     for r in runs:
         alloc_snaps = await prisma.allocationsnapshot.find_many(where={'rebalance_run_id': r.id})
-        seg_snaps = await prisma.segmentsnapshot.find_many(where={'rebalance_run_id': r.id})
         total_alloc_snaps += len(alloc_snaps)
-        total_seg_snaps += len(seg_snaps)
-        print(f"   - Run {r.id[:12]}...: {len(alloc_snaps)} alloc snaps, {len(seg_snaps)} seg snaps")
+        print(f"   - Run {r.id[:12]}...: {len(alloc_snaps)} alloc snaps")
     
     # Step 6: Verify Auto-Trade Setup
     print("\n🔍 Step 5: Verifying Auto-Trade Setup...")
@@ -167,7 +164,6 @@ async def test_complete_flow():
     print(f"   ✅ High Risk Agent: ACTIVE")
     print(f"   ✅ Rebalance Runs: {len(runs)}")
     print(f"   ✅ Allocation Snapshots: {total_alloc_snaps}")
-    print(f"   ✅ Segment Snapshots: {total_seg_snaps}")
     print(f"   ✅ Trades: {len(trades)}")
     print(f"{'='*70}\n")
     

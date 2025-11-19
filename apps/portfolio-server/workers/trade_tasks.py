@@ -31,7 +31,30 @@ logger = logging.getLogger(__name__)
     max_retries=5,
 )
 def process_pending_trade(self, trade_id: str) -> bool:
-    return asyncio.run(_process_pending_trade_async(trade_id))
+    # Fix event loop issue in Celery fork pool workers
+    # Create a new event loop for each task execution
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    
+    try:
+        return loop.run_until_complete(_process_pending_trade_async(trade_id))
+    finally:
+        # Clean up the event loop
+        try:
+            pending = asyncio.all_tasks(loop)
+            for task in pending:
+                task.cancel()
+            if pending:
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            loop.close()
+        except Exception:
+            pass
 
 
 async def _process_pending_trade_async(trade_id: str) -> bool:

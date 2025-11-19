@@ -546,18 +546,24 @@ class PipelineService:
                 for alloc in allocations
             }
 
-        if not allocation_strategy:
-            equal_weight = 1.0 / len(DEFAULT_SEGMENTS)
-            allocation_strategy = {segment: equal_weight for segment in DEFAULT_SEGMENTS}
-
-        user_inputs = {
-            "risk_tolerance": portfolio.risk_tolerance,
-            "expected_return_target": self._safe_float(portfolio.expected_return_target),
-            "investment_horizon_years": int(getattr(portfolio, "investment_horizon_years", 1) or 1),
-            "liquidity_needs": portfolio.liquidity_needs,
-            "constraints": constraints,
-            "allocation_strategy": allocation_strategy,
-        }
+        # Use standardized user_inputs format matching transcript.py
+        # Note: If allocation_strategy is None, create_user_inputs() will use defaults from transcript.py:
+        # low_risk: 0.6, high_risk: 0.2, alpha: 0.2, liquid: 0.0
+        from utils.user_inputs_helper import create_user_inputs
+        
+        # Get expected_return_target (convert from decimal percentage if needed)
+        expected_return = self._safe_float(portfolio.expected_return_target, default=0.18)
+        if expected_return > 1.0:
+            expected_return = expected_return / 100.0  # Convert percentage to decimal
+        
+        user_inputs = create_user_inputs(
+            investment_horizon_years=int(getattr(portfolio, "investment_horizon_years", 1) or 1),
+            expected_return_target=expected_return,
+            risk_tolerance=portfolio.risk_tolerance or "medium",
+            allocation_strategy=allocation_strategy,
+            constraints=constraints,
+            investment_amount=self._safe_float(portfolio.investment_amount),
+        )
 
         initial_value = self._safe_float(
             portfolio.initial_investment,
@@ -624,8 +630,11 @@ class PipelineService:
         triggered_by: str = "schedule",
         trigger_reason: Optional[str] = None,
     ) -> None:
-        weights_raw = result.get("weights") or {}
-        if not isinstance(weights_raw, Mapping):
+        weights_raw = self._coerce_mapping(result.get("weights"))
+        if not weights_raw:
+            weights_raw = self._coerce_mapping(result.get("weights_json"))
+
+        if not weights_raw:
             self.logger.warning("Invalid weights payload for portfolio %s", portfolio.id)
             return
 
@@ -661,6 +670,14 @@ class PipelineService:
         allocations = getattr(portfolio, "allocations", []) or []
         allocation_lookup = {alloc.allocation_type: alloc for alloc in allocations}
         segments = set(allocation_lookup.keys()) | set(weights.keys())
+
+        self.logger.info(
+            "📊 Allocation processing for portfolio %s: weights=%s, existing_allocations=%s, segments=%s",
+            portfolio.id,
+            weights,
+            [alloc.allocation_type for alloc in allocations],
+            sorted(segments)
+        )
 
         for segment in sorted(segments):
             weight = weights.get(segment, 0.0)
@@ -765,30 +782,50 @@ class PipelineService:
         else:
             time_elapsed_days = None
 
-        rebalance_metadata = {
-            "weights": weights,
-            "regime": result.get("regime"),
-            "expected_return": result.get("expected_return"),
-            "expected_risk": result.get("expected_risk"),
-            "objective_value": result.get("objective_value"),
-            "message": result.get("message"),
-            "triggered_by": triggered_by,
-            "trigger_reason": trigger_reason,
-        }
-
-        rebalance_run = await client.rebalancerun.create(
-            data={
+        # Check if a rebalance run was already created recently (within last 5 seconds) for this portfolio
+        # This prevents duplicate snapshots if _persist_allocation_result is called multiple times
+        from datetime import timedelta
+        recent_cutoff = as_of - timedelta(seconds=5)
+        existing_run = await client.rebalancerun.find_first(
+            where={
                 "portfolio_id": portfolio.id,
                 "triggered_by": triggered_by,
-                "triggered_at": as_of,
-                "snapshot_portfolio_value": snapshot_value_dec,
-                "snapshot_cash": self._to_decimal(0.0, places=4),
-                "snapshot_invested": snapshot_value_dec,
-                "time_elapsed_days": time_elapsed_days,
-                "expected_progress": fields.Json({"progress_ratio": result.get("progress_ratio")}),
-                "metadata": fields.Json(rebalance_metadata),
-            }
+                "triggered_at": {"gte": recent_cutoff},
+            },
+            order={"triggered_at": "desc"},
         )
+        
+        if existing_run:
+            self.logger.debug(
+                f"Reusing existing rebalance run {existing_run.id} for portfolio {portfolio.id} "
+                f"(created {as_of - existing_run.triggered_at} ago)"
+            )
+            rebalance_run = existing_run
+        else:
+            rebalance_metadata = {
+                "weights": weights,
+                "regime": result.get("regime"),
+                "expected_return": result.get("expected_return"),
+                "expected_risk": result.get("expected_risk"),
+                "objective_value": result.get("objective_value"),
+                "message": result.get("message"),
+                "triggered_by": triggered_by,
+                "trigger_reason": trigger_reason,
+            }
+
+            rebalance_run = await client.rebalancerun.create(
+                data={
+                    "portfolio_id": portfolio.id,
+                    "triggered_by": triggered_by,
+                    "triggered_at": as_of,
+                    "snapshot_portfolio_value": snapshot_value_dec,
+                    "snapshot_cash": self._to_decimal(0.0, places=4),
+                    "snapshot_invested": snapshot_value_dec,
+                    "time_elapsed_days": time_elapsed_days,
+                    "expected_progress": fields.Json({"progress_ratio": result.get("progress_ratio")}),
+                    "metadata": fields.Json(rebalance_metadata),
+                }
+            )
 
         for segment, weight in weights.items():
             allocation = allocation_lookup.get(segment)
@@ -798,8 +835,28 @@ class PipelineService:
                     None,
                 )
             if allocation is None:
+                self.logger.debug(
+                    "Skipping AllocationSnapshot for segment %s: no allocation found (weight=%.6f)",
+                    segment,
+                    weight
+                )
                 continue
 
+            # Check if snapshot already exists for this rebalance run and allocation
+            existing_snapshot = await client.allocationsnapshot.find_first(
+                where={
+                    "rebalance_run_id": rebalance_run.id,
+                    "portfolio_allocation_id": allocation.id,
+                }
+            )
+            
+            if existing_snapshot:
+                self.logger.debug(
+                    f"Skipping duplicate allocation snapshot for allocation {allocation.id} "
+                    f"in rebalance run {rebalance_run.id}"
+                )
+                continue
+            
             snapshot_amount = self._to_decimal(total_investable * weight, places=4)
             snapshot_current_value = self._to_decimal(current_value * weight, places=4)
 
@@ -814,24 +871,6 @@ class PipelineService:
                     "metadata": fields.Json({
                         "regime": result.get("regime"),
                         "generated_at": as_of.isoformat() + "Z",
-                    }),
-                }
-            )
-
-            await client.segmentsnapshot.create(
-                data={
-                    "rebalance_run_id": rebalance_run.id,
-                    "segment_key": segment,
-                    "allocated_amount": snapshot_amount,
-                    "liquid_amount": self._to_decimal(0.0, places=4),
-                    "invested_amount": snapshot_current_value,
-                    "return_pct": self._to_decimal(0.0, places=6),
-                    "volatility": self._to_decimal(0.0, places=6),
-                    "max_drawdown": self._to_decimal(0.0, places=6),
-                    "sharpe_ratio": None,
-                    "metrics": fields.Json({
-                        "expected_return": result.get("expected_return"),
-                        "expected_risk": result.get("expected_risk"),
                     }),
                 }
             )
@@ -920,6 +959,34 @@ class PipelineService:
         if isinstance(value, list):
             return [self._clean_json(item) for item in value]
         return value
+
+    def _coerce_mapping(self, value: Any) -> Dict[str, Any]:
+        if not value:
+            return {}
+        if isinstance(value, Mapping):
+            return {str(key): val for key, val in value.items()}
+
+        for attr in ("value", "data"):
+            nested = getattr(value, attr, None)
+            if isinstance(nested, Mapping):
+                return {str(key): val for key, val in nested.items()}
+            if isinstance(nested, str):
+                try:
+                    parsed = json.loads(nested)
+                    if isinstance(parsed, Mapping):
+                        return {str(key): val for key, val in parsed.items()}
+                except json.JSONDecodeError:
+                    continue
+
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, Mapping):
+                    return {str(key): val for key, val in parsed.items()}
+            except json.JSONDecodeError:
+                return {}
+
+        return {}
 
     def _parse_metadata(self, value: Any) -> Mapping[str, Any]:
         if value is None:
@@ -1754,6 +1821,7 @@ class PipelineService:
                                     "trade_id": sell_trade.id,
                                     "request_id": f"market_close_sell_{uuid.uuid4().hex[:12]}",
                                     "status": "pending",
+                                    "order_type": "market",
                                     "metadata": json.dumps({
                                         "order_type": "market_close_sell",
                                         "triggered_by": "market_close_worker",

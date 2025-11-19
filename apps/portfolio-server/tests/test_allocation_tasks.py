@@ -286,7 +286,7 @@ async def test_allocate_for_objective_task_creates_snapshots(monkeypatch, mock_d
                     mock_db.portfolioallocation.create.return_value = mock_allocation
                     
                     # Verify _persist_allocation_result is called
-                    # This should create RebalanceRun, AllocationSnapshot, and SegmentSnapshot records
+                    # This should create RebalanceRun and AllocationSnapshot records
                     pass  # Implementation would go here
 
 

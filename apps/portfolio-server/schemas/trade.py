@@ -79,8 +79,6 @@ class TradeSummary(BaseModel):
     status: str
     quantity: int
     price: Optional[Decimal] = None
-    executed_quantity: Optional[int] = None
-    executed_price: Optional[Decimal] = None
     execution_time: Optional[datetime] = None
 
     class Config:

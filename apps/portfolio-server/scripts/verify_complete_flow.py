@@ -78,13 +78,10 @@ async def verify_complete_flow(portfolio_id: str, user_id: str):
     )
     print(f"\n🔄 Rebalance Runs: {len(runs)}")
     total_alloc_snaps = 0
-    total_seg_snaps = 0
     for r in runs:
         alloc_snaps = await prisma.allocationsnapshot.find_many(where={'rebalance_run_id': r.id})
-        seg_snaps = await prisma.segmentsnapshot.find_many(where={'rebalance_run_id': r.id})
         total_alloc_snaps += len(alloc_snaps)
-        total_seg_snaps += len(seg_snaps)
-        print(f"   - Run {r.id[:12]}...: {len(alloc_snaps)} alloc snaps, {len(seg_snaps)} seg snaps")
+        print(f"   - Run {r.id[:12]}...: {len(alloc_snaps)} alloc snaps")
     
     # 5. Check High Risk Agent Status
     print(f"\n🎯 High Risk Agent Status:")
@@ -117,7 +114,6 @@ async def verify_complete_flow(portfolio_id: str, user_id: str):
     print(f"   ✅ Trading Agents: {len(agents)}")
     print(f"   ✅ Rebalance Runs: {len(runs)}")
     print(f"   ✅ Allocation Snapshots: {total_alloc_snaps}")
-    print(f"   ✅ Segment Snapshots: {total_seg_snaps}")
     print(f"{'='*70}\n")
     
     success = (
