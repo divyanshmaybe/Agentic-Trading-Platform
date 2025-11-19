@@ -59,3 +59,27 @@ model User {
   @@map("users")
 }
 
+model Notification {
+  id           String   @id @default(uuid())
+  kafkaKey     String?  @unique
+  topic        String
+  category     String
+  title        String?
+  summary      String?
+  symbol       String?
+  sector       String?
+  sentiment    String?
+  signal       String?
+  confidence   Float?
+  url          String?
+  rawPayload   Json
+  createdAt    DateTime @default(now())
+  eventTime    DateTime?
+
+  @@index([topic])
+  @@index([category])
+  @@index([symbol])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
