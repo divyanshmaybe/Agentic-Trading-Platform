@@ -26,15 +26,21 @@ async def test_complete_flow():
     print("🧪 COMPLETE FLOW TEST")
     print(f"{'='*70}\n")
     
-    # Step 1: Check for existing portfolio
-    portfolios = await prisma.portfolio.find_many(take=5)
-    if not portfolios:
-        print("❌ No portfolios found. Create an objective first.")
-        await prisma.disconnect()
-        return False
+    # Step 1: Check for existing portfolio with proper allocations
+    # Use the portfolio that has high_risk allocations set up
+    portfolio_id = "79a469f1-ce85-4c12-b36c-ff32a2235310"
+    portfolio = await prisma.portfolio.find_unique(where={'id': portfolio_id})
     
-    portfolio = portfolios[0]
-    portfolio_id = portfolio.id
+    if not portfolio:
+        print("❌ Test portfolio not found. Looking for any portfolio with allocations...")
+        portfolios = await prisma.portfolio.find_many(take=5)
+        if not portfolios:
+            print("❌ No portfolios found. Create an objective first.")
+            await prisma.disconnect()
+            return False
+        portfolio = portfolios[0]
+        portfolio_id = portfolio.id
+    
     user_id = portfolio.user_id
     
     print(f"📋 Using Portfolio: {portfolio_id}")

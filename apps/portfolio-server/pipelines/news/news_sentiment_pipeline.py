@@ -589,18 +589,7 @@ def execute_news_sentiment_pipeline(
                             probs = torch.softmax(outputs.logits, dim=-1)
                             sentiment_idx = torch.argmax(probs, dim=-1).item()
                             sentiment_map = {0: "positive", 1: "negative", 2: "neutral"}
-                            sentiment = sentiment_map.get(sentiment_idx, "neutral")
-                        
-                        analyzed_articles.append({
-                            "stream": stream,
-                            "title": title,
-                            "content": content,
-                            "url": url,
-                            "sentiment": sentiment,
-                        })
-                    
-                    articles_by_stream[stream] = analyzed_articles
-                    log.info(f"  {stream}: analyzed {len(analyzed_articles)} articles")
+ticles")
                     
                 except Exception as exc:
                     log.warning(f"Failed to fetch/analyze articles for {stream}: {exc}")
@@ -692,7 +681,21 @@ def execute_news_sentiment_pipeline(
     technical_snapshot: List[Dict[str, Any]] = []
 
     if gemini_key:
-        log.info("Computing technical snapshot for stock recommendations...")
+        technical_snapshot = _compute_technical_snapshot(log)
+        if not technical_snapshot:
+            log.warning("Technical indicators unavailable; recommendations may be limited")
+
+        try:
+            tech_json = json.dumps(technical_snapshot)
+            stock_recs = stock_recommender(
+                sector_analysis_payload["analysis"],
+                tech_json,
+                gemini_api_key=gemini_key,
+            )
+            if isinstance(stock_recs, str):
+                stock_recommendations = json.loads(stock_recs)
+            else:
+                stoc        log.info("Computing technical snapshot for stock recommendations...")
         technical_snapshot = _compute_technical_snapshot(log)
         if not technical_snapshot:
             log.warning("Technical indicators unavailable (empty snapshot); recommendations may be limited or fallback to placeholders")
@@ -751,22 +754,7 @@ def execute_news_sentiment_pipeline(
             stock_recommendations = _build_placeholder_recommendations()
     else:
         log.warning("GEMINI_API_KEY not configured; using placeholder stock recommendations")
-        stock_recommendations = _build_placeholder_recommendations()
-
-    _write_json(recommendations_path, stock_recommendations)
-    _publish_stock_recommendations_to_kafka(
-        stock_recommendations,
-        provider=recommendation_provider,
-        generated_at=run_started_at,
-        logger=log,
-    )
-
-    # ------------------------------------------------------------------
-    # Stage 4: Summary metadata
-    # ------------------------------------------------------------------
-    summary_payload = {
-        "run_started_at": run_started_at,
-        "updated_at": datetime.utcnow().isoformat() + "Z",
+ime.utcnow().isoformat() + "Z",
         "article_count": article_count,
         "stream_count": len(sentiment_by_stream),
         "providers": {

@@ -889,6 +889,25 @@ class TradeExecutionService:
                     "parameter" if auto_sell_at else "trade_record/metadata"
                 )
             
+            # Get agent_id and agent_type - try record first, then metadata
+            agent_id = getattr(trade_record, "agent_id", None)
+            agent_type = getattr(trade_record, "agent_type", None)
+            
+            # Fallback to metadata if not in record
+            if not agent_id or not agent_type:
+                if hasattr(trade_record, "metadata") and trade_record.metadata:
+                    meta = trade_record.metadata
+                    if isinstance(meta, str):
+                        try:
+                            meta = json.loads(meta)
+                        except:
+                            meta = {}
+                    if isinstance(meta, dict):
+                        if not agent_id and "agent_id" in meta:
+                            agent_id = meta["agent_id"]
+                        if not agent_type and "agent_type" in meta:
+                            agent_type = meta["agent_type"]
+            
             # Create Trade record
             trade_data = {
                 "organization_id": organization_id,
@@ -912,13 +931,17 @@ class TradeExecutionService:
                 "source": "nse_pipeline_auto_trade",
                 "metadata": json.dumps({
                     "trade_log_id": str(getattr(trade_record, "id", "")),
-                    "agent_id": getattr(trade_record, "agent_id", None),
-                    "agent_type": getattr(trade_record, "agent_type", None),
+                    "agent_id": agent_id,
+                    "agent_type": agent_type,
                     "triggered_by": metadata.get("triggered_by", "high_risk_agent"),
                     "confidence": float(getattr(trade_record, "confidence", 0)),
                     "allocated_capital": float(getattr(trade_record, "allocated_capital", 0)),
                 }),
             }
+            
+            # Set agent_id for database relation if available
+            if agent_id:
+                trade_data["agent_id"] = agent_id
             
             if auto_sell_at:
                 trade_data["auto_sell_at"] = auto_sell_at
@@ -932,25 +955,6 @@ class TradeExecutionService:
                 executed_quantity,
                 executed_price,
             )
-            
-            # Get agent_id and agent_type - try record first, then metadata
-            agent_id = getattr(trade_record, "agent_id", None)
-            agent_type = getattr(trade_record, "agent_type", None)
-            
-            # Fallback to metadata if not in record
-            if not agent_id or not agent_type:
-                if hasattr(trade_record, "metadata") and trade_record.metadata:
-                    meta = trade_record.metadata
-                    if isinstance(meta, str):
-                        try:
-                            meta = json.loads(meta)
-                        except:
-                            meta = {}
-                    if isinstance(meta, dict):
-                        if not agent_id and "agent_id" in meta:
-                            agent_id = meta["agent_id"]
-                        if not agent_type and "agent_type" in meta:
-                            agent_type = meta["agent_type"]
             
             if agent_id:
                 try:
