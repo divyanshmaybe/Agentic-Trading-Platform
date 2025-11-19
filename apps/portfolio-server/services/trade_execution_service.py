@@ -42,6 +42,11 @@ def _calculate_auto_sell_at(record, execution_time, logger, trade_id):
     triggered_by = metadata.get("triggered_by", "")
     agent_type = getattr(record, "agent_type", None) or metadata.get("agent_type", "")
     
+    logger.info(
+        "🔍 AUTO_SELL_AT DEBUG for trade %s: triggered_by='%s', agent_type='%s', metadata=%s",
+        trade_id, triggered_by, agent_type, metadata
+    )
+    
     is_nse_trade = (
         triggered_by == "nse_filings_pipeline" or
         agent_type == "high_risk" or
@@ -50,14 +55,23 @@ def _calculate_auto_sell_at(record, execution_time, logger, trade_id):
     )
     
     if not is_nse_trade:
+        logger.warning(
+            "⚠️ Trade %s is NOT an NSE trade (triggered_by='%s', agent_type='%s'), skipping auto_sell_at",
+            trade_id, triggered_by, agent_type
+        )
         return None
     
     auto_sell_window_minutes = int(os.getenv("NSE_FILINGS_AUTO_SELL_WINDOW_MINUTES", "15"))
     auto_sell_at = execution_time + timedelta(minutes=auto_sell_window_minutes)
     
+    logger.info(
+        "✅ Calculated auto_sell_at for trade %s: %s (%d minutes from execution)",
+        trade_id, auto_sell_at, auto_sell_window_minutes
+    )
+    
     if auto_sell_at.hour > 15 or (auto_sell_at.hour == 15 and auto_sell_at.minute > 30):
         logger.warning(
-            "Auto-sell time %s would be after market close, skipping auto-sell for trade %s",
+            "⚠️ Auto-sell time %s would be after market close (>15:30), skipping auto-sell for trade %s",
             auto_sell_at, trade_id
         )
         return None
@@ -435,6 +449,7 @@ class TradeExecutionService:
                 record,
                 executed_price=executed_price,
                 executed_quantity=executed_quantity,
+                auto_sell_at=auto_sell_at,
             )
             
             return {
@@ -754,6 +769,7 @@ class TradeExecutionService:
         *,
         executed_price: float,
         executed_quantity: int,
+        auto_sell_at: Optional[datetime] = None,
     ) -> None:
         """
         Update portfolio allocation and trigger value recalculation after trade execution.
@@ -766,6 +782,7 @@ class TradeExecutionService:
             trade_record: The executed trade log record
             executed_price: Price at which the trade was executed
             executed_quantity: Quantity that was executed
+            auto_sell_at: Optional timestamp for auto-selling NSE pipeline trades
         """
         
         client = await self._ensure_client()
@@ -855,14 +872,22 @@ class TradeExecutionService:
             taxes = Decimal("0.0")
             net_amount = Decimal(str(executed_price * executed_quantity))
             
-            auto_sell_at = None
-            if hasattr(trade_record, "auto_sell_at") and trade_record.auto_sell_at:
-                auto_sell_at = trade_record.auto_sell_at
-            elif isinstance(metadata, dict) and "auto_sell_at" in metadata:
-                try:
-                    auto_sell_at = datetime.fromisoformat(metadata["auto_sell_at"])
-                except:
-                    pass
+            # Use auto_sell_at from parameter if provided, otherwise check record
+            if auto_sell_at is None:
+                if hasattr(trade_record, "auto_sell_at") and trade_record.auto_sell_at:
+                    auto_sell_at = trade_record.auto_sell_at
+                elif isinstance(metadata, dict) and "auto_sell_at" in metadata:
+                    try:
+                        auto_sell_at = datetime.fromisoformat(metadata["auto_sell_at"])
+                    except:
+                        pass
+            
+            if auto_sell_at:
+                self.logger.info(
+                    "⏰ Setting auto_sell_at for Trade record: %s (from %s)",
+                    auto_sell_at,
+                    "parameter" if auto_sell_at else "trade_record/metadata"
+                )
             
             # Create Trade record
             trade_data = {

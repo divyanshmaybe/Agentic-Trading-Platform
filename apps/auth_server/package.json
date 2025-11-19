@@ -12,7 +12,7 @@
     "prisma:migrate": "prisma migrate dev --schema ../../shared/prisma/schema.prisma",
     "prisma:push": "prisma db push --schema ../../shared/prisma/schema.prisma",
     "prisma:studio": "prisma studio --schema ../../shared/prisma/schema.prisma",
-    "studio": "prisma studio --schema ../../shared/prisma/schema.prisma"
+    "studio": "prisma studio --schema ../../shared/prisma/schema.prisma --port 5556"
   },
   "keywords": [],
   "author": "",

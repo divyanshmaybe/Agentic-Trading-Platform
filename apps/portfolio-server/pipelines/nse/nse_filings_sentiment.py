@@ -765,7 +765,7 @@ def create_nse_filings_pipeline(
             signal=pw.apply(lambda: 0, pw.this.symbol),
             explanation=pw.apply(lambda: "Market closing soon - skipping new trades", pw.this.symbol),
             confidence=pw.apply(lambda: 0.0, pw.this.symbol),
-        ).filter(pw.apply(lambda: False, pw.this.symbol))
+        ).filter(pw.apply(lambda: False))
     
     print("[SENTIMENT] Step 1: Processing filings from scraper...")
     
