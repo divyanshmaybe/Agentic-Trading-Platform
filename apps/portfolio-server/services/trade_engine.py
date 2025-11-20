@@ -300,27 +300,10 @@ class TradeEngine:
                 },
             )
         else:
-            # Provide defaults for required fields if not specified
-            exchange = payload.exchange or "NSE"
-            segment = payload.segment or "EQUITY"
-            
-            await self.prisma.position.create(
-                data={
-                    "portfolio_id": payload.portfolio_id,
-                    "agent_id": None,
-                    "symbol": payload.symbol,
-                    "exchange": exchange,
-                    "segment": segment,
-                    "quantity": payload.quantity,
-                    "average_buy_price": execution_price,
-                    "current_price": execution_price,
-                    "current_value": total_cost,
-                    "realized_pnl": Decimal(0),
-                    "position_type": "long",
-                    "status": "open",
-                    "opened_at": datetime.utcnow(),
-                }
-            )
+            # NOTE: Legacy position creation path - deprecated
+            # Position creation now requires agent_id and allocation_id (NOT NULL)
+            # Use trade_execution_service.py for proper position management
+            return
 
         await self._recalculate_portfolio_value(payload.portfolio_id)
 

@@ -31,7 +31,7 @@ def mock_db():
     mock_portfolio.id = "portfolio-123"
     mock_portfolio.investment_amount = Decimal("100000")
     mock_portfolio.initial_investment = Decimal("100000")
-    mock_portfolio.current_value = Decimal("100000")
+    mock_portfolio.available_cash = Decimal("100000")
     mock_portfolio.metadata = {}
     mock_portfolio.allocations = []
     mock_portfolio.risk_tolerance = "medium"

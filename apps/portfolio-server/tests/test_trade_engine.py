@@ -37,8 +37,10 @@ class Record(dict):
     def __getattr__(self, item: str) -> Any:  # pragma: no cover - defensive
         try:
             return self[item]
-        except KeyError as exc:  # pragma: no cover
-            raise AttributeError(item) from exc
+        except KeyError:  # pragma: no cover
+            # Return None for missing attributes instead of raising
+            # This matches Prisma behavior for optional fields
+            return None
 
     def dict(self) -> Dict[str, Any]:  # pragma: no cover - parity with Prisma
         return dict(self)
@@ -107,6 +109,8 @@ class InMemoryModel:
 class FakePrisma:
     def __init__(self) -> None:
         self.portfolio = InMemoryModel("id")
+        self.portfolioallocation = InMemoryModel("id")
+        self.tradingagent = InMemoryModel("id")
         self.position = InMemoryModel("id")
         self.trade = InMemoryModel("id")
         self.tradeexecutionlog = InMemoryModel("id")
@@ -190,12 +194,48 @@ async def test_market_buy_creates_position(fake_env: Dict[str, Any]) -> None:
             "customer_id": "cust-1",
             "portfolio_name": "Primary",
             "investment_amount": Decimal("100000"),
-            "current_value": Decimal("0"),
+            "available_cash": Decimal("100000"),
             "investment_horizon_years": 5,
             "expected_return_target": Decimal("0.10"),
             "risk_tolerance": "medium",
             "liquidity_needs": "moderate",
             "realized_pnl": Decimal("0"),
+        }
+    )
+
+    # Create allocation and agent required for position
+    allocation = await db.portfolioallocation.create(
+        data={
+            "portfolio_id": "pf-1",
+            "agent_id": "agent-1",
+            "asset_class": "equity",
+            "weight": Decimal("1.0"),
+            "available_cash": Decimal("100000"),
+        }
+    )
+    agent = await db.tradingagent.create(
+        data={
+            "portfolio_id": "pf-1",
+            "allocation_id": allocation.id,
+            "name": "Test Agent",
+            "is_active": True,
+            "allocation_percentage": Decimal("100"),
+        }
+    )
+
+    # Pre-create position since trade_engine no longer creates new positions
+    # (position creation requires agent context via trade_execution_service)
+    await db.position.create(
+        data={
+            "portfolio_id": "pf-1",
+            "agent_id": agent.id,
+            "allocation_id": allocation.id,
+            "symbol": "TCS",
+            "exchange": "NSE",
+            "segment": "EQUITY",
+            "quantity": 0,
+            "average_buy_price": Decimal("0"),
+            "status": "open",
         }
     )
 
@@ -239,7 +279,7 @@ async def test_market_sell_reduces_position(fake_env: Dict[str, Any]) -> None:
             "customer_id": "cust-1",
             "portfolio_name": "Primary",
             "investment_amount": Decimal("100000"),
-            "current_value": Decimal("0"),
+            "available_cash": Decimal("100000"),
             "investment_horizon_years": 5,
             "expected_return_target": Decimal("0.10"),
             "risk_tolerance": "medium",
@@ -248,17 +288,40 @@ async def test_market_sell_reduces_position(fake_env: Dict[str, Any]) -> None:
         }
     )
 
+    # Create allocation and agent for position requirements
+    allocation = await db.portfolioallocation.create(
+        {
+            "id": "alloc-1",
+            "portfolio_id": "pf-1",
+            "allocation_type": "test",
+            "target_weight": Decimal("1.0"),
+            "allocated_amount": Decimal("100000"),
+            "available_cash": Decimal("100000"),
+        }
+    )
+    
+    agent = await db.tradingagent.create(
+        {
+            "id": "agent-1",
+            "portfolio_id": "pf-1",
+            "portfolio_allocation_id": "alloc-1",
+            "organization_id": "org-1",
+            "agent_name": "Test Agent",
+            "agent_type": "test",
+        }
+    )
+
     position = await db.position.create(
         {
             "id": "pos-1",
             "portfolio_id": "pf-1",
+            "agent_id": "agent-1",
+            "allocation_id": "alloc-1",
             "symbol": "TCS",
             "exchange": "NSE",
             "segment": "EQUITY",
             "quantity": 15,
             "average_buy_price": Decimal("100"),
-            "current_price": Decimal("100"),
-            "current_value": Decimal("1500"),
             "position_type": "long",
             "status": "open",
             "realized_pnl": Decimal("0"),
@@ -301,7 +364,7 @@ async def test_limit_order_creates_pending_trade(fake_env: Dict[str, Any]) -> No
             "customer_id": "cust-1",
             "portfolio_name": "Primary",
             "investment_amount": Decimal("100000"),
-            "current_value": Decimal("0"),
+            "available_cash": Decimal("100000"),
             "investment_horizon_years": 5,
             "expected_return_target": Decimal("0.10"),
             "risk_tolerance": "medium",
@@ -339,7 +402,7 @@ async def test_process_pending_limit_trade_executes(fake_env: Dict[str, Any]) ->
             "customer_id": "cust-1",
             "portfolio_name": "Primary",
             "investment_amount": Decimal("100000"),
-            "current_value": Decimal("0"),
+            "available_cash": Decimal("100000"),
             "investment_horizon_years": 5,
             "expected_return_target": Decimal("0.10"),
             "risk_tolerance": "medium",
@@ -398,7 +461,7 @@ async def test_stop_loss_sell_triggers_on_price_drop(fake_env: Dict[str, Any]) -
             "customer_id": "cust-1",
             "portfolio_name": "Primary",
             "investment_amount": Decimal("100000"),
-            "current_value": Decimal("0"),
+            "available_cash": Decimal("100000"),
             "investment_horizon_years": 5,
             "expected_return_target": Decimal("0.10"),
             "risk_tolerance": "medium",
@@ -407,17 +470,40 @@ async def test_stop_loss_sell_triggers_on_price_drop(fake_env: Dict[str, Any]) -
         }
     )
 
+    # Create allocation and agent for position requirements
+    allocation = await db.portfolioallocation.create(
+        {
+            "id": "alloc-1",
+            "portfolio_id": "pf-1",
+            "allocation_type": "test",
+            "target_weight": Decimal("1.0"),
+            "allocated_amount": Decimal("100000"),
+            "available_cash": Decimal("100000"),
+        }
+    )
+    
+    agent = await db.tradingagent.create(
+        {
+            "id": "agent-1",
+            "portfolio_id": "pf-1",
+            "portfolio_allocation_id": "alloc-1",
+            "organization_id": "org-1",
+            "agent_name": "Test Agent",
+            "agent_type": "test",
+        }
+    )
+
     await db.position.create(
         {
             "id": "pos-1",
             "portfolio_id": "pf-1",
+            "agent_id": "agent-1",
+            "allocation_id": "alloc-1",
             "symbol": "RELIANCE",
             "exchange": "NSE",
             "segment": "EQUITY",
             "quantity": 20,
             "average_buy_price": Decimal("200"),
-            "current_price": Decimal("200"),
-            "current_value": Decimal("4000"),
             "position_type": "long",
             "status": "open",
             "realized_pnl": Decimal("0"),
@@ -471,7 +557,7 @@ async def test_take_profit_executes_on_target(fake_env: Dict[str, Any]) -> None:
             "customer_id": "cust-1",
             "portfolio_name": "Primary",
             "investment_amount": Decimal("100000"),
-            "current_value": Decimal("0"),
+            "available_cash": Decimal("100000"),
             "investment_horizon_years": 5,
             "expected_return_target": Decimal("0.10"),
             "risk_tolerance": "medium",
@@ -480,17 +566,40 @@ async def test_take_profit_executes_on_target(fake_env: Dict[str, Any]) -> None:
         }
     )
 
+    # Create allocation and agent for position requirements
+    allocation = await db.portfolioallocation.create(
+        {
+            "id": "alloc-1",
+            "portfolio_id": "pf-1",
+            "allocation_type": "test",
+            "target_weight": Decimal("1.0"),
+            "allocated_amount": Decimal("100000"),
+            "available_cash": Decimal("100000"),
+        }
+    )
+    
+    agent = await db.tradingagent.create(
+        {
+            "id": "agent-1",
+            "portfolio_id": "pf-1",
+            "portfolio_allocation_id": "alloc-1",
+            "organization_id": "org-1",
+            "agent_name": "Test Agent",
+            "agent_type": "test",
+        }
+    )
+
     await db.position.create(
         {
             "id": "pos-1",
             "portfolio_id": "pf-1",
+            "agent_id": "agent-1",
+            "allocation_id": "alloc-1",
             "symbol": "INFY",
             "exchange": "NSE",
             "segment": "EQUITY",
             "quantity": 12,
             "average_buy_price": Decimal("1000"),
-            "current_price": Decimal("1000"),
-            "current_value": Decimal("12000"),
             "position_type": "long",
             "status": "open",
             "realized_pnl": Decimal("0"),

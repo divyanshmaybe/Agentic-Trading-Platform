@@ -65,7 +65,7 @@ async def test_portfolio(prisma_client):
             "organization_id": "test_org_123",
             "portfolio_name": "Test Portfolio",
             "investment_amount": Decimal("100000"),
-            "current_value": Decimal("105000"),
+            "available_cash": Decimal("105000"),
             "investment_horizon_years": 3,
             "expected_return_target": Decimal("0.08"),
             "risk_tolerance": "moderate",
@@ -101,7 +101,6 @@ async def test_trading_agent(prisma_client, test_portfolio):
             "segment": "EQ",
             "quantity": 100,
             "average_buy_price": Decimal("2500"),
-            "current_price": Decimal("2600"),
             "position_type": "long",
             "status": "open",
         }
@@ -122,7 +121,7 @@ async def test_allocation(prisma_client, test_portfolio):
             "target_weight": Decimal("0.333333"),
             "current_weight": Decimal("0.333333"),
             "allocated_amount": Decimal("33333.33"),
-            "current_value": Decimal("35000"),
+            "available_cash": Decimal("35000"),
             "metadata": {},
         }
     )
@@ -292,7 +291,6 @@ class TestPortfolioSnapshots:
                 "segment": "EQ",
                 "quantity": 50,
                 "average_buy_price": Decimal("3000"),
-                "current_price": Decimal("3100"),
                 "position_type": "long",
                 "status": "open",
             }
@@ -307,7 +305,6 @@ class TestPortfolioSnapshots:
                 "segment": "EQ",
                 "quantity": 100,
                 "average_buy_price": Decimal("1500"),
-                "current_price": Decimal("1600"),
                 "position_type": "long",
                 "status": "open",
             }
@@ -390,7 +387,7 @@ class TestAllocationSnapshots:
                 "portfolio_allocation": {"connect": {"id": test_allocation.id}},
                 "snapshot_weight": Decimal("0.333333"),
                 "snapshot_amount": Decimal("35000"),
-                "snapshot_current_value": Decimal("35000"),
+                "current_value": Decimal("35000"),
                 "snapshot_pnl": Decimal("0"),
                 "metadata": {
                     "regime": pipeline_result["regime"],
@@ -449,7 +446,7 @@ class TestAllocationSnapshots:
                 "portfolio_allocation": {"connect": {"id": test_allocation.id}},
                 "snapshot_weight": Decimal("0.333333"),
                 "snapshot_amount": Decimal("33333.33"),
-                "snapshot_current_value": Decimal("33333.33"),
+                "current_value": Decimal("33333.33"),
                 "snapshot_pnl": Decimal("0"),
                 "metadata": {},
             }
@@ -461,7 +458,7 @@ class TestAllocationSnapshots:
                 "portfolio_allocation": {"connect": {"id": test_allocation.id}},
                 "snapshot_weight": Decimal("0.333333"),
                 "snapshot_amount": Decimal("35000"),
-                "snapshot_current_value": Decimal("35000"),
+                "current_value": Decimal("35000"),
                 "snapshot_pnl": Decimal("1666.67"),
                 "metadata": {},
             }
@@ -714,7 +711,7 @@ class TestSnapshotDataIntegrity:
                 "portfolio_allocation": {"connect": {"id": test_allocation.id}},
                 "snapshot_weight": Decimal("0.333333"),
                 "snapshot_amount": Decimal("35000"),
-                "snapshot_current_value": Decimal("35000"),
+                "current_value": Decimal("35000"),
                 "snapshot_pnl": Decimal("0"),
                 "metadata": {},
             }

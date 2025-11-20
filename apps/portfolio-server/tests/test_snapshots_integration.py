@@ -97,7 +97,6 @@ async def test_trading_agent(prisma_client, test_portfolio):
             "segment": "EQ",
             "quantity": 100,
             "average_buy_price": Decimal("2500"),
-            "current_price": Decimal("2600"),
             "position_type": "long",
             "status": "open",
         }

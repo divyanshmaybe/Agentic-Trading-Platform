@@ -38,13 +38,13 @@ def mock_database_client(monkeypatch):
         if table == 'portfolio':
             table_mock.find_unique.return_value = MagicMock(
                 id="test-portfolio-id",
-                current_value=Decimal("100000"),
-                realized_pnl=Decimal("0")
+                available_cash=Decimal("100000"),
+                total_realized_pnl=Decimal("0")
             )
             table_mock.create.return_value = MagicMock(
                 id="test-portfolio-id",
-                current_value=Decimal("100000"),
-                realized_pnl=Decimal("0")
+                available_cash=Decimal("100000"),
+                total_realized_pnl=Decimal("0")
             )
         elif table == 'position':
             table_mock.find_first.return_value = MagicMock(

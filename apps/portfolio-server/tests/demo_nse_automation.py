@@ -161,7 +161,7 @@ class NSEAutomationDemo:
                     "portfolio_name": "High-Risk Automated Portfolio",
                     "initial_investment": Decimal("500000"),
                     "investment_amount": Decimal("500000"),
-                    "current_value": Decimal("500000"),
+                    "available_cash": Decimal("500000"),
                     "investment_horizon_years": 5,
                     "expected_return_target": Decimal("0.15"),
                     "risk_tolerance": "high",

@@ -48,7 +48,7 @@ async def _run_trade_execution_flow():
             "portfolio_name": "Test Allocation Tracking Portfolio",
             "initial_investment": 100000.00,
             "investment_amount": 100000.00,
-            "current_value": 100000.00,
+            "available_cash": 100000.00,
             "investment_horizon_years": 5,
             "expected_return_target": 0.12,
             "risk_tolerance": "high",

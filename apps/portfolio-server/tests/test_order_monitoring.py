@@ -119,7 +119,7 @@ class OrderMonitorTester:
                 "description": "For order monitoring tests",
                 "portfolio_type": "live",
                 "initial_balance": Decimal("1000000"),  # 10 lakhs
-                "current_value": Decimal("1000000"),
+                "available_cash": Decimal("1000000"),
                 "status": "active"
             }
         )
