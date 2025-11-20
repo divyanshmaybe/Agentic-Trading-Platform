@@ -192,6 +192,19 @@ class FakeTradeExecutionLog:
                 return result
         return SimpleNamespace(**row) if row else None
 
+    async def find_first(self, where: Dict[str, Any], include: Optional[Dict[str, Any]] = None) -> Any:
+        # For find_first, we need to search by trade_id, not id
+        if "trade_id" in where:
+            trade_id = where["trade_id"]
+            for row_id, row in self.rows.items():
+                if row.get("trade_id") == trade_id:
+                    result = SimpleNamespace(**row)
+                    if include and "trade" in include:
+                        # Add trade relation if requested
+                        result.trade = SimpleNamespace(id=row["trade_id"])
+                    return result
+        return None
+
 
 class FakeTrade:
     def __init__(self) -> None:
@@ -228,7 +241,120 @@ class FakeClient:
     def __init__(self) -> None:
         self.tradeexecutionlog = FakeTradeExecutionLog()
         self.trade = FakeTrade()
-        self.portfolio = None  # Add portfolio attribute for schema compatibility
+        self.portfolio = FakePortfolioModel([])
+        self.position = FakePositionModel()
+        self.tradingagent = FakeTradingAgentModel()
+        self.portfolioallocation = FakePortfolioAllocationModel()
+
+
+class FakePortfolioModel:
+    def __init__(self, portfolios: List[Any] = None) -> None:
+        self._portfolios = portfolios or []
+
+    async def find_unique(self, where=None, include=None):
+        # Return a fake portfolio for testing
+        return SimpleNamespace(
+            id="pf-1",
+            organization_id="org-1", 
+            customer_id="cust-1",
+            allocation_trades=None,
+            realized_pnl=Decimal("0"),
+            metadata=None
+        )
+
+    async def find_many(self, where=None, include=None):  # pragma: no cover - include unused
+        return self._portfolios
+
+
+class FakePositionModel:
+    def __init__(self) -> None:
+        self.rows: Dict[str, Dict[str, Any]] = {}
+
+    async def find_first(self, where=None, include=None):
+        # Return None for no existing position
+        return None
+
+    async def create(self, data: Dict[str, Any]) -> Any:
+        row = dict(data)
+        row.setdefault("id", str(uuid.uuid4()))
+        row.setdefault("created_at", datetime.utcnow())
+        row.setdefault("updated_at", datetime.utcnow())
+        self.rows[row["id"]] = row
+        return SimpleNamespace(**row)
+
+    async def update(self, where: Dict[str, Any], data: Dict[str, Any]) -> Any:
+        position_id = where["id"]
+        row = self.rows[position_id]
+        row.update(data)
+        row["updated_at"] = datetime.utcnow()
+        return SimpleNamespace(**row)
+
+
+class FakeTradingAgentModel:
+    def __init__(self) -> None:
+        self.rows: Dict[str, Dict[str, Any]] = {}
+
+    async def find_unique(self, where=None, include=None):
+        # Return a fake agent
+        return SimpleNamespace(
+            id="agent-1",
+            allocation=SimpleNamespace(
+                id="alloc-1",
+                allocated_amount=Decimal("100000"),
+                realized_pnl=Decimal("0")
+            ),
+            realized_pnl=Decimal("0"),
+            metadata=None
+        )
+
+    async def find_many(self, where=None, include=None):
+        # Return fake agents for find_many calls
+        agents = []
+        if where and where.get("agent_type") == "high_risk" and where.get("status") == "active":
+            agent = SimpleNamespace(
+                id="agent-1",
+                agent_type="high_risk",
+                status="active",
+                strategy_config={"auto_trade": True},
+                metadata={"source": "unit-test"},
+                portfolio_id="pf-1",
+                portfolio=SimpleNamespace(
+                    id="pf-1",
+                    user_id="user-1",
+                    portfolio_name="High Risk Sleeve",
+                ),
+                allocation=SimpleNamespace(
+                    id="alloc-1",
+                    allocated_amount=Decimal("100000"),
+                    realized_pnl=Decimal("0")
+                ),
+                realized_pnl=Decimal("0")
+            )
+            agents.append(agent)
+        return agents
+
+    async def update(self, where: Dict[str, Any], data: Dict[str, Any]) -> Any:
+        agent_id = where["id"]
+        if agent_id not in self.rows:
+            self.rows[agent_id] = {"id": agent_id}
+        row = self.rows[agent_id]
+        row.update(data)
+        row["updated_at"] = datetime.utcnow()
+        return SimpleNamespace(**row)
+
+
+class FakePortfolioAllocationModel:
+    def __init__(self) -> None:
+        self.rows: Dict[str, Dict[str, Any]] = {}
+
+    async def update(self, where: Dict[str, Any], data: Dict[str, Any]) -> Any:
+        allocation_id = where["id"]
+        if allocation_id not in self.rows:
+            self.rows[allocation_id] = {"id": allocation_id}
+        row = self.rows[allocation_id]
+        row.update(data)
+        row["updated_at"] = datetime.utcnow()
+        return SimpleNamespace(**row)
 
 
 class FakeDBManager:
@@ -267,6 +393,8 @@ async def test_trade_execution_service_persist_and_execute(monkeypatch: pytest.M
             "signal_id": "sig-1",
             "user_id": "user-1",
             "portfolio_id": "pf-1",
+            "organization_id": "org-1",
+            "customer_id": "cust-1",
             "symbol": "RELIANCE",
             "side": "BUY",
             "quantity": 500,
@@ -290,18 +418,10 @@ async def test_trade_execution_service_persist_and_execute(monkeypatch: pytest.M
     assert record.status == "pending"
     assert record.agent_id == "agent-1"
 
-    result = await service.execute_trade(events[0].request_id, simulate=True)
+    result = await service.execute_trade(events[0].trade_id, simulate=True)
     assert result["status"] == "simulated_executed"
     updated = await fake_manager.get_client().tradeexecutionlog.find_unique({"id": "req-1"})
     assert updated.status == "simulated_executed"
-
-
-class FakePortfolioModel:
-    def __init__(self, portfolios: List[Any]) -> None:
-        self._portfolios = portfolios
-
-    async def find_many(self, where=None, include=None):  # pragma: no cover - include unused
-        return self._portfolios
 
 
 class FakePipelineClient(FakeClient):
@@ -343,8 +463,11 @@ async def test_pipeline_service_process_trade_signals(monkeypatch: pytest.Monkey
         objective_id="obj-1",
     )
 
+    async def fake_get_db_client():
+        return fake_manager.get_client()
+    
     fake_manager = FakePipelineManager([portfolio])
-    monkeypatch.setattr("services.pipeline_service.get_db_manager", lambda: fake_manager, raising=False)
+    monkeypatch.setattr("db_client.get_db_client", fake_get_db_client, raising=False)
 
     # Mock Prisma client - the service creates a new Prisma() instance
     class FakeTradingAgent:

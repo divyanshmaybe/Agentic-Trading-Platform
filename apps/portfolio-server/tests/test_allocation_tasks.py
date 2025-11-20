@@ -109,31 +109,18 @@ async def test_allocate_for_objective_task_creates_allocations(monkeypatch, mock
     monkeypatch.setattr("workers.allocation_tasks.allocate_portfolios", fake_allocate_portfolios)
     monkeypatch.setattr("workers.allocation_tasks._get_current_regime", fake_get_current_regime)
     
-    # Mock DBManager module
-    fake_db_manager_module = types.ModuleType("dbManager")
-    class _DBManager:
-        @staticmethod
-        def get_instance():
-            return mock_db_manager
-    fake_db_manager_module.DBManager = _DBManager
-    monkeypatch.setitem(sys.modules, "dbManager", fake_db_manager_module)
-    
-    # Patch Prisma to return the fake client
-    class FakePrisma:
+    # Mock DatabaseClient to return our test mock_db
+    class MockDatabaseClient:
         def __init__(self):
-            pass
-        
-        async def connect(self):
+            self._client = mock_db
+
+        async def __aenter__(self):
             return mock_db
-        
-        async def disconnect(self):
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
             pass
-        
-        def __getattr__(self, name):
-            # Return the corresponding fake model
-            return getattr(mock_db, name)
-    
-    monkeypatch.setattr("prisma.Prisma", lambda: FakePrisma())
+
+    monkeypatch.setattr("db_client.DatabaseClient", MockDatabaseClient)
     
     # Mock PipelineService - it's imported inside the function, so patch the import location
     mock_pipeline_service = MagicMock()

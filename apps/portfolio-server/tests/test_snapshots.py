@@ -2,7 +2,7 @@
 Test suite for snapshot storage and retrieval functionality.
 
 Tests:
-1. Trading agent snapshots (captured every 6 hours)
+1. Trading agent snapshots (captured every 3 hours)
 2. Portfolio snapshots (aggregated from agents)
 3. Allocation snapshots (created on pipeline trigger)
 """
@@ -507,10 +507,10 @@ class TestCeleryBeatSchedule:
         snapshot_config = beat_schedule["trading-agent-snapshots"]
         assert snapshot_config["task"] == "snapshot.capture_agent_snapshots"
         
-        # Verify schedule is every 6 hours
+        # Verify schedule is every 3 hours
         schedule = str(snapshot_config["schedule"])
-        assert "0,6,12,18" in schedule or "0 0,6,12,18" in schedule, \
-            f"Schedule should be every 6 hours, got: {schedule}"
+        assert "*/3" in schedule, \
+            f"Schedule should be every 3 hours, got: {schedule}"
         
         print(f"✅ Snapshot task scheduled: {schedule}")
     

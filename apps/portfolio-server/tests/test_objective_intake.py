@@ -101,6 +101,17 @@ class FakeRebalanceRunModel:
         self.rows.append(row)
         return FakeRecord(**row)
 
+    async def find_first(self, where: Dict[str, Any], order: Optional[Dict[str, Any]] = None, **kwargs: Any) -> Optional[Any]:
+        for row in self.rows:
+            matches = True
+            for key, expected in where.items():
+                if row.get(key) != expected:
+                    matches = False
+                    break
+            if matches:
+                return FakeRecord(**row)
+        return None
+
 
 class FakeAllocationSnapshotModel:
     def __init__(self) -> None:
@@ -113,6 +124,17 @@ class FakeAllocationSnapshotModel:
         row = {**data, "id": snapshot_id}
         self.rows.append(row)
         return FakeRecord(**row)
+
+    async def find_first(self, where: Dict[str, Any], order: Optional[Dict[str, Any]] = None, **kwargs: Any) -> Optional[Any]:
+        for row in self.rows:
+            matches = True
+            for key, expected in where.items():
+                if row.get(key) != expected:
+                    matches = False
+                    break
+            if matches:
+                return FakeRecord(**row)
+        return None
 
 
 class FakePrismaClient:
@@ -568,40 +590,21 @@ async def test_objective_creation_and_allocation_flow(monkeypatch: pytest.Monkey
         fake_allocate_portfolios,
     )
 
-    class FakeDBManager:
-        def __init__(self, client: FakePrismaClient) -> None:
-            self.client = client
+    # Configure the global MockDatabaseClient to return our fake prisma client
+    from db_client import DatabaseClient
+    original_db_client = DatabaseClient
 
-        async def connect(self) -> FakePrismaClient:
-            return self.client
-
-    fake_db_manager = FakeDBManager(prisma)
-    fake_db_manager_module = types.ModuleType("dbManager")
-
-    class _DBManager:
-        @staticmethod
-        def get_instance() -> FakeDBManager:
-            return fake_db_manager
-
-    fake_db_manager_module.DBManager = _DBManager
-    monkeypatch.setitem(sys.modules, "dbManager", fake_db_manager_module)
-    
-    # Patch Prisma to return the fake client
-    class FakePrisma:
+    class FakeDatabaseClient:
         def __init__(self):
             pass
-        
-        async def connect(self):
+
+        async def __aenter__(self):
             return prisma
-        
-        async def disconnect(self):
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
             pass
-        
-        def __getattr__(self, name):
-            # Return the corresponding fake model
-            return getattr(prisma, name)
-    
-    monkeypatch.setattr("prisma.Prisma", lambda: FakePrisma())
+
+    monkeypatch.setattr("db_client.DatabaseClient", FakeDatabaseClient)
 
     allocation_task = allocation_tasks_module.allocate_for_objective_task._get_current_object()
 
@@ -790,40 +793,21 @@ async def test_objective_intake_then_allocation(monkeypatch: pytest.MonkeyPatch)
         fake_allocate_portfolios,
     )
 
-    class FakeDBManagerInstance:
-        def __init__(self, client: FakePrismaClient) -> None:
-            self.client = client
+    # Configure the global MockDatabaseClient to return our fake prisma client
+    from db_client import DatabaseClient
+    original_db_client = DatabaseClient
 
-        async def connect(self) -> FakePrismaClient:
-            return self.client
-
-    fake_db_manager = FakeDBManagerInstance(prisma)
-
-    class _DBManager:
-        @staticmethod
-        def get_instance() -> FakeDBManagerInstance:
-            return fake_db_manager
-
-    fake_db_manager_module = types.ModuleType("dbManager")
-    fake_db_manager_module.DBManager = _DBManager
-    monkeypatch.setitem(sys.modules, "dbManager", fake_db_manager_module)
-    
-    # Patch Prisma to return the fake client
-    class FakePrisma:
+    class FakeDatabaseClient:
         def __init__(self):
             pass
-        
-        async def connect(self):
+
+        async def __aenter__(self):
             return prisma
-        
-        async def disconnect(self):
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
             pass
-        
-        def __getattr__(self, name):
-            # Return the corresponding fake model
-            return getattr(prisma, name)
-    
-    monkeypatch.setattr("prisma.Prisma", lambda: FakePrisma())
+
+    monkeypatch.setattr("db_client.DatabaseClient", FakeDatabaseClient)
 
     allocation_task = allocation_tasks_module.allocate_for_objective_task._get_current_object()
 
@@ -933,23 +917,21 @@ async def test_allocation_enables_subscribed_agent(monkeypatch: pytest.MonkeyPat
         ],
     )
 
-    class FakeDBManagerInstance:
-        def __init__(self, client: FakePrismaClient) -> None:
-            self.client = client
+    # Configure the global MockDatabaseClient to return our fake prisma client
+    from db_client import DatabaseClient
+    original_db_client = DatabaseClient
 
-        async def connect(self) -> FakePrismaClient:
-            return self.client
+    class FakeDatabaseClient:
+        def __init__(self):
+            pass
 
-    fake_db_manager = FakeDBManagerInstance(prisma)
+        async def __aenter__(self):
+            return prisma
 
-    class _DBManager:
-        @staticmethod
-        def get_instance() -> FakeDBManagerInstance:
-            return fake_db_manager
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
 
-    fake_db_manager_module = types.ModuleType("dbManager")
-    fake_db_manager_module.DBManager = _DBManager
-    monkeypatch.setitem(sys.modules, "dbManager", fake_db_manager_module)
+    monkeypatch.setattr("db_client.DatabaseClient", FakeDatabaseClient)
 
     payload = ObjectiveCreateRequest(
         name="Subscribed Objective",
@@ -971,23 +953,6 @@ async def test_allocation_enables_subscribed_agent(monkeypatch: pytest.MonkeyPat
         return "bull_market"
 
     monkeypatch.setattr("workers.allocation_tasks._get_current_regime", _fake_regime)
-    
-    # Patch Prisma to return the fake client
-    class FakePrisma:
-        def __init__(self):
-            pass
-        
-        async def connect(self):
-            return prisma
-        
-        async def disconnect(self):
-            pass
-        
-        def __getattr__(self, name):
-            # Return the corresponding fake model
-            return getattr(prisma, name)
-    
-    monkeypatch.setattr("prisma.Prisma", lambda: FakePrisma())
     
     allocation_task = allocation_tasks_module.allocate_for_objective_task._get_current_object()
     loop = asyncio.get_running_loop()
