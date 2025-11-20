@@ -129,7 +129,12 @@ celery_app.conf.update(
     result_persistent=True,
 )
 
-celery_app.conf.task_queues = _queue_set(QUEUE_NAMES.values())
+# Ensure all queues are registered explicitly
+_all_queues = [Queue(DEFAULT_QUEUE)]
+for queue_name in ["allocations", "trading", "pipelines", "risk", "orders", "market", "tokens"]:
+    if not any(q.name == queue_name for q in _all_queues):
+        _all_queues.append(Queue(queue_name))
+celery_app.conf.task_queues = _all_queues
 
 celery_app.conf.task_routes = {
     # Allocation + trading queues
@@ -183,8 +188,8 @@ celery_app.conf.redbeat_redis_url = os.getenv("REDBEAT_REDIS_URL", BROKER_URL)
 celery_app.conf.redbeat_lock_timeout = int(os.getenv("CELERY_REDBEAT_LOCK_TIMEOUT", "600"))
 celery_app.conf.redbeat_lock_key = os.getenv("CELERY_REDBEAT_LOCK_KEY", "redbeat::lock")
 
-NEWS_PIPELINE_ENABLED = os.getenv("NEWS_PIPELINE_ENABLED", "false").lower() in {"1", "true", "yes"}
-NEWS_FETCH_RATE = int(os.getenv("NEWS_FETCH_RATE", "1800"))  # Default 30 minutes
+NEWS_PIPELINE_ENABLED = os.getenv("NEWS_PIPELINE_ENABLED", "true").lower() in {"1", "true", "yes"}
+NEWS_FETCH_RATE = int(os.getenv("NEWS_FETCH_RATE", "1800"))  # Default 30 minutes (1800 seconds)
 NEWS_PIPELINE_QUEUE = os.getenv("NEWS_PIPELINE_QUEUE", QUEUE_NAMES["pipelines"])
 
 NSE_PIPELINE_ENABLED = os.getenv("NSE_PIPELINE_ENABLED", "true").lower() in {"1", "true", "yes"}

@@ -52,6 +52,40 @@ class DBManager:
             cls._instance = cls(database_url=database_url, log_queries=log_queries)
         return cls._instance
 
+    @classmethod
+    def reset_instance(cls) -> None:
+        """Reset the singleton instance. Useful for event loop changes in async contexts."""
+        if cls._instance is not None:
+            # Disconnect and unregister the Prisma client
+            try:
+                # Try to disconnect synchronously if possible
+                if cls._instance.client and cls._instance._connected:
+                    try:
+                        # Force disconnect by closing internal httpx client
+                        if hasattr(cls._instance.client, '_engine') and cls._instance.client._engine:
+                            if hasattr(cls._instance.client._engine, '_client'):
+                                try:
+                                    import asyncio
+                                    loop = asyncio.get_event_loop()
+                                    if loop.is_running():
+                                        # Can't await in running loop, force close
+                                        pass
+                                    else:
+                                        asyncio.run(cls._instance.client.disconnect())
+                                except:
+                                    pass
+                    except Exception:
+                        pass  # Best effort cleanup
+                
+                # Unregister from Prisma's global registry
+                from prisma._registry import unregister
+                if cls._instance.client:
+                    unregister(cls._instance.client)
+            except Exception:
+                pass  # Best effort cleanup
+            
+            cls._instance = None
+
     async def connect(self) -> None:
         """Establish a connection to the database via Prisma."""
 

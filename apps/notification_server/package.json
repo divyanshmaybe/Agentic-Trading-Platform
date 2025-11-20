@@ -4,7 +4,7 @@
   "description": "Kafka ingestion service for notifications",
   "main": "index.js",
   "scripts": {
-    "dev": "npx tsx watch --require tsconfig-paths/register src/index.ts",
+    "dev": "npx tsx watch src/index.ts",
     "build": "prisma generate --schema ../../shared/prisma/schema.prisma && tsc",
     "start": "node -r tsconfig-paths/register dist/apps/notification_server/src/index.js",
     "prisma:generate": "prisma generate --schema ../../shared/prisma/schema.prisma",

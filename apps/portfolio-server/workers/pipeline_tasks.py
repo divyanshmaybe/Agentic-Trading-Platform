@@ -216,26 +216,55 @@ def run_news_sentiment_pipeline(self, top_k: int | None = None) -> dict:
     redis_client.set(pid_key, str(current_pid), ex=7200)
     task_logger.info("✅ News sentiment pipeline lock acquired (PID: %s) - starting pipeline...", current_pid)
     
-    # Check last run time to avoid re-fetching on restart
+    # Check last run time to avoid re-fetching on restart. We prefer Redis but fall back to a persisted file
     last_run_key = "pipeline:news_sentiment:last_run"
-    last_run_time = redis_client.get(last_run_key)
-    if last_run_time:
-        from datetime import datetime, timedelta
+    # Build a persistent file path inside the server directory so this survives restarts
+    from pathlib import Path
+    from datetime import datetime, timedelta
+
+    server_dir = Path(__file__).resolve().parents[1]
+    # Keep persistent data under server_dir/data/pipeline
+    persisted_dir = server_dir / "data" / "pipeline"
+    persisted_dir.mkdir(parents=True, exist_ok=True)
+    last_run_file = persisted_dir / "news_last_run.txt"
+
+    def _parse_iso_or_none(value: str | bytes | None):
+        if not value:
+            return None
+        if isinstance(value, bytes):
+            try:
+                value = value.decode()
+            except Exception:
+                return None
         try:
-            last_run = datetime.fromisoformat(last_run_time.decode())
-            time_since_last_run = datetime.utcnow() - last_run
-            # If last run was less than 30 minutes ago, skip
-            if time_since_last_run < timedelta(minutes=30):
-                task_logger.info(
-                    "News sentiment pipeline last ran %s ago (less than 30 minutes), skipping fetch",
-                    time_since_last_run
-                )
-                redis_client.delete(lock_key)
-                redis_client.delete(pid_key)
-                return {"status": "skipped", "reason": "too_soon", "last_run": last_run.isoformat()}
-        except (ValueError, AttributeError):
-            # Invalid timestamp, continue with fetch
-            pass
+            # strip the literal Z if present since fromisoformat() doesn't accept 'Z'
+            if value.endswith("Z"):
+                value = value[:-1]
+            return datetime.fromisoformat(value)
+        except Exception:
+            return None
+
+    last_run_time = redis_client.get(last_run_key)
+    last_run = _parse_iso_or_none(last_run_time)
+
+    if not last_run and last_run_file.exists():
+        # Fall back to file-based timestamp if Redis missed it
+        try:
+            last_run = _parse_iso_or_none(last_run_file.read_text())
+        except Exception:
+            last_run = None
+
+    if last_run:
+        time_since_last_run = datetime.utcnow() - last_run
+        # If last run was less than 30 minutes ago, skip
+        if time_since_last_run < timedelta(minutes=30):
+            task_logger.info(
+                "News sentiment pipeline last ran %s ago (less than 30 minutes), skipping fetch",
+                time_since_last_run,
+            )
+            redis_client.delete(lock_key)
+            redis_client.delete(pid_key)
+            return {"status": "skipped", "reason": "too_soon", "last_run": last_run.isoformat()}
     
     try:
         server_dir = Path(__file__).resolve().parents[1]
@@ -243,9 +272,15 @@ def run_news_sentiment_pipeline(self, top_k: int | None = None) -> dict:
         top_k_value = top_k or int(os.getenv("NEWS_TOP_K", "3"))
         metadata = service.run_news_sentiment_pipeline(top_k=top_k_value)
         
-        # Store last run time
+        # Store last run time (persist to both Redis and local file so restart won't lose it)
         from datetime import datetime
-        redis_client.set(last_run_key, datetime.utcnow().isoformat(), ex=86400)  # 24 hour TTL
+        now_iso = datetime.utcnow().isoformat()
+        redis_client.set(last_run_key, now_iso, ex=86400)  # 24 hour TTL
+        try:
+            # Persist to local file so the timestamp survives Redis restarts
+            last_run_file.write_text(now_iso)
+        except Exception:
+            task_logger.warning("Failed to persist news pipeline last-run timestamp to file: %s", last_run_file, exc_info=True)
         
         task_logger.info("✅ News sentiment pipeline completed: %s", metadata)
         return metadata

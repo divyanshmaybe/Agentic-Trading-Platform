@@ -73,13 +73,18 @@ class OrderMonitorWorker:
         
         # Setup database
         self.db = DBManager.get_instance()
-        if not self.db.is_connected():
-            await self.db.connect()
+        # Always call connect() to ensure we're using the current event loop
+        await self.db.connect()
         
         # Setup market data service
         self.market_data = get_market_data_service()
         
         logger.info("✅ Order Monitor Worker initialized")
+    
+    async def close(self):
+        """Close database connection."""
+        if self.db and self.db.is_connected():
+            await self.db.disconnect()
     
     async def run(self):
         """Main monitoring loop - runs continuously."""
@@ -143,34 +148,28 @@ class OrderMonitorWorker:
         """Fetch all pending orders from both Trade and TradeExecutionLog models."""
         prisma = self.db.get_client()
         
-        # Fetch from Trade model (manual API trades)
+        # Fetch from Trade model (manual API trades and TP/SL orders)
         trade_orders = await prisma.trade.find_many(
-            where={"status": "pending"},
+            where={
+                "status": "pending",
+                "order_type": {"in": ["limit", "stop", "stop_loss", "take_profit"]}
+            },
             order={"created_at": "asc"},
             take=BATCH_SIZE
         )
         
-        # Fetch from TradeExecutionLog model (NSE pipeline TP/SL orders)
-        execution_log_orders = await prisma.tradeexecutionlog.find_many(
-            where={"status": "pending"},
-            order={"created_at": "asc"},
-            take=BATCH_SIZE
-        )
+        # Note: We now only monitor Trade records since TradeExecutionLog
+        # is just a log of execution attempts. All TP/SL orders are created
+        # as Trade records with order_type = "limit" or "stop"
         
-        # Combine and mark the source
         orders = []
         for order in trade_orders:
             order_dict = order.dict()
             order_dict["_source_model"] = "trade"
             orders.append(order_dict)
         
-        for order in execution_log_orders:
-            order_dict = order.dict()
-            order_dict["_source_model"] = "trade_execution_log"
-            orders.append(order_dict)
-        
         logger.debug(
-            f"📦 Fetched {len(trade_orders)} Trade orders + {len(execution_log_orders)} TradeExecutionLog orders"
+            f"📦 Fetched {len(trade_orders)} pending Trade orders (limit/stop/TP/SL)"
         )
         
         return orders
@@ -445,13 +444,15 @@ def start_continuous_monitoring(self):
         return {"status": "crashed", "error": str(e)}
 
 
-@celery_app.task(name="order_monitor.check_pending_orders_once")
-def check_pending_orders_once():
+@celery_app.task(name="order_monitor.check_pending_orders_once", bind=True)
+def check_pending_orders_once(self):
     """
     One-time check of all pending orders (for periodic scheduling).
     
     Use this if you prefer scheduled periodic checks instead of continuous monitoring.
     """
+    # Reset DBManager singleton to avoid event loop conflicts
+    DBManager.reset_instance()
     return asyncio.run(_check_pending_orders_once_async())
 
 
@@ -477,3 +478,11 @@ async def _check_pending_orders_once_async() -> Dict:
     except Exception as e:
         logger.error(f"Failed one-time order check: {e}", exc_info=True)
         return {"status": "error", "error": str(e)}
+    finally:
+        try:
+            await worker.close()
+        except Exception:
+            pass  # Best effort cleanup
+        
+        # Always reset DBManager to prevent Prisma registry conflicts
+        DBManager.reset_instance()

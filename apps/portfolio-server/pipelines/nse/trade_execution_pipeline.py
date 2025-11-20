@@ -434,7 +434,24 @@ def run_trade_execution_requests(
     event_queue.put(None)
 
     try:
-        pw.run(monitoring_level=pw.MonitoringLevel.NONE)
+        # Run pathway computation with timeout
+        import signal as sig
+        import time
+        
+        def timeout_handler(signum, frame):
+            raise TimeoutError("Pathway computation timed out")
+        
+        # Set 10 second timeout
+        old_handler = sig.signal(sig.SIGALRM, timeout_handler)
+        sig.alarm(10)
+        
+        try:
+            pw.run(monitoring_level=pw.MonitoringLevel.NONE)
+        except TimeoutError:
+            logger.warning("⚠️ Pathway computation timed out after 10s, using collected results")
+        finally:
+            sig.alarm(0)
+            sig.signal(sig.SIGALRM, old_handler)
     finally:
         stop_event.set()
 

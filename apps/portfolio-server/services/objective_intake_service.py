@@ -191,6 +191,7 @@ class ObjectiveIntakeService:
                 )
         else:
             # Create new objective - omit JSON fields with defaults to avoid Prisma type errors
+            from prisma import fields
             objective_record = await self.prisma.objective.create(
                 data={
                     "user_id": user_id,
@@ -198,6 +199,7 @@ class ObjectiveIntakeService:
                     "source": request.source or "intake",
                     "completion_status": "pending",
                     "status": "draft",
+                    "sector_constraints": fields.Json({}),
                 }
             )
             created = True

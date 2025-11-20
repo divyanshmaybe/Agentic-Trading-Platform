@@ -31,47 +31,34 @@ logger = logging.getLogger(__name__)
     max_retries=5,
 )
 def process_pending_trade(self, trade_id: str) -> bool:
-    # Fix event loop issue in Celery fork pool workers
-    # Create a new event loop for each task execution
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_closed():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    
-    try:
-        return loop.run_until_complete(_process_pending_trade_async(trade_id))
-    finally:
-        # Clean up the event loop
-        try:
-            pending = asyncio.all_tasks(loop)
-            for task in pending:
-                task.cancel()
-            if pending:
-                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-            loop.close()
-        except Exception:
-            pass
+    """Process a pending trade using asyncio.run for proper event loop management."""
+    # Reset DBManager singleton to avoid event loop conflicts
+    DBManager.reset_instance()
+    return asyncio.run(_process_pending_trade_async(trade_id))
 
 
 async def _process_pending_trade_async(trade_id: str) -> bool:
     db = DBManager.get_instance()
-    if not db.is_connected():
-        await db.connect()
-
-    prisma = db.get_client()
-    engine = TradeEngine(prisma)
+    await db.connect()
 
     try:
-        executed = await engine.process_pending_trade(trade_id)
-        if executed:
-            logger.info("✅ Executed pending trade %s", trade_id)
-        else:
-            logger.debug("⌛ Trade %s not ready for execution", trade_id)
-        return executed
-    except Exception:
-        logger.exception("Failed to process pending trade %s", trade_id)
-        raise
+        prisma = db.get_client()
+        engine = TradeEngine(prisma)
+
+        try:
+            executed = await engine.process_pending_trade(trade_id)
+            if executed:
+                logger.info("✅ Executed pending trade %s", trade_id)
+            else:
+                logger.debug("⌛ Trade %s not ready for execution", trade_id)
+            return executed
+        except Exception:
+            logger.exception("Failed to process pending trade %s", trade_id)
+            raise
+    finally:
+        if db.is_connected():
+            await db.disconnect()
+        
+        # Always reset DBManager to prevent Prisma registry conflicts
+        from dbManager import DBManager  # type: ignore
+        DBManager.reset_instance()

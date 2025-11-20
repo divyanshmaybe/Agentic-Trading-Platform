@@ -16,6 +16,14 @@ from websockets.exceptions import ConnectionClosedError
 
 logger = logging.getLogger(__name__)
 
+# Map legacy/delisted tickers to their current Angel One equivalents so
+# old portfolio positions (e.g. HDFC) can still fetch quotes via HDFCBANK.
+SYMBOL_ALIASES: Dict[str, str] = {
+    "HDFC": "HDFCBANK",
+    "HDFC-EQ": "HDFCBANK-EQ",
+    "HDFC.NS": "HDFCBANK",
+}
+
 
 class MarketDataService:
     """
@@ -126,11 +134,18 @@ class MarketDataService:
         upper = symbol.upper()
         if upper.endswith(".NS"):
             upper = upper[:-3]
+        # Apply alias mapping before checking the token map
+        upper = SYMBOL_ALIASES.get(upper, upper)
         # Try to find in token map
         if upper in self._token_map:
             return upper
-        if f"{upper}-EQ" in self._token_map:
-            return f"{upper}-EQ"
+        eq_symbol = f"{upper}-EQ"
+        eq_symbol = SYMBOL_ALIASES.get(eq_symbol, eq_symbol)
+        if eq_symbol in self._token_map:
+            # Emit a one-time log to help trace alias lookups in production
+            if upper != symbol.upper():
+                logger.info("Symbol %s normalized to %s via alias table", symbol, eq_symbol)
+            return eq_symbol
         return upper
     
     def _get_token_info(self, symbol: str) -> Optional[Dict]:
@@ -359,7 +374,26 @@ class MarketDataService:
         # Get the token map symbol for subscription (might be different format)
         token_info = self._get_token_info(normalized)
         if not token_info:
-            raise RuntimeError(f"Symbol {normalized} not found in token map")
+            # FALLBACK: Try Yahoo Finance if symbol not in Angel One token map
+            logger.warning(f"Symbol {normalized} not in Angel One token map, trying Yahoo Finance fallback...")
+            try:
+                import yfinance as yf
+                # For NSE stocks, try with .NS suffix
+                ticker_symbol = f"{normalized}.NS" if not normalized.endswith(".NS") else normalized
+                ticker = yf.Ticker(ticker_symbol)
+                hist = ticker.history(period="1d", interval="1m")
+                if not hist.empty:
+                    latest_price = Decimal(str(hist['Close'].iloc[-1]))
+                    logger.info(f"✅ Fetched {normalized} from Yahoo Finance: ₹{latest_price:.2f}")
+                    # Cache it for future use
+                    self._prices[normalized] = latest_price
+                    return latest_price
+                else:
+                    raise RuntimeError(f"Yahoo Finance returned no data for {ticker_symbol}")
+            except Exception as yf_error:
+                logger.error(f"Yahoo Finance fallback failed for {normalized}: {yf_error}")
+                raise RuntimeError(f"Symbol {normalized} not in token map and Yahoo Finance fallback failed: {yf_error}")
+
         
         # Use the token map key for subscription
         token_map_symbol = None

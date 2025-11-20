@@ -759,13 +759,14 @@ def create_nse_filings_pipeline(
         logging.warning(market_status)
     
     if current_time >= close_buffer_time:
+        # Return empty table with correct schema by filtering on a boolean column
         return filings_source.select(
             symbol=pw.this.symbol,
             filing_time=pw.this.sort_date if hasattr(pw.this, 'sort_date') else "",
-            signal=pw.apply(lambda: 0, pw.this.symbol),
-            explanation=pw.apply(lambda: "Market closing soon - skipping new trades", pw.this.symbol),
-            confidence=pw.apply(lambda: 0.0, pw.this.symbol),
-        ).filter(pw.apply(lambda: False))
+            signal=pw.apply(lambda s: 0, pw.this.symbol),
+            explanation=pw.apply(lambda s: "Market closing soon - skipping new trades", pw.this.symbol),
+            confidence=pw.apply(lambda s: 0.0, pw.this.symbol),
+        ).filter(pw.this.symbol == "__NEVER_MATCH__")
     
     print("[SENTIMENT] Step 1: Processing filings from scraper...")
     

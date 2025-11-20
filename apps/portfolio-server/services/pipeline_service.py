@@ -1403,6 +1403,15 @@ class PipelineService:
         job_rows = run_trade_execution_requests(request_events, logger=self.logger)
         self.logger.info("📊 Trade execution pipeline produced %d actionable job(s)", len(job_rows) if job_rows else 0)
         
+        # After Pathway timeout, the event loop might be closed, so we need to ensure a new one exists
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop - create a new one for subsequent async operations
+            self.logger.debug("Creating new event loop after Pathway computation")
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
         if not job_rows:
             self.logger.info("⚠️ Trade execution pipeline produced no actionable jobs")
             return {
@@ -1427,10 +1436,31 @@ class PipelineService:
 
         self.logger.info("💾 Persisting %d trade job(s) to database...", len(job_rows))
         try:
-            events = await trade_service.persist_and_publish(
-                job_rows,
-                publish_kafka=publish_kafka,
-            )
+            # After Pathway timeout, the event loop might be closed
+            # We need to ensure persist_and_publish runs in a valid event loop
+            try:
+                asyncio.get_running_loop()
+                # If we get here, there's a running loop - use await
+                events = await trade_service.persist_and_publish(
+                    job_rows,
+                    publish_kafka=publish_kafka,
+                )
+            except RuntimeError:
+                # No running loop or loop is closed - create a new one
+                self.logger.warning("No running event loop detected, creating new loop for persist operation")
+                new_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(new_loop)
+                try:
+                    events = new_loop.run_until_complete(
+                        trade_service.persist_and_publish(
+                            job_rows,
+                            publish_kafka=publish_kafka,
+                        )
+                    )
+                finally:
+                    # Don't close the loop yet, we may need it for execution
+                    pass
+            
             self.logger.info("✅ Persisted %d trade execution log(s), created %d event(s)", len(job_rows), len(events) if events else 0)
         except Exception as persist_exc:
             self.logger.error("❌ Failed to persist trade jobs: %s", persist_exc, exc_info=True)
@@ -1475,7 +1505,15 @@ class PipelineService:
                 # Execute trades immediately in simulation mode (paper trading)
                 for event in events:
                     try:
-                        result = await trade_service.execute_trade(event.trade_id, simulate=True)
+                        # Check if we need to use the new loop we created
+                        try:
+                            current_loop = asyncio.get_running_loop()
+                            result = await trade_service.execute_trade(event.trade_id, simulate=True)
+                        except RuntimeError:
+                            # No running loop, use the one we set
+                            loop = asyncio.get_event_loop()
+                            result = loop.run_until_complete(trade_service.execute_trade(event.trade_id, simulate=True))
+                        
                         executed += 1
                         self.logger.info(
                             "✅ Executed trade immediately (simulation): Trade %s | Agent %s (%s) | %s %s x %d | Status: %s",
@@ -1570,6 +1608,32 @@ class PipelineService:
                         signal,
                         explanation,
                     )
+                    
+                    # Process trade signal immediately for active agents
+                    if signal in [1, -1]:  # Only process BUY (1) or SELL (-1) signals
+                        try:
+                            signal_payload = {
+                                "symbol": symbol,
+                                "signal": signal,
+                                "explanation": row.get("explanation", ""),
+                                "confidence": row.get("confidence", 0.7),
+                                "reference_price": row.get("reference_price"),
+                                "timestamp": datetime.utcnow().isoformat(),
+                                "source": "nse_pipeline",
+                            }
+                            
+                            # Create new event loop for async operation (Pathway context doesn't have one)
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+                            try:
+                                loop.run_until_complete(self._process_signal_for_active_agents(signal_payload))
+                            finally:
+                                loop.close()
+                        except Exception as trade_exc:
+                            self.logger.error(
+                                "Failed to process trade for signal %s (%s): %s",
+                                symbol, signal, trade_exc, exc_info=True
+                            )
 
             def on_signal_end():
                 self.logger.info("[PIPELINE] Signal stream ended")
@@ -1882,4 +1946,177 @@ class PipelineService:
         except Exception as exc:
             self.logger.error("❌ Failed to sell high-risk positions: %s", exc, exc_info=True)
             raise
+
+    async def _process_signal_for_active_agents(self, signal_payload: Dict[str, Any]) -> None:
+        """Process a trading signal for all active high_risk trading agents."""
+        
+        try:
+            symbol = signal_payload["symbol"]
+            signal = signal_payload["signal"]
+            confidence = signal_payload.get("confidence", 0.7)
+            reference_price = signal_payload.get("reference_price")
+            
+            self.logger.info(
+                "📊 Processing signal for active agents: %s %s (confidence: %.2f)",
+                symbol,
+                "BUY" if signal == 1 else "SELL",
+                confidence,
+            )
+            
+            # Get database connection
+            db_manager = get_db_manager()
+            if not db_manager.is_connected():
+                await db_manager.connect()
+            
+            client = db_manager.get_client()
+            
+            # Fetch all active high_risk trading agents
+            agents = await client.tradingagent.find_many(
+                where={
+                    "agent_type": "high_risk",
+                    "status": "active",
+                },
+                include={"allocation": {"include": {"portfolio": True}}},
+            )
+            
+            if not agents:
+                self.logger.warning("⚠️ No active high_risk agents found to process signal %s", symbol)
+                return
+            
+            self.logger.info("Found %d active high_risk agents to process signal", len(agents))
+            
+            # Initialize trade execution service
+            trade_service = TradeExecutionService(logger=self.logger)
+            
+            trades_created = 0
+            errors = 0
+            
+            for agent in agents:
+                try:
+                    if not hasattr(agent, "allocation") or not agent.allocation:
+                        self.logger.warning("Agent %s has no allocation, skipping", agent.id)
+                        continue
+                    
+                    allocation = agent.allocation
+                    portfolio = allocation.portfolio if hasattr(allocation, "portfolio") else None
+                    
+                    if not portfolio:
+                        self.logger.warning("Agent %s allocation has no portfolio, skipping", agent.id)
+                        continue
+                    
+                    # Calculate position size based on allocation value
+                    allocated_capital = float(getattr(allocation, "allocated_value", 0))
+                    
+                    if allocated_capital <= 0:
+                        self.logger.debug("Agent %s has no allocated capital, skipping", agent.id)
+                        continue
+                    
+                    # Get current price or use reference price
+                    try:
+                        market_data = get_market_data_service()
+                        current_price = market_data.get_ltp(symbol)
+                        if not current_price or current_price <= 0:
+                            current_price = reference_price
+                    except:
+                        current_price = reference_price
+                    
+                    if not current_price or current_price <= 0:
+                        self.logger.warning("No valid price for %s, skipping agent %s", symbol, agent.id)
+                        continue
+                    
+                    # Calculate quantity based on capital allocation
+                    # Use 80% of allocated capital for single position
+                    position_capital = allocated_capital * 0.8
+                    quantity = int(position_capital / current_price)
+                    
+                    if quantity <= 0:
+                        self.logger.debug("Calculated quantity is 0 for %s (agent %s), skipping", symbol, agent.id)
+                        continue
+                    
+                    # Create trade job payload
+                    trade_job = {
+                        "request_id": f"nse_{symbol}_{uuid.uuid4().hex[:8]}",
+                        "user_id": portfolio.customer_id,
+                        "portfolio_id": portfolio.id,
+                        "agent_id": agent.id,
+                        "agent_type": "high_risk",
+                        "agent_status": "active",
+                        "symbol": symbol,
+                        "side": "BUY" if signal == 1 else "SELL",
+                        "quantity": quantity,
+                        "reference_price": current_price,
+                        "allocated_capital": position_capital,
+                        "confidence": confidence,
+                        "take_profit_pct": 0.02,  # 2% default TP
+                        "stop_loss_pct": 0.01,    # 1% default SL
+                        "signal_id": f"nse_{symbol}_{int(datetime.utcnow().timestamp())}",
+                        "metadata_json": json.dumps({
+                            "source": "nse_pipeline",
+                            "signal": signal,
+                            "explanation": signal_payload.get("explanation", ""),
+                            "triggered_by": "nse_pipeline_auto",
+                        }),
+                    }
+                    
+                    self.logger.info(
+                        "Creating trade for agent %s: %s %s x %d @ ₹%.2f (capital: ₹%.2f)",
+                        agent.id,
+                        trade_job["side"],
+                        symbol,
+                        quantity,
+                        current_price,
+                        position_capital,
+                    )
+                    
+                    # Persist trade log
+                    trade_record = await trade_service.create_trade_log(trade_job)
+                    
+                    # Execute trade immediately
+                    result = await trade_service.execute_trade(trade_record.id, simulate=True)
+                    # DEBUG: log raw execution result for troubleshooting
+                    self.logger.debug(
+                        "DEBUG: execute_trade result for trade log %s: %s",
+                        trade_record.id,
+                        result,
+                    )
+                    
+                    if result.get("status") in ["executed", "simulated_executed"]:
+                        trades_created += 1
+                        self.logger.info(
+                            "✅ Trade executed for agent %s: %s %s x %d @ ₹%.2f",
+                            agent.id,
+                            trade_job["side"],
+                            symbol,
+                            quantity,
+                            result.get("executed_price", current_price),
+                        )
+                    else:
+                        errors += 1
+                        self.logger.error(
+                            "❌ Trade execution failed for agent %s: %s",
+                            agent.id,
+                            result,
+                        )
+                
+                except Exception as agent_exc:
+                    errors += 1
+                    self.logger.error(
+                        "❌ Error creating trade for agent %s: %s",
+                        agent.id,
+                        agent_exc,
+                        exc_info=True,
+                    )
+            
+            self.logger.info(
+                "✅ Signal processing completed: %s %s - %d trades created, %d errors",
+                symbol,
+                "BUY" if signal == 1 else "SELL",
+                trades_created,
+                errors,
+            )
+        
+        except Exception as exc:
+            self.logger.error("❌ Failed to process signal for active agents: %s", exc, exc_info=True)
+            raise
+
 

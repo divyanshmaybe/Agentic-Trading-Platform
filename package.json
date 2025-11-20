@@ -10,6 +10,7 @@
     "test": "turbo run test",
     "test:cov": "turbo run test:cov",
     "celery": "turbo run celery",
+    "celery:beat": "turbo run celery:beat",
     "studio": "turbo run studio & streamlit run kafkaStudio.py"
   },
   "dependencies": {
