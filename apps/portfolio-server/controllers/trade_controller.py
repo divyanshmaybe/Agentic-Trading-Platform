@@ -114,6 +114,7 @@ class TradeController:
             trigger_price=payload.trigger_price,
             source=payload.source or "user",
             metadata=metadata,
+            auto_sell_after=payload.auto_sell_after,
         )
 
     @staticmethod

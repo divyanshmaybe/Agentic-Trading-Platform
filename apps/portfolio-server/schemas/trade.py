@@ -24,6 +24,7 @@ class TradeRequest(BaseModel):
     customer_id: Optional[str] = Field(default=None, max_length=64)
     source: Optional[str] = Field(default=None, max_length=64)
     metadata: Optional[dict] = None
+    auto_sell_after: Optional[int] = Field(default=None, ge=1, description="Auto-sell after this many seconds (only for BUY orders)")
 
     @model_validator(mode="after")
     def _validate_order_constraints(self) -> "TradeRequest":
@@ -52,6 +53,7 @@ class TradeCreate(BaseModel):
     trigger_price: Optional[Price] = None
     source: Optional[str] = Field(default=None, max_length=64)
     metadata: Optional[dict] = None
+    auto_sell_after: Optional[int] = Field(default=None, ge=1, description="Auto-sell after this many seconds (only for BUY orders)")
 
     model_config = {
         "json_schema_extra": {

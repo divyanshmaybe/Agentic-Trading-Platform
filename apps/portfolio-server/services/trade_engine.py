@@ -3,10 +3,11 @@ from __future__ import annotations
 import os
 import sys
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 from prisma import Prisma
 
@@ -113,6 +114,17 @@ class TradeEngine:
             metadata=trade.metadata,
         )
 
+        # Recalculate auto_sell_at based on actual execution time if auto_sell_after was specified
+        execution_time = datetime.utcnow()
+        if payload.auto_sell_after and trade.side == "BUY":
+            auto_sell_at = self._calculate_auto_sell_at(payload, execution_time)
+            if auto_sell_at:
+                # Update the trade with the recalculated auto_sell_at
+                await self.prisma.trade.update(
+                    where={"id": trade.id},
+                    data={"auto_sell_at": auto_sell_at}
+                )
+        
         # Create payload for execution (will create/update TradeExecutionLog)
         updated_trade = await self._execute_market_order(payload, price, existing_trade_id=trade.id)
         portfolio_snapshot = await self._build_portfolio_snapshot(trade.portfolio_id)
@@ -153,31 +165,37 @@ class TradeEngine:
             exchange = payload.exchange or "NSE"
             segment = payload.segment or "EQUITY"
             
-            trade = await self.prisma.trade.create(
-                data={
-                    "organization_id": payload.organization_id,
-                    "portfolio_id": payload.portfolio_id,
-                    "customer_id": payload.customer_id,
-                    "trade_type": payload.trade_type,
-                    "symbol": payload.symbol,
-                    "exchange": exchange,
-                    "segment": segment,
-                    "side": payload.side,
-                    "order_type": payload.order_type,
-                    "quantity": payload.quantity,
-                    "limit_price": payload.limit_price,
-                    "status": "executed",
-                    "price": execution_price,
-                    "executed_price": execution_price,
-                    "executed_quantity": payload.quantity,
-                    "execution_time": datetime.utcnow(),
-                    "fees": fees,
-                    "taxes": taxes,
-                    "net_amount": net_amount,
-                    "source": payload.source,
-                    "metadata": json.dumps(payload.metadata) if payload.metadata else "{}",
-                }
-            )
+            execution_time = datetime.utcnow()
+            auto_sell_at = self._calculate_auto_sell_at(payload, execution_time)
+            
+            trade_data = {
+                "organization_id": payload.organization_id,
+                "portfolio_id": payload.portfolio_id,
+                "customer_id": payload.customer_id,
+                "trade_type": payload.trade_type,
+                "symbol": payload.symbol,
+                "exchange": exchange,
+                "segment": segment,
+                "side": payload.side,
+                "order_type": payload.order_type,
+                "quantity": payload.quantity,
+                "limit_price": payload.limit_price,
+                "status": "executed",
+                "price": execution_price,
+                "executed_price": execution_price,
+                "executed_quantity": payload.quantity,
+                "execution_time": execution_time,
+                "fees": fees,
+                "taxes": taxes,
+                "net_amount": net_amount,
+                "source": payload.source,
+                "metadata": json.dumps(payload.metadata) if payload.metadata else "{}",
+            }
+            
+            if auto_sell_at:
+                trade_data["auto_sell_at"] = auto_sell_at
+            
+            trade = await self.prisma.trade.create(data=trade_data)
 
         if payload.side == "BUY":
             await self._apply_buy_execution(payload, execution_price)
@@ -212,26 +230,44 @@ class TradeEngine:
             # For stop/take-profit, price should be None until triggered
             trade_price = None
         
-        trade = await self.prisma.trade.create(
-            data={
-                "organization_id": payload.organization_id,
-                "portfolio_id": payload.portfolio_id,
-                "customer_id": payload.customer_id,
-                "trade_type": payload.trade_type,
-                "symbol": payload.symbol,
-                "exchange": exchange,
-                "segment": segment,
-                "side": payload.side,
-                "order_type": payload.order_type,
-                "quantity": payload.quantity,
-                "limit_price": payload.limit_price,
-                "price": trade_price,  # None for stop/take-profit, limit_price for limit (reference only)
-                "trigger_price": payload.trigger_price,
-                "status": "pending",  # Always pending for non-market orders
-                "source": payload.source,
-                "metadata": json.dumps(payload.metadata) if payload.metadata else "{}",
-            }
-        )
+        # Store auto_sell_after in metadata for pending orders so we can recalculate when executed
+        if payload.auto_sell_after and payload.side == "BUY":
+            if payload.metadata is None:
+                payload.metadata = {}
+            payload.metadata["auto_sell_after"] = payload.auto_sell_after
+        
+        # For pending orders, we don't set auto_sell_at yet - it will be calculated when executed
+        # But we can pre-calculate it for reference (will be recalculated on execution)
+        auto_sell_at = None
+        if payload.auto_sell_after and payload.side == "BUY":
+            # For pending orders, calculate auto_sell_at assuming execution happens now
+            # The actual auto_sell_at will be recalculated when the order executes
+            current_time = datetime.utcnow()
+            auto_sell_at = self._calculate_auto_sell_at(payload, current_time)
+        
+        trade_data = {
+            "organization_id": payload.organization_id,
+            "portfolio_id": payload.portfolio_id,
+            "customer_id": payload.customer_id,
+            "trade_type": payload.trade_type,
+            "symbol": payload.symbol,
+            "exchange": exchange,
+            "segment": segment,
+            "side": payload.side,
+            "order_type": payload.order_type,
+            "quantity": payload.quantity,
+            "limit_price": payload.limit_price,
+            "price": trade_price,  # None for stop/take-profit, limit_price for limit (reference only)
+            "trigger_price": payload.trigger_price,
+            "status": "pending",  # Always pending for non-market orders
+            "source": payload.source,
+            "metadata": json.dumps(payload.metadata) if payload.metadata else "{}",
+        }
+        
+        if auto_sell_at:
+            trade_data["auto_sell_at"] = auto_sell_at
+        
+        trade = await self.prisma.trade.create(data=trade_data)
 
         # Create TradeExecutionLog for pending manual trades
         await self._create_trade_execution_log(trade, payload, status="pending")
@@ -386,6 +422,47 @@ class TradeEngine:
         portfolio = await self.prisma.portfolio.find_unique(where={"id": portfolio_id})
         if not portfolio:
             raise ValueError(f"Portfolio {portfolio_id} not found")
+
+    def _calculate_auto_sell_at(self, payload: TradeCreate, execution_time: datetime) -> Optional[datetime]:
+        """Calculate auto_sell_at timestamp from auto_sell_after parameter.
+        
+        Args:
+            payload: TradeCreate payload with optional auto_sell_after (in seconds)
+            execution_time: When the trade was/will be executed
+            
+        Returns:
+            datetime if auto_sell_at should be set, None otherwise
+        """
+        # Only apply to BUY orders
+        if payload.side != "BUY":
+            return None
+        
+        # Check if auto_sell_after is specified
+        if not payload.auto_sell_after or payload.auto_sell_after <= 0:
+            return None
+        
+        # Calculate auto_sell_at = execution_time + auto_sell_after seconds
+        auto_sell_at = execution_time + timedelta(seconds=payload.auto_sell_after)
+        
+        # Check if auto_sell_at would be after market close (15:30 IST)
+        try:
+            ist = ZoneInfo("Asia/Kolkata")
+            local_auto_sell = auto_sell_at.astimezone(ist)
+        except Exception:
+            # If timezone conversion fails, use naive comparison
+            local_auto_sell = auto_sell_at
+        
+        # Market closes at 15:30 IST
+        if local_auto_sell.hour > 15 or (local_auto_sell.hour == 15 and local_auto_sell.minute > 30):
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                "⚠️ Auto-sell time %s (local %s) would be after market close (>15:30 IST), skipping auto-sell",
+                auto_sell_at, local_auto_sell
+            )
+            return None
+        
+        return auto_sell_at
 
     def _enqueue_pending_trade(self, trade_id: str) -> None:
         try:
