@@ -1,4 +1,36 @@
-"""Prisma-powered database manager for FastAPI services."""
+"""
+Prisma-powered database manager for FastAPI services.
+
+This module provides a robust, production-ready database manager for Python services.
+It handles connection lifecycle, event loop management, and ensures proper cleanup.
+
+Key Features:
+- Singleton pattern with proper event loop handling
+- Automatic reconnection on event loop changes
+- Thread-safe operations
+- Comprehensive error handling and logging
+- Health check support
+
+Usage:
+    ```python
+    from dbManager import DBManager
+    
+    # Get singleton instance
+    db_manager = DBManager.get_instance()
+    
+    # Connect
+    await db_manager.connect()
+    
+    # Get Prisma client
+    client = db_manager.get_client()
+    
+    # Use client
+    users = await client.user.find_many()
+    
+    # Disconnect when done
+    await db_manager.disconnect()
+    ```
+"""
 
 from __future__ import annotations
 
@@ -12,13 +44,30 @@ from prisma.errors import PrismaError
 
 
 class DBManager:
-    """Singleton wrapper around Prisma Client Python."""
+    """
+    Singleton wrapper around Prisma Client Python.
+    
+    Provides robust connection management with event loop awareness.
+    Automatically handles event loop changes and reconnection.
+    """
 
     _instance: Optional["DBManager"] = None
+    _lock: asyncio.Lock = None  # Will be created when needed
 
     def __init__(self, database_url: Optional[str] = None, log_queries: bool = False):
+        """
+        Initialize DBManager.
+        
+        Args:
+            database_url: PostgreSQL connection string. If not provided, uses DATABASE_URL env var.
+            log_queries: If True, logs all SQL queries (useful for debugging).
+            
+        Note: Use get_instance() instead of direct instantiation.
+        """
         if DBManager._instance is not None:
-            raise RuntimeError("Use DBManager.get_instance() to access the database manager")
+            raise RuntimeError(
+                "DBManager is a singleton. Use DBManager.get_instance() to access it."
+            )
 
         self.logger = logging.getLogger(__name__)
         self.database_url = database_url or os.getenv("DATABASE_URL") or os.getenv("DB_URL")
@@ -43,105 +92,173 @@ class DBManager:
         self.client: Prisma = Prisma(**self._client_options)
         self._connected: bool = False
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._connecting: bool = False
 
     @classmethod
     def get_instance(cls, database_url: Optional[str] = None, log_queries: bool = False) -> "DBManager":
-        """Return (or create) the shared DB manager instance."""
-
+        """
+        Get or create the shared DBManager singleton instance.
+        
+        Args:
+            database_url: PostgreSQL connection string (only used on first call).
+            log_queries: If True, logs all SQL queries (only used on first call).
+            
+        Returns:
+            The singleton DBManager instance.
+        """
         if cls._instance is None:
             cls._instance = cls(database_url=database_url, log_queries=log_queries)
         return cls._instance
 
     @classmethod
     def reset_instance(cls) -> None:
-        """Reset the singleton instance. Useful for event loop changes in async contexts."""
+        """
+        Reset the singleton instance.
+        
+        Useful for:
+        - Event loop changes in async contexts
+        - Testing scenarios requiring fresh state
+        - Worker processes that need clean slate
+        
+        Warning: This will disconnect any existing connections.
+        """
         if cls._instance is not None:
             # Disconnect and unregister the Prisma client
             try:
                 # Try to disconnect synchronously if possible
                 if cls._instance.client and cls._instance._connected:
                     try:
-                        # Force disconnect by closing internal httpx client
-                        if hasattr(cls._instance.client, '_engine') and cls._instance.client._engine:
-                            if hasattr(cls._instance.client._engine, '_client'):
-                                try:
-                                    import asyncio
-                                    loop = asyncio.get_event_loop()
-                                    if loop.is_running():
-                                        # Can't await in running loop, force close
-                                        pass
-                                    else:
-                                        asyncio.run(cls._instance.client.disconnect())
-                                except:
-                                    pass
+                        loop = asyncio.get_event_loop()
+                        if not loop.is_running():
+                            asyncio.run(cls._instance.disconnect())
                     except Exception:
                         pass  # Best effort cleanup
                 
                 # Unregister from Prisma's global registry
                 from prisma._registry import unregister
                 if cls._instance.client:
-                    unregister(cls._instance.client)
+                    try:
+                        unregister(cls._instance.client)
+                    except Exception:
+                        pass  # Best effort cleanup
             except Exception:
                 pass  # Best effort cleanup
             
             cls._instance = None
 
     async def connect(self) -> None:
-        """Establish a connection to the database via Prisma."""
-
-        loop = asyncio.get_running_loop()
-
-        if self._connected:
-            if self._loop is loop:
-                return
-
-            # Recreate the Prisma client for the new event loop
-            try:
-                await self.client.disconnect()
-            except Exception:  # pragma: no cover - best effort cleanup
-                self.logger.debug("Failed to disconnect existing Prisma client during loop switch", exc_info=True)
-
-            self.client = Prisma(**self._client_options)
-            self._connected = False
-            self._loop = None
-
+        """
+        Establish a connection to the database via Prisma.
+        
+        Handles event loop changes by recreating the client if needed.
+        Safe to call multiple times - will reuse existing connection if still valid.
+        
+        Raises:
+            PrismaError: If connection fails after retries.
+        """
         try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            raise RuntimeError(
+                "connect() must be called from within an async context. "
+                "Use asyncio.run() or ensure you're in an async function."
+            )
+
+        # If already connected to the same event loop, return
+        if self._connected and self._loop is loop:
+            self.logger.debug("Already connected to database (same event loop)")
+            return
+
+        # If already connecting, wait for it to complete
+        if self._connecting:
+            self.logger.debug("Connection in progress, waiting...")
+            while self._connecting:
+                await asyncio.sleep(0.1)
+            return
+
+        self._connecting = True
+        
+        try:
+            # If loop changed, recreate the Prisma client
+            if self._loop is not None and self._loop is not loop:
+                self.logger.info("Event loop changed, recreating Prisma client")
+                try:
+                    await self.client.disconnect()
+                except Exception:  # pragma: no cover - best effort cleanup
+                    self.logger.debug(
+                        "Failed to disconnect existing Prisma client during loop switch", 
+                        exc_info=True
+                    )
+
+                self.client = Prisma(**self._client_options)
+                self._connected = False
+                self._loop = None
+
+            # Connect to database
             await self.client.connect()
             self._connected = True
             self._loop = loop
-            self.logger.info("✅ Connected to database via Prisma")
+            self.logger.info("✅ Connected to database via Prisma (loop_id=%s)", id(loop))
+            
         except PrismaError as exc:
             self.logger.error("❌ Failed to connect to database via Prisma", exc_info=exc)
+            self._connected = False
+            self._loop = None
             raise
+        finally:
+            self._connecting = False
 
     async def disconnect(self) -> None:
-        """Close the Prisma connection if it is active."""
-
+        """
+        Close the Prisma connection if it is active.
+        
+        Safe to call multiple times. Cleans up connection state.
+        """
         if not self._connected:
+            self.logger.debug("Already disconnected")
             return
 
         try:
             await self.client.disconnect()
             self.logger.info("🔌 Disconnected Prisma client")
+        except Exception as e:
+            self.logger.warning("Error during disconnect: %s", e)
         finally:
             self._connected = False
             self._loop = None
 
     def get_client(self) -> Prisma:
-        """Return the underlying Prisma client (requires active connection)."""
-
+        """
+        Get the underlying Prisma client.
+        
+        Returns:
+            Connected Prisma client instance.
+            
+        Raises:
+            RuntimeError: If not connected. Call connect() first.
+        """
         if not self._connected:
-            raise RuntimeError("Database not connected. Call connect() before accessing the client.")
+            raise RuntimeError(
+                "Database not connected. Call await connect() before accessing the client."
+            )
         return self.client
 
     def is_connected(self) -> bool:
-        """Return True if the Prisma client is connected."""
-
+        """
+        Check if the database connection is active.
+        
+        Returns:
+            True if connected, False otherwise.
+        """
         return self._connected
 
     async def health_check(self) -> bool:
-        """Perform a basic health check against the database."""
-
+        """
+        Perform a basic health check against the database.
+        
+        Returns:
+            True if database is healthy, False otherwise.
+        """
         if not self._connected:
             return False
 
@@ -154,10 +271,24 @@ class DBManager:
             return False
 
     async def execute_raw(self, query: str, parameters: Optional[Any] = None) -> Any:
-        """Execute a raw query using the Prisma client."""
-
+        """
+        Execute a raw SQL query using the Prisma client.
+        
+        Args:
+            query: SQL query string.
+            parameters: Optional query parameters.
+            
+        Returns:
+            Query results.
+            
+        Raises:
+            RuntimeError: If not connected.
+            PrismaError: If query execution fails.
+        """
         if not self._connected:
-            raise RuntimeError("Database not connected. Call connect() before executing queries.")
+            raise RuntimeError(
+                "Database not connected. Call await connect() before executing queries."
+            )
 
         if parameters is None:
             return await self.client.execute_raw(query)

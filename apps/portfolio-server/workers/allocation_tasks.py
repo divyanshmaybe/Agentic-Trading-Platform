@@ -854,50 +854,50 @@ def allocate_for_objective_task(
             
             # Update portfolio status to processing
             logger.info(f"Connecting to database for portfolio {portfolio_id}...")
-            # Use Prisma directly to avoid event loop issues with DBManager singleton
-            from prisma import Prisma
-            db = Prisma()
-            await db.connect()
-            logger.info(f"Database connected for portfolio {portfolio_id}")
+            # Use DatabaseClient context manager for proper connection handling
+            from db_client import DatabaseClient
             
-            logger.info(f"Fetching user subscriptions for user {user_id}...")
-            user_subscriptions = await _get_user_subscriptions(db, user_id)
-            logger.info(f"User subscriptions retrieved: {user_subscriptions}")
-            
-            logger.info(f"Updating portfolio {portfolio_id} status to 'processing'...")
-            await db.portfolio.update(
-                where={"id": portfolio_id},
-                data={"allocation_status": "processing"}
-            )
-            logger.info(f"Portfolio {portfolio_id} status updated to 'processing'")
-            
-            # Execute Pathway allocation pipeline in a thread pool to avoid event loop conflicts
-            # Use asyncio.to_thread to run the synchronous pipeline without blocking the event loop
-            from concurrent.futures import ThreadPoolExecutor
-            import functools
-            
-            loop = asyncio.get_event_loop()
-            
-            # Run the synchronous pipeline in a thread pool executor with timeout
-            logger.info(f"Executing allocation pipeline for portfolio {portfolio_id}...")
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                try:
-                    results = await asyncio.wait_for(
-                        loop.run_in_executor(
-                    executor,
-                    functools.partial(
-                        allocate_portfolios,
-                        [request],
-                        logger=logger,
-                        audit_path=f"/tmp/portfolio_allocations_{portfolio_id}_{objective_id}.jsonl"
-                    )
-                        ),
-                        timeout=300.0  # 5 minute timeout
+            async with DatabaseClient() as db:
+                logger.info(f"Database connected for portfolio {portfolio_id}")
+                
+                logger.info(f"Fetching user subscriptions for user {user_id}...")
+                user_subscriptions = await _get_user_subscriptions(db, user_id)
+                logger.info(f"User subscriptions retrieved: {user_subscriptions}")
+                
+                logger.info(f"Updating portfolio {portfolio_id} status to 'processing'...")
+                await db.portfolio.update(
+                    where={"id": portfolio_id},
+                    data={"allocation_status": "processing"}
                 )
-                    logger.info(f"Allocation pipeline completed for portfolio {portfolio_id}")
-                except asyncio.TimeoutError:
-                    logger.error(f"Allocation pipeline timed out after 5 minutes for portfolio {portfolio_id}")
-                    raise TimeoutError(f"Allocation pipeline timed out for portfolio {portfolio_id}")
+                logger.info(f"Portfolio {portfolio_id} status updated to 'processing'")
+            
+                # Execute Pathway allocation pipeline in a thread pool to avoid event loop conflicts
+                # Use asyncio.to_thread to run the synchronous pipeline without blocking the event loop
+                from concurrent.futures import ThreadPoolExecutor
+                import functools
+                
+                loop = asyncio.get_event_loop()
+                
+                # Run the synchronous pipeline in a thread pool executor with timeout
+                logger.info(f"Executing allocation pipeline for portfolio {portfolio_id}...")
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    try:
+                        results = await asyncio.wait_for(
+                            loop.run_in_executor(
+                        executor,
+                        functools.partial(
+                            allocate_portfolios,
+                            [request],
+                            logger=logger,
+                            audit_path=f"/tmp/portfolio_allocations_{portfolio_id}_{objective_id}.jsonl"
+                        )
+                            ),
+                            timeout=300.0  # 5 minute timeout
+                    )
+                        logger.info(f"Allocation pipeline completed for portfolio {portfolio_id}")
+                    except asyncio.TimeoutError:
+                        logger.error(f"Allocation pipeline timed out after 5 minutes for portfolio {portfolio_id}")
+                        raise TimeoutError(f"Allocation pipeline timed out for portfolio {portfolio_id}")
             
             if not results:
                 logger.error("Allocation pipeline returned no results")
@@ -1184,14 +1184,13 @@ def allocate_for_objective_task(
         except Exception as exc:
             # Mark portfolio as failed
             try:
-                from prisma import Prisma
-                error_db = Prisma()
-                await error_db.connect()
-                await error_db.portfolio.update(
-                        where={"id": portfolio_id},
-                        data={"allocation_status": "failed"}
-                    )
-                await error_db.disconnect()
+                # Use DatabaseClient for error handling too
+                from db_client import DatabaseClient
+                async with DatabaseClient() as error_db:
+                    await error_db.portfolio.update(
+                            where={"id": portfolio_id},
+                            data={"allocation_status": "failed"}
+                        )
             except:
                 pass
             
@@ -1200,12 +1199,6 @@ def allocate_for_objective_task(
                 exc_info=True
             )
             raise exc
-        finally:
-            # Always disconnect database
-            try:
-                await db.disconnect()
-            except:
-                pass
     
     # Create a fresh event loop for this task execution to avoid loop closure issues
     loop = asyncio.new_event_loop()
@@ -1238,17 +1231,16 @@ def daily_rebalancing_sweep_task(self) -> Dict[str, Any]:
     
     async def _sweep():
         try:
-            # Use Prisma directly to avoid event loop issues with DBManager singleton
-            from prisma import Prisma
-            db = Prisma()
-            await db.connect()
+            # Use DatabaseClient for proper connection handling
+            from db_client import DatabaseClient
+            async with DatabaseClient() as db:
             
-            today = datetime.now().date()
-            logger.info(f"Running daily rebalancing sweep for {today}")
-            
-            # Find portfolios with rebalancing_date <= today (includes overdue portfolios)
-            # This ensures we catch any portfolios that were missed
-            portfolios_to_rebalance = await db.portfolio.find_many(
+                today = datetime.now().date()
+                logger.info(f"Running daily rebalancing sweep for {today}")
+                
+                # Find portfolios with rebalancing_date <= today (includes overdue portfolios)
+                # This ensures we catch any portfolios that were missed
+                portfolios_to_rebalance = await db.portfolio.find_many(
                 where={
                     "AND": [
                         {"rebalancing_date": {"lte": today}},
@@ -1260,26 +1252,26 @@ def daily_rebalancing_sweep_task(self) -> Dict[str, Any]:
                 include={
                     "allocations": True,
                 }
-            )
-            
-            if not portfolios_to_rebalance:
-                logger.info("No portfolios due for rebalancing today or overdue")
-                return {
-                    "success": True,
-                    "portfolios_checked": 0,
-                    "portfolios_rebalanced": 0,
-                }
-            
-            logger.info(
-                f"Found {len(portfolios_to_rebalance)} portfolios to rebalance "
-                f"(including overdue)"
-            )
-            
-            # Get current regime once for all portfolios
-            current_regime = await _get_current_regime()
-            
-            # Build allocation requests for all due portfolios
-            requests = []
+                )
+                
+                if not portfolios_to_rebalance:
+                    logger.info("No portfolios due for rebalancing today or overdue")
+                    return {
+                        "success": True,
+                        "portfolios_checked": 0,
+                        "portfolios_rebalanced": 0,
+                    }
+                
+                logger.info(
+                    f"Found {len(portfolios_to_rebalance)} portfolios to rebalance "
+                    f"(including overdue)"
+                )
+                
+                # Get current regime once for all portfolios
+                current_regime = await _get_current_regime()
+                
+                # Build allocation requests for all due portfolios
+                requests = []
             portfolio_map = {}
             
             for portfolio in portfolios_to_rebalance:

@@ -35,7 +35,7 @@ PORTFOLIO_SERVER_ROOT = os.path.join(os.path.dirname(__file__), "..")
 if PORTFOLIO_SERVER_ROOT not in sys.path:
     sys.path.insert(0, PORTFOLIO_SERVER_ROOT)
 
-from dbManager import DBManager  # type: ignore
+from db_client import DatabaseClient, get_db_client  # type: ignore
 from market_data import get_market_data_service  # type: ignore
 from services.trade_engine import TradeEngine
 
@@ -61,7 +61,7 @@ class OrderMonitorWorker:
     """
     
     def __init__(self):
-        self.db: Optional[DBManager] = None
+        self.db = None  # Will hold Prisma client
         self.market_data = None
         self.running = False
         self.subscribed_symbols: Set[str] = set()
@@ -71,10 +71,8 @@ class OrderMonitorWorker:
         """Initialize database and market data connections."""
         logger.info("🚀 Initializing Order Monitor Worker...")
         
-        # Setup database
-        self.db = DBManager.get_instance()
-        # Always call connect() to ensure we're using the current event loop
-        await self.db.connect()
+        # Setup database - get connected client for current event loop
+        self.db = await get_db_client()
         
         # Setup market data service
         self.market_data = get_market_data_service()
@@ -83,8 +81,8 @@ class OrderMonitorWorker:
     
     async def close(self):
         """Close database connection."""
-        if self.db and self.db.is_connected():
-            await self.db.disconnect()
+        # Connection is managed per event loop by db_client module
+        pass
     
     async def run(self):
         """Main monitoring loop - runs continuously."""
@@ -146,7 +144,7 @@ class OrderMonitorWorker:
     
     async def _fetch_pending_orders(self) -> List[Dict]:
         """Fetch all pending orders from both Trade and TradeExecutionLog models."""
-        prisma = self.db.get_client()
+        prisma = self.db
         
         # Fetch from Trade model (manual API trades and TP/SL orders)
         trade_orders = await prisma.trade.find_many(
@@ -318,7 +316,7 @@ class OrderMonitorWorker:
             
             if source_model == "trade":
                 # Use TradeEngine for Trade model orders
-                prisma = self.db.get_client()
+                prisma = self.db
                 engine = TradeEngine(prisma)
                 executed = await engine.process_pending_trade(order["id"])
                 
@@ -353,7 +351,7 @@ class OrderMonitorWorker:
         """Cancel orders that have been pending for too long in both Trade and TradeExecutionLog."""
         from datetime import datetime, timedelta
         
-        prisma = self.db.get_client()
+        prisma = self.db
         
         cutoff_time = datetime.utcnow() - timedelta(hours=STALE_ORDER_TIMEOUT)
         
@@ -451,8 +449,6 @@ def check_pending_orders_once(self):
     
     Use this if you prefer scheduled periodic checks instead of continuous monitoring.
     """
-    # Reset DBManager singleton to avoid event loop conflicts
-    DBManager.reset_instance()
     return asyncio.run(_check_pending_orders_once_async())
 
 
@@ -479,10 +475,4 @@ async def _check_pending_orders_once_async() -> Dict:
         logger.error(f"Failed one-time order check: {e}", exc_info=True)
         return {"status": "error", "error": str(e)}
     finally:
-        try:
-            await worker.close()
-        except Exception:
-            pass  # Best effort cleanup
-        
-        # Always reset DBManager to prevent Prisma registry conflicts
-        DBManager.reset_instance()
+        await worker.close()

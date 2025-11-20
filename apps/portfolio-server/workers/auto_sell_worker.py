@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from celery_app import celery_app  # type: ignore
-from db import get_db_manager  # type: ignore
+from db_client import DatabaseClient, ensure_disconnected  # type: ignore
 from market_data import get_live_price  # type: ignore
 from services.trade_execution_service import TradeExecutionService  # type: ignore
 
@@ -20,9 +20,6 @@ def auto_sell_expired_trades(self):
     """Auto-sell trades that have reached their auto_sell_at timestamp."""
     logger.info("🔄 Starting auto-sell worker...")
     try:
-        # Reset DBManager singleton to avoid event loop conflicts
-        from dbManager import DBManager  # type: ignore
-        DBManager.reset_instance()
         return asyncio.run(_run_auto_sell())
     except Exception as exc:
         logger.error("❌ Auto-sell worker failed: %s", exc, exc_info=True)
@@ -31,11 +28,7 @@ def auto_sell_expired_trades(self):
 
 async def _run_auto_sell():
     """Run auto-sell logic for expired trades."""
-    db_manager = get_db_manager()
-    await db_manager.connect()
-    
-    try:
-        client = db_manager.get_client()
+    async with DatabaseClient() as client:
         current_time = datetime.now(timezone.utc)
         
         # Only check Trade records (auto_sell_at field only exists on Trade model)
@@ -68,13 +61,6 @@ async def _run_auto_sell():
         logger.info("✅ Auto-sell worker completed: %d sold, %d errors", sold_count, error_count)
         
         return {"status": "completed", "sold_count": sold_count, "error_count": error_count}
-    finally:
-        if db_manager.is_connected():
-            await db_manager.disconnect()
-        
-        # Always reset DBManager to prevent Prisma registry conflicts
-        from dbManager import DBManager  # type: ignore
-        DBManager.reset_instance()
 
 
 async def _sell_trade(trade, trade_service: TradeExecutionService, client, logger):

@@ -16,7 +16,7 @@ PORTFOLIO_SERVER_ROOT = os.path.join(os.path.dirname(__file__), "..")
 if PORTFOLIO_SERVER_ROOT not in sys.path:
     sys.path.insert(0, PORTFOLIO_SERVER_ROOT)
 
-from dbManager import DBManager  # type: ignore
+from db_client import get_db_client  # type: ignore
 
 from services.trade_engine import TradeEngine
 
@@ -32,18 +32,14 @@ logger = logging.getLogger(__name__)
 )
 def process_pending_trade(self, trade_id: str) -> bool:
     """Process a pending trade using asyncio.run for proper event loop management."""
-    # Reset DBManager singleton to avoid event loop conflicts
-    DBManager.reset_instance()
     return asyncio.run(_process_pending_trade_async(trade_id))
 
 
 async def _process_pending_trade_async(trade_id: str) -> bool:
-    db = DBManager.get_instance()
-    await db.connect()
+    client = await get_db_client()
 
     try:
-        prisma = db.get_client()
-        engine = TradeEngine(prisma)
+        engine = TradeEngine(client)
 
         try:
             executed = await engine.process_pending_trade(trade_id)
@@ -56,9 +52,5 @@ async def _process_pending_trade_async(trade_id: str) -> bool:
             logger.exception("Failed to process pending trade %s", trade_id)
             raise
     finally:
-        if db.is_connected():
-            await db.disconnect()
-        
-        # Always reset DBManager to prevent Prisma registry conflicts
-        from dbManager import DBManager  # type: ignore
-        DBManager.reset_instance()
+        # Connection cleanup handled by db_client module
+        pass

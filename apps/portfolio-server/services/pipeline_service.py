@@ -1244,25 +1244,24 @@ class PipelineService:
                 "dispatched": 0,
             }
 
-        # Use Prisma directly to avoid event loop issues with DBManager singleton
-        from prisma import Prisma
-        client = Prisma()
-        await client.connect()
-
+        # Use DatabaseClient for proper connection handling
+        from db_client import get_db_client
+        client = await get_db_client()
+        
         trade_service = TradeExecutionService(logger=self.logger)
 
         # DIRECTLY query for active high_risk agents with auto_trade enabled
         # No need for user filtering bullshit
         agents = await client.tradingagent.find_many(
-            where={
-                "agent_type": "high_risk",
-                "status": "active",
-            },
-            include={
-                "portfolio": True,
-                "allocation": True,
-            }
-        )
+                where={
+                    "agent_type": "high_risk",
+                    "status": "active",
+                },
+                include={
+                    "portfolio": True,
+                    "allocation": True,
+                }
+            )
         
         if not agents:
             self.logger.warning("⚠️ No active high_risk trading agents found")
@@ -1273,21 +1272,21 @@ class PipelineService:
                 "dispatched": 0,
             }
         
-        # Filter agents with auto_trade enabled
-        auto_trade_agents = []
-        for agent in agents:
-            config = self._clean_json(getattr(agent, "strategy_config", None)) or {}
-            if bool(config.get("auto_trade", False)):
-                auto_trade_agents.append(agent)
-        
-        if not auto_trade_agents:
-            self.logger.warning("⚠️ Found %d high_risk agents but NONE have auto_trade enabled", len(agents))
-            return {
-                "processed_signals": len(processed_signals),
-                "payloads": 0,
-                "jobs": 0,
-                "dispatched": 0,
-            }
+            # Filter agents with auto_trade enabled
+            auto_trade_agents = []
+            for agent in agents:
+                config = self._clean_json(getattr(agent, "strategy_config", None)) or {}
+                if bool(config.get("auto_trade", False)):
+                    auto_trade_agents.append(agent)
+            
+            if not auto_trade_agents:
+                self.logger.warning("⚠️ Found %d high_risk agents but NONE have auto_trade enabled", len(agents))
+                return {
+                    "processed_signals": len(processed_signals),
+                    "payloads": 0,
+                    "jobs": 0,
+                    "dispatched": 0,
+                }
         
         self.logger.info("✅ Found %d active high_risk agents with auto_trade enabled", len(auto_trade_agents))
         
