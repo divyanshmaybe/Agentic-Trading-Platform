@@ -23,6 +23,7 @@ from pipelines.nse.trade_execution_pipeline import (  # type: ignore  # noqa: E4
     TradeExecutionEvent,
     publish_trade_execution_events,
 )
+from services.trade_validation_service import TradeValidationService  # noqa: E402
 
 
 def _parse_metadata(metadata):
@@ -1433,6 +1434,10 @@ class TradeExecutionService:
         For BUY trades: increases quantity (or creates new position)
         For SELL trades: decreases quantity (or closes position if quantity reaches 0)
         
+        Includes:
+        - Pre-trade validation (sufficient cash for BUY, sufficient holdings for SELL)
+        - Cash tracking (deduct for BUY, add for SELL)
+        
         Args:
             portfolio_id: Portfolio ID
             symbol: Stock symbol
@@ -1447,6 +1452,57 @@ class TradeExecutionService:
         """
         
         try:
+            # Initialize validation service
+            validation_service = TradeValidationService()
+            
+            # Validate trade before execution
+            if side.upper() == "BUY":
+                # Calculate total cost
+                total_cost = Decimal(str(executed_price)) * Decimal(str(quantity))
+                
+                # Validate available cash at portfolio or allocation level
+                if agent_id:
+                    # Validate at allocation level if agent is involved
+                    validation_result = await validation_service.validate_buy_order(
+                        symbol=symbol,
+                        quantity=quantity,
+                        price=Decimal(str(executed_price)),
+                        portfolio_id=portfolio_id,
+                        allocation_id=None  # Will be fetched from agent
+                    )
+                else:
+                    # Validate at portfolio level
+                    validation_result = await validation_service.validate_buy_order(
+                        symbol=symbol,
+                        quantity=quantity,
+                        price=Decimal(str(executed_price)),
+                        portfolio_id=portfolio_id
+                    )
+                
+                if not validation_result["valid"]:
+                    self.logger.error(
+                        "❌ BUY validation failed for %s: %s",
+                        symbol,
+                        validation_result.get("error", "Unknown error")
+                    )
+                    raise ValueError(f"Insufficient funds: {validation_result.get('error')}")
+                
+            elif side.upper() == "SELL":
+                # Validate sufficient holdings
+                validation_result = await validation_service.validate_sell_order(
+                    symbol=symbol,
+                    quantity=quantity,
+                    portfolio_id=portfolio_id
+                )
+                
+                if not validation_result["valid"]:
+                    self.logger.error(
+                        "❌ SELL validation failed for %s: %s",
+                        symbol,
+                        validation_result.get("error", "Unknown error")
+                    )
+                    raise ValueError(f"Insufficient holdings: {validation_result.get('error')}")
+            
             # Check if position already exists
             existing_position = await client.position.find_first(
                 where={
@@ -1465,11 +1521,6 @@ class TradeExecutionService:
                     new_quantity = old_quantity + quantity
                     # Calculate new average price: (old_total + new_total) / new_quantity
                     new_avg_price = ((old_quantity * old_avg_price) + (quantity * executed_price)) / new_quantity
-                    
-                    # Calculate current value and unrealized P&L
-                    current_value = new_quantity * executed_price
-                    unrealized_pnl = current_value - (new_quantity * new_avg_price)
-                    pnl_percentage = (unrealized_pnl / (new_quantity * new_avg_price)) * 100 if new_avg_price > 0 else 0
                     
                     # Get existing trade IDs array from metadata
                     position_metadata = {}
@@ -1494,9 +1545,6 @@ class TradeExecutionService:
                     update_data = {
                         "quantity": new_quantity,
                         "average_buy_price": self._as_decimal(new_avg_price),
-                        "current_price": self._as_decimal(executed_price),
-                        "current_value": self._as_decimal(current_value),
-                        "pnl_percentage": self._as_decimal(pnl_percentage),
                         "updated_at": datetime.utcnow(),
                         "metadata": json.dumps(position_metadata),
                     }
@@ -1511,19 +1559,16 @@ class TradeExecutionService:
                     )
                     
                     self.logger.info(
-                        "✅ Updated position %s: %s qty %d→%d, avg price ₹%.2f→₹%.2f, P&L ₹%.2f (%.2f%%)",
+                        "✅ Updated position %s: %s qty %d→%d, avg price ₹%.2f→₹%.2f",
                         existing_position.id,
                         symbol,
                         old_quantity,
                         new_quantity,
                         old_avg_price,
                         new_avg_price,
-                        unrealized_pnl,
-                        pnl_percentage,
                     )
                 else:
                     # Create new position
-                    current_value = quantity * executed_price
                     
                     position_metadata = {
                         "trade_ids": [trade_id],
@@ -1538,27 +1583,84 @@ class TradeExecutionService:
                         "segment": segment,
                         "quantity": quantity,
                         "average_buy_price": self._as_decimal(executed_price),
-                        "current_price": self._as_decimal(executed_price),
-                        "current_value": self._as_decimal(current_value),
                         "position_type": "LONG",  # BUY = LONG position
                         "status": "open",
                         "opened_at": datetime.utcnow(),
                         "metadata": json.dumps(position_metadata),
                     }
                     
-                    # Link agent if provided
+                    # Position requires both agent_id and allocation_id
                     if agent_id:
                         create_data["agent_id"] = agent_id
+                        # Fetch allocation_id from agent
+                        agent = await client.tradingagent.find_unique(where={"id": agent_id})
+                        if agent and hasattr(agent, "portfolio_allocation_id"):
+                            create_data["allocation_id"] = agent.portfolio_allocation_id
+                        else:
+                            self.logger.warning(
+                                "⚠️ Agent %s has no allocation_id, skipping position creation",
+                                agent_id
+                            )
+                            return
+                    else:
+                        self.logger.warning(
+                            "⚠️ No agent_id provided for position creation, skipping"
+                        )
+                        return
                     
                     new_position = await client.position.create(data=create_data)
                     
                     self.logger.info(
-                        "✅ Created new position %s: %s x %d @ ₹%.2f (value ₹%.2f)",
+                        "✅ Created new position %s: %s x %d @ ₹%.2f",
                         new_position.id,
                         symbol,
                         quantity,
                         executed_price,
-                        current_value,
+                    )
+                
+                # Update cash tracking after BUY
+                total_cost = Decimal(str(executed_price)) * Decimal(str(quantity))
+                
+                # Get allocation_id from agent or position
+                allocation_id = None
+                if agent_id:
+                    agent = await client.tradingagent.find_unique(where={"id": agent_id})
+                    if agent:
+                        allocation_id = getattr(agent, "portfolio_allocation_id", None)
+                
+                if allocation_id:
+                    # Deduct from allocation cash
+                    allocation = await client.portfolioallocation.find_unique(where={"id": allocation_id})
+                    if allocation:
+                        current_cash = Decimal(str(getattr(allocation, "available_cash", 0)))
+                        new_cash = current_cash - total_cost
+                        await client.portfolioallocation.update(
+                            where={"id": allocation_id},
+                            data={"available_cash": new_cash}
+                        )
+                        self.logger.info(
+                            "💰 Deducted ₹%.2f from allocation %s: ₹%.2f → ₹%.2f",
+                            float(total_cost),
+                            allocation_id,
+                            float(current_cash),
+                            float(new_cash)
+                        )
+                
+                # Also update portfolio available_cash
+                portfolio = await client.portfolio.find_unique(where={"id": portfolio_id})
+                if portfolio:
+                    portfolio_cash = Decimal(str(getattr(portfolio, "available_cash", 0)))
+                    new_portfolio_cash = portfolio_cash - total_cost
+                    await client.portfolio.update(
+                        where={"id": portfolio_id},
+                        data={"available_cash": new_portfolio_cash}
+                    )
+                    self.logger.info(
+                        "💰 Deducted ₹%.2f from portfolio %s: ₹%.2f → ₹%.2f",
+                        float(total_cost),
+                        portfolio_id,
+                        float(portfolio_cash),
+                        float(new_portfolio_cash)
                     )
                     
             elif side.upper() == "SELL":
@@ -1598,9 +1700,7 @@ class TradeExecutionService:
                             where={"id": existing_position.id},
                             data={
                                 "quantity": 0,
-                                "current_value": self._as_decimal(0),
                                 "status": "closed",
-                                "current_price": self._as_decimal(executed_price),
                                 "realized_pnl": self._as_decimal(total_realized_pnl),
                                 "closed_at": datetime.utcnow(),
                                 "updated_at": datetime.utcnow(),
@@ -1620,34 +1720,66 @@ class TradeExecutionService:
                         # Cancel pending TP/SL orders for this symbol
                         await self._cancel_pending_tp_sl_orders(portfolio_id, symbol, client)
                     else:
-                        # Reduce quantity and update unrealized P&L
-                        current_value = new_quantity * executed_price
-                        unrealized_pnl = current_value - (new_quantity * avg_buy_price)
-                        pnl_percentage = (unrealized_pnl / (new_quantity * avg_buy_price)) * 100 if avg_buy_price > 0 else 0
-                        
+                        # Reduce quantity
                         await client.position.update(
                             where={"id": existing_position.id},
                             data={
                                 "quantity": new_quantity,
-                                "current_price": self._as_decimal(executed_price),
-                                "current_value": self._as_decimal(current_value),
                                 "realized_pnl": self._as_decimal(total_realized_pnl),
-                                "pnl_percentage": self._as_decimal(pnl_percentage),
                                 "updated_at": datetime.utcnow(),
                                 "metadata": json.dumps(position_metadata),
                             }
                         )
                         
                         self.logger.info(
-                            "✅ Updated position %s: %s qty %d→%d (SELL %d), realized P&L ₹%.2f, unrealized P&L ₹%.2f (%.2f%%)",
+                            "✅ Updated position %s: %s qty %d→%d (SELL %d), realized P&L ₹%.2f",
                             existing_position.id,
                             symbol,
                             old_quantity,
                             new_quantity,
                             quantity,
                             realized_pnl,
-                            unrealized_pnl,
-                            pnl_percentage,
+                        )
+                    
+                    # Update cash tracking after SELL
+                    sale_proceeds = Decimal(str(executed_price)) * Decimal(str(quantity))
+                    
+                    # Get allocation_id from position or agent
+                    allocation_id = getattr(existing_position, "allocation_id", None)
+                    
+                    if allocation_id:
+                        # Add to allocation cash
+                        allocation = await client.portfolioallocation.find_unique(where={"id": allocation_id})
+                        if allocation:
+                            current_cash = Decimal(str(getattr(allocation, "available_cash", 0)))
+                            new_cash = current_cash + sale_proceeds
+                            await client.portfolioallocation.update(
+                                where={"id": allocation_id},
+                                data={"available_cash": new_cash}
+                            )
+                            self.logger.info(
+                                "💰 Added ₹%.2f to allocation %s: ₹%.2f → ₹%.2f",
+                                float(sale_proceeds),
+                                allocation_id,
+                                float(current_cash),
+                                float(new_cash)
+                            )
+                    
+                    # Also update portfolio available_cash
+                    portfolio = await client.portfolio.find_unique(where={"id": portfolio_id})
+                    if portfolio:
+                        portfolio_cash = Decimal(str(getattr(portfolio, "available_cash", 0)))
+                        new_portfolio_cash = portfolio_cash + sale_proceeds
+                        await client.portfolio.update(
+                            where={"id": portfolio_id},
+                            data={"available_cash": new_portfolio_cash}
+                        )
+                        self.logger.info(
+                            "💰 Added ₹%.2f to portfolio %s: ₹%.2f → ₹%.2f",
+                            float(sale_proceeds),
+                            portfolio_id,
+                            float(portfolio_cash),
+                            float(new_portfolio_cash)
                         )
                 else:
                     self.logger.warning(
@@ -1673,54 +1805,26 @@ class TradeExecutionService:
         client: Any,
     ) -> None:
         """
-        Recalculate portfolio value based on current positions.
+        Update portfolio metrics after position changes.
         
-        This fetches all positions, gets their current prices from the market data service,
-        and updates the portfolio's current_value field.
+        Note: With the new schema, portfolio uses available_cash (not current_value).
+        Position values are calculated on-the-fly using live prices when needed.
+        This method can be used for other portfolio-level updates if needed.
         
         Args:
-            portfolio_id: Portfolio ID to recalculate
+            portfolio_id: Portfolio ID
             client: Prisma client
         """
         
         try:
-            # Fetch all positions for this portfolio
-            positions = await client.position.find_many(
-                where={"portfolio_id": portfolio_id, "status": "open"}
-            )
-            
-            if not positions:
-                self.logger.info("No open positions for portfolio %s", portfolio_id)
-                return
-            
-            # Calculate total value from positions
-            total_value = Decimal("0")
-            
-            for position in positions:
-                # Use current_price from position (updated by market data service)
-                # or average_buy_price as fallback
-                price = getattr(position, "current_price", None) or getattr(position, "average_buy_price", Decimal("0"))
-                quantity = getattr(position, "quantity", 0)
-                
-                position_value = Decimal(str(price)) * Decimal(str(quantity))
-                total_value += position_value
-            
-            # Update portfolio current value
-            await client.portfolio.update(
-                where={"id": portfolio_id},
-                data={"current_value": total_value}
-            )
-            
-            self.logger.info(
-                "✅ Recalculated portfolio %s value: ₹%.2f (%d positions)",
+            self.logger.debug(
+                "Portfolio %s updated (position change tracked)",
                 portfolio_id,
-                float(total_value),
-                len(positions),
             )
             
         except Exception as exc:
             self.logger.error(
-                "Failed to recalculate portfolio value for %s: %s",
+                "Failed to update portfolio metrics for %s: %s",
                 portfolio_id,
                 exc,
                 exc_info=True

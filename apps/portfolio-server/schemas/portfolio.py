@@ -13,7 +13,7 @@ class PortfolioResponse(BaseModel):
     customer_id: str
     portfolio_name: str
     investment_amount: Decimal
-    current_value: Decimal
+    available_cash: Decimal
     investment_horizon_years: int
     expected_return_target: Decimal
     risk_tolerance: str
@@ -34,10 +34,7 @@ class HoldingResponse(BaseModel):
     segment: str
     quantity: int
     average_buy_price: Decimal
-    current_price: Decimal
-    current_value: Decimal
-    pnl: Decimal
-    pnl_percentage: Decimal
+    realized_pnl: Decimal
     position_type: str
     status: str
     metadata: Optional[dict] = None
@@ -55,10 +52,7 @@ class PositionSummary(BaseModel):
     segment: str
     quantity: int
     average_buy_price: Decimal
-    current_price: Decimal
-    current_value: Decimal
-    pnl: Decimal
-    pnl_percentage: Decimal
+    realized_pnl: Decimal
     position_type: str
     status: str
     updated_at: datetime
@@ -132,7 +126,7 @@ class PortfolioAllocationSummary(BaseModel):
     target_weight: Decimal
     current_weight: Decimal
     allocated_amount: Decimal
-    current_value: Decimal
+    available_cash: Decimal
     expected_return: Optional[Decimal] = None
     expected_risk: Optional[Decimal] = None
     regime: Optional[str] = None
@@ -157,10 +151,9 @@ class PortfolioAllocationListResponse(BaseModel):
 class SnapshotResponse(BaseModel):
     """Single snapshot data point for timeline charts"""
     snapshot_at: datetime
-    portfolio_value: Decimal
+    current_value: Decimal
     realized_pnl: Decimal
-    positions_count: int
-    agents_count: Optional[int] = None
+    unrealized_pnl: Decimal
 
 
 class SnapshotListResponse(BaseModel):
@@ -172,15 +165,12 @@ class SnapshotListResponse(BaseModel):
 class AllocationSnapshotResponse(BaseModel):
     """Allocation snapshot for tracking allocation weight and value over time"""
     id: str
-    rebalance_run_id: str
     portfolio_allocation_id: str
-    allocation_name: Optional[str] = None
-    snapshot_weight: Decimal
-    snapshot_amount: Decimal
-    snapshot_current_value: Decimal
-    snapshot_pnl: Decimal
-    created_at: datetime
-    metadata: Optional[dict] = None
+    allocation_type: str
+    current_value: Decimal
+    realized_pnl: Decimal
+    unrealized_pnl: Decimal
+    snapshot_at: datetime
 
     class Config:
         from_attributes = True
@@ -196,7 +186,7 @@ class AllocationDashboardSummary(BaseModel):
     allocation_type: str
     target_weight: Decimal
     allocated_amount: Decimal
-    current_value: Decimal
+    available_cash: Decimal
     realized_pnl: Decimal
     pnl_percentage: Decimal
 
@@ -217,11 +207,10 @@ class PortfolioDashboardResponse(BaseModel):
     portfolio_id: str
     portfolio_name: str
     investment_amount: Decimal
-    current_value: Decimal
-    realized_pnl: Decimal
+    available_cash: Decimal
+    total_realized_pnl: Decimal
     total_positions: int
     active_agents: int
-    cash_balance: Optional[Decimal] = None
     allocations: List[AllocationDashboardSummary]
     recent_trades: List[RecentTradeSummary]
 
@@ -233,7 +222,7 @@ class AgentDashboardResponse(BaseModel):
     agent_type: str
     portfolio_id: str
     status: str
-    portfolio_value: Decimal
+    current_value: Decimal
     realized_pnl: Decimal
     positions_count: int
     positions: List[PositionSummary]

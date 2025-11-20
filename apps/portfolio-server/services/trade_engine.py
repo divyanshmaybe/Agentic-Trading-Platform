@@ -296,8 +296,6 @@ class TradeEngine:
                 data={
                     "quantity": new_quantity,
                     "average_buy_price": new_average,
-                    "current_price": execution_price,
-                    "current_value": (execution_price * Decimal(new_quantity)).quantize(FOUR_DP),
                     "status": "open",
                 },
             )
@@ -345,15 +343,15 @@ class TradeEngine:
 
         remaining = position.quantity - payload.quantity
         
-        # Update portfolio's realized_pnl
+        # Update portfolio's total_realized_pnl
         portfolio = await self.prisma.portfolio.find_unique(where={"id": payload.portfolio_id})
         if portfolio:
-            portfolio_current_realized_pnl = Decimal(str(portfolio.realized_pnl)) if portfolio.realized_pnl else Decimal(0)
+            portfolio_current_realized_pnl = Decimal(str(portfolio.total_realized_pnl)) if portfolio.total_realized_pnl else Decimal(0)
             portfolio_new_realized_pnl = portfolio_current_realized_pnl + realized_pnl
             
             await self.prisma.portfolio.update(
                 where={"id": payload.portfolio_id},
-                data={"realized_pnl": portfolio_new_realized_pnl},
+                data={"total_realized_pnl": portfolio_new_realized_pnl},
             )
 
         if remaining == 0:
@@ -362,8 +360,6 @@ class TradeEngine:
                 where={"id": position.id},
                 data={
                     "quantity": 0,
-                    "current_price": execution_price,
-                    "current_value": Decimal(0),
                     "realized_pnl": new_realized_pnl,
                     "status": "closed",
                     "closed_at": datetime.utcnow(),
@@ -375,8 +371,6 @@ class TradeEngine:
                 where={"id": position.id},
                 data={
                     "quantity": remaining,
-                    "current_price": execution_price,
-                    "current_value": (execution_price * Decimal(remaining)).quantize(FOUR_DP),
                     "realized_pnl": new_realized_pnl,
                     "status": "open",
                 },

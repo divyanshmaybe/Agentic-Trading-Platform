@@ -799,7 +799,7 @@ def allocate_for_objective_task(
     organization_id: str,
     user_inputs: Dict[str, Any],
     initial_value: float,
-    current_value: Optional[float] = None,
+    available_cash: Optional[float] = None,
     triggered_by: str = "objective_created",
 ) -> Dict[str, Any]:
     """
@@ -812,7 +812,7 @@ def allocate_for_objective_task(
         organization_id: Organization ID
         user_inputs: Portfolio preferences from objective
         initial_value: Initial investment amount
-        current_value: Current portfolio value (defaults to initial_value)
+        available_cash: Available cash in portfolio (defaults to initial_value)
         triggered_by: What triggered this allocation
         
     Returns:
@@ -841,7 +841,7 @@ def allocate_for_objective_task(
                 "current_regime": current_regime,
                 "user_inputs": user_inputs,
                 "initial_value": initial_value,
-                "current_value": current_value or initial_value,
+                "current_value": available_cash or initial_value,  # Pathway expects current_value
                 "metadata": {
                     "portfolio_id": portfolio_id,
                     "objective_id": objective_id,
@@ -1004,7 +1004,7 @@ def allocate_for_objective_task(
                     "target_weight": float(weight),
                     "current_weight": float(weight),
                     "allocated_amount": allocated_amount,
-                    "current_value": allocated_amount,  # Initially same as allocated
+                    "available_cash": allocated_amount,  # Initially same as allocated
                     "expected_return": allocation_result.get("expected_return"),
                     "expected_risk": allocation_result.get("expected_risk"),
                     "regime": current_regime,
@@ -1299,7 +1299,7 @@ def daily_rebalancing_sweep_task(self) -> Dict[str, Any]:
                     "current_regime": current_regime,
                     "user_inputs": user_inputs,
                     "initial_value": float(portfolio.investment_amount),
-                    "current_value": float(portfolio.current_value),
+                    "current_value": float(portfolio.available_cash),  # Pathway expects current_value
                     "value_history": value_history,
                     "metadata": {
                         "portfolio_id": portfolio.id,
