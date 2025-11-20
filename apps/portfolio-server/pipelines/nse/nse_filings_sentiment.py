@@ -70,6 +70,7 @@ MARKET_CLOSE = (15, 30)
 MARKET_CLOSE_BUFFER_MINUTES = int(os.getenv("NSE_FILINGS_MARKET_CLOSE_BUFFER_MINUTES", "15"))
 AUTO_SELL_WINDOW_MINUTES = int(os.getenv("NSE_FILINGS_AUTO_SELL_WINDOW_MINUTES", "15"))
 LLM_MODEL = os.getenv("NSE_FILINGS_LLM_MODEL", "gemini-2.5-flash")
+DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() in {"1", "true", "yes"}
 
 
 # API Keys
@@ -745,7 +746,12 @@ def create_nse_filings_pipeline(
     is_market_open = market_open_time <= current_time <= market_close_time
     is_near_close = current_time >= close_buffer_time
     
-    if is_market_open and not is_near_close:
+    # In DEMO_MODE, always process signals regardless of market hours
+    if DEMO_MODE:
+        market_status = f"🔵 DEMO MODE - Signal processing enabled 24/7. Current time: {current_time.strftime('%H:%M:%S')} IST. Market hours check bypassed."
+        print(f"[MARKET] {market_status}")
+        logging.info(market_status)
+    elif is_market_open and not is_near_close:
         market_status = f"🟢 MARKET OPEN - NSE trading hours: {MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d} - {MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST. Current time: {current_time.strftime('%H:%M:%S')} IST"
         print(f"[MARKET] {market_status}")
         logging.info(market_status)
@@ -758,7 +764,8 @@ def create_nse_filings_pipeline(
         print(f"[MARKET] {market_status}")
         logging.warning(market_status)
     
-    if current_time >= close_buffer_time:
+    # Skip signal processing only if not in DEMO_MODE and market is closing soon
+    if not DEMO_MODE and current_time >= close_buffer_time:
         # Return empty table with correct schema by filtering on a boolean column
         return filings_source.select(
             symbol=pw.this.symbol,

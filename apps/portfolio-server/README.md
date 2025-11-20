@@ -30,7 +30,12 @@ CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/1
 MARKET_DATA_PROVIDER=finnhub  # options: finnhub, 5paisa, generic
 MARKET_DATA_WS_URL=wss://ws.finnhub.io?token=YOUR_TOKEN  # set provider-specific websocket URL
+
+# Demo Mode - Process signals 24/7 (for testing/demo only)
+DEMO_MODE=false  # Set to true to bypass market hours restrictions
 ```
+
+**DEMO_MODE**: When enabled, the NSE pipeline will process trading signals at any time, regardless of market hours. This is useful for testing and demonstrations but should be disabled in production.
 
 ### Install Dependencies
 
