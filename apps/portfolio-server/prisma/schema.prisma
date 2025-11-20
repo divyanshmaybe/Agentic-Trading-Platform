@@ -58,7 +58,7 @@ model Portfolio {
   portfolio_name           String
   initial_investment       Decimal   @db.Decimal(20, 4)
   investment_amount        Decimal   @db.Decimal(20, 4)
-  current_value            Decimal   @default(0) @db.Decimal(20, 4)
+  available_cash           Decimal   @default(0) @db.Decimal(20, 4)
   investment_horizon_years Int
   expected_return_target   Decimal   @db.Decimal(7, 4)
   risk_tolerance           String
@@ -72,17 +72,18 @@ model Portfolio {
   last_rebalanced_at       DateTime?
   next_rebalance_at        DateTime?
   allocation_trades        Json?
-  realized_pnl             Decimal   @default(0) @db.Decimal(20, 4)
+  total_realized_pnl       Decimal   @default(0) @db.Decimal(20, 4)
   metadata                 Json?     @default("{}")
   created_at               DateTime  @default(now())
   updated_at               DateTime  @updatedAt
   deleted_at               DateTime?
 
-  allocations    PortfolioAllocation[]
-  trades         Trade[]
-  positions      Position[]
-  agents         TradingAgent[]
-  rebalance_runs RebalanceRun[]
+  allocations       PortfolioAllocation[]
+  trades            Trade[]
+  positions         Position[]
+  agents            TradingAgent[]
+  rebalance_runs    RebalanceRun[]
+  portfolio_snapshots PortfolioSnapshot[]
 
   objective Objective? @relation(fields: [objective_id], references: [id], onDelete: SetNull)
 
@@ -103,7 +104,7 @@ model PortfolioAllocation {
   target_weight        Decimal  @db.Decimal(9, 6)
   current_weight       Decimal  @default(0) @db.Decimal(9, 6)
   allocated_amount     Decimal  @default(0) @db.Decimal(20, 4)
-  current_value        Decimal  @default(0) @db.Decimal(20, 4)
+  available_cash       Decimal  @default(0) @db.Decimal(20, 4)
   expected_return      Decimal? @db.Decimal(9, 6)
   expected_risk        Decimal? @db.Decimal(9, 6)
   regime               String?
@@ -119,6 +120,7 @@ model PortfolioAllocation {
   portfolio            Portfolio            @relation(fields: [portfolio_id], references: [id], onDelete: Cascade)
   tradingAgent         TradingAgent?        @relation("AllocationAgent")
   allocation_snapshots AllocationSnapshot[]
+  positions            Position[]
 
   @@index([portfolio_id])
   @@index([allocation_type])
@@ -132,6 +134,7 @@ model TradingAgent {
   id                      String    @id @default(uuid())
   portfolio_id            String?
   portfolio_allocation_id String
+  organization_id         String
   agent_type              String
   agent_name              String
   status                  String    @default("active")
@@ -155,6 +158,7 @@ model TradingAgent {
   @@index([portfolio_id])
   @@index([portfolio_allocation_id])
   @@index([agent_type])
+  @@index([organization_id])
   @@map("trading_agents")
 }
 
@@ -221,16 +225,14 @@ model Trade {
 model Position {
   id                String    @id @default(uuid())
   portfolio_id      String
-  agent_id          String?
+  agent_id          String
+  allocation_id     String
   symbol            String
   exchange          String
   segment           String
   quantity          Int
   average_buy_price Decimal   @db.Decimal(20, 4)
-  current_price     Decimal   @db.Decimal(20, 4)
-  current_value     Decimal   @db.Decimal(20, 4)
   realized_pnl      Decimal   @default(0) @db.Decimal(20, 4)
-  pnl_percentage    Decimal   @default(0) @db.Decimal(9, 6)
   position_type     String
   status            String    @default("open")
   opened_at         DateTime?
@@ -238,11 +240,13 @@ model Position {
   metadata          Json?     @default("{}")
   updated_at        DateTime  @updatedAt
 
-  portfolio Portfolio     @relation(fields: [portfolio_id], references: [id], onDelete: Cascade)
-  agent     TradingAgent? @relation(fields: [agent_id], references: [id])
+  portfolio  Portfolio           @relation(fields: [portfolio_id], references: [id], onDelete: Cascade)
+  agent      TradingAgent        @relation(fields: [agent_id], references: [id], onDelete: Cascade)
+  allocation PortfolioAllocation @relation(fields: [allocation_id], references: [id], onDelete: Cascade)
 
   @@index([portfolio_id])
   @@index([agent_id])
+  @@index([allocation_id])
   @@index([status])
   @@map("positions")
 }
@@ -272,31 +276,35 @@ model RebalanceRun {
 }
 
 /// --------------------
-/// Portfolio snapshot (simple time-series tracking)
+/// Portfolio snapshot (minimal tracking)
 /// --------------------
 model PortfolioSnapshot {
-  id            String   @id @default(uuid())
-  portfolio_id  String
-  current_value Decimal  @db.Decimal(20, 4)
-  total_pnl     Decimal  @db.Decimal(20, 4)
-  created_at    DateTime @default(now())
+  id             String   @id @default(uuid())
+  portfolio_id   String
+  snapshot_at    DateTime @default(now())
+  current_value  Decimal  @db.Decimal(20, 4)
+  realized_pnl   Decimal  @db.Decimal(20, 4)
+  unrealized_pnl Decimal  @db.Decimal(20, 4)
+  created_at     DateTime @default(now())
+
+  portfolio Portfolio @relation(fields: [portfolio_id], references: [id], onDelete: Cascade)
 
   @@index([portfolio_id])
-  @@index([created_at])
+  @@index([snapshot_at])
   @@map("portfolio_snapshots")
 }
 
 /// --------------------
-/// Allocation snapshot
+/// Allocation snapshot (minimal tracking)
 /// --------------------
 model AllocationSnapshot {
   id                      String   @id @default(uuid())
   rebalance_run_id        String
   portfolio_allocation_id String
-  snapshot_weight         Decimal  @db.Decimal(9, 6)
-  snapshot_amount         Decimal  @db.Decimal(20, 4)
-  snapshot_current_value  Decimal  @db.Decimal(20, 4)
-  snapshot_pnl            Decimal  @db.Decimal(20, 4)
+  snapshot_at             DateTime @default(now())
+  current_value           Decimal  @db.Decimal(20, 4)
+  realized_pnl            Decimal  @db.Decimal(20, 4)
+  unrealized_pnl          Decimal  @db.Decimal(20, 4)
   metadata                Json?    @default("{}")
   created_at              DateTime @default(now())
 
@@ -331,23 +339,25 @@ model TradeExecutionLog {
 }
 
 /// --------------------
-/// Trading Agent Snapshot
+/// Trading Agent Snapshot (minimal tracking)
 /// --------------------
 model TradingAgentSnapshot {
-  id              String   @id @default(uuid())
-  agent_id        String
-  portfolio_id    String
-  snapshot_at     DateTime @default(now())
-  portfolio_value Decimal  @db.Decimal(20, 4)
-  realized_pnl    Decimal  @db.Decimal(20, 4)
-  positions_count Int      @default(0)
-  metadata        Json?    @default("{}")
-  created_at      DateTime @default(now())
+  id             String   @id @default(uuid())
+  agent_id       String
+  portfolio_id   String
+  agent_type     String
+  snapshot_at    DateTime @default(now())
+  current_value  Decimal  @db.Decimal(20, 4)
+  realized_pnl   Decimal  @db.Decimal(20, 4)
+  unrealized_pnl Decimal  @db.Decimal(20, 4)
+  metadata       Json?    @default("{}")
+  created_at     DateTime @default(now())
 
   agent TradingAgent @relation(fields: [agent_id], references: [id], onDelete: Cascade)
 
   @@index([agent_id])
   @@index([portfolio_id])
   @@index([snapshot_at])
+  @@index([agent_type])
   @@map("trading_agent_snapshots")
 }
