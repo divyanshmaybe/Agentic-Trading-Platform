@@ -156,7 +156,7 @@ class PortfolioController:
                     else DEFAULT_PORTFOLIO_NAME,
                     "initial_investment": defaults["initial_investment"],
                     "investment_amount": defaults["investment_amount"],
-                    "current_value": defaults["investment_amount"],
+                    "available_cash": defaults["investment_amount"],
                     "investment_horizon_years": DEFAULT_INVESTMENT_HORIZON_YEARS,
                     "expected_return_target": defaults["expected_return_target"],
                     "risk_tolerance": DEFAULT_RISK_TOLERANCE,
@@ -235,10 +235,7 @@ class PortfolioController:
             segment=position.segment,
             quantity=position.quantity,
             average_buy_price=position.average_buy_price,
-            current_price=position.current_price,
-            current_value=position.current_value,
-            pnl=position.realized_pnl,
-            pnl_percentage=position.pnl_percentage,
+            realized_pnl=getattr(position, "realized_pnl", Decimal("0")) or Decimal("0"),
             position_type=position.position_type,
             status=position.status,
             metadata=self._parse_metadata(position.metadata),
@@ -272,23 +269,12 @@ class PortfolioController:
         if search:
             where["symbol"] = {"contains": search, "mode": "insensitive"}
 
-        if profitability:
-            normalized = profitability.lower()
-            if normalized in {"profitable", "profit"}:
-                where["pnl"] = {"gt": Decimal("0")}
-            elif normalized in {"loss", "loss-making", "losing"}:
-                where["pnl"] = {"lt": Decimal("0")}
-            elif normalized in {"breakeven", "neutral"}:
-                where["pnl"] = {"equals": Decimal("0")}
+        # Note: profitability filtering removed - Position no longer has pnl field
+        # P&L is calculated on-demand from snapshots or via aggregation
 
         sort_field_map = {
             "symbol": "symbol",
             "quantity": "quantity",
-            "currentValue": "current_value",
-            "current_price": "current_price",
-            "pnl": "pnl",
-            "unrealizedPnL": "pnl",
-            "pnlPercentage": "pnl_percentage",
             "positionType": "position_type",
             "status": "status",
             "updatedAt": "updated_at",
@@ -312,10 +298,7 @@ class PortfolioController:
                 segment=record.segment,
                 quantity=record.quantity,
                 average_buy_price=record.average_buy_price,
-                current_price=record.current_price,
-                current_value=record.current_value,
-                pnl=record.realized_pnl,
-                pnl_percentage=record.pnl_percentage,
+                realized_pnl=getattr(record, "realized_pnl", Decimal("0")) or Decimal("0"),
                 position_type=record.position_type,
                 status=record.status,
                 updated_at=record.updated_at,
@@ -519,7 +502,7 @@ class PortfolioController:
                     target_weight=allocation.target_weight,
                     current_weight=allocation.current_weight,
                     allocated_amount=allocation.allocated_amount,
-                    current_value=allocation.current_value,
+                    available_cash=allocation.available_cash,
                     expected_return=allocation.expected_return,
                     expected_risk=allocation.expected_risk,
                     regime=allocation.regime,
@@ -573,27 +556,17 @@ class PortfolioController:
             take=10,
         )
         
-        # Calculate cash balance (look for cashAvailable allocation or use investment_amount - current_value)
-        cash_allocation = next(
-            (a for a in allocations if a.allocation_type == "cashAvailable"),
-            None
-        )
-        cash_balance = cash_allocation.current_value if cash_allocation else (
-            portfolio.investment_amount - portfolio.current_value
-        )
-        
         # Build allocation summaries
         allocation_summaries = [
             AllocationDashboardSummary(
                 allocation_type=alloc.allocation_type,
                 target_weight=alloc.target_weight,
                 allocated_amount=alloc.allocated_amount,
-                current_value=alloc.current_value,
+                available_cash=alloc.available_cash,
                 realized_pnl=getattr(alloc, "realized_pnl", Decimal("0")) or Decimal("0"),
                 pnl_percentage=alloc.pnl_percentage,
             )
             for alloc in allocations
-            if alloc.allocation_type != "cashAvailable"  # Exclude cash from dashboard allocations
         ]
         
         # Build recent trade summaries
@@ -614,11 +587,10 @@ class PortfolioController:
             portfolio_id=portfolio.id,
             portfolio_name=portfolio.portfolio_name,
             investment_amount=portfolio.investment_amount,
-            current_value=portfolio.current_value,
-            realized_pnl=getattr(portfolio, "realized_pnl", Decimal("0")) or Decimal("0"),
+            available_cash=portfolio.available_cash,
+            total_realized_pnl=getattr(portfolio, "total_realized_pnl", Decimal("0")) or Decimal("0"),
             total_positions=len(positions),
             active_agents=len(agents),
-            cash_balance=cash_balance,
             allocations=allocation_summaries,
             recent_trades=recent_trade_summaries,
         )
@@ -654,12 +626,25 @@ class PortfolioController:
             user_id = portfolio.customer_id
             self._authorize_user(request_user, user_id)
         
-        # Calculate portfolio value from positions
+        # Calculate current value from positions using live prices
+        from services.snapshot_service import TradingAgentSnapshotService
         positions = getattr(agent, "positions", []) or []
-        portfolio_value = sum(
-            (getattr(p, "current_price", Decimal("0")) or Decimal("0")) * Decimal(str(getattr(p, "quantity", 0)))
-            for p in positions
-        )
+        
+        snapshot_service = TradingAgentSnapshotService(logger=self.logger)
+        current_value = Decimal("0")
+        if positions:
+            # Get live prices for all position symbols
+            for pos in positions:
+                try:
+                    live_price = await snapshot_service._fetch_live_price(
+                        pos.symbol, pos.exchange, pos.segment
+                    )
+                    if live_price:
+                        current_value += live_price * Decimal(str(pos.quantity))
+                except Exception as e:
+                    self.logger.warning(f"Failed to fetch price for {pos.symbol}: {e}")
+                    # Fallback to average buy price
+                    current_value += pos.average_buy_price * Decimal(str(pos.quantity))
         
         # Get realized P&L from agent
         realized_pnl = getattr(agent, "realized_pnl", Decimal("0")) or Decimal("0")
@@ -674,10 +659,7 @@ class PortfolioController:
                 segment=pos.segment,
                 quantity=pos.quantity,
                 average_buy_price=pos.average_buy_price,
-                current_price=pos.current_price,
-                current_value=pos.current_value,
-                pnl=pos.realized_pnl,
-                pnl_percentage=pos.pnl_percentage,
+                realized_pnl=getattr(pos, "realized_pnl", Decimal("0")) or Decimal("0"),
                 position_type=pos.position_type,
                 status=pos.status,
                 updated_at=pos.updated_at,
@@ -696,7 +678,7 @@ class PortfolioController:
                 target_weight=alloc.target_weight,
                 current_weight=alloc.current_weight,
                 allocated_amount=alloc.allocated_amount,
-                current_value=alloc.current_value,
+                available_cash=alloc.available_cash,
                 expected_return=alloc.expected_return,
                 expected_risk=alloc.expected_risk,
                 regime=alloc.regime,
@@ -737,7 +719,7 @@ class PortfolioController:
             agent_type=agent.agent_type,
             portfolio_id=agent.portfolio_id or "",
             status=agent.status,
-            portfolio_value=portfolio_value,
+            current_value=current_value,
             realized_pnl=realized_pnl,
             positions_count=len(positions),
             positions=position_summaries,
