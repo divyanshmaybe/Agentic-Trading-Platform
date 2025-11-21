@@ -94,40 +94,67 @@ class MarketDataService:
             self._token_map = {}
     
     def _login(self):
-        """Login to Angel One to get feed token"""
+        """Login to Angel One to get feed token with retry logic"""
         import pyotp
         import httpx
+        import time
 
-        totp = pyotp.TOTP(self.totp_secret).now()
+        max_retries = 3
+        retry_delay = 5  # seconds
         
-        url = "https://apiconnect.angelone.in/rest/auth/angelbroking/user/v1/loginByPassword"
-        headers = {
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "X-UserType": "USER",
-            "X-SourceID": "WEB",
-            "X-ClientLocalIP": "127.0.0.1",
-            "X-ClientPublicIP": "127.0.0.1",
-            "X-MACAddress": "00:00:00:00:00:00",
-            "X-PrivateKey": self.api_key,
-        }
-        
-        payload = {
-            "clientcode": self.client_code,
-            "password": self.password,
-            "totp": totp,
-        }
-        
-        response = httpx.post(url, json=payload, headers=headers, timeout=10)
-        response.raise_for_status()
-        
-        data = response.json()
-        if data.get("status") and data.get("data"):
-            self.feed_token = data["data"]["feedToken"]
-            self.jwt_token = data["data"]["jwtToken"]
-            logger.info("✅ Angel One login successful")
-        else:
-            raise RuntimeError(f"Login failed: {data}")
+        for attempt in range(max_retries):
+            try:
+                totp = pyotp.TOTP(self.totp_secret).now()
+                
+                url = "https://apiconnect.angelone.in/rest/auth/angelbroking/user/v1/loginByPassword"
+                headers = {
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "X-UserType": "USER",
+                    "X-SourceID": "WEB",
+                    "X-ClientLocalIP": "127.0.0.1",
+                    "X-ClientPublicIP": "127.0.0.1",
+                    "X-MACAddress": "00:00:00:00:00:00",
+                    "X-PrivateKey": self.api_key,
+                }
+                
+                payload = {
+                    "clientcode": self.client_code,
+                    "password": self.password,
+                    "totp": totp,
+                }
+                
+                response = httpx.post(url, json=payload, headers=headers, timeout=10)
+                response.raise_for_status()
+                
+                data = response.json()
+                if data.get("status") and data.get("data"):
+                    self.feed_token = data["data"]["feedToken"]
+                    self.jwt_token = data["data"]["jwtToken"]
+                    logger.info("✅ Angel One login successful")
+                    return
+                else:
+                    raise RuntimeError(f"Login failed: {data}")
+                    
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 403:
+                    logger.warning(
+                        f"⚠️ Angel One 403 error (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay}s..."
+                    )
+                    if attempt < max_retries - 1:
+                        time.sleep(retry_delay)
+                        retry_delay *= 2  # Exponential backoff
+                        continue
+                raise
+            except Exception as e:
+                logger.warning(
+                    f"⚠️ Angel One login failed (attempt {attempt + 1}/{max_retries}): {e}"
+                )
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    retry_delay *= 2
+                    continue
+                raise
     
     def _normalize_symbol(self, symbol: str) -> str:
         """Normalize symbol (strip .NS, handle aliases)"""

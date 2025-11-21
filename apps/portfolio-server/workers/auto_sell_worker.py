@@ -35,7 +35,7 @@ async def _run_auto_sell():
         trades_to_sell = await client.trade.find_many(
             where={
                 "status": {"in": ["executed", "simulated_executed"]},
-                "auto_sell_at": {"lte": current_time},
+                "auto_sell_at": {"lte": current_time, "not": None},  # Must have auto_sell_at set
                 "side": "BUY",
             },
             include={"portfolio": True, "agent": True},
@@ -49,18 +49,44 @@ async def _run_auto_sell():
         trade_service = TradeExecutionService(logger=logger)
         sold_count = 0
         error_count = 0
+        skipped_count = 0
         
         for trade in trades_to_sell or []:
             try:
+                # Atomic check: Try to clear auto_sell_at for this trade
+                # If auto_sell_at is already None, another worker processed it
+                update_result = await client.trade.update_many(
+                    where={
+                        "id": trade.id,
+                        "auto_sell_at": {"not": None},  # Only update if still set
+                    },
+                    data={"auto_sell_at": None},  # Clear to prevent duplicate processing
+                )
+                
+                # If no rows were updated, another worker already claimed this trade
+                if update_result == 0:
+                    logger.debug("⏭️ Skipping Trade %s: already processed by another worker", trade.id)
+                    skipped_count += 1
+                    continue
+                
+                # We successfully claimed this trade, now sell it
                 await _sell_trade(trade, trade_service, client, logger)
                 sold_count += 1
             except Exception as exc:
                 logger.error("❌ Failed to auto-sell Trade %s: %s", trade.id, exc, exc_info=True)
                 error_count += 1
         
-        logger.info("✅ Auto-sell worker completed: %d sold, %d errors", sold_count, error_count)
+        logger.info(
+            "✅ Auto-sell worker completed: %d sold, %d errors, %d skipped (already processed)",
+            sold_count, error_count, skipped_count,
+        )
         
-        return {"status": "completed", "sold_count": sold_count, "error_count": error_count}
+        return {
+            "status": "completed",
+            "sold_count": sold_count,
+            "error_count": error_count,
+            "skipped_count": skipped_count,
+        }
 
 
 async def _sell_trade(trade, trade_service: TradeExecutionService, client, logger):
@@ -159,13 +185,10 @@ async def _sell_trade(trade, trade_service: TradeExecutionService, client, logge
             "sell_reason": "15_minute_window_expired",
         })
         
-        # Clear auto_sell_at to prevent duplicate auto-sells
+        # Update metadata to mark as auto-sold
         await client.trade.update(
             where={"id": trade.id},
-            data={
-                "metadata": json.dumps(trade_metadata),
-                "auto_sell_at": None,  # Clear to prevent re-triggering
-            },
+            data={"metadata": json.dumps(trade_metadata)},
         )
     else:
         logger.error("❌ Failed to execute auto-sell for Trade %s: %s", trade.id, result)
