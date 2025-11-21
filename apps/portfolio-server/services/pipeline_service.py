@@ -1609,9 +1609,11 @@ class PipelineService:
                         explanation,
                     )
                     
-                    # Process trade signal immediately for active agents
+                    # Process trade signal immediately for active agents using Celery task
                     if signal in [1, -1]:  # Only process BUY (1) or SELL (-1) signals
                         try:
+                            from workers.pipeline_tasks import process_trade_signal
+                            
                             signal_payload = {
                                 "symbol": symbol,
                                 "signal": signal,
@@ -1622,16 +1624,15 @@ class PipelineService:
                                 "source": "nse_pipeline",
                             }
                             
-                            # Create new event loop for async operation (Pathway context doesn't have one)
-                            loop = asyncio.new_event_loop()
-                            asyncio.set_event_loop(loop)
-                            try:
-                                loop.run_until_complete(self._process_signal_for_active_agents(signal_payload))
-                            finally:
-                                loop.close()
+                            # Enqueue trade signal processing via Celery (async, non-blocking)
+                            task = process_trade_signal.apply_async(args=[signal_payload])
+                            self.logger.info(
+                                "🚀 Enqueued trade signal processing for %s (signal: %s) - Task ID: %s",
+                                symbol, "BUY" if signal == 1 else "SELL", task.id
+                            )
                         except Exception as trade_exc:
                             self.logger.error(
-                                "Failed to process trade for signal %s (%s): %s",
+                                "Failed to enqueue trade for signal %s (%s): %s",
                                 symbol, signal, trade_exc, exc_info=True
                             )
 
