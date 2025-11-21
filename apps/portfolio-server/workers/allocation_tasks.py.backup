@@ -120,7 +120,7 @@ async def _get_user_subscriptions(db: Any, user_id: Optional[str]) -> Set[str]:
 
     try:
         rows = await db.query_raw(
-            "SELECT subscriptions FROM users WHERE id = $1",
+            "SELECT subscriptions FROM users WHERE id = %s",
             user_id,
         )
     except Exception as exc:  # pragma: no cover - defensive logging
@@ -917,285 +917,285 @@ def allocate_for_objective_task(
                 allocation_result = results[0]
                 logger.info(f"✅ Got allocation_result, type={type(allocation_result)}")
             
-                # Log allocation result for debugging
-                logger.info(
-                    f"Allocation result for portfolio {portfolio_id}: "
-                    f"has_weights={bool(allocation_result.get('weights'))}, "
-                    f"has_weights_json={bool(allocation_result.get('weights_json'))}, "
-                    f"success={allocation_result.get('success', 'N/A')}, "
-                    f"keys={list(allocation_result.keys())}"
-                )
-                
-                # Check for weights directly instead of relying on "success" field
-                # Try multiple ways to extract weights
-                weights = None
-                
-                # First try direct weights field
-                weights_raw = allocation_result.get("weights")
-                if weights_raw:
-                    weights = _coerce_to_plain_dict(weights_raw)
-                    logger.debug(f"Extracted weights from 'weights' field: {weights}")
-                
-                # If not found, try weights_json (might be a string)
-                if not weights:
-                    weights_json_raw = allocation_result.get("weights_json")
-                    if weights_json_raw:
-                        # If it's a string, parse it
-                        if isinstance(weights_json_raw, str):
-                            try:
-                                weights = json.loads(weights_json_raw)
-                                logger.debug(f"Parsed weights from 'weights_json' string: {weights}")
-                            except (json.JSONDecodeError, TypeError):
-                                weights = _coerce_to_plain_dict(weights_json_raw)
-                        else:
+            # Log allocation result for debugging
+            logger.info(
+                f"Allocation result for portfolio {portfolio_id}: "
+                f"has_weights={bool(allocation_result.get('weights'))}, "
+                f"has_weights_json={bool(allocation_result.get('weights_json'))}, "
+                f"success={allocation_result.get('success', 'N/A')}, "
+                f"keys={list(allocation_result.keys())}"
+            )
+            
+            # Check for weights directly instead of relying on "success" field
+            # Try multiple ways to extract weights
+            weights = None
+            
+            # First try direct weights field
+            weights_raw = allocation_result.get("weights")
+            if weights_raw:
+                weights = _coerce_to_plain_dict(weights_raw)
+                logger.debug(f"Extracted weights from 'weights' field: {weights}")
+            
+            # If not found, try weights_json (might be a string)
+            if not weights:
+                weights_json_raw = allocation_result.get("weights_json")
+                if weights_json_raw:
+                    # If it's a string, parse it
+                    if isinstance(weights_json_raw, str):
+                        try:
+                            weights = json.loads(weights_json_raw)
+                            logger.debug(f"Parsed weights from 'weights_json' string: {weights}")
+                        except (json.JSONDecodeError, TypeError):
                             weights = _coerce_to_plain_dict(weights_json_raw)
-                        logger.debug(f"Extracted weights from 'weights_json' field: {weights}")
-                
-                # If still no weights, log warning but continue with default allocation
-                if not weights:
+                    else:
+                        weights = _coerce_to_plain_dict(weights_json_raw)
+                    logger.debug(f"Extracted weights from 'weights_json' field: {weights}")
+            
+            # If still no weights, log warning but continue with default allocation
+            if not weights:
+                logger.warning(
+                    f"No weights found in allocation result for portfolio {portfolio_id}. "
+                    f"Result keys: {list(allocation_result.keys())}. "
+                    f"Result sample: {str(allocation_result)[:500]}. "
+                    f"Using defaults from transcript.py."
+                )
+                # Use defaults from transcript.py (single source of truth)
+                from utils.user_inputs_helper import create_user_inputs
+                default_user_inputs = create_user_inputs(
+                    investment_horizon_years=15,  # Default value
+                    expected_return_target=0.18,  # Default value
+                    risk_tolerance="medium"  # Default value
+                )
+                weights = default_user_inputs.get("allocation_strategy", {
+                    "low_risk": 0.6,
+                    "high_risk": 0.2,
+                    "alpha": 0.2,
+                    "liquid": 0.0
+                })
+                logger.info(f"Using default weights from transcript.py: {weights}")
+            
+            # Validate weights sum to approximately 1.0
+            if weights:
+                weight_sum = sum(weights.values())
+                if abs(weight_sum - 1.0) > 0.01:
                     logger.warning(
-                        f"No weights found in allocation result for portfolio {portfolio_id}. "
-                        f"Result keys: {list(allocation_result.keys())}. "
-                        f"Result sample: {str(allocation_result)[:500]}. "
-                        f"Using defaults from transcript.py."
+                        f"Weights sum to {weight_sum} instead of 1.0 for portfolio {portfolio_id}. "
+                        f"Normalizing weights."
                     )
-                    # Use defaults from transcript.py (single source of truth)
-                    from utils.user_inputs_helper import create_user_inputs
-                    default_user_inputs = create_user_inputs(
-                        investment_horizon_years=15,  # Default value
-                        expected_return_target=0.18,  # Default value
-                        risk_tolerance="medium"  # Default value
-                    )
-                    weights = default_user_inputs.get("allocation_strategy", {
-                        "low_risk": 0.6,
-                        "high_risk": 0.2,
-                        "alpha": 0.2,
-                        "liquid": 0.0
-                    })
-                    logger.info(f"Using default weights from transcript.py: {weights}")
+                    weights = {k: v / weight_sum for k, v in weights.items()}
+
+            # Ensure downstream consumers receive the resolved weights payload
+            allocation_result["weights"] = weights
+            
+            # Get investable amount from portfolio or initial_value
+            portfolio_record = await db.portfolio.find_unique(where={"id": portfolio_id})
+            investable_amount = float(initial_value)
+            if portfolio_record:
+                investable_amount = float(
+                    portfolio_record.investment_amount or 
+                    portfolio_record.initial_investment or 
+                    initial_value
+                )
+            
+            logger.info(f"💰 Investable amount: {investable_amount}, Weights: {weights}")
+            logger.info(f"🔄 Starting allocation creation loop for {len(weights)} segments...")
+            
+            allocations_created = []
+            trading_agents_created = []
+
+            for allocation_type, weight in weights.items():
+                logger.info(f"🔹 Processing allocation: type={allocation_type}, weight={weight}")
                 
-                # Validate weights sum to approximately 1.0
-                if weights:
-                    weight_sum = sum(weights.values())
-                    if abs(weight_sum - 1.0) > 0.01:
-                        logger.warning(
-                            f"Weights sum to {weight_sum} instead of 1.0 for portfolio {portfolio_id}. "
-                            f"Normalizing weights."
-                        )
-                        weights = {k: v / weight_sum for k, v in weights.items()}
-    
-                # Ensure downstream consumers receive the resolved weights payload
-                allocation_result["weights"] = weights
+                # Calculate allocated amount based on weight
+                allocated_amount = investable_amount * float(weight)
                 
-                # Get investable amount from portfolio or initial_value
-                portfolio_record = await db.portfolio.find_unique(where={"id": portfolio_id})
-                investable_amount = float(initial_value)
-                if portfolio_record:
-                    investable_amount = float(
-                        portfolio_record.investment_amount or 
-                        portfolio_record.initial_investment or 
-                        initial_value
-                    )
-                
-                logger.info(f"💰 Investable amount: {investable_amount}, Weights: {weights}")
-                logger.info(f"🔄 Starting allocation creation loop for {len(weights)} segments...")
-                
-                allocations_created = []
-                trading_agents_created = []
-    
-                for allocation_type, weight in weights.items():
-                    logger.info(f"🔹 Processing allocation: type={allocation_type}, weight={weight}")
-                    
-                    # Calculate allocated amount based on weight
-                    allocated_amount = investable_amount * float(weight)
-                    
-                    allocation_metadata = {
-                        "request_id": request["request_id"],
-                        "objective_id": objective_id,
-                        "trigger": triggered_by,
-                        "objective_value": allocation_result.get("objective_value"),
-                        "message": allocation_result.get("message"),
+                allocation_metadata = {
+                    "request_id": request["request_id"],
+                    "objective_id": objective_id,
+                    "trigger": triggered_by,
+                    "objective_value": allocation_result.get("objective_value"),
+                    "message": allocation_result.get("message"),
+                }
+
+                allocation_payload = {
+                    "target_weight": float(weight),
+                    "current_weight": float(weight),
+                    "allocated_amount": allocated_amount,
+                    "available_cash": allocated_amount,  # Initially same as allocated
+                    "expected_return": allocation_result.get("expected_return"),
+                    "expected_risk": allocation_result.get("expected_risk"),
+                    "regime": current_regime,
+                    "metadata": _encode_json(allocation_metadata),
+                }
+
+                existing_allocation = await db.portfolioallocation.find_first(
+                    where={
+                        "portfolio_id": portfolio_id,
+                        "allocation_type": allocation_type,
                     }
-    
-                    allocation_payload = {
-                        "target_weight": float(weight),
-                        "current_weight": float(weight),
-                        "allocated_amount": allocated_amount,
-                        "available_cash": allocated_amount,  # Initially same as allocated
-                        "expected_return": allocation_result.get("expected_return"),
-                        "expected_risk": allocation_result.get("expected_risk"),
-                        "regime": current_regime,
-                        "metadata": _encode_json(allocation_metadata),
-                    }
-    
-                    existing_allocation = await db.portfolioallocation.find_first(
-                        where={
+                )
+
+                if existing_allocation:
+                    allocation_record = await db.portfolioallocation.update(
+                        where={"id": existing_allocation.id},
+                        data=allocation_payload,
+                    )
+                else:
+                    allocation_record = await db.portfolioallocation.create(
+                        data={
                             "portfolio_id": portfolio_id,
                             "allocation_type": allocation_type,
-                        }
+                            **allocation_payload,
+                        },
                     )
-    
-                    if existing_allocation:
-                        allocation_record = await db.portfolioallocation.update(
-                            where={"id": existing_allocation.id},
-                            data=allocation_payload,
-                        )
-                    else:
-                        allocation_record = await db.portfolioallocation.create(
-                            data={
-                                "portfolio_id": portfolio_id,
-                                "allocation_type": allocation_type,
-                                **allocation_payload,
-                            },
-                        )
-    
-                    agent_context = dict(request.get("metadata") or {})
-                    agent_context["request_id"] = request["request_id"]
-                    agent_context["current_regime"] = current_regime
-    
-                    allocations_created.append(allocation_record)
-                    
-                    # Create trading agent for this allocation
-                    try:
-                        agent_created = await _ensure_trading_agent(
-                        db,
-                        portfolio_id=portfolio_id,
-                        allocation=allocation_record,
-                        allocation_type=allocation_type,
-                        request_context=agent_context,
-                        objective_id=objective_id,
-                        user_subscriptions=user_subscriptions,
-                    )
-                        if agent_created is not False:
-                            trading_agents_created.append(allocation_type)
-                            logger.info(
-                                f"✅ Created/updated trading agent for allocation {allocation_record.id} "
-                                f"(type: {allocation_type})"
-                            )
-                    except Exception as agent_exc:
-                        logger.error(
-                            f"❌ Failed to create trading agent for allocation {allocation_record.id}: {agent_exc}",
-                            exc_info=True
-                        )
+
+                agent_context = dict(request.get("metadata") or {})
+                agent_context["request_id"] = request["request_id"]
+                agent_context["current_regime"] = current_regime
+
+                allocations_created.append(allocation_record)
                 
-                # Validate that allocations and agents were created
-                if not allocations_created:
-                    raise ValueError(f"No allocations were created for portfolio {portfolio_id}")
-                
-                logger.info(
-                    f"✅ Created {len(allocations_created)} allocations and {len(trading_agents_created)} trading agents "
-                    f"for portfolio {portfolio_id}"
+                # Create trading agent for this allocation
+                try:
+                    agent_created = await _ensure_trading_agent(
+                    db,
+                    portfolio_id=portfolio_id,
+                    allocation=allocation_record,
+                    allocation_type=allocation_type,
+                    request_context=agent_context,
+                    objective_id=objective_id,
+                    user_subscriptions=user_subscriptions,
                 )
-                
-                # Get portfolio record for _persist_allocation_result
-                # Reload portfolio with allocations to ensure we have the latest data
-                try:
-                    portfolio = await db.portfolio.find_unique(
-                        where={"id": portfolio_id},
-                        include={"allocations": True}
-                    )
-                except TypeError:
-                    # Fallback if include is not supported (e.g., in test mocks)
-                    logger.debug("find_unique with include not supported, trying without include")
-                    portfolio = await db.portfolio.find_unique(
-                        where={"id": portfolio_id}
-                    )
-                
-                if not portfolio:
-                    raise ValueError(f"Portfolio {portfolio_id} not found after allocation creation")
-                
-                # Ensure portfolio has allocations attribute
-                if not hasattr(portfolio, "allocations"):
-                    try:
-                        allocations = await db.portfolioallocation.find_many(
-                            where={"portfolio_id": portfolio_id}
+                    if agent_created is not False:
+                        trading_agents_created.append(allocation_type)
+                        logger.info(
+                            f"✅ Created/updated trading agent for allocation {allocation_record.id} "
+                            f"(type: {allocation_type})"
                         )
-                        portfolio.allocations = allocations
-                    except Exception as alloc_exc:
-                        logger.warning(
-                            f"Failed to fetch allocations for portfolio {portfolio_id}: {alloc_exc}"
-                        )
-                        portfolio.allocations = []
-                
-                # Call _persist_allocation_result to create allocation snapshots
-                try:
-                    from services.pipeline_service import PipelineService
-                    # PipelineService expects a string path to the server root
-                    server_root_str = str(Path(__file__).resolve().parents[1])
-                    pipeline_service = PipelineService(server_root_str, logger=logger)
-                    
-                    allocation_count = len(getattr(portfolio, "allocations", []) or [])
-                    logger.info(
-                        f"Calling _persist_allocation_result for portfolio {portfolio_id} "
-                        f"with {allocation_count} allocations"
-                    )
-                    
-                    await pipeline_service._persist_allocation_result(
-                        client=db,
-                        portfolio=portfolio,
-                        result=allocation_result,
-                        as_of=datetime.utcnow(),
-                        triggered_by=triggered_by,
-                        trigger_reason=f"Objective {objective_id} allocation",
-                    )
-                    logger.info(
-                        f"✅ Created allocation snapshots for portfolio {portfolio_id} "
-                        f"(rebalance run and allocation snapshots)"
-                    )
-                except Exception as snapshot_exc:
+                except Exception as agent_exc:
                     logger.error(
-                        f"❌ Failed to create allocation snapshots for portfolio {portfolio_id}: {snapshot_exc}",
+                        f"❌ Failed to create trading agent for allocation {allocation_record.id}: {agent_exc}",
                         exc_info=True
                     )
-                    # Don't fail the entire task if snapshot creation fails
-                
-                # Calculate next rebalancing date based on frequency from portfolio
-                # Note: rebalancing_frequency is NOT in user_inputs (transcript.py format)
-                # It comes from portfolio model, not user_inputs
-                rebalancing_freq = "quarterly"  # Default
-                if portfolio and portfolio.rebalancing_frequency:
-                    if isinstance(portfolio.rebalancing_frequency, dict):
-                        rebalancing_freq = portfolio.rebalancing_frequency.get("frequency", "quarterly")
-                    elif isinstance(portfolio.rebalancing_frequency, str):
-                        rebalancing_freq = portfolio.rebalancing_frequency
-                
-                rebalancing_date = _calculate_next_rebalance_date(rebalancing_freq)
-                
-                # Mark portfolio as ready
-                portfolio_metadata = {
-                    "allocated_at": datetime.utcnow(),
-                    "allocation_regime": current_regime,
-                    "objective_id": objective_id,
-                    "triggered_by": triggered_by,
-                }
-    
-                await db.portfolio.update(
+            
+            # Validate that allocations and agents were created
+            if not allocations_created:
+                raise ValueError(f"No allocations were created for portfolio {portfolio_id}")
+            
+            logger.info(
+                f"✅ Created {len(allocations_created)} allocations and {len(trading_agents_created)} trading agents "
+                f"for portfolio {portfolio_id}"
+            )
+            
+            # Get portfolio record for _persist_allocation_result
+            # Reload portfolio with allocations to ensure we have the latest data
+            try:
+                portfolio = await db.portfolio.find_unique(
                     where={"id": portfolio_id},
-                    data={
-                        "allocation_status": "ready",
-                        "rebalancing_date": rebalancing_date,
-                        "last_rebalanced_at": datetime.utcnow(),
-                        "next_rebalance_at": rebalancing_date,
-                        "metadata": _encode_json(portfolio_metadata),
-                    },
+                    include={"allocations": True}
                 )
+            except TypeError:
+                # Fallback if include is not supported (e.g., in test mocks)
+                logger.debug("find_unique with include not supported, trying without include")
+                portfolio = await db.portfolio.find_unique(
+                    where={"id": portfolio_id}
+                )
+            
+            if not portfolio:
+                raise ValueError(f"Portfolio {portfolio_id} not found after allocation creation")
+            
+            # Ensure portfolio has allocations attribute
+            if not hasattr(portfolio, "allocations"):
+                try:
+                    allocations = await db.portfolioallocation.find_many(
+                        where={"portfolio_id": portfolio_id}
+                    )
+                    portfolio.allocations = allocations
+                except Exception as alloc_exc:
+                    logger.warning(
+                        f"Failed to fetch allocations for portfolio {portfolio_id}: {alloc_exc}"
+                    )
+                    portfolio.allocations = []
+            
+            # Call _persist_allocation_result to create allocation snapshots
+            try:
+                from services.pipeline_service import PipelineService
+                # PipelineService expects a string path to the server root
+                server_root_str = str(Path(__file__).resolve().parents[1])
+                pipeline_service = PipelineService(server_root_str, logger=logger)
                 
+                allocation_count = len(getattr(portfolio, "allocations", []) or [])
                 logger.info(
-                    f"✅ Successfully allocated portfolio {portfolio_id} for objective {objective_id}: "
-                    f"{len(allocations_created)} allocations, {len(trading_agents_created)} trading agents "
-                    f"(weights: {weights}, next rebalance: {rebalancing_date})"
+                    f"Calling _persist_allocation_result for portfolio {portfolio_id} "
+                    f"with {allocation_count} allocations"
                 )
                 
-                return {
-                    "success": True,
-                    "portfolio_id": portfolio_id,
-                    "objective_id": objective_id,
-                    "allocations_created": len(allocations_created),
-                    "trading_agents_created": len(trading_agents_created),
-                    "allocation": allocation_result,
-                    "rebalancing_date": rebalancing_date.isoformat() if rebalancing_date else None,
-                    "last_rebalanced_at": datetime.utcnow().isoformat(),
-                    "next_rebalance_at": rebalancing_date.isoformat() if rebalancing_date else None,
+                await pipeline_service._persist_allocation_result(
+                    client=db,
+                    portfolio=portfolio,
+                    result=allocation_result,
+                    as_of=datetime.utcnow(),
+                    triggered_by=triggered_by,
+                    trigger_reason=f"Objective {objective_id} allocation",
+                )
+                logger.info(
+                    f"✅ Created allocation snapshots for portfolio {portfolio_id} "
+                    f"(rebalance run and allocation snapshots)"
+                )
+            except Exception as snapshot_exc:
+                logger.error(
+                    f"❌ Failed to create allocation snapshots for portfolio {portfolio_id}: {snapshot_exc}",
+                    exc_info=True
+                )
+                # Don't fail the entire task if snapshot creation fails
+            
+            # Calculate next rebalancing date based on frequency from portfolio
+            # Note: rebalancing_frequency is NOT in user_inputs (transcript.py format)
+            # It comes from portfolio model, not user_inputs
+            rebalancing_freq = "quarterly"  # Default
+            if portfolio and portfolio.rebalancing_frequency:
+                if isinstance(portfolio.rebalancing_frequency, dict):
+                    rebalancing_freq = portfolio.rebalancing_frequency.get("frequency", "quarterly")
+                elif isinstance(portfolio.rebalancing_frequency, str):
+                    rebalancing_freq = portfolio.rebalancing_frequency
+            
+            rebalancing_date = _calculate_next_rebalance_date(rebalancing_freq)
+            
+            # Mark portfolio as ready
+            portfolio_metadata = {
+                "allocated_at": datetime.utcnow(),
+                "allocation_regime": current_regime,
+                "objective_id": objective_id,
+                "triggered_by": triggered_by,
+            }
+
+            await db.portfolio.update(
+                where={"id": portfolio_id},
+                data={
+                    "allocation_status": "ready",
+                    "rebalancing_date": rebalancing_date,
+                    "last_rebalanced_at": datetime.utcnow(),
+                    "next_rebalance_at": rebalancing_date,
+                    "metadata": _encode_json(portfolio_metadata),
+                },
+            )
+            
+            logger.info(
+                f"✅ Successfully allocated portfolio {portfolio_id} for objective {objective_id}: "
+                f"{len(allocations_created)} allocations, {len(trading_agents_created)} trading agents "
+                f"(weights: {weights}, next rebalance: {rebalancing_date})"
+            )
+            
+            return {
+                "success": True,
+                "portfolio_id": portfolio_id,
+                "objective_id": objective_id,
+                "allocations_created": len(allocations_created),
+                "trading_agents_created": len(trading_agents_created),
+                "allocation": allocation_result,
+                "rebalancing_date": rebalancing_date.isoformat() if rebalancing_date else None,
+                "last_rebalanced_at": datetime.utcnow().isoformat(),
+                "next_rebalance_at": rebalancing_date.isoformat() if rebalancing_date else None,
             }
             
         except Exception as exc:

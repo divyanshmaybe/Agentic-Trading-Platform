@@ -65,21 +65,26 @@ def prepare_allocation_requests(
 
     requests: List[PortfolioAllocationRequest] = []
     for item in raw_requests:
-        request_id = str(item.get("request_id") or item.get("user_id") or len(requests))
-        request = PortfolioAllocationRequest(
-            request_id=request_id,
-            user_id=str(item["user_id"]),
-            current_regime=str(item.get("current_regime", default_regime)),
-            user_inputs=dict(item["user_inputs"]),
-            initial_value=float(item["initial_value"]),
-            current_value=item.get("current_value"),
-            value_history=item.get("value_history"),
-            segment_history=item.get("segment_history"),
-            use_rolling_metrics=bool(item.get("use_rolling_metrics", True)),
-            lookback_quarters=int(item.get("lookback_quarters", 4)),
-            metadata=dict(item.get("metadata", {})),
-        )
-        requests.append(request)
+        try:
+            request_id = str(item.get("request_id") or item.get("user_id") or len(requests))
+            request = PortfolioAllocationRequest(
+                request_id=request_id,
+                user_id=str(item["user_id"]),
+                current_regime=str(item.get("current_regime", default_regime)),
+                user_inputs=dict(item["user_inputs"]),
+                initial_value=float(item["initial_value"]),
+                current_value=item.get("current_value"),
+                value_history=item.get("value_history"),
+                segment_history=item.get("segment_history"),
+                use_rolling_metrics=bool(item.get("use_rolling_metrics", True)),
+                lookback_quarters=int(item.get("lookback_quarters", 4)),
+                metadata=dict(item.get("metadata", {})),
+            )
+            requests.append(request)
+        except Exception as e:
+            # Log but don't crash - skip invalid requests
+            import logging
+            logging.getLogger(__name__).error(f"❌ Failed to prepare allocation request: {e}. Item: {item}", exc_info=True)
     return requests
 
 
@@ -108,7 +113,11 @@ def allocate_portfolios(
 
     logger = logger or LOGGER
     prepared = prepare_allocation_requests(requests)
+    
+    logger.info(f"📋 prepare_allocation_requests returned {len(prepared)} prepared requests from {len(requests)} raw requests")
+    
     if not prepared:
+        logger.warning(f"⚠️ No allocation requests prepared! Raw requests: {requests}")
         logger.info("No allocation requests received; returning empty result set.")
         return []
 

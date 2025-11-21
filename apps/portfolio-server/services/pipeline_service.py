@@ -569,10 +569,10 @@ class PipelineService:
             portfolio.initial_investment,
             default=self._safe_float(
                 portfolio.investment_amount,
-                default=self._safe_float(portfolio.current_value),
+                default=self._safe_float(portfolio.available_cash),
             ),
         )
-        current_value = self._safe_float(portfolio.current_value, default=initial_value)
+        current_value = self._safe_float(portfolio.available_cash, default=initial_value)
 
         value_history = metadata_obj.get("value_history")
         if not isinstance(value_history, list) or not value_history:
@@ -647,7 +647,7 @@ class PipelineService:
             portfolio.investment_amount,
             default=self._safe_float(
                 portfolio.initial_investment,
-                default=self._safe_float(portfolio.current_value),
+                default=self._safe_float(portfolio.available_cash),
             ),
         )
         # If total_investable is still 0, try to get from objective
@@ -659,7 +659,7 @@ class PipelineService:
                     getattr(objective, "total_investment", None) or
                     0.0
         )
-        current_value = self._safe_float(portfolio.current_value, default=total_investable)
+        current_value = self._safe_float(portfolio.available_cash, default=total_investable)
         drift_values = result.get("drift") or {}
 
         metadata_payload = self._parse_metadata(portfolio.metadata)
@@ -710,7 +710,7 @@ class PipelineService:
                         "target_weight": target_weight_dec,
                         "current_weight": target_weight_dec,
                         "allocated_amount": allocated_amount_dec,
-                        "current_value": current_value_dec,
+                        "available_cash": allocated_amount_dec,  # Initially same as allocated
                         "drift_percentage": drift_dec,
                         "requires_rebalancing": False,
                         "metadata": fields.Json(allocation_metadata),
@@ -724,7 +724,7 @@ class PipelineService:
                         "target_weight": target_weight_dec,
                         "current_weight": target_weight_dec,
                         "allocated_amount": allocated_amount_dec,
-                        "current_value": current_value_dec,
+                        "available_cash": allocated_amount_dec,  # Initially same as allocated
                         "metadata": fields.Json({
                             "created_at": as_of.isoformat() + "Z",
                             "created_by": triggered_by,
@@ -864,13 +864,14 @@ class PipelineService:
                 data={
                     "rebalance_run_id": rebalance_run.id,
                     "portfolio_allocation_id": allocation.id,
-                    "snapshot_weight": self._to_decimal(weight, places=6),
-                    "snapshot_amount": snapshot_amount,
-                    "snapshot_current_value": snapshot_current_value,
-                    "snapshot_pnl": self._to_decimal(0.0, places=4),
+                    "current_value": snapshot_current_value,
+                    "realized_pnl": self._to_decimal(0.0, places=4),
+                    "unrealized_pnl": self._to_decimal(0.0, places=4),
                     "metadata": fields.Json({
                         "regime": result.get("regime"),
                         "generated_at": as_of.isoformat() + "Z",
+                        "snapshot_weight": float(weight),
+                        "snapshot_amount": float(snapshot_amount),
                     }),
                 }
             )

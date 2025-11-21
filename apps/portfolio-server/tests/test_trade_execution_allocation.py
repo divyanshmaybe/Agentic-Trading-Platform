@@ -235,7 +235,7 @@ async def _run_trade_execution_flow():
         )
         
         if portfolio:
-            print(f"✅ Portfolio current value: ₹{float(portfolio.current_value)}")
+            print(f"✅ Portfolio available cash: ₹{float(portfolio.available_cash)}")
             print("   (Recalculation triggered successfully)")
         else:
             print("⚠️  Could not verify portfolio value")

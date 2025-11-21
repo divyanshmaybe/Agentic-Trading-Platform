@@ -183,7 +183,7 @@ class ObjectiveController:
                     "organization_id": organization_id,
                     "user_inputs": user_inputs,
                     "initial_value": float(payload.investable_amount),
-                    "current_value": float(payload.investable_amount),
+                    "available_cash": float(payload.investable_amount),
                     "triggered_by": "objective_created",
                 },
                 countdown=2,  # Delay by 2 seconds to ensure DB commit
@@ -377,7 +377,7 @@ class ObjectiveController:
                     "organization_id": organization_id,
                     "user_inputs": user_inputs,
                     "initial_value": float(payload.investable_amount),
-                    "current_value": float(payload.investable_amount),
+                    "available_cash": float(payload.investable_amount),
                     "triggered_by": "objective_intake_complete",
                 },
                 countdown=2,  # Delay by 2 seconds to ensure DB commit
@@ -500,7 +500,7 @@ class ObjectiveController:
         if isinstance(payload.investable_amount, Decimal):
             update_data["investment_amount"] = payload.investable_amount
             update_data["initial_investment"] = payload.investable_amount
-            update_data["current_value"] = payload.investable_amount
+            update_data["available_cash"] = payload.investable_amount
 
         if payload.expected_return_target is not None:
             update_data["expected_return_target"] = payload.expected_return_target

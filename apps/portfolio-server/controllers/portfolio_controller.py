@@ -175,18 +175,24 @@ class PortfolioController:
             
             # Trigger portfolio allocation via Celery
             try:
-                from workers.allocation_tasks import allocate_new_portfolio_task
+                from workers.allocation_tasks import allocate_for_objective_task
                 from utils.user_inputs_helper import extract_user_inputs_from_portfolio
                 
                 # Build user inputs from portfolio (matching transcript.py format)
                 user_inputs = extract_user_inputs_from_portfolio(portfolio)
                 
-                task = allocate_new_portfolio_task.delay(
-                    portfolio_id=portfolio.id,
-                    user_id=str(user_id),
-                    organization_id=organization_id,
-                    user_inputs=user_inputs,
-                    initial_value=float(portfolio.investment_amount),
+                task = allocate_for_objective_task.apply_async(
+                    kwargs={
+                        "portfolio_id": portfolio.id,
+                        "objective_id": None,  # Auto-created portfolio without objective
+                        "user_id": user_id,
+                        "organization_id": organization_id,
+                        "user_inputs": user_inputs,
+                        "initial_value": float(defaults["investment_amount"]),
+                        "available_cash": float(defaults["investment_amount"]),
+                        "triggered_by": "portfolio_auto_created",
+                    },
+                    countdown=2,
                 )
                 
                 self.logger.info(

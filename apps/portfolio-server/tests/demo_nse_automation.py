@@ -176,7 +176,7 @@ class NSEAutomationDemo:
         
         logger.info(f"   User ID: {user.id}")
         logger.info(f"   Portfolio ID: {portfolio.id}")
-        logger.info(f"   Available Capital: ₹{portfolio.current_value:,.2f}")
+        logger.info(f"   Available Capital: ₹{portfolio.available_cash:,.2f}")
         logger.info("")
     
     async def simulate_nse_signal(self) -> Dict[str, Any]:

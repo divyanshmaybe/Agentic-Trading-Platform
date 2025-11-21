@@ -362,36 +362,24 @@ class TradeEngine:
         await self._recalculate_portfolio_value(payload.portfolio_id)
 
     async def _recalculate_portfolio_value(self, portfolio_id: str) -> None:
-        positions = await self.prisma.position.find_many(where={"portfolio_id": portfolio_id})
-        total = Decimal(0)
-
-        for position in positions:
-            self.market_data.register_symbol(position.symbol)
-            price = self.market_data.get_latest_price(position.symbol)
-            if price is None:
-                price = await await_live_price(position.symbol, timeout=5.0)
-
-            current_value = (price * Decimal(position.quantity)).quantize(FOUR_DP)
-            total += current_value
-
-            await self.prisma.position.update(
-                where={"id": position.id},
-                data={
-                    "current_price": price,
-                    "current_value": current_value,
-                },
-            )
-
-        await self.prisma.portfolio.update(
-            where={"id": portfolio_id},
-            data={"current_value": total.quantize(FOUR_DP)},
-        )
+        """
+        DEPRECATED: Portfolio value is no longer stored as a field.
+        Position no longer has current_price/current_value fields.
+        Portfolio no longer has current_value field.
+        Value is calculated on-demand via SnapshotService using live prices.
+        """
+        # No-op: This method is deprecated but kept for compatibility
+        pass
 
     async def _build_portfolio_snapshot(self, portfolio_id: str) -> Dict:
+        """
+        DEPRECATED: Portfolio snapshots are now handled by SnapshotService.
+        current_value field no longer exists on Portfolio model.
+        """
         portfolio = await self.prisma.portfolio.find_unique_or_raise(where={"id": portfolio_id})
         return {
             "id": portfolio.id,
-            "current_value": portfolio.current_value,
+            "available_cash": portfolio.available_cash,
             "updated_at": portfolio.updated_at,
         }
 
