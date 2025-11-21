@@ -16,7 +16,7 @@ PORTFOLIO_SERVER_ROOT = os.path.join(os.path.dirname(__file__), "..")
 if PORTFOLIO_SERVER_ROOT not in sys.path:
     sys.path.insert(0, PORTFOLIO_SERVER_ROOT)
 
-from db_client import get_db_client  # type: ignore
+from dbManager import DBManager
 
 from services.trade_engine import TradeEngine
 
@@ -36,7 +36,9 @@ def process_pending_trade(self, trade_id: str) -> bool:
 
 
 async def _process_pending_trade_async(trade_id: str) -> bool:
-    client = await get_db_client()
+    db_manager = DBManager.get_instance()
+    await db_manager.connect()
+    client = db_manager.get_client()
 
     try:
         engine = TradeEngine(client)

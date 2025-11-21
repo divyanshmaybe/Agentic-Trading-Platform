@@ -959,11 +959,11 @@ class TradeExecutionService:
             # Accumulate realized P&L at Portfolio level
             portfolio = await client.portfolio.find_unique(where={"id": portfolio_id})
             if portfolio:
-                current_portfolio_pnl = float(getattr(portfolio, "realized_pnl", 0) or 0)
+                current_portfolio_pnl = float(getattr(portfolio, "total_realized_pnl", 0) or 0)
                 new_portfolio_pnl = self._as_decimal(current_portfolio_pnl + realized_pnl)
                 await client.portfolio.update(
                     where={"id": portfolio_id},
-                    data={"realized_pnl": new_portfolio_pnl},
+                    data={"total_realized_pnl": new_portfolio_pnl},
                 )
             
             # Accumulate realized P&L at Allocation and Agent levels

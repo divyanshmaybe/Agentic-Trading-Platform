@@ -851,87 +851,90 @@ def allocate_for_objective_task(
             
             # Update portfolio status to processing
             logger.info(f"Connecting to database for portfolio {portfolio_id}...")
-            # Use DatabaseClient context manager for proper connection handling
-            from db_client import DatabaseClient
+            # Use DBManager singleton pattern
+            from dbManager import DBManager
             
-            async with DatabaseClient() as db:
-                logger.info(f"Database connected for portfolio {portfolio_id}")
-                
-                logger.info(f"Fetching user subscriptions for user {user_id}...")
-                user_subscriptions = await _get_user_subscriptions(db, user_id)
-                logger.info(f"User subscriptions retrieved: {user_subscriptions}")
-                
-                logger.info(f"Updating portfolio {portfolio_id} status to 'processing'...")
-                await db.portfolio.update(
-                    where={"id": portfolio_id},
-                    data={"allocation_status": "processing"}
-                )
-                logger.info(f"Portfolio {portfolio_id} status updated to 'processing'")
+            db_manager = DBManager.get_instance()
+            await db_manager.connect()
+            db = db_manager.get_client()
             
-                # Execute Pathway allocation pipeline in a thread pool to avoid event loop conflicts
-                # Use asyncio.to_thread to run the synchronous pipeline without blocking the event loop
-                from concurrent.futures import ThreadPoolExecutor
-                import functools
-                
-                loop = asyncio.get_event_loop()
-                
-                # Log request details for debugging
-                logger.info(f"🔍 Allocation request details: user_id={request.get('user_id')}, "
-                           f"initial_value={request.get('initial_value')}, "
-                           f"user_inputs_keys={list(request.get('user_inputs', {}).keys())}, "
-                           f"current_regime={request.get('current_regime')}")
-                
-                # Run the synchronous pipeline in a thread pool executor with timeout
-                logger.info(f"Executing allocation pipeline for portfolio {portfolio_id}...")
-                with ThreadPoolExecutor(max_workers=1) as executor:
-                    try:
-                        results = await asyncio.wait_for(
-                            loop.run_in_executor(
-                        executor,
-                        functools.partial(
-                            allocate_portfolios,
-                            [request],
-                            logger=logger,
-                            audit_path=f"/tmp/portfolio_allocations_{portfolio_id}_{objective_id}.jsonl"
-                        )
-                            ),
-                            timeout=300.0  # 5 minute timeout
+            logger.info(f"Database connected for portfolio {portfolio_id}")
+            
+            logger.info(f"Fetching user subscriptions for user {user_id}...")
+            user_subscriptions = await _get_user_subscriptions(db, user_id)
+            logger.info(f"User subscriptions retrieved: {user_subscriptions}")
+            
+            logger.info(f"Updating portfolio {portfolio_id} status to 'processing'...")
+            await db.portfolio.update(
+                where={"id": portfolio_id},
+                data={"allocation_status": "processing"}
+            )
+            logger.info(f"Portfolio {portfolio_id} status updated to 'processing'")
+        
+            # Execute Pathway allocation pipeline in a thread pool to avoid event loop conflicts
+            # Use asyncio.to_thread to run the synchronous pipeline without blocking the event loop
+            from concurrent.futures import ThreadPoolExecutor
+            import functools
+            
+            loop = asyncio.get_event_loop()
+            
+            # Log request details for debugging
+            logger.info(f"🔍 Allocation request details: user_id={request.get('user_id')}, "
+                       f"initial_value={request.get('initial_value')}, "
+                       f"user_inputs_keys={list(request.get('user_inputs', {}).keys())}, "
+                       f"current_regime={request.get('current_regime')}")
+            
+            # Run the synchronous pipeline in a thread pool executor with timeout
+            logger.info(f"Executing allocation pipeline for portfolio {portfolio_id}...")
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                try:
+                    results = await asyncio.wait_for(
+                        loop.run_in_executor(
+                            executor,
+                            functools.partial(
+                                allocate_portfolios,
+                                [request],
+                                logger=logger,
+                                audit_path=f"/tmp/portfolio_allocations_{portfolio_id}_{objective_id}.jsonl"
+                            )
+                        ),
+                        timeout=300.0  # 5 minute timeout
                     )
-                        logger.info(f"✅ Allocation pipeline completed for portfolio {portfolio_id}. "
-                                  f"Results type: {type(results)}, Length: {len(results) if results else 'NONE/EMPTY'}, "
-                                  f"Results: {results[:500] if results else 'EMPTY'}")
-                    except asyncio.TimeoutError:
-                        logger.error(f"Allocation pipeline timed out after 5 minutes for portfolio {portfolio_id}")
-                        raise TimeoutError(f"Allocation pipeline timed out for portfolio {portfolio_id}")
-                
-                logger.info(f"🔍 Checking results validity...")
-                
-                if not results:
-                    logger.error("Allocation pipeline returned no results")
-                    raise ValueError("Allocation pipeline returned no results")
-                
-                logger.info(f"📦 Extracting allocation_result from results[0]...")
-                allocation_result = results[0]
-                logger.info(f"✅ Got allocation_result, type={type(allocation_result)}")
+                    logger.info(f"✅ Allocation pipeline completed for portfolio {portfolio_id}. "
+                              f"Results type: {type(results)}, Length: {len(results) if results else 'NONE/EMPTY'}, "
+                              f"Results: {results[:500] if results else 'EMPTY'}")
+                except asyncio.TimeoutError:
+                    logger.error(f"Allocation pipeline timed out after 5 minutes for portfolio {portfolio_id}")
+                    raise TimeoutError(f"Allocation pipeline timed out for portfolio {portfolio_id}")
             
-                # Log allocation result for debugging
-                logger.info(
-                    f"Allocation result for portfolio {portfolio_id}: "
-                    f"has_weights={bool(allocation_result.get('weights'))}, "
-                    f"has_weights_json={bool(allocation_result.get('weights_json'))}, "
-                    f"success={allocation_result.get('success', 'N/A')}, "
-                    f"keys={list(allocation_result.keys())}"
-                )
-                
-                # Check for weights directly instead of relying on "success" field
-                # Try multiple ways to extract weights
-                weights = None
-                
-                # First try direct weights field
-                weights_raw = allocation_result.get("weights")
-                if weights_raw:
-                    weights = _coerce_to_plain_dict(weights_raw)
-                    logger.debug(f"Extracted weights from 'weights' field: {weights}")
+            logger.info(f"🔍 Checking results validity...")
+            
+            if not results:
+                logger.error("Allocation pipeline returned no results")
+                raise ValueError("Allocation pipeline returned no results")
+            
+            logger.info(f"📦 Extracting allocation_result from results[0]...")
+            allocation_result = results[0]
+            logger.info(f"✅ Got allocation_result, type={type(allocation_result)}")
+        
+            # Log allocation result for debugging
+            logger.info(
+                f"Allocation result for portfolio {portfolio_id}: "
+                f"has_weights={bool(allocation_result.get('weights'))}, "
+                f"has_weights_json={bool(allocation_result.get('weights_json'))}, "
+                f"success={allocation_result.get('success', 'N/A')}, "
+                f"keys={list(allocation_result.keys())}"
+            )
+            
+            # Check for weights directly instead of relying on "success" field
+            # Try multiple ways to extract weights
+            weights = None
+            
+            # First try direct weights field
+            weights_raw = allocation_result.get("weights")
+            if weights_raw:
+                weights = _coerce_to_plain_dict(weights_raw)
+                logger.debug(f"Extracted weights from 'weights' field: {weights}")
                 
                 # If not found, try weights_json (might be a string)
                 if not weights:
@@ -1198,13 +1201,15 @@ def allocate_for_objective_task(
         except Exception as exc:
             # Mark portfolio as failed
             try:
-                # Use DatabaseClient for error handling too
-                from db_client import DatabaseClient
-                async with DatabaseClient() as error_db:
-                    await error_db.portfolio.update(
-                            where={"id": portfolio_id},
-                            data={"allocation_status": "failed"}
-                        )
+                # Use DBManager for error handling too
+                from dbManager import DBManager
+                error_db_manager = DBManager.get_instance()
+                await error_db_manager.connect()
+                error_db = error_db_manager.get_client()
+                await error_db.portfolio.update(
+                    where={"id": portfolio_id},
+                    data={"allocation_status": "failed"}
+                )
             except:
                 pass
             
@@ -1245,16 +1250,18 @@ def daily_rebalancing_sweep_task(self) -> Dict[str, Any]:
     
     async def _sweep():
         try:
-            # Use DatabaseClient for proper connection handling
-            from db_client import DatabaseClient
-            async with DatabaseClient() as db:
+            # Use DBManager for proper connection handling
+            from dbManager import DBManager
+            db_manager = DBManager.get_instance()
+            await db_manager.connect()
+            db = db_manager.get_client()
             
-                today = datetime.now().date()
-                logger.info(f"Running daily rebalancing sweep for {today}")
-                
-                # Find portfolios with rebalancing_date <= today (includes overdue portfolios)
-                # This ensures we catch any portfolios that were missed
-                portfolios_to_rebalance = await db.portfolio.find_many(
+            today = datetime.now().date()
+            logger.info(f"Running daily rebalancing sweep for {today}")
+            
+            # Find portfolios with rebalancing_date <= today (includes overdue portfolios)
+            # This ensures we catch any portfolios that were missed
+            portfolios_to_rebalance = await db.portfolio.find_many(
                 where={
                     "AND": [
                         {"rebalancing_date": {"lte": today}},
@@ -1266,26 +1273,26 @@ def daily_rebalancing_sweep_task(self) -> Dict[str, Any]:
                 include={
                     "allocations": True,
                 }
-                )
-                
-                if not portfolios_to_rebalance:
-                    logger.info("No portfolios due for rebalancing today or overdue")
-                    return {
-                        "success": True,
-                        "portfolios_checked": 0,
-                        "portfolios_rebalanced": 0,
-                    }
-                
-                logger.info(
-                    f"Found {len(portfolios_to_rebalance)} portfolios to rebalance "
-                    f"(including overdue)"
-                )
-                
-                # Get current regime once for all portfolios
-                current_regime = await _get_current_regime()
-                
-                # Build allocation requests for all due portfolios
-                requests = []
+            )
+            
+            if not portfolios_to_rebalance:
+                logger.info("No portfolios due for rebalancing today or overdue")
+                return {
+                    "success": True,
+                    "portfolios_checked": 0,
+                    "portfolios_rebalanced": 0,
+                }
+            
+            logger.info(
+                f"Found {len(portfolios_to_rebalance)} portfolios to rebalance "
+                f"(including overdue)"
+            )
+            
+            # Get current regime once for all portfolios
+            current_regime = await _get_current_regime()
+            
+            # Build allocation requests for all due portfolios
+            requests = []
             portfolio_map = {}
             
             for portfolio in portfolios_to_rebalance:

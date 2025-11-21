@@ -1,74 +1,33 @@
 """
-Database utilities for the portfolio server.
+Database connection manager - re-export from shared module.
 
-This module provides database access utilities for the portfolio server.
-It wraps the new db_client module for compatibility with existing code.
+This file maintains backward compatibility for existing imports.
+All new code should import directly from dbManager.
 """
 
-from __future__ import annotations
+import sys
+import os
 
-from typing import AsyncIterator
-from prisma import Prisma
+# Add shared/py to path if not already there
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+shared_py_path = os.path.join(project_root, "shared/py")
+if shared_py_path not in sys.path:
+    sys.path.insert(0, shared_py_path)
 
-# Import from new robust db_client module
-from db_client import (
-    DBManager,
-    get_db_client,
-    get_db,
-    ensure_disconnected,
-    DatabaseClient,
-    health_check,
-)
+from dbManager import DBManager
 
+# Backward compatibility aliases
+DatabaseClient = DBManager
+get_db_client = DBManager.get_instance
+get_db_manager = DBManager.get_instance  # Legacy alias from old implementation
+disconnect = lambda: DBManager.get_instance().disconnect()
 
-def get_db_manager() -> DBManager:
-    """
-    Return the database manager instance.
-    
-    Legacy compatibility function. For new code, prefer using
-    get_db_client() or DatabaseClient context manager directly.
-    """
-    return DBManager.get_instance()
+# prisma_client function for routes that need direct Prisma access
+def get_prisma_client():
+    """Get the Prisma client from DBManager. Must be called after DB is connected."""
+    return DBManager.get_instance().get_client()
 
+# For backward compatibility with direct prisma_client import
+prisma_client = get_prisma_client
 
-async def prisma_client() -> AsyncIterator[Prisma]:
-    """
-    FastAPI dependency that yields a connected Prisma client.
-    
-    Usage:
-        ```python
-        from db import prisma_client
-        
-        @router.get("/users")
-        async def get_users(db: Prisma = Depends(prisma_client)):
-            return await db.user.find_many()
-        ```
-    
-    For new code, prefer using get_db from db_client:
-        ```python
-        from db_client import get_db
-        
-        @router.get("/users")
-        async def get_users(db: Prisma = Depends(get_db)):
-            return await db.user.find_many()
-        ```
-    """
-    db = await get_db_client()
-    try:
-        yield db
-    finally:
-        # Connection stays open for reuse
-        pass
-
-
-# Re-export for convenience
-__all__ = [
-    "get_db_manager",
-    "prisma_client",
-    "get_db_client",
-    "get_db",
-    "ensure_disconnected",
-    "DatabaseClient",
-    "health_check",
-    "DBManager",
-]
+__all__ = ["DBManager", "DatabaseClient", "get_db_client", "get_db_manager", "disconnect", "prisma_client", "get_prisma_client"]

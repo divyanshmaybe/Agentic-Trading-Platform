@@ -81,13 +81,17 @@ def mock_database_client(monkeypatch):
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             pass
 
-    # Mock the DatabaseClient class
-    monkeypatch.setattr("db_client.DatabaseClient", MockDatabaseClient)
-
-    # Also mock get_db_client function
-    async def mock_get_db_client():
-        return mock_client
-
-    monkeypatch.setattr("db_client.get_db_client", mock_get_db_client)
+    # Mock the DBManager class (now using dbManager from shared/py)
+    # Note: DBManager.get_instance() is a classmethod that returns a singleton
+    
+    # Create a mock instance
+    mock_manager_instance = MockDatabaseClient()
+    
+    # Patch all the places DBManager is used
+    monkeypatch.setattr("dbManager.DBManager.get_instance", classmethod(lambda cls, *args, **kwargs: mock_manager_instance))
+    
+    # Backward compatibility for db.py re-exports
+    monkeypatch.setattr("db.get_db_client", lambda: mock_client)
+    monkeypatch.setattr("db.get_db_manager", lambda: mock_client)
 
     return mock_client

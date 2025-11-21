@@ -590,12 +590,25 @@ async def test_objective_creation_and_allocation_flow(monkeypatch: pytest.Monkey
         fake_allocate_portfolios,
     )
 
-    # Configure the global MockDatabaseClient to return our fake prisma client
-    from db_client import DatabaseClient
-    original_db_client = DatabaseClient
+    # Configure the global MockDBManager to return our fake prisma client
+    from dbManager import DBManager
+    original_db_client = DBManager
 
-    class FakeDatabaseClient:
+    class FakeDBManager:
+        @classmethod
+        def get_instance(cls):
+            return cls()
+        
         def __init__(self):
+            self._client = prisma
+        
+        async def connect(self):
+            pass
+        
+        def get_client(self):
+            return self._client
+        
+        async def disconnect(self):
             pass
 
         async def __aenter__(self):
@@ -604,7 +617,7 @@ async def test_objective_creation_and_allocation_flow(monkeypatch: pytest.Monkey
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             pass
 
-    monkeypatch.setattr("db_client.DatabaseClient", FakeDatabaseClient)
+    monkeypatch.setattr("dbManager.DBManager", FakeDBManager)
 
     allocation_task = allocation_tasks_module.allocate_for_objective_task._get_current_object()
 
@@ -792,12 +805,25 @@ async def test_objective_intake_then_allocation(monkeypatch: pytest.MonkeyPatch)
         fake_allocate_portfolios,
     )
 
-    # Configure the global MockDatabaseClient to return our fake prisma client
-    from db_client import DatabaseClient
-    original_db_client = DatabaseClient
+    # Configure the global MockDBManager to return our fake prisma client
+    from dbManager import DBManager
+    original_db_client = DBManager
 
-    class FakeDatabaseClient:
+    class FakeDBManager2:
+        @classmethod
+        def get_instance(cls):
+            return cls()
+        
         def __init__(self):
+            self._client = prisma
+        
+        async def connect(self):
+            pass
+        
+        def get_client(self):
+            return self._client
+        
+        async def disconnect(self):
             pass
 
         async def __aenter__(self):
@@ -806,7 +832,7 @@ async def test_objective_intake_then_allocation(monkeypatch: pytest.MonkeyPatch)
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             pass
 
-    monkeypatch.setattr("db_client.DatabaseClient", FakeDatabaseClient)
+    monkeypatch.setattr("dbManager.DBManager", FakeDBManager2)
 
     allocation_task = allocation_tasks_module.allocate_for_objective_task._get_current_object()
 
@@ -915,12 +941,25 @@ async def test_allocation_enables_subscribed_agent(monkeypatch: pytest.MonkeyPat
         ],
     )
 
-    # Configure the global MockDatabaseClient to return our fake prisma client
-    from db_client import DatabaseClient
-    original_db_client = DatabaseClient
+    # Configure the global MockDBManager to return our fake prisma client
+    from dbManager import DBManager
+    original_db_client = DBManager
 
-    class FakeDatabaseClient:
+    class FakeDBManager3:
+        @classmethod
+        def get_instance(cls):
+            return cls()
+        
         def __init__(self):
+            self._client = prisma
+        
+        async def connect(self):
+            pass
+        
+        def get_client(self):
+            return self._client
+        
+        async def disconnect(self):
             pass
 
         async def __aenter__(self):
@@ -929,7 +968,7 @@ async def test_allocation_enables_subscribed_agent(monkeypatch: pytest.MonkeyPat
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             pass
 
-    monkeypatch.setattr("db_client.DatabaseClient", FakeDatabaseClient)
+    monkeypatch.setattr("dbManager.DBManager", FakeDBManager3)
 
     payload = ObjectiveCreateRequest(
         name="Subscribed Objective",

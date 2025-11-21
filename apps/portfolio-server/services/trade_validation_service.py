@@ -13,7 +13,7 @@ import logging
 from decimal import Decimal
 from typing import Any, Dict, Optional
 
-from db_client import get_db_client
+from dbManager import DBManager
 
 
 class TradeValidationService:
@@ -54,7 +54,9 @@ class TradeValidationService:
         Returns:
             Dict with 'valid' (bool), 'reason' (str), and 'available_cash' (Decimal)
         """
-        client = await get_db_client()
+        db_manager = DBManager.get_instance()
+        await db_manager.connect()
+        client = db_manager.get_client()
         try:
             # Calculate required cash
             required_cash = self._as_decimal(price * Decimal(str(quantity)))
@@ -150,7 +152,9 @@ class TradeValidationService:
         Returns:
             Dict with 'valid' (bool), 'reason' (str), and 'available_quantity' (int)
         """
-        client = await get_db_client()
+        db_manager = DBManager.get_instance()
+        await db_manager.connect()
+        client = db_manager.get_client()
         try:
             # Find position
             where_clause = {

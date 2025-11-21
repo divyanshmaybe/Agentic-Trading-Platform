@@ -35,7 +35,7 @@ PORTFOLIO_SERVER_ROOT = os.path.join(os.path.dirname(__file__), "..")
 if PORTFOLIO_SERVER_ROOT not in sys.path:
     sys.path.insert(0, PORTFOLIO_SERVER_ROOT)
 
-from db_client import DatabaseClient, get_db_client  # type: ignore
+from dbManager import DBManager
 from market_data import get_market_data_service  # type: ignore
 from services.trade_engine import TradeEngine
 
@@ -86,8 +86,10 @@ class OrderMonitorWorker:
         """Initialize database and market data connections."""
         logger.info("🚀 Initializing Order Monitor Worker...")
         
-        # Setup database - get connected client for current event loop
-        self.db = await get_db_client()
+        # Setup database - get singleton instance and connect
+        db_manager = DBManager.get_instance()
+        await db_manager.connect()
+        self.db = db_manager.get_client()
         
         # Setup market data service (use global singleton to avoid repeated login)
         self.market_data = await get_or_create_market_data_service()
@@ -106,8 +108,8 @@ class OrderMonitorWorker:
         
         # Force cleanup of event loop client to prevent connection leaks
         try:
-            from db_client import ensure_disconnected
-            await ensure_disconnected()
+            from dbManager import DBManager
+            await DBManager.get_instance().disconnect()
         except Exception as e:
             logger.debug(f"Additional cleanup error: {e}")
     

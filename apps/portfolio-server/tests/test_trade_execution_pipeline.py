@@ -463,11 +463,25 @@ async def test_pipeline_service_process_trade_signals(monkeypatch: pytest.Monkey
         objective_id="obj-1",
     )
 
-    async def fake_get_db_client():
-        return fake_manager.get_client()
+    class FakeDBManagerInstance:
+        def __init__(self, client):
+            self._client = client
+        
+        async def connect(self):
+            pass
+        
+        def get_client(self):
+            return self._client
+        
+        async def disconnect(self):
+            pass
     
     fake_manager = FakePipelineManager([portfolio])
-    monkeypatch.setattr("db_client.get_db_client", fake_get_db_client, raising=False)
+    
+    def fake_get_db_client():
+        return FakeDBManagerInstance(fake_manager.get_client())
+    
+    monkeypatch.setattr("dbManager.DBManager.get_instance", fake_get_db_client, raising=False)
 
     # Mock Prisma client - the service creates a new Prisma() instance
     class FakeTradingAgent:
@@ -737,6 +751,25 @@ async def test_pipeline_service_skips_portfolios_with_inactive_agents(
 
     monkeypatch.setattr("prisma.Prisma", FakePrisma)
     monkeypatch.setattr(PipelineService, "_load_environment", lambda self: None, raising=False)
+
+    # Mock DBManager to return FakePrisma instance
+    class FakeDBManagerInstance:
+        def __init__(self):
+            self._client = FakePrisma()
+        
+        async def connect(self):
+            await self._client.connect()
+        
+        def get_client(self):
+            return self._client
+        
+        async def disconnect(self):
+            await self._client.disconnect()
+    
+    def fake_get_db_client():
+        return FakeDBManagerInstance()
+    
+    monkeypatch.setattr("dbManager.DBManager.get_instance", fake_get_db_client)
 
     service = PipelineService(str(PORTFOLIO_SERVER_ROOT), logger=None)
 

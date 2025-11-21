@@ -1245,9 +1245,11 @@ class PipelineService:
                 "dispatched": 0,
             }
 
-        # Use DatabaseClient for proper connection handling
-        from db_client import get_db_client
-        client = await get_db_client()
+        # Use DBManager for proper connection handling
+        from dbManager import DBManager
+        db_manager = DBManager.get_instance()
+        await db_manager.connect()
+        client = db_manager.get_client()
         
         trade_service = TradeExecutionService(logger=self.logger)
 

@@ -111,8 +111,21 @@ async def test_allocate_for_objective_task_creates_allocations(monkeypatch, mock
     
     # Mock DatabaseClient to return our test mock_db
     class MockDatabaseClient:
+        @classmethod
+        def get_instance(cls):
+            return cls()
+        
         def __init__(self):
             self._client = mock_db
+        
+        async def connect(self):
+            pass
+        
+        def get_client(self):
+            return self._client
+        
+        async def disconnect(self):
+            pass
 
         async def __aenter__(self):
             return mock_db
@@ -120,7 +133,7 @@ async def test_allocate_for_objective_task_creates_allocations(monkeypatch, mock
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             pass
 
-    monkeypatch.setattr("db_client.DatabaseClient", MockDatabaseClient)
+    monkeypatch.setattr("dbManager.DBManager", MockDatabaseClient)
     
     # Mock PipelineService - it's imported inside the function, so patch the import location
     mock_pipeline_service = MagicMock()

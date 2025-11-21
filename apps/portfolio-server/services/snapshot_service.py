@@ -14,7 +14,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-from db_client import get_db_client
+from dbManager import DBManager
 
 
 class TradingAgentSnapshotService:
@@ -62,7 +62,9 @@ class TradingAgentSnapshotService:
         Returns:
             Snapshot record dict or None if failed
         """
-        client = await get_db_client()
+        db_manager = DBManager.get_instance()
+        await db_manager.connect()
+        client = db_manager.get_client()
         try:
             # Fetch agent with positions and allocation
                 agent = await client.tradingagent.find_unique(
@@ -162,7 +164,9 @@ class TradingAgentSnapshotService:
         Returns:
             Dict with summary of snapshots captured
         """
-        client = await get_db_client()
+        db_manager = DBManager.get_instance()
+        await db_manager.connect()
+        client = db_manager.get_client()
         try:
             # Find all active agents
                 agents = await client.tradingagent.find_many(
@@ -216,7 +220,9 @@ class TradingAgentSnapshotService:
         Returns:
             Snapshot record dict or None if failed
         """
-        client = await get_db_client()
+        db_manager = DBManager.get_instance()
+        await db_manager.connect()
+        client = db_manager.get_client()
         try:
             portfolio = await client.portfolio.find_unique(
                 where={"id": portfolio_id},
@@ -289,7 +295,9 @@ class TradingAgentSnapshotService:
         Returns:
             Dict with summary of snapshots captured
         """
-        client = await get_db_client()
+        db_manager = DBManager.get_instance()
+        await db_manager.connect()
+        client = db_manager.get_client()
         try:
             portfolios = await client.portfolio.find_many(
                 where={"status": "active"},
@@ -342,7 +350,9 @@ class TradingAgentSnapshotService:
         Returns:
             List of snapshot records ordered by snapshot_at (descending)
         """
-        client = await get_db_client()
+        db_manager = DBManager.get_instance()
+        await db_manager.connect()
+        client = db_manager.get_client()
         try:
             snapshots = await client.tradingagentsnapshot.find_many(
                 where={"agent_id": agent_id},
@@ -385,7 +395,9 @@ class TradingAgentSnapshotService:
         Returns:
             List of snapshot records ordered by snapshot_at (descending)
         """
-        client = await get_db_client()
+        db_manager = DBManager.get_instance()
+        await db_manager.connect()
+        client = db_manager.get_client()
         try:
             snapshots = await client.portfoliosnapshot.find_many(
                 where={"portfolio_id": portfolio_id},
