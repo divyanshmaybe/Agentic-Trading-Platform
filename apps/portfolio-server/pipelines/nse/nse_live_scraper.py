@@ -277,22 +277,26 @@ class NSEScraperSubject(ConnectorSubject):
         except Exception as e:
             print(f"[WARN] Could not load processed announcements: {e}")
     
-    def _fetch_api_announcements(self) -> List[Dict]:
-        """Fetch announcements from API - simplified and robust"""
+    def _fetch_api_announcements(self, retry_count: int = 0) -> List[Dict]:
+        """Fetch announcements from API with exponential backoff retry"""
+        MAX_RETRIES = 3
+        BASE_TIMEOUT = 20  # Increased base timeout
+        
         session = requests.Session()
         headers = get_session_headers()
         
         try:
             # Establish session (required by NSE)
             print("[NSE-SCRAPER] Establishing NSE session...")
-            session.get(NSE_BASE_URL, headers=headers, timeout=10)
+            session.get(NSE_BASE_URL, headers=headers, timeout=BASE_TIMEOUT)
             time.sleep(1)
-            session.get(NSE_ANNOUNCEMENTS_URL, headers=headers, timeout=10)
+            session.get(NSE_ANNOUNCEMENTS_URL, headers=headers, timeout=BASE_TIMEOUT)
             time.sleep(1)
             
-            # Fetch from API
-            print(f"[NSE-SCRAPER] Fetching from NSE API: {NSE_API_URL}")
-            response = session.get(NSE_API_URL, headers=headers, timeout=15)
+            # Fetch from API with increased timeout
+            timeout = BASE_TIMEOUT * (retry_count + 1)  # Progressive timeout
+            print(f"[NSE-SCRAPER] Fetching from NSE API (attempt {retry_count + 1}/{MAX_RETRIES + 1}, timeout={timeout}s): {NSE_API_URL}")
+            response = session.get(NSE_API_URL, headers=headers, timeout=timeout)
             print(f"[NSE-SCRAPER] API response status: {response.status_code}")
             
             if response.status_code != 200:
@@ -361,10 +365,19 @@ class NSEScraperSubject(ConnectorSubject):
             return announcements
             
         except requests.exceptions.RequestException as e:
-            print(f"[ERROR] API request failed: {e}")
-            import traceback
-            traceback.print_exc()
-            return []  # Return empty list, keep polling
+            print(f"[ERROR] API request failed (attempt {retry_count + 1}): {e}")
+            
+            # Retry with exponential backoff
+            if retry_count < 3:
+                backoff_time = 2 ** retry_count  # 1s, 2s, 4s
+                print(f"[RETRY] Waiting {backoff_time}s before retry...")
+                time.sleep(backoff_time)
+                return self._fetch_api_announcements(retry_count + 1)
+            else:
+                print("[ERROR] Max retries reached, giving up for this cycle")
+                import traceback
+                traceback.print_exc()
+                return []  # Return empty list, keep polling
         except Exception as e:
             print(f"[ERROR] Unexpected error in API fetch: {e}")
             import traceback

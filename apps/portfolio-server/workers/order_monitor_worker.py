@@ -47,6 +47,21 @@ BATCH_SIZE = int(os.getenv("ORDER_MONITOR_BATCH_SIZE", "100"))  # Process 100 or
 MAX_RETRY_ATTEMPTS = int(os.getenv("ORDER_MONITOR_MAX_RETRIES", "3"))
 STALE_ORDER_TIMEOUT = int(os.getenv("ORDER_STALE_TIMEOUT_HOURS", "24"))  # Cancel after 24 hours
 
+# Global market data service singleton for this process (survives across task runs)
+_market_data_service = None
+_market_data_lock = asyncio.Lock()
+
+
+async def get_or_create_market_data_service():
+    """Get or create market data service singleton for this worker process."""
+    global _market_data_service
+    if _market_data_service is None:
+        async with _market_data_lock:
+            if _market_data_service is None:
+                _market_data_service = get_market_data_service()
+                logger.info("📊 Market data service initialized for worker process")
+    return _market_data_service
+
 
 class OrderMonitorWorker:
     """
@@ -74,8 +89,8 @@ class OrderMonitorWorker:
         # Setup database - get connected client for current event loop
         self.db = await get_db_client()
         
-        # Setup market data service
-        self.market_data = get_market_data_service()
+        # Setup market data service (use global singleton to avoid repeated login)
+        self.market_data = await get_or_create_market_data_service()
         
         logger.info("✅ Order Monitor Worker initialized")
     

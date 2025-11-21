@@ -1613,6 +1613,7 @@ class PipelineService:
                     if signal in [1, -1]:  # Only process BUY (1) or SELL (-1) signals
                         try:
                             from workers.pipeline_tasks import process_trade_signal
+                            from celery_app import celery_app
                             
                             signal_payload = {
                                 "symbol": symbol,
@@ -1624,15 +1625,30 @@ class PipelineService:
                                 "source": "nse_pipeline",
                             }
                             
-                            # Enqueue trade signal processing via Celery (async, non-blocking)
-                            task = process_trade_signal.apply_async(args=[signal_payload])
-                            self.logger.info(
-                                "🚀 Enqueued trade signal processing for %s (signal: %s) - Task ID: %s",
-                                symbol, "BUY" if signal == 1 else "SELL", task.id
-                            )
+                            # Check if Celery workers are available
+                            inspect = celery_app.control.inspect(timeout=2.0)
+                            active_queues = inspect.active_queues()
+                            
+                            if not active_queues:
+                                self.logger.error(
+                                    "❌ No Celery workers available! Cannot enqueue trade for %s. Start workers with: pnpm celery",
+                                    symbol
+                                )
+                                # Store signal for manual retry
+                                self.logger.warning(
+                                    "⚠️  Signal stored in trading_signals.jsonl for manual processing: %s %s @ confidence=%.2f",
+                                    symbol, "BUY" if signal == 1 else "SELL", row.get("confidence", 0.7)
+                                )
+                            else:
+                                # Enqueue trade signal processing via Celery (async, non-blocking)
+                                task = process_trade_signal.apply_async(args=[signal_payload])
+                                self.logger.info(
+                                    "🚀 Enqueued trade signal processing for %s (signal: %s) - Task ID: %s",
+                                    symbol, "BUY" if signal == 1 else "SELL", task.id
+                                )
                         except Exception as trade_exc:
                             self.logger.error(
-                                "Failed to enqueue trade for signal %s (%s): %s",
+                                "❌ Failed to enqueue trade for signal %s (%s): %s",
                                 symbol, signal, trade_exc, exc_info=True
                             )
 
