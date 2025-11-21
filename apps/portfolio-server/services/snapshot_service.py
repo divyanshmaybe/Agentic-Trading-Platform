@@ -115,20 +115,16 @@ class TradingAgentSnapshotService:
                 current_value = available_cash + positions_value
                 realized_pnl = self._as_decimal(getattr(agent, "realized_pnl", 0))
                 
-                # Create snapshot with minimal fields
+                # Create snapshot (agent relation automatically sets agent_id)
                 snapshot = await client.tradingagentsnapshot.create(
                     data={
-                        "agent_id": agent_id,
+                        "agent": {"connect": {"id": agent_id}},
                         "portfolio_id": portfolio_id,
                         "agent_type": agent_type,
                         "snapshot_at": datetime.utcnow(),
                         "current_value": current_value,
                         "realized_pnl": realized_pnl,
                         "unrealized_pnl": unrealized_pnl,
-                        "metadata": {
-                            "agent_name": getattr(agent, "agent_name", ""),
-                            "captured_at": datetime.utcnow().isoformat(),
-                        },
                     }
                 )
                 
@@ -256,10 +252,10 @@ class TradingAgentSnapshotService:
             
             current_value = available_cash + positions_value
             
-            # Create snapshot
+            # Create snapshot with relation to portfolio
             snapshot = await client.portfoliosnapshot.create(
                 data={
-                    "portfolio_id": portfolio_id,
+                    "portfolio": {"connect": {"id": portfolio_id}},
                     "snapshot_at": datetime.utcnow(),
                     "current_value": current_value,
                     "realized_pnl": realized_pnl,
