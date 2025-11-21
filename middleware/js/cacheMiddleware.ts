@@ -242,8 +242,6 @@ export function cacheMiddleware(options: CacheOptions = {}) {
       const cached = await cacheManager.get(cacheKey);
 
       if (cached) {
-        console.log(`🎯 Cache HIT: ${cacheKey}`);
-
         // Set cache headers
         res.set({
           "X-Cache": "HIT",
@@ -253,8 +251,6 @@ export function cacheMiddleware(options: CacheOptions = {}) {
 
         return res.status(cached.statusCode).json(cached.data);
       }
-
-      console.log(`💨 Cache MISS: ${cacheKey}`);
 
       // Cache miss - intercept response
       const originalJson = res.json.bind(res);

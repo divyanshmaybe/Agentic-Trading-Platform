@@ -33,13 +33,6 @@ export function internalAuth(req: Request, res: Response, next: NextFunction) {
   const isInternal = req.headers["x-internal-service"];
   const expectedSecret = process.env.INTERNAL_SERVICE_SECRET;
 
-  // Debug logging (remove in production)
-  console.log("🔐 Internal Auth Check:", {
-    hasSecret: !!serviceSecret,
-    hasExpected: !!expectedSecret,
-    isInternal,
-  });
-
   // SECURITY: Use timing-safe comparison to prevent timing attacks
   if (
     !isInternal ||

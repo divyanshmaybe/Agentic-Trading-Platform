@@ -97,6 +97,15 @@ class TradingAgentSnapshotService:
                 positions_value = Decimal("0")
                 unrealized_pnl = Decimal("0")
                 
+                # Batch fetch all prices first (more efficient than per-position)
+                symbols_needed = {str(getattr(p, "symbol", "")) for p in positions 
+                                if str(getattr(p, "symbol", "")) and int(getattr(p, "quantity", 0)) != 0}
+                
+                # Pre-fetch all prices from cache (WebSocket already has them)
+                price_cache = {}
+                for symbol in symbols_needed:
+                    price_cache[symbol] = self._get_live_price(symbol, Decimal("0"))
+                
                 for position in positions:
                     symbol = str(getattr(position, "symbol", ""))
                     quantity = int(getattr(position, "quantity", 0))
@@ -105,8 +114,10 @@ class TradingAgentSnapshotService:
                     if not symbol or quantity == 0:
                         continue
                     
-                    # Get live price
-                    current_price = self._get_live_price(symbol, avg_buy_price)
+                    # Use pre-fetched price (fallback to avg if not in cache)
+                    current_price = price_cache.get(symbol, avg_buy_price)
+                    if current_price == Decimal("0"):
+                        current_price = avg_buy_price
                     
                     position_value = current_price * Decimal(str(quantity))
                     cost_basis = avg_buy_price * Decimal(str(quantity))
@@ -240,6 +251,15 @@ class TradingAgentSnapshotService:
             positions_value = Decimal("0")
             unrealized_pnl = Decimal("0")
             
+            # Batch fetch all prices first (more efficient than per-position)
+            symbols_needed = {str(getattr(p, "symbol", "")) for p in positions 
+                            if str(getattr(p, "symbol", "")) and int(getattr(p, "quantity", 0)) != 0}
+            
+            # Pre-fetch all prices from cache (WebSocket already has them)
+            price_cache = {}
+            for symbol in symbols_needed:
+                price_cache[symbol] = self._get_live_price(symbol, Decimal("0"))
+            
             for pos in positions:
                 symbol = str(getattr(pos, "symbol", ""))
                 quantity = int(getattr(pos, "quantity", 0))
@@ -248,7 +268,10 @@ class TradingAgentSnapshotService:
                 if not symbol or quantity == 0:
                     continue
                 
-                current_price = self._get_live_price(symbol, avg_buy_price)
+                # Use pre-fetched price (fallback to avg if not in cache)
+                current_price = price_cache.get(symbol, avg_buy_price)
+                if current_price == Decimal("0"):
+                    current_price = avg_buy_price
                 
                 position_value = current_price * Decimal(str(quantity))
                 cost_basis = avg_buy_price * Decimal(str(quantity))
