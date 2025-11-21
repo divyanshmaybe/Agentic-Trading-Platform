@@ -1461,23 +1461,13 @@ class TradeExecutionService:
                 total_cost = Decimal(str(executed_price)) * Decimal(str(quantity))
                 
                 # Validate available cash at portfolio or allocation level
-                if agent_id:
-                    # Validate at allocation level if agent is involved
-                    validation_result = await validation_service.validate_buy_order(
-                        symbol=symbol,
-                        quantity=quantity,
-                        price=Decimal(str(executed_price)),
-                        portfolio_id=portfolio_id,
-                        allocation_id=None  # Will be fetched from agent
-                    )
-                else:
-                    # Validate at portfolio level
-                    validation_result = await validation_service.validate_buy_order(
-                        symbol=symbol,
-                        quantity=quantity,
-                        price=Decimal(str(executed_price)),
-                        portfolio_id=portfolio_id
-                    )
+                validation_result = await validation_service.validate_buy_order(
+                    portfolio_id=portfolio_id,
+                    agent_id=agent_id,  # Pass agent_id (can be None for manual trades)
+                    symbol=symbol,
+                    quantity=quantity,
+                    price=Decimal(str(executed_price)),
+                )
                 
                 if not validation_result["valid"]:
                     self.logger.error(
@@ -1490,9 +1480,10 @@ class TradeExecutionService:
             elif side.upper() == "SELL":
                 # Validate sufficient holdings
                 validation_result = await validation_service.validate_sell_order(
+                    portfolio_id=portfolio_id,
+                    agent_id=agent_id,  # Pass agent_id to find position
                     symbol=symbol,
                     quantity=quantity,
-                    portfolio_id=portfolio_id
                 )
                 
                 if not validation_result["valid"]:

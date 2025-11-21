@@ -186,7 +186,6 @@ class PortfolioController:
                         "portfolio_id": portfolio.id,
                         "objective_id": None,  # Auto-created portfolio without objective
                         "user_id": user_id,
-                        "organization_id": organization_id,
                         "user_inputs": user_inputs,
                         "initial_value": float(defaults["investment_amount"]),
                         "available_cash": float(defaults["investment_amount"]),

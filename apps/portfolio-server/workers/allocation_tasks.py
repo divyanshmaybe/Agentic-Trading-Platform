@@ -796,7 +796,6 @@ def allocate_for_objective_task(
     portfolio_id: str,
     objective_id: str,
     user_id: str,
-    organization_id: str,
     user_inputs: Dict[str, Any],
     initial_value: float,
     available_cash: Optional[float] = None,
@@ -809,7 +808,6 @@ def allocate_for_objective_task(
         portfolio_id: Database ID of the portfolio
         objective_id: Database ID of the objective that triggered this
         user_id: User who owns the portfolio
-        organization_id: Organization ID
         user_inputs: Portfolio preferences from objective
         initial_value: Initial investment amount
         available_cash: Available cash in portfolio (defaults to initial_value)
@@ -845,7 +843,6 @@ def allocate_for_objective_task(
                 "metadata": {
                     "portfolio_id": portfolio_id,
                     "objective_id": objective_id,
-                    "organization_id": organization_id,
                     "trigger": triggered_by,
                     "timestamp": datetime.utcnow().isoformat(),
                 }
@@ -1320,7 +1317,6 @@ def daily_rebalancing_sweep_task(self) -> Dict[str, Any]:
                     "value_history": value_history,
                     "metadata": {
                         "portfolio_id": portfolio.id,
-                        "organization_id": portfolio.organization_id,
                         "trigger": "scheduled_rebalancing",
                         "scheduled_date": portfolio.rebalancing_date.isoformat() if portfolio.rebalancing_date else None,
                         "days_overdue": days_overdue,

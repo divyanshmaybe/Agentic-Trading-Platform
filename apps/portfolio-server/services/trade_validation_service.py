@@ -54,82 +54,82 @@ class TradeValidationService:
         Returns:
             Dict with 'valid' (bool), 'reason' (str), and 'available_cash' (Decimal)
         """
-        async with get_db_client() as client:
-            try:
-                # Calculate required cash
-                required_cash = self._as_decimal(price * Decimal(str(quantity)))
-                
-                # Get available cash from portfolio allocation
-                if agent_id:
-                    agent = await client.tradingagent.find_unique(
-                        where={"id": agent_id},
-                        include={"allocation": True},
-                    )
-                    
-                    if not agent:
-                        return {
-                            "valid": False,
-                            "reason": "Trading agent not found",
-                            "available_cash": Decimal("0"),
-                        }
-                    
-                    allocation = getattr(agent, "allocation", None)
-                    if not allocation:
-                        return {
-                            "valid": False,
-                            "reason": "No allocation found for agent",
-                            "available_cash": Decimal("0"),
-                        }
-                    
-                    # Get liquid cash from allocation
-                    available_cash = self._as_decimal(getattr(allocation, "available_cash", 0))
-                    
-                else:
-                    # Manual trade - check portfolio-level cash
-                    portfolio = await client.portfolio.find_unique(
-                        where={"id": portfolio_id}
-                    )
-                    
-                    if not portfolio:
-                        return {
-                            "valid": False,
-                            "reason": "Portfolio not found",
-                            "available_cash": Decimal("0"),
-                        }
-                    
-                    available_cash = self._as_decimal(getattr(portfolio, "available_cash", 0))
-                
-                # Validate
-                if available_cash < required_cash:
-                    return {
-                        "valid": False,
-                        "reason": f"Insufficient cash: ₹{float(available_cash):.2f} available, ₹{float(required_cash):.2f} required",
-                        "available_cash": available_cash,
-                        "required_cash": required_cash,
-                    }
-                
-                self.logger.info(
-                    "✅ BUY validation passed: %s x %d @ ₹%.2f (cash: ₹%.2f)",
-                    symbol,
-                    quantity,
-                    float(price),
-                    float(available_cash),
+        client = await get_db_client()
+        try:
+            # Calculate required cash
+            required_cash = self._as_decimal(price * Decimal(str(quantity)))
+            
+            # Get available cash from portfolio allocation
+            if agent_id:
+                agent = await client.tradingagent.find_unique(
+                    where={"id": agent_id},
+                    include={"allocation": True},
                 )
                 
+                if not agent:
+                    return {
+                        "valid": False,
+                        "reason": "Trading agent not found",
+                        "available_cash": Decimal("0"),
+                    }
+                
+                allocation = getattr(agent, "allocation", None)
+                if not allocation:
+                    return {
+                        "valid": False,
+                        "reason": "No allocation found for agent",
+                        "available_cash": Decimal("0"),
+                    }
+                
+                # Get liquid cash from allocation
+                available_cash = self._as_decimal(getattr(allocation, "available_cash", 0))
+                
+            else:
+                # Manual trade - check portfolio-level cash
+                portfolio = await client.portfolio.find_unique(
+                    where={"id": portfolio_id}
+                )
+                
+                if not portfolio:
+                    return {
+                        "valid": False,
+                        "reason": "Portfolio not found",
+                        "available_cash": Decimal("0"),
+                    }
+                
+                available_cash = self._as_decimal(getattr(portfolio, "available_cash", 0))
+            
+            # Validate
+            if available_cash < required_cash:
                 return {
-                    "valid": True,
-                    "reason": "Sufficient cash available",
+                    "valid": False,
+                    "reason": f"Insufficient cash: ₹{float(available_cash):.2f} available, ₹{float(required_cash):.2f} required",
                     "available_cash": available_cash,
                     "required_cash": required_cash,
                 }
+            
+            self.logger.info(
+                "✅ BUY validation passed: %s x %d @ ₹%.2f (cash: ₹%.2f)",
+                symbol,
+                quantity,
+                float(price),
+                float(available_cash),
+            )
+            
+            return {
+                "valid": True,
+                "reason": "Sufficient cash available",
+                "available_cash": available_cash,
+                "required_cash": required_cash,
+            }
                 
-            except Exception as exc:
-                self.logger.error("Buy validation failed: %s", exc, exc_info=True)
-                return {
-                    "valid": False,
-                    "reason": f"Validation error: {str(exc)}",
-                    "available_cash": Decimal("0"),
-                }
+        except Exception as exc:
+            self.logger.error("Buy validation failed: %s", exc, exc_info=True)
+            return {
+                "valid": False,
+                "reason": f"Validation error: {str(exc)}",
+                "available_cash": Decimal("0"),
+            }
 
     async def validate_sell_order(
         self,
@@ -150,55 +150,55 @@ class TradeValidationService:
         Returns:
             Dict with 'valid' (bool), 'reason' (str), and 'available_quantity' (int)
         """
-        async with get_db_client() as client:
-            try:
-                # Find position
-                where_clause = {
-                    "portfolio_id": portfolio_id,
-                    "symbol": symbol,
-                    "status": "open",
-                }
-                
-                if agent_id:
-                    where_clause["agent_id"] = agent_id
-                
-                position = await client.position.find_first(where=where_clause)
-                
-                if not position:
-                    return {
-                        "valid": False,
-                        "reason": f"No open position found for {symbol}",
-                        "available_quantity": 0,
-                    }
-                
-                available_quantity = int(getattr(position, "quantity", 0))
-                
-                if available_quantity < quantity:
-                    return {
-                        "valid": False,
-                        "reason": f"Insufficient holdings: {available_quantity} available, {quantity} requested",
-                        "available_quantity": available_quantity,
-                        "requested_quantity": quantity,
-                    }
-                
-                self.logger.info(
-                    "✅ SELL validation passed: %s x %d (holdings: %d)",
-                    symbol,
-                    quantity,
-                    available_quantity,
-                )
-                
+        client = await get_db_client()
+        try:
+            # Find position
+            where_clause = {
+                "portfolio_id": portfolio_id,
+                "symbol": symbol,
+                "status": "open",
+            }
+            
+            if agent_id:
+                where_clause["agent_id"] = agent_id
+            
+            position = await client.position.find_first(where=where_clause)
+            
+            if not position:
                 return {
-                    "valid": True,
-                    "reason": "Sufficient holdings available",
+                    "valid": False,
+                    "reason": f"No open position found for {symbol}",
+                    "available_quantity": 0,
+                }
+            
+            available_quantity = int(getattr(position, "quantity", 0))
+            
+            if available_quantity < quantity:
+                return {
+                    "valid": False,
+                    "reason": f"Insufficient holdings: {available_quantity} available, {quantity} requested",
                     "available_quantity": available_quantity,
                     "requested_quantity": quantity,
                 }
+            
+            self.logger.info(
+                "✅ SELL validation passed: %s x %d (holdings: %d)",
+                symbol,
+                quantity,
+                available_quantity,
+            )
+            
+            return {
+                "valid": True,
+                "reason": "Sufficient holdings available",
+                "available_quantity": available_quantity,
+                "requested_quantity": quantity,
+            }
                 
-            except Exception as exc:
-                self.logger.error("Sell validation failed: %s", exc, exc_info=True)
-                return {
-                    "valid": False,
-                    "reason": f"Validation error: {str(exc)}",
-                    "available_quantity": 0,
-                }
+        except Exception as exc:
+            self.logger.error("Sell validation failed: %s", exc, exc_info=True)
+            return {
+                "valid": False,
+                "reason": f"Validation error: {str(exc)}",
+                "available_quantity": 0,
+            }
