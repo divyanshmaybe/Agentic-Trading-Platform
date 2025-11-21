@@ -22,14 +22,23 @@ import requests
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
-# Suppress verbose Pathway sink logging
-os.environ.setdefault("PATHWAY_LOG_LEVEL", "ERROR")
-os.environ.setdefault("PATHWAY_MONITORING_LEVEL", "NONE")
-# Suppress Pathway IO sink loggers specifically
-logging.getLogger("pathway").setLevel(logging.ERROR)
-logging.getLogger("pathway.io").setLevel(logging.ERROR)
-logging.getLogger("pathway.io.kafka").setLevel(logging.ERROR)
-logging.getLogger("pathway.io.jsonlines").setLevel(logging.ERROR)
+# Suppress verbose Pathway sink logging - MUST be set before Pathway imports
+os.environ["PATHWAY_LOG_LEVEL"] = "ERROR"
+os.environ["PATHWAY_MONITORING_LEVEL"] = "NONE"
+os.environ["PATHWAY_PERSISTENT_STORAGE"] = ""
+
+# Suppress ALL Pathway-related loggers
+import logging
+for logger_name in [
+    "pathway",
+    "pathway.io",
+    "pathway.io.kafka",
+    "pathway.io.jsonlines",
+    "pathway.xpacks",
+    "pathway.stdlib",
+]:
+    logging.getLogger(logger_name).setLevel(logging.CRITICAL)
+    logging.getLogger(logger_name).propagate = False
 
 # Ensure shared utilities (Kafka service, etc.) are importable when the pipeline
 # runs in isolation (e.g. Celery worker context or manual execution).

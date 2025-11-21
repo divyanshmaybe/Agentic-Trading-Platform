@@ -80,9 +80,21 @@ class OrderMonitorWorker:
         logger.info("✅ Order Monitor Worker initialized")
     
     async def close(self):
-        """Close database connection."""
-        # Connection is managed per event loop by db_client module
-        pass
+        """Close database connection and cleanup resources."""
+        if self.db:
+            try:
+                await self.db.disconnect()
+                self.db = None
+                logger.debug("🔌 Database connection closed")
+            except Exception as e:
+                logger.warning(f"Error closing database connection: {e}")
+        
+        # Force cleanup of event loop client to prevent connection leaks
+        try:
+            from db_client import ensure_disconnected
+            await ensure_disconnected()
+        except Exception as e:
+            logger.debug(f"Additional cleanup error: {e}")
     
     async def run(self):
         """Main monitoring loop - runs continuously."""
@@ -455,9 +467,9 @@ def check_pending_orders_once(self):
 async def _check_pending_orders_once_async() -> Dict:
     """Async implementation of one-time order check."""
     worker = OrderMonitorWorker()
-    await worker.initialize()
     
     try:
+        await worker.initialize()
         pending_orders = await worker._fetch_pending_orders()
         
         if not pending_orders:
@@ -475,4 +487,8 @@ async def _check_pending_orders_once_async() -> Dict:
         logger.error(f"Failed one-time order check: {e}", exc_info=True)
         return {"status": "error", "error": str(e)}
     finally:
-        await worker.close()
+        # Always close database connection to prevent leaks
+        try:
+            await worker.close()
+        except Exception as close_err:
+            logger.warning(f"Error closing worker: {close_err}")
