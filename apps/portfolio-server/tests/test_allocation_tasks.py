@@ -158,7 +158,6 @@ async def test_allocate_for_objective_task_creates_allocations(monkeypatch, mock
             "portfolio-123",
             "objective-123",
             "user-123",
-            "org-123",
             {"risk_tolerance": "medium"},
             100000.0,
             100000.0,

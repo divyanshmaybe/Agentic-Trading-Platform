@@ -615,7 +615,6 @@ async def test_objective_creation_and_allocation_flow(monkeypatch: pytest.Monkey
             response.portfolio_id,
             response.objective.id,
             user["id"],
-            user["organization_id"],
             task_kwargs["user_inputs"],
             float(payload.investable_amount),
             float(payload.investable_amount),
@@ -818,7 +817,6 @@ async def test_objective_intake_then_allocation(monkeypatch: pytest.MonkeyPatch)
             task_kwargs["portfolio_id"],
             task_kwargs["objective_id"],
             task_kwargs["user_id"],
-            task_kwargs["organization_id"],
             task_kwargs["user_inputs"],
             task_kwargs["initial_value"],
             task_kwargs.get("available_cash") or task_kwargs.get("current_value"),
@@ -962,7 +960,6 @@ async def test_allocation_enables_subscribed_agent(monkeypatch: pytest.MonkeyPat
             response.portfolio_id,
             response.objective.id,
             user["id"],
-            user["organization_id"],
             {
                 "risk_tolerance": "high",
                 "investment_horizon_years": 5,
