@@ -157,6 +157,13 @@ spec:
                 name: portfolio-config
             - secretRef:
                 name: portfolio-env-secret
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "1Gi"
+            limits:
+              cpu: "1"
+              memory: "2Gi"
           ports:
             - containerPort: 8000
               name: http
@@ -177,12 +184,16 @@ spec:
               port: http
             initialDelaySeconds: 30
             periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
           livenessProbe:
             httpGet:
               path: /health
               port: http
             initialDelaySeconds: 60
             periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -251,6 +262,8 @@ spec:
                 - /app/apps/portfolio-server/scripts/celery_healthcheck.py
             initialDelaySeconds: 20
             periodSeconds: 20
+            timeoutSeconds: 10
+            failureThreshold: 3
           livenessProbe:
             exec:
               command:
@@ -258,6 +271,8 @@ spec:
                 - /app/apps/portfolio-server/scripts/celery_healthcheck.py
             initialDelaySeconds: 40
             periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
@@ -710,6 +725,13 @@ spec:
                 name: portfolio-config
             - secretRef:
                 name: portfolio-env-secret
+          env:
+            - name: AUTO_SELL_ENABLED
+              value: "true"
+            - name: SNAPSHOT_TASKS_ENABLED
+              value: "true"
+            - name: MARKET_CLOSE_SELL_ENABLED
+              value: "false"
           resources:
             requests:
               cpu: "100m"
@@ -895,6 +917,19 @@ spec:
               value: "true"
             - name: CLUSTER_ID
               value: "MkU3OEVBNTcwNTJENDM2Qk"
+          volumeMounts:
+            - name: kafka-data
+              mountPath: /var/lib/kafka/data
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "2Gi"
+      volumes:
+        - name: kafka-data
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

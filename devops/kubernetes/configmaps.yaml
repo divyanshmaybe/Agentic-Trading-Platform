@@ -28,6 +28,23 @@ data:
   MARKET_DATA_WS_URL: wss://example.org/dummy
   ENABLE_NIFTY500_PREFETCH: "false"
   PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware:/app/middleware/py
+  # Trading Mode Configuration
+  DEMO_MODE: "true"
+  ENABLE_AUTO_TRADING: "true"
+  MARKET_CLOSE_SELL_ENABLED: "false"
+  # Pathway Logging Suppression
+  PATHWAY_LOG_LEVEL: "ERROR"
+  PATHWAY_DISABLE_PROGRESS: "1"
+  PATHWAY_MONITORING_LEVEL: "none"
+  # NSE Pipeline Configuration
+  NSE_REFRESH_INTERVAL: "60"
+  NSE_PIPELINE_TIMEOUT: "20"
+  NSE_MAX_TIMEOUT: "60"
+  NEWS_FETCH_RATE: "3600"
+  NEWS_TOP_K: "3"
+  # Worker Availability Checks
+  MIN_AVAILABLE_WORKERS: "1"
+  WORKER_CHECK_ENABLED: "true"
   CELERY_DEFAULT_QUEUE: general
   CELERY_QUEUE_ALLOCATIONS: allocations
   CELERY_QUEUE_TRADING: trading
@@ -58,7 +75,20 @@ data:
   CELERY_PREFETCH_MARKET: "4"
   CELERY_PREFETCH_TOKENS: "1"
   CELERY_LOG_LEVEL: info
+  # Auto-Sell Configuration
+  AUTO_SELL_CHECK_INTERVAL_SECONDS: "60"
+  AUTO_SELL_HOLD_DURATION_MINUTES: "15"
+  # Angel One Configuration
+  ANGELONE_RETRY_ATTEMPTS: "3"
+  ANGELONE_RETRY_DELAY: "5"
+  ANGELONE_MAX_RETRY_DELAY: "20"
+  # Market Data Configuration
+  MARKET_DATA_RECONNECT_DELAY: "5"
+  MARKET_DATA_MAX_RECONNECT_DELAY: "60"
+  # Kafka Configuration
   KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  KAFKA_NSE_TOPIC: nse_filings_trading_signal
+  KAFKA_TRADE_LOGS_TOPIC: nse_pipeline_trade_logs
 ---
 apiVersion: v1
 kind: ConfigMap
