@@ -159,12 +159,9 @@ celery_app.conf.task_queues = _all_queues
 
 celery_app.conf.task_routes = {
     # Allocation + trading queues
-    "portfolio.allocate_new_portfolio": {"queue": QUEUE_NAMES["allocations"]},
     "portfolio.allocate_for_objective": {"queue": QUEUE_NAMES["allocations"]},
     "portfolio.check_regime_and_rebalance": {"queue": QUEUE_NAMES["allocations"]},
-    "pipeline.rebalance.scheduled": {"queue": QUEUE_NAMES["allocations"]},
     "trading.execute_trade_job": {"queue": QUEUE_NAMES["trading"]},
-    "trading.process_pending_trade": {"queue": QUEUE_NAMES["trading"]},
     "pipeline.trade_execution.process_signal": {"queue": QUEUE_NAMES["trading"]},
     # Pipelines + data
     "pipeline.start": {"queue": QUEUE_NAMES["pipelines"]},
@@ -176,6 +173,7 @@ celery_app.conf.task_routes = {
     "market_data.generate_angelone_tokens": {"queue": QUEUE_NAMES["tokens"]},
     # Risk + alerts
     "risk.alerts.send_email": {"queue": QUEUE_NAMES["risk"]},
+    "risk.streaming_monitor.start": {"queue": QUEUE_NAMES["risk"]},
     # Order monitoring
     "order_monitor.start_continuous_monitoring": {"queue": QUEUE_NAMES["orders"]},
     "order_monitor.check_pending_orders_once": {"queue": QUEUE_NAMES["orders"]},
@@ -185,15 +183,12 @@ celery_app.conf.task_routes = {
 }
 
 ANNOTATED_TASKS = [
-    "portfolio.allocate_new_portfolio",
     "portfolio.allocate_for_objective",
     "portfolio.check_regime_and_rebalance",
-    "pipeline.rebalance.scheduled",
     "pipeline.risk_monitor.run",
     "pipeline.news_sentiment.run",
     "pipeline.trade_execution.process_signal",
     "trading.execute_trade_job",
-    "trading.process_pending_trade",
 ]
 
 celery_app.conf.task_annotations = {

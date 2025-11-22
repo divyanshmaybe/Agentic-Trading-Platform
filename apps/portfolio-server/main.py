@@ -144,6 +144,23 @@ def create_lifespan(base_app_instance, pipeline_service_instance):
             )
             app.state.regime_service = None
         
+        # Start streaming risk monitor (real-time position monitoring)
+        streaming_risk_enabled = os.getenv("STREAMING_RISK_MONITOR_ENABLED", "true").lower() in {"1", "true", "yes"}
+        if streaming_risk_enabled:
+            try:
+                base_app_instance.logger.info("🚀 Starting streaming risk monitor for real-time alerts...")
+                from workers.streaming_risk_tasks import start_streaming_risk_monitor_task
+                result = start_streaming_risk_monitor_task.delay()
+                app.state.streaming_risk_job_id = result.id
+                base_app_instance.logger.info(
+                    f"✅ Streaming risk monitor started: task_id={result.id} "
+                    f"(sub-second alert latency via WebSocket feeds)"
+                )
+            except Exception as exc:
+                base_app_instance.logger.error(f"❌ Failed to start streaming risk monitor: {exc}")
+        else:
+            base_app_instance.logger.info("⏭️  Streaming risk monitor disabled (using batch mode)")
+        
         yield
         
         # Shutdown
