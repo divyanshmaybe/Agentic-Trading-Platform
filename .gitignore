@@ -58,3 +58,4 @@ torch
 
 celerybeat-schedule*
 apps/portfolio-server/data/pipeline/news_last_run.txt
+docs/**
