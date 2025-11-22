@@ -84,6 +84,20 @@ AUTO_SELL_WINDOW_MINUTES = int(os.getenv("NSE_FILINGS_AUTO_SELL_WINDOW_MINUTES",
 LLM_MODEL = os.getenv("NSE_FILINGS_LLM_MODEL", "gemini-2.5-flash")
 DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() in {"1", "true", "yes"}
 
+# Relevant filing types to filter and process
+RELEVANT_FILE_TYPES = {
+    "Outcome of Board Meeting": {"positive": True, "negative": True},
+    "Press Release": {"positive": True, "negative": False},
+    "Appointment": {"positive": True, "negative": True},
+    "Acquisition": {"positive": True, "negative": True},
+    "Updates": {"positive": True, "negative": True},
+    "Action(s) initiated or orders passed": {"positive": True, "negative": True},
+    "Investor Presentation": {"positive": True, "negative": True},
+    "Sale or Disposal": {"positive": True, "negative": True},
+    "Bagging/Receiving of Orders/Contracts": {"positive": True, "negative": True},
+    "Change in Director(s)": {"positive": True, "negative": True},
+}
+
 
 # API Keys
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
@@ -253,6 +267,68 @@ def publish_signal_to_kafka(
     except Exception as exc:  # pragma: no cover - defensive logging
         print(f"[KAFKA] Failed to publish signal for {symbol}: {exc}")
         return f"error:{exc}"
+
+
+# ============================================================================
+# FILING TYPE MAPPING AND FILTERING
+# ============================================================================
+
+@pw.udf
+def map_filing_type(desc: str) -> str:
+    """Map announcement description to a relevant filing type
+    
+    Returns the matched filing type from RELEVANT_FILE_TYPES, or empty string if no match.
+    """
+    if not desc:
+        return ""
+    
+    desc_lower = desc.lower()
+    
+    # Direct keyword matching - check if filing type appears in description
+    for filing_type in RELEVANT_FILE_TYPES.keys():
+        if filing_type.lower() in desc_lower:
+            return filing_type
+    
+    # Fuzzy matching for common patterns
+    if "board" in desc_lower and "meeting" in desc_lower:
+        return "Outcome of Board Meeting"
+    elif "press" in desc_lower or "release" in desc_lower:
+        return "Press Release"
+    elif "appoint" in desc_lower or "resignation" in desc_lower:
+        return "Appointment"
+    elif "acqui" in desc_lower or "merger" in desc_lower:
+        return "Acquisition"
+    elif "update" in desc_lower:
+        return "Updates"
+    elif "order" in desc_lower or "action" in desc_lower:
+        return "Action(s) initiated or orders passed"
+    elif "presentation" in desc_lower or "investor" in desc_lower:
+        return "Investor Presentation"
+    elif "sale" in desc_lower or "disposal" in desc_lower or "divestment" in desc_lower:
+        return "Sale or Disposal"
+    elif "contract" in desc_lower or "bagging" in desc_lower:
+        return "Bagging/Receiving of Orders/Contracts"
+    elif "director" in desc_lower and "change" in desc_lower:
+        return "Change in Director(s)"
+    
+    # No match found
+    return ""
+
+
+@pw.udf
+def should_use_positive_impact(filing_type: str) -> bool:
+    """Check if positive impact should be fetched for this filing type"""
+    if not filing_type or filing_type not in RELEVANT_FILE_TYPES:
+        return False
+    return RELEVANT_FILE_TYPES[filing_type].get("positive", False)
+
+
+@pw.udf
+def should_use_negative_impact(filing_type: str) -> bool:
+    """Check if negative impact should be fetched for this filing type"""
+    if not filing_type or filing_type not in RELEVANT_FILE_TYPES:
+        return False
+    return RELEVANT_FILE_TYPES[filing_type].get("negative", False)
 
 
 # ============================================================================
@@ -428,8 +504,20 @@ def fetch_stock_data(symbol: str, filing_time: str) -> str:
 # ============================================================================
 
 @pw.udf
-def get_pos_impact(file_type: str, static_data_path: str = "staticdata.csv") -> str:
-    """Get positive impact scenario for filing type"""
+def get_pos_impact(file_type: str, use_positive: bool, static_data_path: str = "staticdata.csv") -> str:
+    """Get positive impact scenario for filing type
+    
+    Args:
+        file_type: The mapped filing type
+        use_positive: Whether to fetch positive impact based on RELEVANT_FILE_TYPES config
+        static_data_path: Path to CSV with filing type impact scenarios
+    
+    Returns:
+        Positive impact scenario text, or "not applicable" if shouldn't be used
+    """
+    if not use_positive:
+        return "not applicable for this filing type"
+    
     try:
         import pandas as pd
         
@@ -449,8 +537,20 @@ def get_pos_impact(file_type: str, static_data_path: str = "staticdata.csv") -> 
 
 
 @pw.udf
-def get_neg_impact(file_type: str, static_data_path: str = "staticdata.csv") -> str:
-    """Get negative impact scenario for filing type"""
+def get_neg_impact(file_type: str, use_negative: bool, static_data_path: str = "staticdata.csv") -> str:
+    """Get negative impact scenario for filing type
+    
+    Args:
+        file_type: The mapped filing type
+        use_negative: Whether to fetch negative impact based on RELEVANT_FILE_TYPES config
+        static_data_path: Path to CSV with filing type impact scenarios
+    
+    Returns:
+        Negative impact scenario text, or "not applicable" if shouldn't be used
+    """
+    if not use_negative:
+        return "not applicable for this filing type"
+    
     try:
         import pandas as pd
         
@@ -789,16 +889,25 @@ def create_nse_filings_pipeline(
     
     print("[SENTIMENT] Step 1: Processing filings from scraper...")
     
-    filings_with_paths = filings_source.select(
+    # Map filing descriptions to filing types and filter relevant ones
+    filings_with_types = filings_source.select(
         *pw.this,
+        filing_type=map_filing_type(pw.this.desc),
         filename=pw.apply(lambda url: url.split("/")[-1] if url else "", pw.this.attchmntFile),
     )
     
+    # Filter to only process relevant filing types
+    relevant_filings = filings_with_types.filter(pw.this.filing_type != "")
+    
+    print("[SENTIMENT] Step 1a: Filtered filings by relevant types...")
+    print(f"[SENTIMENT] Relevant filing types: {list(RELEVANT_FILE_TYPES.keys())}")
+    
     print("[SENTIMENT] Step 2: Downloading and parsing PDFs...")
     
-    filings_with_text = filings_with_paths.select(
+    filings_with_text = relevant_filings.select(
         symbol=pw.this.symbol,
         desc=pw.this.desc,
+        filing_type=pw.this.filing_type,
         sort_date=pw.this.sort_date,
         attchmntFile=pw.this.attchmntFile,
         filename=pw.this.filename,
@@ -807,10 +916,18 @@ def create_nse_filings_pipeline(
     
     print("[SENTIMENT] Step 2 complete: PDFs parsed, proceeding to sentiment analysis...")
     print("[SENTIMENT] Step 3: Fetching impact scenarios and stock data...")
-    filings_enriched = filings_with_text.select(
+    
+    # Determine which impacts to fetch based on filing type configuration
+    filings_with_impact_flags = filings_with_text.select(
         *pw.this,
-        pos_impact=get_pos_impact(pw.this.desc, static_data_path),
-        neg_impact=get_neg_impact(pw.this.desc, static_data_path),
+        use_positive=should_use_positive_impact(pw.this.filing_type),
+        use_negative=should_use_negative_impact(pw.this.filing_type),
+    )
+    
+    filings_enriched = filings_with_impact_flags.select(
+        *pw.this,
+        pos_impact=get_pos_impact(pw.this.filing_type, pw.this.use_positive, static_data_path),
+        neg_impact=get_neg_impact(pw.this.filing_type, pw.this.use_negative, static_data_path),
         stocktechdata=fetch_stock_data(pw.this.symbol, pw.this.sort_date)
     )
     
