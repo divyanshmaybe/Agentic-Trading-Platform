@@ -27,6 +27,27 @@ logging.getLogger("pathway.io.sink").setLevel(logging.ERROR)
 logging.getLogger("pathway.io.filesystem").setLevel(logging.ERROR)
 logging.getLogger("pathway.io.kafka").setLevel(logging.ERROR)
 
+# Add filter to suppress verbose Pathway sink messages
+class PathwaySinkFilter(logging.Filter):
+    """Filter out verbose Pathway sink/publisher log messages"""
+    def filter(self, record):
+        msg = record.getMessage()
+        # Suppress "Done writing", "Current batch writes", etc.
+        suppress_patterns = [
+            "Done writing",
+            "Current batch writes took",
+            "All writes so far took",
+            "entries have been sent to the engine",
+            "minibatch(es)",
+        ]
+        return not any(pattern in msg for pattern in suppress_patterns)
+
+# Apply filter to root logger and Celery worker logger
+pathway_filter = PathwaySinkFilter()
+logging.getLogger().addFilter(pathway_filter)
+logging.getLogger("celery").addFilter(pathway_filter)
+logging.getLogger("celery.worker").addFilter(pathway_filter)
+
 # Load environment variables from portfolio-server .env and project root .env
 # (same logic as PipelineService._load_environment)
 _celery_file = Path(__file__).resolve()
