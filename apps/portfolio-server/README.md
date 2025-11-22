@@ -33,9 +33,27 @@ MARKET_DATA_WS_URL=wss://ws.finnhub.io?token=YOUR_TOKEN  # set provider-specific
 
 # Demo Mode - Process signals 24/7 (for testing/demo only)
 DEMO_MODE=false  # Set to true to bypass market hours restrictions
+
+# Risk Monitoring Configuration
+STREAMING_RISK_MONITOR_ENABLED=true  # Enable real-time streaming risk monitor
+RISK_MONITOR_POLL_INTERVAL=0.5  # Polling interval in seconds (default: 500ms)
+RISK_MONITOR_REFRESH_POSITIONS=30  # Position refresh interval in seconds
+PORTFOLIO_RISK_MONITOR_ENABLED=false  # Disable legacy batch-based risk monitor
+
+# Portfolio Allocation Configuration
+PORTFOLIO_REBALANCE_ENABLED=true  # Enable automatic rebalancing
+PORTFOLIO_REBALANCE_HOUR=5  # Rebalancing sweep time (5:00 AM = 1h before market open)
+PORTFOLIO_REBALANCE_MINUTE=0
+PORTFOLIO_REBALANCE_DAY_OF_WEEK=mon-fri  # Run on weekdays only
+ALLOCATION_SWEEP_ON_STARTUP=true  # Run allocation sweep on startup for pending portfolios
 ```
 
 **DEMO_MODE**: When enabled, the NSE pipeline will process trading signals at any time, regardless of market hours. This is useful for testing and demonstrations but should be disabled in production.
+
+**Portfolio Allocation**: 
+- **On Startup**: Allocates pending portfolios (created but not allocated yet)
+- **Scheduled**: Runs daily at 5:00 AM for portfolios due for rebalancing
+- **Triggered**: Via API when objectives are created/updated
 
 ### Install Dependencies
 
@@ -60,7 +78,69 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
 # Celery worker (second terminal, runs NSE pipeline & trade queue)
 celery --workdir apps/portfolio-server -A celery_app:celery_app worker --loglevel=info
+
+# Streaming risk monitor (third terminal, real-time position monitoring)
+cd apps/portfolio-server
+python -m workers.streaming_risk_monitor
 ```
+
+### Risk Monitoring
+
+The portfolio server includes **two risk monitoring modes**:
+
+#### 1. Streaming Risk Monitor (RECOMMENDED - Real-time)
+- **Latency**: <1 second from price change to alert
+- **Architecture**: Continuous background service polling WebSocket price cache every 500ms
+- **Alerts**: Instant Kafka publishing when threshold breached
+- **Usage**: Run `python -m workers.streaming_risk_monitor`
+- **Benefits**: 
+  - Sub-second alert generation
+  - Continuous monitoring (no 15-minute gaps)
+  - Minimal resource usage (symbol-based price fetching)
+  - Integrates with MarketDataService WebSocket cache
+
+#### 2. Batch Risk Monitor (LEGACY - Backward compatible)
+- **Latency**: 15 minutes (Celery Beat scheduled)
+- **Architecture**: Periodic task that processes all positions in batch
+- **Alerts**: Kafka + Email after each batch run
+- **Usage**: Enabled via `PORTFOLIO_RISK_MONITOR_ENABLED=true`
+- **Note**: Kept for backward compatibility and testing only
+
+**Production Recommendation**: Use streaming mode for real-time alerts with <1 second latency.
+
+### Portfolio Allocation & Rebalancing
+
+The portfolio server handles allocation in **three scenarios**:
+
+#### 1. API-Triggered Allocation (Immediate)
+- **When**: Portfolio or objective created via API
+- **Trigger**: `POST /api/portfolios` or `POST /api/objectives`
+- **Behavior**: Immediate Celery task queued for allocation
+- **Status**: Portfolio marked as `allocation_status="pending"` then `"ready"`
+
+#### 2. Startup Allocation Sweep (On Service Start)
+- **When**: Service starts (if `ALLOCATION_SWEEP_ON_STARTUP=true`)
+- **Trigger**: FastAPI lifespan startup event
+- **Behavior**: 
+  - Finds portfolios with `allocation_status="pending"` (never allocated)
+  - Allocates them immediately using current market regime
+- **Use Case**: Handle portfolios created while service was down
+
+#### 3. Scheduled Rebalancing (Daily)
+- **When**: Daily at configured time (default: 5:00 AM, 1h before market open)
+- **Trigger**: Celery Beat schedule (if `PORTFOLIO_REBALANCE_ENABLED=true`)
+- **Behavior**:
+  - Finds portfolios with `rebalancing_date <= today`
+  - Includes overdue portfolios (catches missed rebalancing dates)
+  - Re-runs allocation pipeline with latest regime
+  - Calculates next rebalancing date based on frequency
+- **Schedule**: Configurable via `PORTFOLIO_REBALANCE_HOUR`, `PORTFOLIO_REBALANCE_MINUTE`
+
+**Rebalancing Logic**:
+- Frequency options: `"quarterly"`, `"monthly"`, `"biannual"`, `"annual"`
+- Next date calculated from portfolio's `rebalancing_frequency` setting
+- Allocation weights recalculated based on current market regime
+- Existing allocations updated, trading agents maintained
 
 ## API Endpoints
 

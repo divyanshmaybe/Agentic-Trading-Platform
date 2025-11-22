@@ -88,6 +88,17 @@ def create_lifespan(base_app_instance, pipeline_service_instance):
             "📋 Pipelines configured. News: hourly via Beat + startup, NSE: continuous polling (60s interval)"
         )
         
+        # Run allocation sweep on startup to handle pending portfolios
+        allocation_on_startup = os.getenv("ALLOCATION_SWEEP_ON_STARTUP", "true").lower() in {"1", "true", "yes"}
+        if allocation_on_startup:
+            try:
+                base_app_instance.logger.info("🔄 Running regime check and allocation sweep at startup...")
+                from workers.allocation_tasks import check_regime_and_rebalance_task
+                result = check_regime_and_rebalance_task.delay()
+                base_app_instance.logger.info(f"✅ Regime check and allocation sweep started: task_id={result.id}")
+            except Exception as exc:
+                base_app_instance.logger.error(f"❌ Failed to dispatch regime check and allocation sweep: {exc}")
+        
         # Subscribe to Nifty 500 symbols on startup (if enabled)
         nifty500_subscribe = os.getenv("ENABLE_NIFTY500_SUBSCRIPTION", "false").lower() in {"1", "true", "yes"}
         if nifty500_subscribe:

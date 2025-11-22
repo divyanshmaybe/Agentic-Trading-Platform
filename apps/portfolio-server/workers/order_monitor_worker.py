@@ -36,8 +36,8 @@ if PORTFOLIO_SERVER_ROOT not in sys.path:
     sys.path.insert(0, PORTFOLIO_SERVER_ROOT)
 
 from dbManager import DBManager
-from market_data import get_market_data_service  # type: ignore
 from services.trade_engine import TradeEngine
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -47,20 +47,8 @@ BATCH_SIZE = int(os.getenv("ORDER_MONITOR_BATCH_SIZE", "100"))  # Process 100 or
 MAX_RETRY_ATTEMPTS = int(os.getenv("ORDER_MONITOR_MAX_RETRIES", "3"))
 STALE_ORDER_TIMEOUT = int(os.getenv("ORDER_STALE_TIMEOUT_HOURS", "24"))  # Cancel after 24 hours
 
-# Global market data service singleton for this process (survives across task runs)
-_market_data_service = None
-_market_data_lock = asyncio.Lock()
-
-
-async def get_or_create_market_data_service():
-    """Get or create market data service singleton for this worker process."""
-    global _market_data_service
-    if _market_data_service is None:
-        async with _market_data_lock:
-            if _market_data_service is None:
-                _market_data_service = get_market_data_service()
-                logger.info("📊 Market data service initialized for worker process")
-    return _market_data_service
+# FastAPI server URL for fetching prices
+PORTFOLIO_SERVER_URL = os.getenv("PORTFOLIO_SERVER_URL", "http://localhost:8000")
 
 
 class OrderMonitorWorker:
@@ -77,13 +65,13 @@ class OrderMonitorWorker:
     
     def __init__(self):
         self.db = None  # Will hold Prisma client
-        self.market_data = None
+        self.http_client = None  # HTTP client for fetching prices from FastAPI server
         self.running = False
         self.subscribed_symbols: Set[str] = set()
         self._last_cleanup = time.time()
         
     async def initialize(self):
-        """Initialize database and market data connections."""
+        """Initialize database connection and HTTP client for price fetching."""
         logger.info("🚀 Initializing Order Monitor Worker...")
         
         # Setup database - get singleton instance and connect
@@ -91,13 +79,24 @@ class OrderMonitorWorker:
         await db_manager.connect()
         self.db = db_manager.get_client()
         
-        # Setup market data service (use global singleton to avoid repeated login)
-        self.market_data = await get_or_create_market_data_service()
+        # Setup HTTP client to fetch prices from FastAPI server
+        self.http_client = httpx.AsyncClient(
+            base_url=PORTFOLIO_SERVER_URL,
+            timeout=httpx.Timeout(5.0)
+        )
         
-        logger.info("✅ Order Monitor Worker initialized")
+        logger.info("✅ Order Monitor Worker initialized (fetching prices from FastAPI server)")
     
     async def close(self):
-        """Close database connection and cleanup resources."""
+        """Close database connection and HTTP client."""
+        if self.http_client:
+            try:
+                await self.http_client.aclose()
+                self.http_client = None
+                logger.debug("🔌 HTTP client closed")
+            except Exception as e:
+                logger.warning(f"Error closing HTTP client: {e}")
+        
         if self.db:
             try:
                 await self.db.disconnect()
@@ -202,19 +201,49 @@ class OrderMonitorWorker:
         return orders
     
     async def _ensure_symbol_subscriptions(self, orders: List[Dict]):
-        """Ensure market data service is subscribed to all symbols with pending orders."""
+        """
+        Ensure FastAPI server is subscribed to symbols (via HTTP request).
+        Note: With the centralized WebSocket in FastAPI, workers just request subscription.
+        """
         symbols_needed = {order["symbol"] for order in orders}
         new_symbols = symbols_needed - self.subscribed_symbols
         
         if new_symbols:
-            logger.info(f"📡 Subscribing to {len(new_symbols)} new symbols: {sorted(list(new_symbols))[:10]}...")
+            logger.info(f"📡 Requesting subscription for {len(new_symbols)} symbols via FastAPI server...")
             
-            for symbol in new_symbols:
-                try:
-                    self.market_data.register_symbol(symbol)
-                    self.subscribed_symbols.add(symbol)
-                except Exception as e:
-                    logger.warning(f"⚠️  Failed to subscribe to {symbol}: {e}")
+            try:
+                # Request FastAPI server to subscribe to symbols
+                response = await self.http_client.post(
+                    "/api/market/subscribe",
+                    json={"symbols": list(new_symbols)},
+                    timeout=5.0
+                )
+                
+                if response.status_code == 200:
+                    self.subscribed_symbols.update(new_symbols)
+                    logger.debug(f"✅ Subscribed to {len(new_symbols)} symbols")
+                else:
+                    logger.warning(f"⚠️  Subscription request failed: {response.status_code}")
+            except Exception as e:
+                logger.warning(f"⚠️  Failed to request subscriptions: {e}")
+    
+    async def _get_current_price(self, symbol: str) -> Optional[Decimal]:
+        """Fetch current price from FastAPI server."""
+        try:
+            response = await self.http_client.get(
+                f"/api/market/price/{symbol}",
+                timeout=2.0
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                return Decimal(str(data.get("price", 0)))
+            else:
+                logger.warning(f"⚠️  Failed to fetch price for {symbol}: {response.status_code}")
+                return None
+        except Exception as e:
+            logger.warning(f"⚠️  Error fetching price for {symbol}: {e}")
+            return None
     
     async def _process_pending_orders(self, orders: List[Dict]) -> int:
         """
@@ -245,8 +274,8 @@ class OrderMonitorWorker:
         symbol = order["symbol"]
         source_model = order.get("_source_model", "trade")
         
-        # Get current market price from cache (instant lookup)
-        current_price = self.market_data.get_latest_price(symbol)
+        # Get current market price from FastAPI server
+        current_price = await self._get_current_price(symbol)
         
         if current_price is None:
             logger.debug(f"⏳ No price available yet for {symbol}")

@@ -140,7 +140,7 @@ celery_app.conf.task_routes = {
     # Allocation + trading queues
     "portfolio.allocate_new_portfolio": {"queue": QUEUE_NAMES["allocations"]},
     "portfolio.allocate_for_objective": {"queue": QUEUE_NAMES["allocations"]},
-    "portfolio.daily_rebalancing_sweep": {"queue": QUEUE_NAMES["allocations"]},
+    "portfolio.check_regime_and_rebalance": {"queue": QUEUE_NAMES["allocations"]},
     "pipeline.rebalance.scheduled": {"queue": QUEUE_NAMES["allocations"]},
     "trading.execute_trade_job": {"queue": QUEUE_NAMES["trading"]},
     "trading.process_pending_trade": {"queue": QUEUE_NAMES["trading"]},
@@ -166,7 +166,7 @@ celery_app.conf.task_routes = {
 ANNOTATED_TASKS = [
     "portfolio.allocate_new_portfolio",
     "portfolio.allocate_for_objective",
-    "portfolio.daily_rebalancing_sweep",
+    "portfolio.check_regime_and_rebalance",
     "pipeline.rebalance.scheduled",
     "pipeline.risk_monitor.run",
     "pipeline.news_sentiment.run",
@@ -195,10 +195,15 @@ NEWS_PIPELINE_QUEUE = os.getenv("NEWS_PIPELINE_QUEUE", QUEUE_NAMES["pipelines"])
 NSE_PIPELINE_ENABLED = os.getenv("NSE_PIPELINE_ENABLED", "true").lower() in {"1", "true", "yes"}
 NSE_PIPELINE_QUEUE = os.getenv("NSE_PIPELINE_QUEUE", QUEUE_NAMES["pipelines"])
 
+# Regime monitoring (runs 1h before market open to detect regime changes)
+REGIME_MONITOR_ENABLED = os.getenv("REGIME_MONITOR_ENABLED", "true").lower() in {"1", "true", "yes"}
+REGIME_MONITOR_HOUR = int(os.getenv("REGIME_MONITOR_HOUR", "8"))  # 8:15 AM = 1h before 9:15 AM market open
+REGIME_MONITOR_MINUTE = int(os.getenv("REGIME_MONITOR_MINUTE", "15"))
+REGIME_MONITOR_DAY_OF_WEEK = os.getenv("REGIME_MONITOR_DAY_OF_WEEK", "mon-fri")
+REGIME_MONITOR_QUEUE = os.getenv("REGIME_MONITOR_QUEUE", QUEUE_NAMES["allocations"])
+
+# Portfolio rebalancing (only rebalances when rebalancing_date reached or regime changed)
 REBALANCE_ENABLED = os.getenv("PORTFOLIO_REBALANCE_ENABLED", "true").lower() in {"1", "true", "yes"}
-REBALANCE_HOUR = int(os.getenv("PORTFOLIO_REBALANCE_HOUR", "5"))
-REBALANCE_MINUTE = int(os.getenv("PORTFOLIO_REBALANCE_MINUTE", "0"))
-REBALANCE_DAY_OF_WEEK = os.getenv("PORTFOLIO_REBALANCE_DAY_OF_WEEK", "mon-fri")
 REBALANCE_QUEUE = os.getenv("PORTFOLIO_REBALANCE_QUEUE", QUEUE_NAMES["allocations"])
 
 RISK_MONITOR_ENABLED = os.getenv("PORTFOLIO_RISK_MONITOR_ENABLED", "false").lower() in {"1", "true", "yes"}
@@ -229,11 +234,12 @@ if NEWS_PIPELINE_ENABLED:
         "options": {"queue": NEWS_PIPELINE_QUEUE},
     }
 
-if REBALANCE_ENABLED:
-    celery_app.conf.beat_schedule["portfolio-daily-rebalance"] = {
-        "task": "portfolio.daily_rebalancing_sweep",
-        "schedule": crontab(hour=REBALANCE_HOUR, minute=REBALANCE_MINUTE, day_of_week=REBALANCE_DAY_OF_WEEK),
-        "options": {"queue": REBALANCE_QUEUE},
+# Regime monitor - runs daily 1h before market open (8:15 AM for 9:15 AM market)
+if REGIME_MONITOR_ENABLED:
+    celery_app.conf.beat_schedule["regime-monitor-check"] = {
+        "task": "portfolio.check_regime_and_rebalance",
+        "schedule": crontab(hour=REGIME_MONITOR_HOUR, minute=REGIME_MONITOR_MINUTE, day_of_week=REGIME_MONITOR_DAY_OF_WEEK),
+        "options": {"queue": REGIME_MONITOR_QUEUE},
     }
 
 if RISK_MONITOR_ENABLED:
@@ -292,5 +298,6 @@ if MARKET_CLOSE_SELL_ENABLED:
         "schedule": crontab(hour=9, minute=45, day_of_week="mon-fri"),  # 3:15 PM IST = 9:45 AM UTC
         "options": {"queue": MARKET_CLOSE_SELL_QUEUE},
     }
+
 
 __all__ = ["celery_app"]

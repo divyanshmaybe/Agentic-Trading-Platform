@@ -189,6 +189,7 @@ services:
       CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/1
       INTERNAL_SERVICE_SECRET: agentinvest-secret
       GEMINI_API_KEY: dummy
+      PORTFOLIO_RISK_MONITOR_ENABLED: "false"  # Disable legacy batch monitor
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "python -m prisma generate &&
@@ -197,6 +198,46 @@ services:
                  sleep 2;
                done &&
                celery -A celery_app:celery_app worker --loglevel=info --beat"
+    volumes:
+      - ./apps/portfolio-server:/app/apps/portfolio-server
+      - ./shared:/app/shared
+      - ./middleware:/app/middleware
+    depends_on:
+      portfolio_postgres:
+        condition: service_healthy
+      portfolio_redis:
+        condition: service_healthy
+    networks:
+      - agentInvest
+
+  # Streaming Risk Monitor (Real-time position monitoring <1 sec alerts)
+  portfolio_risk_monitor:
+    image: portfolio_server:latest
+    container_name: portfolio_risk_monitor
+    restart: unless-stopped
+    env_file:
+      - .env
+      - apps/portfolio-server/docker.env
+    environment:
+      PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
+      DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
+      SHADOW_DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
+      REDIS_HOST: portfolio_redis
+      REDIS_PORT: 6379
+      INTERNAL_SERVICE_SECRET: agentinvest-secret
+      STREAMING_RISK_MONITOR_ENABLED: "true"
+      RISK_MONITOR_POLL_INTERVAL: "0.5"  # 500ms polling
+      RISK_MONITOR_REFRESH_POSITIONS: "30"  # Refresh every 30 seconds
+      KAFKA_BROKERS: "kafka:9092"
+      RISK_ALERTS_TOPIC: "risk_agent_alerts"
+    working_dir: /app/apps/portfolio-server
+    command: >
+      bash -c "python -m prisma generate &&
+               until python -m prisma db push --accept-data-loss; do
+                 echo 'Waiting for Postgres...';
+                 sleep 2;
+               done &&
+               python -m workers.streaming_risk_monitor"
     volumes:
       - ./apps/portfolio-server:/app/apps/portfolio-server
       - ./shared:/app/shared
