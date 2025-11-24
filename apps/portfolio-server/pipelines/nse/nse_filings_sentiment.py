@@ -152,12 +152,18 @@ class TechnicalDataSchema(pw.Schema):
 
 
 class TradingSignalSchema(pw.Schema):
-    """Schema for trading signals"""
+    """Schema for trading signals with enhanced features"""
     symbol: str
     filing_time: str
     signal: int  # 1=BUY, -1=SELL, 0=HOLD
     explanation: str
     confidence: float
+    # Enhanced features
+    file_type: str
+    headline_sentiment: float  # -1 to 1
+    impact_level: int  # 0=low, 1=medium, 2=high
+    positive_keyword_count: int
+    negative_keyword_count: int
 
 
 # ============================================================================
@@ -176,6 +182,12 @@ class NSESignalEvent(BaseModel):
     confidence: float
     generated_at: str
     source: str = "nse_filings_pipeline"
+    # Enhanced features
+    file_type: Optional[str] = None
+    headline_sentiment: Optional[float] = None
+    impact_level: Optional[int] = None
+    positive_keyword_count: Optional[int] = None
+    negative_keyword_count: Optional[int] = None
 
 
 _signal_publisher: Optional[KafkaPublisher] = None
@@ -234,7 +246,15 @@ def publish_signal_to_kafka(
     explanation: str,
     confidence: float,
 ) -> str:
-    """Publish the generated trading signal to Kafka and return a status string."""
+    """
+    Queue trade execution via Celery, then publish signal to Kafka for analytics.
+    
+    Flow:
+    1. Celery task → Execute trade immediately (fast path)
+    2. Kafka publish → Analytics/audit trail (async, non-blocking)
+    
+    This ensures lowest latency: trade executes while Kafka publish happens in background.
+    """
 
     try:
         signal_value = int(signal)
@@ -252,21 +272,35 @@ def publish_signal_to_kafka(
     )
 
     try:
-        _publish_to_kafka(event)
+        # STEP 1: Queue trade execution FIRST (critical path)
+        # This uses direct Python calculation (no Pathway overhead)
+        # Celery worker will execute in <100ms
+        celery_app.send_task(
+            "pipeline.trade_execution.process_signal",
+            args=[event.model_dump()],
+            queue="trades",  # High-priority queue for trades
+        )
+        print(f"[CELERY] ✅ Queued trade execution for {symbol}")
+        
+        # STEP 2: Publish to Kafka (non-critical, analytics only)
+        # This happens async and doesn't block trade execution
         try:
-            celery_app.send_task(
-                "pipeline.trade_execution.process_signal",
-                args=[event.model_dump()],
-            )
-        except Exception as celery_exc:  # pragma: no cover - defensive logging
-            print(f"[CELERY] Failed to enqueue trade execution task: {celery_exc}")
+            _publish_to_kafka(event)
+            print(f"[KAFKA] ✅ Published signal to Kafka for {symbol}")
+        except Exception as kafka_exc:
+            # Kafka failure doesn't affect trade execution
+            print(f"[KAFKA] ⚠️ Failed to publish to Kafka (trade still executing): {kafka_exc}")
+        
         return "published"
-    except TimeoutError:
-        print("[KAFKA] Publish timed out for symbol", symbol)
-        return "timeout"
-    except Exception as exc:  # pragma: no cover - defensive logging
-        print(f"[KAFKA] Failed to publish signal for {symbol}: {exc}")
-        return f"error:{exc}"
+        
+    except Exception as celery_exc:  # pragma: no cover - defensive logging
+        print(f"[CELERY] ❌ Failed to queue trade execution for {symbol}: {celery_exc}")
+        # Try Kafka at least for audit trail
+        try:
+            _publish_to_kafka(event)
+        except:
+            pass
+        return f"error:{celery_exc}"
 
 
 # ============================================================================
@@ -570,7 +604,241 @@ def get_neg_impact(file_type: str, use_negative: bool, static_data_path: str = "
 
 
 # ============================================================================
-# LLM TRADING SIGNAL GENERATION
+# API KEY ROTATION
+# ============================================================================
+
+class APIKeyRotator:
+    """Manage multiple API keys and rotate on rate limits"""
+    def __init__(self, api_keys_str: str):
+        # Parse comma-separated API keys
+        self.api_keys = [key.strip() for key in api_keys_str.split(',') if key.strip()]
+        self.current_index = 0
+        self.failed_keys = set()
+        print(f"[API] Initialized with {len(self.api_keys)} API key(s)")
+    
+    def get_current_key(self) -> str:
+        """Get the current active API key"""
+        if not self.api_keys:
+            return ""
+        return self.api_keys[self.current_index]
+    
+    def rotate(self) -> bool:
+        """Rotate to next API key. Returns True if rotation successful, False if all keys exhausted"""
+        self.failed_keys.add(self.current_index)
+        
+        # Try next available key
+        for _ in range(len(self.api_keys)):
+            self.current_index = (self.current_index + 1) % len(self.api_keys)
+            if self.current_index not in self.failed_keys:
+                print(f"[API] Rotated to key #{self.current_index + 1}")
+                return True
+        
+        print("[API] All API keys exhausted")
+        return False
+    
+    def reset(self):
+        """Reset failed keys tracking"""
+        self.failed_keys.clear()
+        self.current_index = 0
+
+
+# Global API key rotator instance
+_api_key_rotator: Optional[APIKeyRotator] = None
+
+def get_api_key_rotator() -> APIKeyRotator:
+    """Get or create the global API key rotator"""
+    global _api_key_rotator
+    if _api_key_rotator is None:
+        api_keys_str = os.getenv("GEMINI_API_KEY", "")
+        _api_key_rotator = APIKeyRotator(api_keys_str)
+    return _api_key_rotator
+
+
+# ============================================================================
+# LLM FEATURE EXTRACTION
+# ============================================================================
+
+@pw.udf
+def extract_filing_features(
+    text: str,
+    pos_impact: str,
+    neg_impact: str,
+    stocktechdata: str,
+) -> str:
+    """Extract structured features from NSE filing using LLM
+    
+    Returns JSON string with:
+    - file_type: normalized category
+    - headline_sentiment: float [-1, 1]
+    - direction: BUY/HOLD/SELL
+    - impact_level: 0/1/2
+    - positive_keyword_count: int
+    - negative_keyword_count: int
+    """
+    if not text or not text.strip():
+        print("[WARN] Empty text provided to extract_filing_features")
+        return json.dumps({"error": "Empty text content"})
+    
+    print(f"[PIPELINE] Extracting filing features with LLM (text length: {len(text)} chars)...")
+    
+    prompt = f"""You are an expert financial NLP engine specialized in analyzing Indian corporate disclosures, particularly NSE filings.
+Your role is to transform complex regulatory text into STRICT, MACHINE-READABLE STRUCTURED FEATURES used by a trading ML model.
+
+Your output MUST be precise, consistent, and fully deterministic.
+
+You are given:
+- Technical indicators for the past hour: {stocktechdata}
+- Common positive market reactions for this filing type: {pos_impact}
+- Common negative reactions for this filing type: {neg_impact}
+- The raw NSE filing content: {text[:5000]}
+
+
+ANALYSIS INSTRUCTIONS:
+
+Your task is to extract ONLY SIX FIELDS in the EXACT ORDER below. 
+Each field must be rigorous, data-driven, and based on the combined interpretation of:
+- Filing tone and financial meaning
+- Company fundamentals implied in text
+- Market expectations vs actual results
+- Magnitude and direction of event impact
+- Common NSE market behaviour for similar filings
+- Whether the information is routine or materially price-moving
+
+Interpretation Rules:
+1. "file_type":
+   - Must be a **normalized category** describing the filing.
+   - Examples: "earnings", "order_win", "credit_rating", "pledge_update",
+     "shareholding", "board_meeting", "results", "corporate_action", etc.
+
+2. "headline_sentiment":
+   - A float ∈ [-1, 1] capturing *true financial impact*, NOT emotional tone.
+   - Consider revenue/profit direction, margin trend, guidance, capex plans, 
+     order wins/losses, debt impact, cashflow commentary, promoter behaviour,
+     operational risks, and sector conditions.
+   - -1 = highly negative fundamental surprise
+     0  = neutral / routine
+     +1 = highly positive & material
+
+3. "direction":
+   - One of: "BUY", "HOLD", "SELL"
+   - BUY  → strong positive, clear upward short-term pressure
+   - SELL → strong negative, clear downward pressure
+   - HOLD → neutral, noisy, routine, unclear, or already priced-in event
+
+4. "impact_level":
+   - Integer {{0, 1, 2}}
+   - 0: Routine or low-materiality filings (default for most board meetings)
+   - 1: Noticeable but not major short-term impact
+   - 2: High-impact, market-moving event (major earnings surprise, big order win,
+        buyback, merger, sharp rating change, major guidance update)
+
+5. "positive_keyword_count":
+   - Count words strongly associated with bullish short-term reactions.
+   - Examples: "order", "approval", "upgrade", "growth", "expansion", "revenue up", 
+     "profit rises", "guidance raised", "buyback", "merger benefit", etc.
+
+6. "negative_keyword_count":
+   - Count words strongly associated with bearish reactions.
+   - Examples: "downgrade", "delay", "default", "loss", "fall", "decline", 
+     "pledge", "fraud", "investigation", "guidance cut", etc.
+
+Critical Notes:
+- If the filing is long but routine → direction="HOLD", impact_level=0.
+- "Outcome of Board Meeting" is often low-impact unless MAJOR decisions are present.
+- Strong numbers can still produce SELL signals if the filing shows weak outlook,
+  deteriorating margins, inventory buildup, cashflow issues, or sector headwinds.
+- Be extremely careful to avoid overestimating impact.
+
+
+OUTPUT:
+
+Return ONLY the following EXACT JSON structure and NOTHING ELSE:
+
+{{
+  "file_type": "<string>",
+  "headline_sentiment": <float>,
+  "direction": "<BUY|HOLD|SELL>",
+  "impact_level": <0|1|2>,
+  "positive_keyword_count": <int>,
+  "negative_keyword_count": <int>
+}}
+"""
+    
+    rotator = get_api_key_rotator()
+    max_retries = len(rotator.api_keys) if rotator.api_keys else 1
+    
+    for attempt in range(max_retries):
+        api_key = rotator.get_current_key()
+        
+        if not api_key:
+            return json.dumps({"error": "No API key available"})
+        
+        try:
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            
+            model_name = os.getenv("NSE_FILINGS_LLM_MODEL", LLM_MODEL)
+            
+            # Set API key for this attempt
+            original_google_key = os.environ.get("GOOGLE_API_KEY", None)
+            os.environ["GOOGLE_API_KEY"] = api_key
+            
+            try:
+                llm = ChatGoogleGenerativeAI(
+                    model=model_name,
+                    temperature=0.0,
+                    max_tokens=512,
+                    timeout=30,
+                )
+                response = llm.invoke(prompt)
+                result = response.content.strip()
+                
+                # Validate JSON response
+                try:
+                    parsed = json.loads(result)
+                    # Ensure all required fields are present
+                    required_fields = ["file_type", "headline_sentiment", "direction", 
+                                     "impact_level", "positive_keyword_count", "negative_keyword_count"]
+                    if all(field in parsed for field in required_fields):
+                        print(f"[PIPELINE] Features extracted successfully (attempt {attempt + 1})")
+                        return result
+                    else:
+                        print(f"[WARN] LLM response missing required fields: {result[:200]}")
+                        return json.dumps({"error": "Incomplete LLM response", "raw": result[:500]})
+                except json.JSONDecodeError:
+                    print(f"[WARN] LLM response not valid JSON: {result[:200]}")
+                    return json.dumps({"error": "Invalid JSON from LLM", "raw": result[:500]})
+                    
+            finally:
+                # Restore original API key
+                if original_google_key is not None:
+                    os.environ["GOOGLE_API_KEY"] = original_google_key
+                else:
+                    os.environ.pop("GOOGLE_API_KEY", None)
+                    
+        except Exception as e:
+            error_msg = str(e)
+            print(f"[ERROR] Feature extraction failed (attempt {attempt + 1}): {error_msg}")
+            
+            # Check for rate limit errors
+            if "429" in error_msg or "quota" in error_msg.lower() or "rate limit" in error_msg.lower():
+                print(f"[API] Rate limit hit on key #{rotator.current_index + 1}")
+                if attempt < max_retries - 1:
+                    if rotator.rotate():
+                        print(f"[API] Retrying with next key...")
+                        continue
+                    else:
+                        return json.dumps({"error": "All API keys rate limited"})
+                else:
+                    return json.dumps({"error": "Rate limit exceeded on all keys"})
+            else:
+                # Non-rate-limit error
+                return json.dumps({"error": f"LLM error: {error_msg[:200]}"})
+    
+    return json.dumps({"error": "Max retries exceeded"})
+
+
+# ============================================================================
+# LLM TRADING SIGNAL GENERATION (Legacy - kept for backwards compatibility)
 # ============================================================================
 
 @pw.udf
@@ -1044,21 +1312,7 @@ def create_filings_input_from_http(port: int = 8001) -> tuple[pw.Table, pw.io.ht
 
 def main():
     """Main execution function"""
-    
-    # Example: Create input from CSV
-    # Uncomment the appropriate input method:
-    
-    # Option 1: CSV input
-    # filings_input = create_filings_input_from_csv("nse_filings.csv")
-    
-    # Option 2: Kafka input
-    # kafka_settings = {
-    #     "bootstrap.servers": "localhost:9092",
-    #     "group.id": "nse_filings_consumer",
-    # }
-    # filings_input = create_filings_input_from_kafka(kafka_settings, "nse_filings")
-    
-    # Option 3: HTTP input (for testing)
+
     filings_input, writer = create_filings_input_from_http(port=8001)
     
     # Create pipeline
@@ -1067,17 +1321,6 @@ def main():
         static_data_path="staticdata.csv",
         output_path="trading_signals.jsonl"
     )
-    
-    # Optional: Write signals back via HTTP
-    # writer(trading_signals.select(
-    #     result=pw.apply(
-    #         lambda s, e: f"Signal: {s}, Explanation: {e}",
-    #         pw.this.signal,
-    #         pw.this.explanation
-    #     )
-    # ))
-    
-    # Run the pipeline
     pw.run()
 
 

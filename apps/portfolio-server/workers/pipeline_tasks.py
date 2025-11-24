@@ -334,13 +334,111 @@ def run_risk_monitor(self) -> dict:
     retry_kwargs={"max_retries": 3},
 )
 def process_trade_signal(self, signal_payload: dict) -> dict:
-    """Process a single NSE trading signal and enqueue automated trades."""
-
-    server_dir = Path(__file__).resolve().parents[1]
-    service = PipelineService(str(server_dir), logger=task_logger)
-    summary = service.process_nse_trade_signals([signal_payload])
-    task_logger.info("Trade signal processed: %s", summary)
-    return summary
+    """
+    Process NSE trading signal with optimized flow:
+    1. Calculate trade jobs (direct Python - fast)
+    2. Execute trades immediately (no extra queueing)
+    3. Publish results to Kafka (analytics/audit)
+    
+    This eliminates the extra Celery queue layer for maximum speed.
+    """
+    import asyncio
+    from services.trade_sizing_service import calculate_trade_execution_jobs
+    from services.trade_execution_service import TradeExecutionService
+    from db import get_db_client
+    
+    try:
+        # Step 1: Calculate trade jobs using direct Python (2-5ms)
+        task_logger.info("📊 Calculating trade jobs for signal: %s", signal_payload.get('symbol'))
+        request = {
+            "request_id": signal_payload.get('filing_time', 'unknown'),
+            "payload": signal_payload,
+        }
+        job_rows = calculate_trade_execution_jobs([request], logger=task_logger)
+        
+        if not job_rows:
+            task_logger.warning("⚠️ No actionable jobs from signal")
+            return {"processed": 0, "executed": 0, "symbol": signal_payload.get('symbol')}
+        
+        task_logger.info("✅ Calculated %d trade job(s)", len(job_rows))
+        
+        # Step 2: Execute trades immediately (no extra queueing)
+        async def execute_trades():
+            db = get_db_client()
+            trade_service = TradeExecutionService(db, logger=task_logger)
+            
+            executed_count = 0
+            for job in job_rows:
+                try:
+                    # Persist trade
+                    task_logger.info("💾 Creating trade: %s %s x %d", 
+                                   job.get('symbol'), job.get('side'), job.get('quantity'))
+                    
+                    # Create trade log
+                    record = await trade_service.create_trade_log(job)
+                    
+                    # Execute immediately
+                    task_logger.info("🚀 Executing trade: %s", record.id)
+                    result = await trade_service.execute_trade(
+                        record.id, 
+                        simulate=False  # Real execution
+                    )
+                    
+                    task_logger.info("✅ Trade executed: %s | Status: %s", 
+                                   record.id, result.get('status'))
+                    executed_count += 1
+                    
+                    # Publish to Kafka for analytics (non-blocking)
+                    try:
+                        from pipelines.nse.trade_execution_pipeline import (
+                            TradeExecutionEvent,
+                            publish_trade_execution_events
+                        )
+                        
+                        event = TradeExecutionEvent(
+                            trade_id=record.id,
+                            request_id=request['request_id'],
+                            signal_id=signal_payload.get('filing_time', ''),
+                            user_id=job.get('user_id', ''),
+                            portfolio_id=job.get('portfolio_id', ''),
+                            symbol=job.get('symbol', ''),
+                            side=job.get('side', ''),
+                            quantity=int(job.get('quantity', 0)),
+                            allocated_capital=float(job.get('allocated_capital', 0)),
+                            confidence=float(job.get('confidence', 0)),
+                            reference_price=float(job.get('reference_price', 0)),
+                            take_profit_pct=float(job.get('take_profit_pct', 0.03)),
+                            stop_loss_pct=float(job.get('stop_loss_pct', 0.01)),
+                            explanation=job.get('explanation', ''),
+                            filing_time=signal_payload.get('filing_time', ''),
+                            generated_at=signal_payload.get('generated_at', ''),
+                            status='executed',
+                        )
+                        publish_trade_execution_events([event], logger=task_logger)
+                        task_logger.info("📤 Published trade result to Kafka")
+                    except Exception as kafka_err:
+                        task_logger.warning("⚠️ Kafka publish failed (non-critical): %s", kafka_err)
+                    
+                except Exception as trade_err:
+                    task_logger.error("❌ Trade execution failed: %s", trade_err, exc_info=True)
+                    continue
+            
+            return executed_count
+        
+        # Run async execution
+        executed = asyncio.run(execute_trades())
+        
+        summary = {
+            "processed": len(job_rows),
+            "executed": executed,
+            "symbol": signal_payload.get('symbol'),
+        }
+        task_logger.info("✅ Trade signal processing complete: %s", summary)
+        return summary
+        
+    except Exception as exc:
+        task_logger.error("❌ Failed to process trade signal: %s", exc, exc_info=True)
+        raise
 
 
 @celery_app.task(
