@@ -190,6 +190,19 @@ class ObjectiveIntakeService:
                     detail="Objective does not belong to the authenticated user.",
                 )
         else:
+            # Check if user already has an active objective
+            existing_objective = await self.prisma.objective.find_first(
+                where={
+                    "user_id": user_id,
+                    "status": "active",
+                }
+            )
+            if existing_objective:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="You already have an active objective. Please update or deactivate your existing objective before creating a new one.",
+                )
+            
             # Create new objective - omit JSON fields with defaults to avoid Prisma type errors
             from prisma import fields
             objective_record = await self.prisma.objective.create(
