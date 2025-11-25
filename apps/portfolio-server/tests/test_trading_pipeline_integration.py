@@ -579,23 +579,47 @@ async def test_pipeline_service_processes_trade_signals(monkeypatch: pytest.Monk
         return [payload]
 
     def mock_run_requests(events, logger=None):
-        return [{
-            "request_id": "test-req-1",
-            "symbol": test_symbol,
-            "side": "BUY",
-            "quantity": 2500,  # 250000 / 100
-            "allocated_capital": 250000.0,
-            "confidence": 0.85,
-            "reference_price": 100.0,
-            "take_profit_pct": 0.03,
-            "stop_loss_pct": 0.01,
-            "agent_id": agent.id,
-            "agent_type": "high_risk",
-            "agent_status": "active",
-        }]
+        job_rows = []
+        for event in events:
+            # Handle TradeExecutionPayload objects directly
+            if hasattr(event, 'to_event'):
+                # It's a TradeExecutionPayload, convert to event dict and parse JSON
+                event_dict = event.to_event()
+                payload = json.loads(event_dict["payload"])
+            else:
+                # It's already an event dict
+                payload = json.loads(event["payload"])
+            
+            quantity = int(payload.get("capital", 100000) / payload.get("reference_price", 100.0))
+            
+            job_rows.append({
+                "request_id": payload["request_id"],
+                "signal_id": payload.get("signal_id", ""),
+                "user_id": payload["user_id"],
+                "portfolio_id": payload["portfolio_id"],
+                "portfolio_name": payload.get("portfolio_name", ""),
+                "organization_id": payload.get("organization_id"),
+                "customer_id": payload.get("customer_id"),
+                "symbol": payload["symbol"],
+                "side": "BUY" if payload["signal"] == 1 else "SELL" if payload["signal"] == -1 else "HOLD",
+                "quantity": quantity,
+                "allocated_capital": float(payload.get("capital", 100000)),
+                "confidence": float(payload.get("confidence", 0.85)),
+                "reference_price": float(payload.get("reference_price", 100.0)),
+                "take_profit_pct": float(payload.get("take_profit_pct", 0.03)),
+                "stop_loss_pct": float(payload.get("stop_loss_pct", 0.01)),
+                "explanation": payload.get("explanation", ""),
+                "filing_time": payload.get("filing_time", ""),
+                "generated_at": payload.get("generated_at", datetime.now(timezone.utc).isoformat() + "Z"),
+                "metadata_json": json.dumps(payload.get("metadata", {})),
+                "agent_id": payload.get("agent_id"),
+                "agent_type": payload.get("agent_type"),
+                "agent_status": payload.get("agent_status"),
+            })
+        return job_rows
 
     monkeypatch.setattr("services.pipeline_service.prepare_trade_execution_payloads", mock_prepare_payloads)
-    monkeypatch.setattr("services.pipeline_service.run_trade_execution_requests", mock_run_requests)
+    monkeypatch.setattr("services.pipeline_service.calculate_trade_execution_jobs", mock_run_requests)
 
     # Mock the persist_and_publish to avoid complex trade execution
     async def mock_persist_and_publish(self, job_rows, *, publish_kafka=True):
@@ -923,6 +947,7 @@ async def test_complete_trading_pipeline_flow(monkeypatch: pytest.MonkeyPatch) -
     
     # Mock run_trade_execution_requests
     def mock_run_requests(events, logger=None):
+        print(f"DEBUG mock_run_requests called with {len(events)} events")
         job_rows = []
         for event in events:
             payload = json.loads(event["payload"])

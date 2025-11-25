@@ -1441,7 +1441,7 @@ def check_regime_and_rebalance_task(self) -> Dict[str, Any]:
                     elif isinstance(portfolio.rebalancing_frequency, str):
                         rebalancing_freq = portfolio.rebalancing_frequency
                 
-                days_overdue = (today - portfolio.rebalancing_date).days if portfolio.rebalancing_date else 0
+                days_overdue = (today.date() - portfolio.rebalancing_date).days if portfolio.rebalancing_date else 0
                 
                 request = {
                     "request_id": f"rebalance_{portfolio.id}_{today.isoformat()}",

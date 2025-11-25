@@ -88,6 +88,19 @@ class FakeObjectiveModel:
         row = self.rows.get(obj_id)
         return FakeRecord(**row) if row else None
 
+    async def find_first(self, where: Dict[str, Any], order: Optional[Dict[str, Any]] = None, **kwargs: Any) -> Optional[Any]:
+        for row in self.rows.values():
+            matches = True
+            for key, expected in where.items():
+                if isinstance(expected, dict) and "equals" in expected:
+                    expected = expected["equals"]
+                if row.get(key) != expected:
+                    matches = False
+                    break
+            if matches:
+                return FakeRecord(**row)
+        return None
+
 
 class FakeRebalanceRunModel:
     def __init__(self) -> None:
