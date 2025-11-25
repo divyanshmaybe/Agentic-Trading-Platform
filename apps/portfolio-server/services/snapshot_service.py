@@ -167,6 +167,12 @@ class TradingAgentSnapshotService:
                 exc_info=True,
             )
             return None
+        finally:
+            # Clean up database connection
+            try:
+                await db_manager.disconnect()
+            except Exception as cleanup_err:
+                self.logger.debug("Error during connection cleanup: %s", cleanup_err)
 
     async def capture_all_active_agents(self) -> Dict[str, Any]:
         """
@@ -215,6 +221,12 @@ class TradingAgentSnapshotService:
         except Exception as exc:
             self.logger.error("Failed to capture all agent snapshots: %s", exc, exc_info=True)
             return {"total_agents": 0, "snapshots_captured": 0, "failed": 0}
+        finally:
+            # Clean up database connection
+            try:
+                await db_manager.disconnect()
+            except Exception as cleanup_err:
+                self.logger.debug("Error during connection cleanup: %s", cleanup_err)
     
     async def capture_portfolio_snapshot(self, portfolio_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -310,6 +322,12 @@ class TradingAgentSnapshotService:
         except Exception as exc:
             self.logger.error("Portfolio snapshot failed: %s", exc, exc_info=True)
             return None
+        finally:
+            # Clean up database connection
+            try:
+                await db_manager.disconnect()
+            except Exception as cleanup_err:
+                self.logger.debug("Error during connection cleanup: %s", cleanup_err)
 
     async def capture_all_portfolio_snapshots(self) -> Dict[str, Any]:
         """
@@ -357,6 +375,12 @@ class TradingAgentSnapshotService:
         except Exception as exc:
             self.logger.error("Failed to capture all portfolio snapshots: %s", exc, exc_info=True)
             return {"total_portfolios": 0, "snapshots_captured": 0, "failed": 0}
+        finally:
+            # Clean up database connection
+            try:
+                await db_manager.disconnect()
+            except Exception as cleanup_err:
+                self.logger.debug("Error during connection cleanup: %s", cleanup_err)
     
     async def get_agent_snapshot_history(
         self,

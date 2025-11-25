@@ -32,7 +32,32 @@ async def _run_auto_sell():
     await db_manager.connect()
     client = db_manager.get_client()
     
-    current_time = datetime.now(timezone.utc)
+    try:
+        current_time = datetime.now(timezone.utc)
+    
+    # Debug: Check all BUY trades with auto_sell_at (query all fields - no select)
+    all_auto_sell_trades = await client.trade.find_many(
+        where={
+            "auto_sell_at": {"not": None},
+            "side": "BUY",
+        },
+    )
+    
+    logger.info(
+        "🔍 DEBUG: Found %d total BUY trades with auto_sell_at set. Current time: %s",
+        len(all_auto_sell_trades) if all_auto_sell_trades else 0,
+        current_time.isoformat(),
+    )
+    
+    for trade in all_auto_sell_trades or []:
+        logger.info(
+            "🔍 Trade %s: symbol=%s, status=%s, auto_sell_at=%s, expired=%s",
+            trade.id[:8],
+            trade.symbol,
+            trade.status,
+            trade.auto_sell_at,
+            trade.auto_sell_at <= current_time if trade.auto_sell_at else "N/A",
+        )
     
     # Only check Trade records (auto_sell_at field only exists on Trade model)
     trades_to_sell = await client.trade.find_many(
@@ -84,6 +109,12 @@ async def _run_auto_sell():
         sold_count, error_count, skipped_count,
     )
     
+    # Clean up database connection
+    try:
+        await db_manager.disconnect()
+    except Exception as cleanup_err:
+        logger.debug("Error during connection cleanup: %s", cleanup_err)
+    
     return {
         "status": "completed",
         "sold_count": sold_count,
@@ -108,8 +139,23 @@ async def _sell_trade(trade, trade_service: TradeExecutionService, client, logge
         trade.id, symbol, executed_quantity, executed_price,
     )
     
-    # Use executed_price as reference (live price not needed for simulated trades)
-    reference_price = executed_price
+    # Fetch live market price from Angel One for realistic P&L
+    try:
+        from services.angel_one_service import AngelOneService
+        angel_service = AngelOneService()
+        await angel_service.initialize()
+        
+        # Get current market price
+        market_data = await angel_service.get_market_price(symbol, "NSE")
+        if market_data and market_data.get("ltp"):
+            reference_price = float(market_data["ltp"])
+            logger.info("📈 Using live market price for %s: ₹%.2f (buy was ₹%.2f)", symbol, reference_price, executed_price)
+        else:
+            reference_price = executed_price
+            logger.warning("⚠️ No live price available for %s, using buy price ₹%.2f", symbol, executed_price)
+    except Exception as e:
+        logger.warning("⚠️ Failed to fetch live price for %s: %s, using buy price ₹%.2f", symbol, e, executed_price)
+        reference_price = executed_price
     
     portfolio = await client.portfolio.find_unique(where={"id": portfolio_id})
     if not portfolio:
@@ -175,9 +221,10 @@ async def _sell_trade(trade, trade_service: TradeExecutionService, client, logge
     result = await trade_service.execute_trade(sell_trade.id, simulate=True)
     
     if result.get("status") in ["simulated_executed", "executed"]:
+        closing_price = result.get("executed_price", reference_price)
         logger.info(
             "✅ Auto-sold Trade %s (15-min window): SELL %s x %d @ ₹%.2f",
-            trade.id, symbol, executed_quantity, result.get("executed_price", reference_price),
+            trade.id, symbol, executed_quantity, closing_price,
         )
         
         trade_metadata = _parse_metadata(getattr(trade, "metadata", None))
@@ -186,6 +233,8 @@ async def _sell_trade(trade, trade_service: TradeExecutionService, client, logge
             "auto_sold_at": datetime.now(timezone.utc).isoformat(),
             "auto_sell_trade_log_id": str(sell_log.id),
             "sell_reason": "15_minute_window_expired",
+            "closing_price": float(closing_price),
+            "opening_price": executed_price,
         })
         
         # Update metadata to mark as auto-sold

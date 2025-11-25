@@ -40,13 +40,22 @@ def _parse_metadata(metadata):
 
 def _calculate_auto_sell_at(record, execution_time, logger, trade_id):
     """Calculate auto_sell_at timestamp for high-risk NSE pipeline trades."""
+    # Check TradeExecutionLog metadata first
     metadata = _parse_metadata(getattr(record, "metadata", None))
     triggered_by = metadata.get("triggered_by", "")
     agent_type = getattr(record, "agent_type", None) or metadata.get("agent_type", "")
     
+    # Also check the Trade record's metadata if TradeExecutionLog doesn't have it
+    if hasattr(record, "trade") and record.trade:
+        trade_metadata = _parse_metadata(getattr(record.trade, "metadata", None))
+        if not triggered_by:
+            triggered_by = trade_metadata.get("triggered_by", "")
+        if not agent_type:
+            agent_type = trade_metadata.get("agent_type", "")
+    
     logger.info(
-        "🔍 AUTO_SELL_AT DEBUG for trade %s: triggered_by='%s', agent_type='%s', metadata=%s",
-        trade_id, triggered_by, agent_type, metadata
+        "🔍 AUTO_SELL_AT DEBUG for trade %s: triggered_by='%s', agent_type='%s'",
+        trade_id, triggered_by, agent_type
     )
     
     is_nse_trade = (

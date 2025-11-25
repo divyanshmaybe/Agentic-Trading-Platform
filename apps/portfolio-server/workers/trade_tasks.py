@@ -54,5 +54,8 @@ async def _process_pending_trade_async(trade_id: str) -> bool:
             logger.exception("Failed to process pending trade %s", trade_id)
             raise
     finally:
-        # Connection cleanup handled by db_client module
-        pass
+        # Clean up database connection to prevent leaks
+        try:
+            await db_manager.disconnect()
+        except Exception as cleanup_err:
+            logger.debug("Error during connection cleanup: %s", cleanup_err)

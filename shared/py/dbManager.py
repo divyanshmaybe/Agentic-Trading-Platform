@@ -190,6 +190,19 @@ class DBManager:
                         exc_info=True
                     )
 
+                # Clear Prisma registry before creating new client
+                try:
+                    from prisma._registry import get_client as get_registered_client, unregister
+                    try:
+                        existing_client = get_registered_client()
+                        if existing_client:
+                            unregister(existing_client)
+                            self.logger.debug("Unregistered existing Prisma client from registry")
+                    except Exception:
+                        pass  # No client registered
+                except ImportError:
+                    pass  # Old Prisma version without registry
+
                 self.client = Prisma(**self._client_options)
                 self._connected = False
                 self._loop = None
@@ -200,8 +213,29 @@ class DBManager:
             self._loop = loop
             self.logger.info("✅ Connected to database via Prisma (loop_id=%s)", id(loop))
             
-        except PrismaError as exc:
-            self.logger.error("❌ Failed to connect to database via Prisma", exc_info=exc)
+        except Exception as exc:
+            # Handle ClientAlreadyRegisteredError - reuse existing client
+            if "ClientAlreadyRegisteredError" in str(type(exc).__name__):
+                self.logger.warning("Prisma client already registered, attempting to reuse existing client")
+                try:
+                    from prisma._registry import get_client as get_registered_client
+                    existing_client = get_registered_client()
+                    if existing_client:
+                        self.client = existing_client
+                        self._connected = True
+                        self._loop = loop
+                        self.logger.info("✅ Reusing existing Prisma client (loop_id=%s)", id(loop))
+                        self._connecting = False
+                        return
+                except Exception as reuse_exc:
+                    self.logger.error("Failed to reuse existing Prisma client: %s", reuse_exc)
+            
+            # For other errors or if reuse failed
+            if isinstance(exc, PrismaError):
+                self.logger.error("❌ Failed to connect to database via Prisma", exc_info=exc)
+            else:
+                self.logger.error("❌ Unexpected error during Prisma connection: %s", exc, exc_info=True)
+            
             self._connected = False
             self._loop = None
             raise

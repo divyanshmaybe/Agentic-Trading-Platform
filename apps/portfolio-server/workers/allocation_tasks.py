@@ -1222,6 +1222,12 @@ def allocate_for_objective_task(
                 exc_info=True
             )
             raise exc
+        finally:
+            # Clean up database connection
+            try:
+                await db_manager.disconnect()
+            except Exception as cleanup_err:
+                logger.debug(f"Error during DB cleanup in _allocate: {cleanup_err}")
     
     # Create a fresh event loop for this task execution to avoid loop closure issues
     loop = asyncio.new_event_loop()
@@ -1689,6 +1695,12 @@ def check_regime_and_rebalance_task(self) -> Dict[str, Any]:
                 "success": False,
                 "error": str(exc),
             }
+        finally:
+            # Clean up database connection
+            try:
+                await db_manager.disconnect()
+            except Exception as cleanup_err:
+                logger.debug(f"Error during DB cleanup in _check_and_rebalance: {cleanup_err}")
     
     # Create a fresh event loop for this task execution to avoid loop closure issues
     loop = asyncio.new_event_loop()
