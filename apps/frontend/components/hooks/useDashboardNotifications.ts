@@ -30,13 +30,6 @@ export function useDashboardNotifications(): UseDashboardNotificationsReturn {
     (n) => n.category === "news_sentiment"
   );
 
-  // Debug: Log filtered arrays
-  useEffect(() => {
-    console.log("[Dashboard Notifications] State update - Total notifications:", notifications.length);
-    console.log("[Dashboard Notifications] Stock recommendations:", stockRecommendations.length);
-    console.log("[Dashboard Notifications] News sentiments:", newsSentiments.length);
-  }, [notifications, stockRecommendations, newsSentiments]);
-
   const eventSourceRef = useRef<EventSource | null>(null);
   const seenIdsRef = useRef<Set<string>>(new Set());
   const dismissManyTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -72,20 +65,8 @@ export function useDashboardNotifications(): UseDashboardNotificationsReturn {
 
         const data = await response.json();
         
-        console.log("[Dashboard Notifications] Raw API response:", data);
-        console.log("[Dashboard Notifications] Raw API response type:", Array.isArray(data) ? "Array" : typeof data);
-        console.log("[Dashboard Notifications] Raw API response length:", Array.isArray(data) ? data.length : "N/A");
-        
         // Handle both direct array and wrapped response formats
         const notificationsData: NotificationDTO[] = Array.isArray(data) ? data : (data.notifications || []);
-
-        console.log("[Dashboard Notifications] Parsed notifications data:", notificationsData);
-        console.log("[Dashboard Notifications] Count:", notificationsData.length);
-        
-        if (notificationsData.length > 0) {
-          console.log("[Dashboard Notifications] Sample notification categories:", notificationsData.slice(0, 5).map(n => ({ id: n.id, category: n.category })));
-          console.log("[Dashboard Notifications] All unique categories in response:", [...new Set(notificationsData.map(n => n.category))]);
-        }
 
         if (!cancelled) {
           // Filter by category (client-side safety check)
@@ -93,10 +74,6 @@ export function useDashboardNotifications(): UseDashboardNotificationsReturn {
             DASHBOARD_ALLOWED_CATEGORIES.includes(n.category)
           );
 
-          console.log("[Dashboard Notifications] After category filter:", filtered);
-          console.log("[Dashboard Notifications] Filtered count:", filtered.length);
-          console.log("[Dashboard Notifications] Allowed categories:", DASHBOARD_ALLOWED_CATEGORIES);
-          
           if (notificationsData.length > 0 && filtered.length === 0) {
             console.error("[Dashboard Notifications] ERROR: Notifications exist in API response but none match category filter!");
             console.error("[Dashboard Notifications] API returned categories:", [...new Set(notificationsData.map(n => n.category))]);
@@ -109,12 +86,10 @@ export function useDashboardNotifications(): UseDashboardNotificationsReturn {
           // Sort by createdAt descending (newest first)
           notifications.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
-          console.log("[Dashboard Notifications] Final notifications to set:", notifications);
 
           // Merge with existing notifications (in case SSE already added some)
           setNotifications((prev) => {
             const merged = mergeNotifications(prev, notifications);
-            console.log("[Dashboard Notifications] Merged notifications:", merged);
             return merged;
           });
           

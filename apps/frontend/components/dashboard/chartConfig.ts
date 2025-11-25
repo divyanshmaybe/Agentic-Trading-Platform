@@ -23,6 +23,12 @@ const PIE_COLOR_MAP = {
     hover: "#d97706",
     glow: "rgba(245,158,11,0.2)",
   },
+  "Liquid Strategies": {
+    fill: "#a855f7",
+    border: "#6b21a8",
+    hover: "#9333ea",
+    glow: "rgba(168,85,247,0.22)",
+  },
 } as const satisfies Record<string, { fill: string; border: string; hover: string; glow: string }>
 
 type PieColorKey = keyof typeof PIE_COLOR_MAP
@@ -33,6 +39,7 @@ const ALLOCATION_TYPE_TO_COLOR_MAP: Record<string, PieColorKey> = {
   "Long-Term": "Long-Term Strategies",
   "Intraday": "Intraday Strategies",
   "Algorithmic": "Algorithmic Strategies",
+  "Liquid": "Liquid Strategies",
   // API allocation types (what backend sends)
   "Low Risk": "Long-Term Strategies",
   "High Risk": "Intraday Strategies",
@@ -41,6 +48,7 @@ const ALLOCATION_TYPE_TO_COLOR_MAP: Record<string, PieColorKey> = {
   "low risk": "Long-Term Strategies",
   "high risk": "Intraday Strategies",
   "alpha": "Algorithmic Strategies",
+  "liquid": "Liquid Strategies",
   "Low_Risk": "Long-Term Strategies",
   "High_Risk": "Intraday Strategies",
   "low_risk": "Long-Term Strategies",

@@ -103,7 +103,7 @@ export type AllocationDashboardSummary = {
   allocation_type: string
   target_weight: string
   allocated_amount: string
-  current_value: string
+  available_cash: string
   realized_pnl: string
   pnl_percentage: string
 }
@@ -122,11 +122,10 @@ export type PortfolioDashboardResponse = {
   portfolio_id: string
   portfolio_name: string
   investment_amount: string
-  current_value: string
-  realized_pnl: string
+  available_cash: string
+  total_realized_pnl: string
   total_positions: number
   active_agents: number
-  cash_balance: string | null
   allocations: AllocationDashboardSummary[]
   recent_trades: RecentTradeSummary[]
 }
@@ -416,12 +415,71 @@ export async function submitTrade(
 ): Promise<TradeResponse> {
   const token = resolveAccessToken(accessToken)
 
+  // Ensure quantity is a positive integer
+  const quantity = Math.floor(tradeData.quantity)
+  if (!Number.isInteger(quantity) || quantity <= 0) {
+    throw new Error("Quantity must be a positive integer")
+  }
+
+  // Clean up the request data to match backend expectations
+  const cleanedData: Record<string, unknown> = {
+    portfolio_id: tradeData.portfolio_id,
+    symbol: tradeData.symbol,
+    side: tradeData.side,
+    order_type: tradeData.order_type,
+    quantity: quantity,
+  }
+
+  // Add optional fields only if they have values
+  if (tradeData.exchange) {
+    cleanedData.exchange = tradeData.exchange
+  }
+  if (tradeData.segment) {
+    cleanedData.segment = tradeData.segment
+  }
+  if (tradeData.trade_type) {
+    cleanedData.trade_type = tradeData.trade_type
+  }
+  if (tradeData.customer_id) {
+    cleanedData.customer_id = tradeData.customer_id
+  }
+  if (tradeData.source) {
+    cleanedData.source = tradeData.source
+  }
+  if (tradeData.metadata) {
+    cleanedData.metadata = tradeData.metadata
+  }
+
+  // Handle price fields based on order type
+  // For market orders, explicitly omit limit_price and trigger_price
+  // For limit orders, require limit_price
+  // For stop orders, require trigger_price
+  if (tradeData.order_type === "market") {
+    // Market orders should not have limit_price or trigger_price
+    // They are already omitted by not adding them to cleanedData
+  } else if (tradeData.order_type === "limit") {
+    if (tradeData.limit_price !== undefined && tradeData.limit_price !== null && tradeData.limit_price > 0) {
+      cleanedData.limit_price = tradeData.limit_price
+    } else {
+      throw new Error("Limit price is required for limit orders and must be greater than 0")
+    }
+  } else if (["stop", "stop_loss", "take_profit"].includes(tradeData.order_type)) {
+    if (tradeData.trigger_price !== undefined && tradeData.trigger_price !== null && tradeData.trigger_price > 0) {
+      cleanedData.trigger_price = tradeData.trigger_price
+    } else {
+      throw new Error("Trigger price is required for stop/take-profit orders and must be greater than 0")
+    }
+    // Limit price is optional for stop orders
+    if (tradeData.limit_price !== undefined && tradeData.limit_price !== null && tradeData.limit_price > 0) {
+      cleanedData.limit_price = tradeData.limit_price
+    }
+  }
+
   return request<TradeResponse>("/api/trades/", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify(tradeData),
+    body: JSON.stringify(cleanedData),
   })
 }
-
