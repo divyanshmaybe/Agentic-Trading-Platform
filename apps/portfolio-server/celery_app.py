@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from datetime import timedelta
 from pathlib import Path
 from typing import Dict, Iterable
@@ -105,7 +106,6 @@ celery_app = Celery(
         "workers.angelone_token_task",
         "workers.allocation_tasks",
         "workers.risk_alert_tasks",
-        "workers.order_monitor_worker",
         "workers.trade_execution_tasks",
         "workers.pipeline_tasks",
         "workers.snapshot_tasks",
@@ -174,9 +174,8 @@ celery_app.conf.task_routes = {
     # Risk + alerts
     "risk.alerts.send_email": {"queue": QUEUE_NAMES["risk"]},
     "risk.streaming_monitor.start": {"queue": QUEUE_NAMES["risk"]},
-    # Order monitoring
-    "order_monitor.start_continuous_monitoring": {"queue": QUEUE_NAMES["orders"]},
-    "order_monitor.check_pending_orders_once": {"queue": QUEUE_NAMES["orders"]},
+    # Order monitoring - NOW USING STREAMING (workers/streaming_order_monitor.py)
+    # Old polling-based tasks removed
     # Auto-sell worker
     "trades.auto_sell_expired_trades": {"queue": QUEUE_NAMES["trading"]},
     "pipeline.sell_high_risk_before_close": {"queue": QUEUE_NAMES["trading"]},
@@ -265,13 +264,14 @@ if RISK_MONITOR_ENABLED:
         "options": {"queue": RISK_MONITOR_QUEUE},
     }
 
-# Order Monitor - Continuous checking of pending limit/stop/take-profit orders
-if ORDER_MONITOR_ENABLED:
-    celery_app.conf.beat_schedule["order-monitor-check"] = {
-        "task": "order_monitor.check_pending_orders_once",
-        "schedule": timedelta(seconds=ORDER_MONITOR_INTERVAL),
-        "options": {"queue": ORDER_MONITOR_QUEUE},
-    }
+# Order Monitor - NOW USING PATHWAY STREAMING (see workers/streaming_order_monitor.py)
+# Polling-based order monitor is DISABLED - use streaming version instead
+# if ORDER_MONITOR_ENABLED:
+#     celery_app.conf.beat_schedule["order-monitor-check"] = {
+#         "task": "order_monitor.check_pending_orders_once",
+#         "schedule": timedelta(seconds=ORDER_MONITOR_INTERVAL),
+#         "options": {"queue": ORDER_MONITOR_QUEUE},
+#     }
 
 # Snapshot capture - Every 3 hours (0:00, 3:00, 6:00, 9:00, 12:00, 15:00, 18:00, 21:00 UTC)
 SNAPSHOT_ENABLED = os.getenv("SNAPSHOT_CAPTURE_ENABLED", "true").lower() in {"1", "true", "yes"}
@@ -314,6 +314,29 @@ if MARKET_CLOSE_SELL_ENABLED:
         "schedule": crontab(hour=9, minute=45, day_of_week="mon-fri"),  # 3:15 PM IST = 9:45 AM UTC
         "options": {"queue": MARKET_CLOSE_SELL_QUEUE},
     }
+
+
+# Lazy import worker modules to avoid circular imports
+# These imports happen when celery worker starts, not when this module is imported
+def _import_tasks():
+    """Import all worker task modules so Celery discovers them."""
+    # Import statement must be inside function to avoid circular imports
+    # since some workers import services which import celery_app
+    from workers import (
+        allocation_tasks,
+        pipeline_tasks,
+        trade_tasks,
+        auto_sell_worker,
+        market_data_tasks,
+        risk_alert_tasks,
+        snapshot_tasks,
+        angelone_token_task,
+    )
+
+
+# Only import tasks when running as Celery worker (not when imported by other modules)
+if os.environ.get("CELERY_WORKER_RUNNING") or "celery" in sys.argv[0]:
+    _import_tasks()
 
 
 __all__ = ["celery_app"]

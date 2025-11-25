@@ -261,8 +261,6 @@ def publish_signal_to_kafka(
 
     try:
         # STEP 1: Queue trade execution FIRST (critical path)
-        # This uses direct Python calculation (no Pathway overhead)
-        # Celery worker will execute in <100ms
         celery_app.send_task(
             "pipeline.trade_execution.process_signal",
             args=[event.model_dump()],
@@ -1071,39 +1069,13 @@ def create_filings_input_from_http(port: int = 8001) -> tuple[pw.Table, pw.io.ht
 def main():
     """Main execution function"""
     
-    # Example: Create input from CSV
-    # Uncomment the appropriate input method:
-    
-    # Option 1: CSV input
-    # filings_input = create_filings_input_from_csv("nse_filings.csv")
-    
-    # Option 2: Kafka input
-    # kafka_settings = {
-    #     "bootstrap.servers": "localhost:9092",
-    #     "group.id": "nse_filings_consumer",
-    # }
-    # filings_input = create_filings_input_from_kafka(kafka_settings, "nse_filings")
-    
-    # Option 3: HTTP input (for testing)
     filings_input, writer = create_filings_input_from_http(port=8001)
     
-    # Create pipeline
     trading_signals = create_nse_filings_pipeline(
         filings_source=filings_input,
         static_data_path="staticdata.csv",
         output_path="trading_signals.jsonl"
     )
-    
-    # Optional: Write signals back via HTTP
-    # writer(trading_signals.select(
-    #     result=pw.apply(
-    #         lambda s, e: f"Signal: {s}, Explanation: {e}",
-    #         pw.this.signal,
-    #         pw.this.explanation
-    #     )
-    # ))
-    
-    # Run the pipeline
     pw.run()
 
 
