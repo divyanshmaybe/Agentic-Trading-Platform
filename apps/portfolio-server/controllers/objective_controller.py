@@ -84,6 +84,19 @@ class ObjectiveController:
 
         customer_id = user.get("customer_id") or user_id
 
+        # Check if user already has an active objective
+        existing_objective = await self.prisma.objective.find_first(
+            where={
+                "user_id": user_id,
+                "status": "active",
+            }
+        )
+        if existing_objective:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="You already have an active objective. Please update or deactivate your existing objective before creating a new one.",
+            )
+
         # Ensure the portfolio exists (or create it with sensible defaults).
         portfolio_response = await self._portfolio_controller.get_or_create_portfolio(
             {
