@@ -62,6 +62,7 @@ export default function DashboardPage() {
               portfolioName: "No Portfolio",
               totalValue: 0,
               investmentAmount: 0,
+              availableCash: 0,
               changePct: 0,
               changeValue: 0,
               dailyPnL: 0,
@@ -90,6 +91,7 @@ export default function DashboardPage() {
               portfolioName: "No Portfolio",
               totalValue: 0,
               investmentAmount: 0,
+              availableCash: 0,
               changePct: 0,
               changeValue: 0,
               dailyPnL: 0,
@@ -140,6 +142,8 @@ export default function DashboardPage() {
               "High Risk": "Intraday",
               "alpha": "Algorithmic",
               "Alpha": "Algorithmic",
+              "liquid": "Liquid",
+              "Liquid": "Liquid",
             }
             
             allocation = filteredAllocations.map((alloc, index) => {
@@ -171,22 +175,27 @@ export default function DashboardPage() {
         }
         
         // Calculate portfolio summary from dashboard data
-        const totalValue = parseFloat(dashboardData.current_value)
         const investmentAmount = parseFloat(dashboardData.investment_amount)
-        const realizedPnL = parseFloat(dashboardData.realized_pnl)
+        const availableCash = parseFloat(dashboardData.available_cash)
+        const totalRealizedPnL = parseFloat(dashboardData.total_realized_pnl)
+        // Calculate current portfolio value: investment amount + realized P&L
+        // (available_cash is separate and not part of the invested portfolio value)
+        const totalValue = investmentAmount + totalRealizedPnL
         
-        // Calculate change percentage
+        // Calculate return percentage and value based on realized P&L
         const changePct = investmentAmount > 0 
-          ? ((totalValue - investmentAmount) / investmentAmount) * 100 
+          ? (totalRealizedPnL / investmentAmount) * 100 
           : 0
+        const changeValue = totalRealizedPnL
 
         setPortfolioSummary({
           portfolioName: dashboardData.portfolio_name,
           totalValue: totalValue,
           investmentAmount: investmentAmount,
+          availableCash: availableCash,
           changePct: changePct,
-          changeValue: totalValue - investmentAmount,
-          dailyPnL: realizedPnL,
+          changeValue: changeValue,
+          dailyPnL: totalRealizedPnL,
           riskTolerance: portfolioData.risk_tolerance,
           expectedReturn: parseFloat(portfolioData.expected_return_target) * 100, // Convert to percentage
           investmentHorizon: portfolioData.investment_horizon_years,
@@ -276,6 +285,7 @@ export default function DashboardPage() {
             portfolioName: "No Portfolio",
             totalValue: 0,
             investmentAmount: 0,
+            availableCash: 0,
             changePct: 0,
             changeValue: 0,
             dailyPnL: 0,

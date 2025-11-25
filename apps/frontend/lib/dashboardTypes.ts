@@ -20,6 +20,7 @@ export type PortfolioSummary = {
   portfolioName: string
   totalValue: number
   investmentAmount: number
+  availableCash: number
   changePct: number
   changeValue: number
   dailyPnL: number

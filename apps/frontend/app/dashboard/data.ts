@@ -71,6 +71,7 @@ export const portfolioSummary: PortfolioSummary = {
   portfolioName: "Managed Portfolio",
   totalValue: 1245000,
   investmentAmount: 1200000,
+  availableCash: 50000,
   changePct: 1.86,
   changeValue: 22840,
   dailyPnL: 14280,

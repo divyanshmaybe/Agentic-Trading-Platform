@@ -23,6 +23,7 @@ export function PortfolioOverviewCard({ summary, loading = false }: PortfolioOve
     return {
       totalValue: formatCurrency(summary.totalValue),
       investmentAmount: formatCurrency(summary.investmentAmount),
+      availableCash: formatCurrency(summary.availableCash),
       changeValue: Math.abs(summary.changeValue).toLocaleString("en-US"),
       changePrefix: changePositive ? "+" : "-",
       changePctPrefix: summary.changePct > 0 ? "+" : summary.changePct < 0 ? "-" : "",
@@ -40,9 +41,10 @@ export function PortfolioOverviewCard({ summary, loading = false }: PortfolioOve
           {loading ? (
             <div className="h-8 w-48 animate-pulse rounded bg-white/10" />
           ) : (
-            formatted.totalValue
+            formatted.availableCash
           )}
         </CardTitle>
+
       </CardHeader>
       <CardContent className="grid gap-6 lg:grid-cols-[1.2fr_1fr]">
         <div className="grid gap-4">
