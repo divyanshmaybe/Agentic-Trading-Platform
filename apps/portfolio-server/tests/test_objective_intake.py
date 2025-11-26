@@ -721,7 +721,7 @@ async def test_objective_intake_then_allocation(monkeypatch: pytest.MonkeyPatch)
                     "available_cash": Decimal("750000"),
                     "investment_horizon_years": 5,
                     "expected_return_target": Decimal("0.12"),
-                    "risk_tolerance": "moderate",
+                    "risk_tolerance": "medium",
                     "liquidity_needs": "medium",
                     "allocation_status": "pending",
                 }

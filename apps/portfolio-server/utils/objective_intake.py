@@ -471,7 +471,11 @@ def _map_llm_output_to_system_format(llm_data: Dict[str, Any]) -> Dict[str, Any]
     risk_tolerance = llm_data.get("risk_tolerance")
     if not isinstance(risk_tolerance, str) or risk_tolerance.lower() not in ["low", "medium", "high"]:
         raise ValueError(f"Invalid risk_tolerance: {risk_tolerance}. Must be 'low', 'medium', or 'high'")
-    extraction["risk_tolerance"]["category"] = risk_tolerance.lower()
+    # Normalize "moderate" to "medium" for consistency with RiskTolerance enum
+    normalized_risk = risk_tolerance.lower()
+    if normalized_risk == "moderate":
+        normalized_risk = "medium"
+    extraction["risk_tolerance"]["category"] = normalized_risk
     
     # Map allocation strategy to preferences (if available)
     if "allocation_strategy" in llm_data:
