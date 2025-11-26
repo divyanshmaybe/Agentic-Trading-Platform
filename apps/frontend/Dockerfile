@@ -1,11 +1,14 @@
+# Build from monorepo root: docker build -f apps/frontend/Dockerfile -t frontend .
+# NOT from apps/frontend directory
+
 ARG NODE_VERSION=20.11.1-alpine
 
 FROM node:${NODE_VERSION} AS pnpm-base
 
 ARG PNPM_VERSION=9.10.0
 
-ENV PNPM_HOME=/pnpm \
-    PATH="${PNPM_HOME}:${PATH}"
+ENV PNPM_HOME=/pnpm
+ENV PATH="${PNPM_HOME}:${PATH}"
 
 RUN corepack enable pnpm && corepack prepare pnpm@${PNPM_VERSION} --activate
 
@@ -31,6 +34,7 @@ COPY types ./types
 COPY apps/frontend ./apps/frontend
 
 RUN pnpm install --offline --filter frontend... \
+    && npx prisma generate --schema=./shared/prisma/schema.prisma \
     && pnpm --filter frontend run build \
     && pnpm prune --prod
 
@@ -38,11 +42,11 @@ FROM node:${NODE_VERSION} AS runner
 
 ARG PNPM_VERSION=9.10.0
 
-ENV PNPM_HOME=/pnpm \
-    PATH="${PNPM_HOME}:${PATH}" \
-    NODE_ENV=production \
-    NEXT_TELEMETRY_DISABLED=1 \
-    PORT=3000
+ENV PNPM_HOME=/pnpm
+ENV PATH="${PNPM_HOME}:${PATH}"
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV PORT=3000
 
 RUN corepack enable pnpm && corepack prepare pnpm@${PNPM_VERSION} --activate
 
