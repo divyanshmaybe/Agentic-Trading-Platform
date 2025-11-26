@@ -298,6 +298,9 @@ services:
       CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/1
       FLOWER_BASIC_AUTH: admin:admin123
       FLOWER_PORT: 5555
+      CELERY_APP: celery_app
+      FLOWER_INSPECT_TIMEOUT: 10
+      FLOWER_ENABLE_EVENTS: "true"
     ports:
       - "5555:5555"
     depends_on:
