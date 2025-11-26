@@ -350,9 +350,9 @@ export default function DashboardPage() {
             />
           </div>
 
-          <div className="flex flex-col gap-6 lg:col-span-2 xl:col-span-3">
+          <div className="flex flex-col gap-6 lg:col-span-2 xl:col-span-3 h-full">
             {portfolioNotFound ? (
-              <div className="card-glass rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_32px_70px_-45px_rgba(0,0,0,0.95)] backdrop-blur p-8">
+              <div className="card-glass rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_32px_70px_-45px_rgba(0,0,0,0.95)] backdrop-blur p-8 h-full flex items-center justify-center">
                 <div className="flex flex-col items-center justify-center text-center space-y-4">
                   <h3 className="text-2xl font-semibold text-[#fafafa]">No Portfolio Found</h3>
                   <p className="text-white/60 max-w-md">
