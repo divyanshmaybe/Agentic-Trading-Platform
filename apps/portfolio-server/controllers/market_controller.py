@@ -145,17 +145,13 @@ class MarketController:
         return self._service
 
     async def _get_price(self, provider_symbol: str) -> tuple[Optional[Decimal], str, str]:
-        # Try REST API first to avoid WebSocket connection
-        price = await self._fetch_rest_price(provider_symbol)
-        if price is not None:
-            return price, "rest-api", "rest-api"
-        
-        # Only use WebSocket service if explicitly enabled and REST failed
+        # For live price (no candles), use WebSocket only to avoid REST API calls
+        # Only use WebSocket service if explicitly enabled
         use_websocket = os.getenv("MARKET_DATA_USE_WEBSOCKET", "true").lower() in ("true", "1", "yes")
         if not use_websocket:
-            return None, "unavailable", "rest-api-only"
+            return None, "unavailable", "websocket-disabled"
         
-        # WebSocket fallback (only if enabled)
+        # WebSocket for live prices
         try:
             price = self.service.get_latest_price(provider_symbol)
             if price is not None:
@@ -215,7 +211,7 @@ class MarketController:
         end: Optional[datetime] = None,
     ) -> Optional[List[Dict[str, Decimal]]]:
         """
-        Fetch historical candles using Angel One Historical API.
+        Fetch historical candles: Angel One first, then yfinance fallback.
         
         Supports predefined periods: 1h, 1d, 5d, 7d, 30d, 1y
         Or custom date ranges via start/end parameters.
@@ -239,51 +235,132 @@ class MarketController:
         angelone_interval, default_range = resolution_map[resolution]
         time_from, time_to = self._resolve_time_range(resolution, start, end)
 
+        # Adjust time range to respect market hours (9:15 AM to 3:30 PM IST)
+        # If requested time is after market close, use previous trading day
+        from datetime import timezone, time as dt_time
+        import pytz
+        
+        ist = pytz.timezone('Asia/Kolkata')
+        market_open = dt_time(9, 15)
+        market_close = dt_time(15, 30)
+        
+        # Convert to IST for market hour check
+        time_from_ist = time_from.astimezone(ist) if time_from.tzinfo else ist.localize(time_from)
+        time_to_ist = time_to.astimezone(ist) if time_to.tzinfo else ist.localize(time_to)
+        
+        # If end time is after market close, adjust to market close
+        if time_to_ist.time() > market_close:
+            time_to_ist = time_to_ist.replace(hour=15, minute=30, second=0, microsecond=0)
+        
+        # If start time is before market open, adjust to market open
+        if time_from_ist.time() < market_open:
+            time_from_ist = time_from_ist.replace(hour=9, minute=15, second=0, microsecond=0)
+        
+        # Convert back to UTC/naive for API
+        time_from = time_from_ist.replace(tzinfo=None)
+        time_to = time_to_ist.replace(tzinfo=None)
+
         # Format dates for Angel One API (YYYY-MM-DD HH:MM)
         fromdate = time_from.strftime("%Y-%m-%d %H:%M")
         todate = time_to.strftime("%Y-%m-%d %H:%M")
 
-        # Check if using Angel One adapter
+        # Try Angel One first
         try:
-            from market_data import AngelOneAdapter
-        except ImportError:
-            AngelOneAdapter = None
-        
-        if AngelOneAdapter is None or not isinstance(self.service.adapter, AngelOneAdapter):
-            logger.warning(
-                "Candle data requires Angel One adapter. Current provider: %s",
-                self.service.adapter.name
+            logger.info(f"Trying Angel One historical API for {provider_symbol}")
+            candles_raw = self.service.get_historical_candles(
+                symbol=provider_symbol,
+                interval=angelone_interval,
+                fromdate=fromdate,
+                todate=todate,
+                exchange="NSE"
             )
-            return None
 
-        # Fetch candles from Angel One
-        adapter = self.service.adapter
-        candles_raw = adapter.get_historical_candles(
-            symbol=provider_symbol,
-            interval=angelone_interval,
-            fromdate=fromdate,
-            todate=todate,
-            exchange="NSE"
-        )
+            if candles_raw:
+                # Convert to response format with Decimal types
+                candles: List[Dict[str, Decimal]] = []
+                for candle in candles_raw:
+                    candles.append({
+                        "timestamp": candle["timestamp"],
+                        "open": Decimal(str(candle["open"])),
+                        "high": Decimal(str(candle["high"])),
+                        "low": Decimal(str(candle["low"])),
+                        "close": Decimal(str(candle["close"])),
+                        "volume": Decimal(str(candle["volume"])),
+                    })
 
-        if not candles_raw:
-            logger.warning(f"No candle data returned for {provider_symbol}")
-            return None
+                logger.info(f"✅ Fetched {len(candles)} candles from Angel One for {provider_symbol} ({resolution})")
+                return candles
+            else:
+                logger.warning(f"Angel One returned empty candles for {provider_symbol}")
+        except Exception as e:
+            logger.warning(f"Angel One historical API failed for {provider_symbol}: {e}")
 
-        # Convert to response format with Decimal types
-        candles: List[Dict[str, Decimal]] = []
-        for candle in candles_raw:
-            candles.append({
-                "timestamp": candle["timestamp"],
-                "open": Decimal(str(candle["open"])),
-                "high": Decimal(str(candle["high"])),
-                "low": Decimal(str(candle["low"])),
-                "close": Decimal(str(candle["close"])),
-                "volume": Decimal(str(candle["volume"])),
-            })
+        # Fallback to yfinance
+        try:
+            import yfinance as yf
+            
+            # Map resolution to yfinance interval
+            yf_interval_map = {
+                "1h": "1m",   # yfinance doesn't have 1h, use 1m
+                "1d": "5m",
+                "5d": "15m", 
+                "7d": "15m",
+                "30d": "1h",
+                "1y": "1d",
+            }
+            yf_interval = yf_interval_map.get(resolution, "1d")
+            
+            # Try different ticker formats for NSE
+            ticker_candidates = [
+                f"{provider_symbol}.NS",  # Standard NSE format
+                f"{provider_symbol}.BO",  # BSE format
+                provider_symbol,          # Raw symbol
+            ]
+            
+            for ticker_symbol in ticker_candidates:
+                try:
+                    logger.info(f"Trying yfinance with {ticker_symbol}")
+                    ticker = yf.Ticker(ticker_symbol)
+                    
+                    # Adjust period based on resolution
+                    period_map = {
+                        "1h": "1d",
+                        "1d": "5d", 
+                        "5d": "1mo",
+                        "7d": "1mo",
+                        "30d": "3mo",
+                        "1y": "2y",
+                    }
+                    period = period_map.get(resolution, "1y")
+                    
+                    hist = ticker.history(period=period, interval=yf_interval)
+                    if not hist.empty:
+                        # Convert to our format
+                        candles: List[Dict[str, Decimal]] = []
+                        for idx, row in hist.iterrows():
+                            candles.append({
+                                "timestamp": idx.to_pydatetime(),
+                                "open": Decimal(str(row["Open"])),
+                                "high": Decimal(str(row["High"])),
+                                "low": Decimal(str(row["Low"])),
+                                "close": Decimal(str(row["Close"])),
+                                "volume": Decimal(str(row["Volume"])),
+                            })
+                        
+                        logger.info(f"✅ Fetched {len(candles)} candles from yfinance for {provider_symbol} using {ticker_symbol}")
+                        return candles
+                    else:
+                        logger.warning(f"yfinance returned empty data for {ticker_symbol}")
+                except Exception as e:
+                    logger.warning(f"yfinance failed for {ticker_symbol}: {e}")
+                    continue
+            
+            logger.warning(f"yfinance failed for all ticker candidates for {provider_symbol}")
+        except Exception as e:
+            logger.error(f"yfinance fallback failed for {provider_symbol}: {e}")
 
-        logger.info(f"✅ Fetched {len(candles)} candles for {provider_symbol} ({resolution})")
-        return candles
+        logger.error(f"No candle data available for {provider_symbol} from any source")
+        return None
 
     def _resolve_time_range(
         self,
@@ -295,14 +372,19 @@ class MarketController:
         Resolve time range for candle data queries.
         
         Supports custom ranges (start/end) or predefined periods:
-        - 1h: Last 1 hour
+        - 1h: Last 1 hour (within last trading session)
         - 1d: Last 1 day
         - 5d: Last 5 days
         - 7d: Last 7 days
         - 30d: Last 30 days
         - 1y: Last 1 year
         """
-        now = datetime.utcnow()
+        import pytz
+        ist = pytz.timezone('Asia/Kolkata')
+        
+        # Get current IST time
+        now_ist = datetime.now(ist)
+        now = now_ist.replace(tzinfo=None)
 
         if start and end:
             if start >= end:
@@ -334,10 +416,26 @@ class MarketController:
             }
             return start, mapping[resolution]
 
-        # Default range when none provided
+        # Default range when none provided - use last completed trading session
+        # For intraday, go back to last market close
+        if resolution in ["1h", "1d"]:
+            # Get last market close (3:30 PM IST)
+            last_close = now.replace(hour=15, minute=30, second=0, microsecond=0)
+            
+            # If current time is before market close today, use yesterday's close
+            if now < last_close:
+                last_close = last_close - timedelta(days=1)
+            
+            # Start from appropriate time before close
+            if resolution == "1h":
+                start_time = last_close - timedelta(hours=6)  # 6 hours of market data
+            else:  # 1d
+                start_time = last_close - timedelta(days=1)
+            
+            return start_time, last_close
+        
+        # For longer periods, use standard lookback
         defaults = {
-            "1h": now - timedelta(hours=1),
-            "1d": now - timedelta(days=1),
             "5d": now - timedelta(days=5),
             "7d": now - timedelta(days=7),
             "30d": now - timedelta(days=30),

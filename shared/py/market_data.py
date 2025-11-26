@@ -10,7 +10,7 @@ import logging
 import os
 import time
 from decimal import Decimal
-from typing import Dict, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 import websockets
 from websockets.exceptions import ConnectionClosedError
 
@@ -23,6 +23,25 @@ SYMBOL_ALIASES: Dict[str, str] = {
     "HDFC-EQ": "HDFCBANK-EQ",
     "HDFC.NS": "HDFCBANK",
 }
+
+
+class AngelOneAdapter:
+    """Adapter for Angel One market data operations."""
+    
+    def __init__(self, service: "MarketDataService"):
+        self.service = service
+        self.name = "simple-angelone"
+    
+    def get_historical_candles(
+        self,
+        symbol: str,
+        interval: str,
+        fromdate: str,
+        todate: str,
+        exchange: str = "NSE"
+    ) -> List[Dict[str, Any]]:
+        """Fetch historical candles from Angel One API."""
+        return self.service.get_historical_candles(symbol, interval, fromdate, todate, exchange)
 
 
 class MarketDataService:
@@ -554,11 +573,124 @@ class MarketDataService:
             logger.error(f"Failed to subscribe to Nifty 500 symbols: {e}")
             return 0
     
+    def get_historical_candles(
+        self,
+        symbol: str,
+        interval: str,
+        fromdate: str,
+        todate: str,
+        exchange: str = "NSE"
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch historical candle data from Angel One API.
+        
+        Args:
+            symbol: Symbol name (e.g., 'RELIANCE', 'TCS')
+            interval: Time interval ('ONE_MINUTE', 'FIVE_MINUTE', 'FIFTEEN_MINUTE', 'ONE_HOUR', 'ONE_DAY')
+            fromdate: Start date in 'YYYY-MM-DD HH:MM' format
+            todate: End date in 'YYYY-MM-DD HH:MM' format
+            exchange: Exchange name (default: 'NSE')
+            
+        Returns:
+            List of candle dictionaries with keys: timestamp, open, high, low, close, volume
+        """
+        import httpx
+        from datetime import datetime
+        
+        # Get token for symbol
+        token_info = self._get_token_info(symbol)
+        if not token_info:
+            logger.warning(f"No token found for symbol {symbol}")
+            return []
+        
+        symbol_token = token_info.get("token")
+        if not symbol_token:
+            logger.warning(f"No token available for {symbol}")
+            return []
+        
+        # Use the token map key as the symbol for API
+        api_symbol = None
+        for key, info in self._token_map.items():
+            if info.get("token") == symbol_token and info.get("exchangeType") == 1:  # NSE
+                api_symbol = key
+                break
+        
+        if not api_symbol:
+            logger.warning(f"Could not find API symbol for token {symbol_token}")
+            return []
+        
+        logger.info(f"Fetching historical candles for {symbol} (API symbol: {api_symbol}, token: {symbol_token}) ({interval}) from {fromdate} to {todate}")
+        
+        # API endpoint
+        url = "https://apiconnect.angelone.in/rest/secure/angelbroking/historical/v1/getCandleData"
+        
+        # Headers
+        headers = {
+            "Authorization": f"Bearer {self.jwt_token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "X-UserType": "USER",
+            "X-SourceID": "WEB",
+            "X-ClientLocalIP": "127.0.0.1",
+            "X-ClientPublicIP": "127.0.0.1",
+            "X-MACAddress": "00:00:00:00:00:00",
+            "X-PrivateKey": self.api_key
+        }
+        
+        # Payload
+        payload = {
+            "exchange": exchange,
+            "symboltoken": symbol_token,
+            "interval": interval,
+            "fromdate": fromdate,
+            "todate": todate
+        }
+        
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                response = client.post(url, json=payload, headers=headers)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    # Check if response has data field and it's not empty
+                    if data.get("status") and data.get("data") and len(data.get("data", [])) > 0:
+                        candles = []
+                        for candle in data["data"]:
+                            # Angel One format: [timestamp_str, open, high, low, close, volume]
+                            timestamp_str = candle[0]
+                            # Parse timestamp (remove timezone offset for UTC)
+                            dt = datetime.fromisoformat(timestamp_str.replace('+05:30', ''))
+                            
+                            candles.append({
+                                "timestamp": dt,
+                                "open": float(candle[1]),
+                                "high": float(candle[2]),
+                                "low": float(candle[3]),
+                                "close": float(candle[4]),
+                                "volume": int(candle[5])
+                            })
+                        
+                        logger.info(f"✅ Fetched {len(candles)} candles for {symbol}")
+                        return candles
+                    else:
+                        msg = data.get('message', 'No data available')
+                        logger.warning(f"Angel One returned empty data for {symbol}: {msg}")
+                        return []
+                else:
+                    logger.error(f"HTTP {response.status_code} for {symbol}: {response.text}")
+                    return []
+                    
+        except Exception as e:
+            logger.error(f"Failed to fetch historical candles for {symbol}: {e}")
+            return []
+    
     @property
     def adapter(self):
         """Return adapter info for compatibility"""
         class Adapter:
             name = "simple-angelone"
+            get_historical_candles = self.get_historical_candles
         return Adapter()
 
 
