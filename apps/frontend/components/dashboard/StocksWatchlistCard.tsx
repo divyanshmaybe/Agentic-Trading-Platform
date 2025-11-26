@@ -15,7 +15,10 @@ type StocksWatchlistCardProps = {
 
 export function StocksWatchlistCard({ stocks, loading = false }: StocksWatchlistCardProps) {
 	return (
-		<Card className="card-glass flex flex-col rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_32px_70px_-45px_rgba(0,0,0,0.95)] backdrop-blur md:min-h-[50vh]">
+		<Card className={cn(
+			"card-glass flex flex-col rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_32px_70px_-45px_rgba(0,0,0,0.95)] backdrop-blur",
+			stocks.length === 0 && !loading ? "flex-1" : "md:min-h-[50vh]"
+		)}>
 			<CardHeader className="gap-2">
 				<CardDescription className="text-xs uppercase tracking-[0.3em] text-white/45">
 					Your Holdings
