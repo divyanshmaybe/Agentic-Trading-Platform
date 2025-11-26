@@ -106,8 +106,8 @@ services:
       CELERY_RESULT_BACKEND: redis://redis:6379/1
     working_dir: /app/apps/auth_server
     command: >
-      sh -c "pnpm prisma generate &&
-             pnpm prisma db push &&
+      sh -c "pnpm prisma generate --schema ../../shared/prisma/schema.prisma &&
+             pnpm prisma db push --schema ../../shared/prisma/schema.prisma &&
              pnpm run start"
     ports:
       - "4000:4000"
@@ -144,10 +144,17 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_CLIENT_ID: notification-server
       KAFKA_GROUP_ID: notifications-consumer
-    working_dir: /app/apps/notification_server
+    working_dir: /app
     command: >
-      sh -c "pnpm prisma generate &&
-             node dist/index.js"
+      sh -c "cd apps/notification_server && pnpm prisma generate --schema /app/shared/prisma/schema.prisma &&
+             pnpm prisma db push --schema /app/shared/prisma/schema.prisma --accept-data-loss &&
+             node -r tsconfig-paths/register dist/apps/notification_server/src/index.js"
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'node.*index.js' > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     depends_on:
       postgres:
         condition: service_healthy
@@ -167,7 +174,6 @@ services:
       context: .
       dockerfile: apps/portfolio-server/Dockerfile
     env_file:
-      - .env
       - apps/portfolio-server/docker.env
     environment:
       PORT: 8000
@@ -210,7 +216,6 @@ services:
     container_name: portfolio_celery
     restart: unless-stopped
     env_file:
-      - .env
       - apps/portfolio-server/docker.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
@@ -251,7 +256,6 @@ services:
     container_name: portfolio_celery_beat
     restart: unless-stopped
     env_file:
-      - .env
       - apps/portfolio-server/docker.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
@@ -283,6 +287,28 @@ services:
         condition: service_healthy
     networks:
       - agentInvest
+
+  # Flower (Celery monitoring dashboard)
+  flower:
+    image: mher/flower:latest
+    container_name: flower
+    restart: unless-stopped
+    environment:
+      CELERY_BROKER_URL: redis://portfolio_redis:6379/0
+      CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/1
+      FLOWER_BASIC_AUTH: admin:admin123
+      FLOWER_PORT: 5555
+    ports:
+      - "5555:5555"
+    depends_on:
+      portfolio_redis:
+        condition: service_healthy
+      portfolio_celery:
+        condition: service_started
+    networks:
+      - agentInvest
+    profiles:
+      - debug
 
   # Frontend (Next.js)
   frontend:
@@ -334,7 +360,7 @@ services:
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
     healthcheck:
-      test: ["CMD-SHELL", "kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
       interval: 10s
       timeout: 10s
       retries: 10
