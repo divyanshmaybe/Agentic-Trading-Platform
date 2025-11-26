@@ -1465,7 +1465,7 @@ class PipelineService:
             # Persist trade jobs and publish to Kafka
             events = await trade_service.persist_and_publish(
                 job_rows,
-                publish_kafka=publish_kafka,
+                publish_kafka=False,  # Disable Pathway Kafka to prevent blocking
             )
             
             self.logger.info("✅ Persisted %d trade execution log(s), created %d event(s)", len(job_rows), len(events) if events else 0)

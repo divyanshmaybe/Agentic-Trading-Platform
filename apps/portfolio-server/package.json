@@ -8,7 +8,7 @@
 		"prisma:generate": "prisma generate",
 		"prisma:studio": "prisma studio",
 		"dev": "PYTHONPATH=../..:../../shared/py:../../middleware:../../middleware/py python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000",
-		"celery": "CELERY_WORKER_RUNNING=1 PYTHONPATH=../..:../../shared/py:../../middleware:../../middleware/py celery -A celery_app:celery_app worker --loglevel=info -Q general,allocations,trading,pipelines,risk,orders,market,tokens --concurrency=4",
+		"celery": "CELERY_WORKER_RUNNING=1 PYTHONPATH=../..:../../shared/py:../../middleware:../../middleware/py celery -A celery_app:celery_app worker --loglevel=info -Q general,allocations,trading,pipelines,risk,orders,market,tokens --concurrency=8",
 		"celery:beat": "CELERY_WORKER_RUNNING=1 PYTHONPATH=../..:../../shared/py:../../middleware:../../middleware/py celery -A celery_app:celery_app beat --loglevel=info",
 		"streaming:risk": "PYTHONPATH=../..:../../shared/py:../../middleware:../../middleware/py python -m workers.streaming_risk_monitor",
 		"streaming:orders": "PYTHONPATH=../..:../../shared/py:../../middleware:../../middleware/py python -m workers.streaming_order_monitor",
