@@ -5,6 +5,7 @@ import { motion, type Variants } from "framer-motion"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import type { AgentDashboard } from "@/lib/types/agent"
 import { formatCurrency, formatPercentage, formatWeight, displayValue } from "@/lib/utils/formatters"
+import { AllocationLoadingState } from "@/components/shared/AllocationLoadingState"
 
 const container: Variants = {
   hidden: { opacity: 0, y: 12 },
@@ -23,9 +24,26 @@ const item: Variants = {
 interface AgentOverviewProps {
   data: AgentDashboard | null
   loading: boolean
+  isAllocating?: boolean
 }
 
-export function AgentOverview({ data, loading }: AgentOverviewProps) {
+export function AgentOverview({ data, loading, isAllocating = false }: AgentOverviewProps) {
+  // Show allocating message when agents are being created
+  if (isAllocating) {
+    return (
+      <AllocationLoadingState
+        title="Allocating Your Portfolio"
+        description="We're setting up your trading agents and allocating your portfolio. This usually takes a few moments."
+        steps={[
+          "Creating agent instances...",
+          "Calculating optimal allocations...",
+          "Initializing trading strategies...",
+        ]}
+        asCard
+      />
+    )
+  }
+
   if (loading || !data) {
     return (
       <Card className="card-glass flex h-full flex-col rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_28px_65px_-38px_rgba(0,0,0,0.9)] backdrop-blur">

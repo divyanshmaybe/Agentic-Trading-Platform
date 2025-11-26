@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import type { PortfolioSummary } from "@/lib/dashboardTypes"
 import { formatCurrency } from "@/lib/dashboardData"
 import { cn } from "@/lib/utils"
+import { AllocationLoadingState } from "@/components/shared/AllocationLoadingState"
 
 import { allocationChartOptions, createAllocationChartData, pieDepthPlugin } from "./chartConfig"
 
@@ -119,12 +120,16 @@ export function PortfolioOverviewCard({ summary, loading = false }: PortfolioOve
               <Pie data={allocationChart} options={allocationChartOptions} plugins={[pieDepthPlugin]} />
             </div>
           ) : (
-            <div className="flex w-full max-w-xs flex-col items-center justify-center rounded-xl border border-amber-500/20 bg-amber-500/5 p-6 text-center">
-              <h4 className="mb-2 text-sm font-semibold text-amber-400">Balancing Portfolio</h4>
-              <p className="text-xs text-white/60 leading-relaxed">
-                We're currently balancing your investments between long-term, intraday, and algorithmic trading strategies based on your goals and objectives.
-              </p>
-            </div>
+            <AllocationLoadingState
+              title="Balancing Portfolio"
+              description="We're currently balancing your investments between long-term, intraday, and algorithmic trading strategies."
+              steps={[
+                "Analyzing risk profile...",
+                "Optimizing allocations...",
+                "Configuring strategies...",
+              ]}
+              className="w-full"
+            />
           )}
         </div>
       </CardContent>
