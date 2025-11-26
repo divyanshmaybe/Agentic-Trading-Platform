@@ -53,6 +53,8 @@ DEFAULT_LIQUIDITY_NEEDS = os.getenv("DEFAULT_PORTFOLIO_LIQUIDITY_NEEDS", "standa
 MAX_TRADE_VALUE = _decimal_from_env("MAX_TRADE_VALUE", "50000")
 MAX_POSITION_VALUE = _decimal_from_env("MAX_POSITION_VALUE", "100000")
 
+VALID_AGENT_TYPES = ["alpha", "liquid", "low_risk", "high_risk"]
+
 
 class PortfolioController:
     """Encapsulates portfolio-related queries and transformations."""
@@ -602,13 +604,30 @@ class PortfolioController:
 
     async def get_agent_dashboard(
         self,
-        agent_id: str,
+        agent_type: str,
         request_user: dict,
     ) -> AgentDashboardResponse:
         """Get agent-specific dashboard data"""
-        # Get agent with related data
-        agent = await self.prisma.tradingagent.find_unique(
-            where={"id": agent_id},
+        if agent_type not in VALID_AGENT_TYPES:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Invalid agent_type. Must be one of: {', '.join(VALID_AGENT_TYPES)}"
+            )
+        
+        user_id = request_user.get("id")
+        if not user_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User id is required")
+
+        portfolio = await self._get_portfolio_for_user(user_id, request_user.get("organization_id"))
+        if portfolio is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found for user")
+        
+        # Get agent with related data by portfolio_id and agent_type
+        agent = await self.prisma.tradingagent.find_first(
+            where={
+                "portfolio_id": portfolio.id,
+                "agent_type": agent_type,
+            },
             include={
                 "portfolio": True,
                 "allocation": True,
@@ -623,13 +642,10 @@ class PortfolioController:
         )
         
         if not agent:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-        
-        # Authorize user has access to portfolio
-        portfolio = agent.portfolio
-        if portfolio:
-            user_id = portfolio.customer_id
-            self._authorize_user(request_user, user_id)
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Agent with type '{agent_type}' not found for your portfolio"
+            )
         
         # Calculate current value from positions using live prices
         from services.snapshot_service import TradingAgentSnapshotService
@@ -737,7 +753,7 @@ class PortfolioController:
         self,
         request_user: dict,
         *,
-        agent_id: Optional[str] = None,
+        agent_type: Optional[str] = None,
         limit: int = 100,
         target_user_id: Optional[str] = None,
     ) -> SnapshotListResponse:
@@ -756,16 +772,28 @@ class PortfolioController:
 
         service = TradingAgentSnapshotService(logger=self.logger)
         
-        if agent_id:
-            # Get agent-specific snapshots
-            # Verify agent belongs to user's portfolio
-            agent = await self.prisma.tradingagent.find_unique(
-                where={"id": agent_id},
-            )
-            if not agent or agent.portfolio_id != portfolio.id:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+        if agent_type:
+            if agent_type not in VALID_AGENT_TYPES:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Invalid agent_type. Must be one of: {', '.join(VALID_AGENT_TYPES)}"
+                )
             
-            snapshot_data = await service.get_agent_snapshot_history(agent_id, limit=limit)
+            # Get agent-specific snapshots
+            # Find agent by portfolio_id and agent_type
+            agent = await self.prisma.tradingagent.find_first(
+                where={
+                    "portfolio_id": portfolio.id,
+                    "agent_type": agent_type,
+                },
+            )
+            if not agent:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Agent with type '{agent_type}' not found for your portfolio"
+                )
+            
+            snapshot_data = await service.get_agent_snapshot_history(agent.id, limit=limit)
         else:
             # Get aggregated portfolio snapshots
             snapshot_data = await service.get_portfolio_snapshot_history(portfolio.id, limit=limit)
