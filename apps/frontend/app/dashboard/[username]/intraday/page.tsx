@@ -1,12 +1,13 @@
 "use client"
 
 import { useParams } from "next/navigation"
-import { AlphaStats, TradeTable } from "@/components/alpha"
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader"
 import { IntradayNotifications } from "@/components/intraday"
 import { Container } from "@/components/shared/Container"
 import { PageHeading } from "@/components/shared/PageHeading"
 import { useAuth } from "@/hooks/useAuth"
+import { AgentOverview, AgentTradesTable } from "@/components/agent"
+import { useAgentDashboard } from "@/hooks/useAgentDashboard"
 
 export default function IntradayCommandCenterPage() {
   const params = useParams()
@@ -14,6 +15,8 @@ export default function IntradayCommandCenterPage() {
 
   // SECURE: Get user data from server-validated token, NOT localStorage
   const { user: authUser, loading: authLoading } = useAuth()
+  
+  const { data: agentData, loading: agentLoading } = useAgentDashboard("high_risk")
 
   // Show loading state while auth is being verified
   if (authLoading || !authUser) {
@@ -34,8 +37,8 @@ export default function IntradayCommandCenterPage() {
         />
 
         <section className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <AlphaStats />
-          <TradeTable />
+          <AgentOverview data={agentData} loading={agentLoading} />
+          <AgentTradesTable trades={agentData?.recent_trades ?? []} loading={agentLoading} />
         </section>
 
         <section>
