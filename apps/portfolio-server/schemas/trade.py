@@ -25,6 +25,7 @@ class TradeRequest(BaseModel):
     source: Optional[str] = Field(default=None, max_length=64)
     metadata: Optional[dict] = None
     auto_sell_after: Optional[int] = Field(default=None, ge=1, description="Auto-sell after this many seconds (only for BUY orders)")
+    allocation_id: Optional[str] = Field(default=None, description="Portfolio allocation ID (will auto-detect liquid agent if not provided)")
 
     @model_validator(mode="after")
     def _validate_order_constraints(self) -> "TradeRequest":
@@ -54,6 +55,7 @@ class TradeCreate(BaseModel):
     source: Optional[str] = Field(default=None, max_length=64)
     metadata: Optional[dict] = None
     auto_sell_after: Optional[int] = Field(default=None, ge=1, description="Auto-sell after this many seconds (only for BUY orders)")
+    allocation_id: Optional[str] = Field(default=None, description="Portfolio allocation ID")
 
     model_config = {
         "json_schema_extra": {
@@ -89,6 +91,7 @@ class TradeSummary(BaseModel):
 
 class PortfolioSnapshot(BaseModel):
     id: str
+    available_cash: Decimal
     current_value: Decimal
     updated_at: datetime
 

@@ -82,7 +82,9 @@ MARKET_CLOSE = (15, 30)
 MARKET_CLOSE_BUFFER_MINUTES = int(os.getenv("NSE_FILINGS_MARKET_CLOSE_BUFFER_MINUTES", "15"))
 AUTO_SELL_WINDOW_MINUTES = int(os.getenv("NSE_FILINGS_AUTO_SELL_WINDOW_MINUTES", "15"))
 LLM_MODEL = os.getenv("NSE_FILINGS_LLM_MODEL", "gemini-2.5-flash")
-DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() in {"1", "true", "yes"}
+DEMO_MODE = os.getenv("DEMO_MODE", "true").lower() in {"1", "true", "yes"}  # Default: true for 24/7 signal generation
+print(f"[DEBUG] DEMO_MODE environment variable: '{os.getenv('DEMO_MODE', 'NOT_SET')}'")
+print(f"[DEBUG] DEMO_MODE parsed value: {DEMO_MODE}")
 
 # Relevant filing types to filter and process
 RELEVANT_FILE_TYPES = {
@@ -264,7 +266,7 @@ def publish_signal_to_kafka(
         celery_app.send_task(
             "pipeline.trade_execution.process_signal",
             args=[event.model_dump()],
-            queue="trading",  # Route to trading queue (matches celery_app routing)
+            queue="pipelines",  # Route to pipelines queue (matches celery_app routing)
         )
         print(f"[CELERY] ✅ Queued trade execution for {symbol}")
         
@@ -300,13 +302,16 @@ def map_filing_type(desc: str) -> str:
     Returns the matched filing type from RELEVANT_FILE_TYPES, or empty string if no match.
     """
     if not desc:
+        print(f"[DEBUG] map_filing_type: Empty description")
         return ""
     
     desc_lower = desc.lower()
+    print(f"[DEBUG] map_filing_type: Processing '{desc[:100]}...'")
     
     # Direct keyword matching - check if filing type appears in description
     for filing_type in RELEVANT_FILE_TYPES.keys():
         if filing_type.lower() in desc_lower:
+            print(f"[DEBUG] map_filing_type: Matched filing_type='{filing_type}'")
             return filing_type
     
     # Fuzzy matching for common patterns
@@ -332,6 +337,7 @@ def map_filing_type(desc: str) -> str:
         return "Change in Director(s)"
     
     # No match found
+    print(f"[DEBUG] map_filing_type: NO MATCH for '{desc[:100]}...'")
     return ""
 
 
@@ -483,12 +489,18 @@ def fetch_stock_data(symbol: str, filing_time: str) -> str:
     
     is_market_hours = market_open_time <= current_time <= market_close_time
     
-    if not is_market_hours and not DEMO_MODE:
-        # Market is closed - log and return a message indicating this
-        market_status_msg = f"🔴 MARKET CLOSED for {symbol} - NSE hours: {MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d} - {MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST. Current time: {current_time.strftime('%H:%M:%S')} IST, Filing time: {filing_time}"
-        print(f"[MARKET] {market_status_msg}")
-        logging.warning(market_status_msg)
-        return f"Market closed (NSE hours: {MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d} - {MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST). Current time: {current_time.strftime('%H:%M:%S')} IST"
+    # Show market status for logging/monitoring
+    if not is_market_hours:
+        if DEMO_MODE:
+            market_status_msg = f"🔴 MARKET CLOSED for {symbol} (NSE: {MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d}-{MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST, Current: {current_time.strftime('%H:%M:%S')} IST) 🔵 BUT DEMO_MODE ENABLED - Processing anyway"
+            print(f"[MARKET] {market_status_msg}")
+            logging.info(market_status_msg)
+        else:
+            # Market is closed and not in demo mode - skip processing
+            market_status_msg = f"🔴 MARKET CLOSED for {symbol} - NSE hours: {MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d} - {MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST. Current time: {current_time.strftime('%H:%M:%S')} IST, Filing time: {filing_time}"
+            print(f"[MARKET] {market_status_msg}")
+            logging.warning(market_status_msg)
+            return f"Market closed (NSE hours: {MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d} - {MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST). Current time: {current_time.strftime('%H:%M:%S')} IST"
 
     try:
         # Get current live price via HTTP API (market_data service)
@@ -882,9 +894,14 @@ def create_nse_filings_pipeline(
     is_market_open = market_open_time <= current_time <= market_close_time
     is_near_close = current_time >= close_buffer_time
     
-    # In DEMO_MODE, always process signals regardless of market hours
+    # Show market status and DEMO_MODE override
     if DEMO_MODE:
-        market_status = f"🔵 DEMO MODE - Signal processing enabled 24/7. Current time: {current_time.strftime('%H:%M:%S')} IST. Market hours check bypassed."
+        if not is_market_open:
+            market_status = f"🔴 MARKET CLOSED (NSE: {MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d}-{MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST, Current: {current_time.strftime('%H:%M:%S')} IST) 🔵 DEMO MODE ENABLED - Processing 24/7"
+        elif is_near_close:
+            market_status = f"🟡 MARKET CLOSING SOON (within {MARKET_CLOSE_BUFFER_MINUTES}min of {MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST, Current: {current_time.strftime('%H:%M:%S')} IST) 🔵 DEMO MODE ENABLED - Processing anyway"
+        else:
+            market_status = f"🟢 MARKET OPEN (NSE: {MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d}-{MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST, Current: {current_time.strftime('%H:%M:%S')} IST) 🔵 DEMO MODE ENABLED"
         print(f"[MARKET] {market_status}")
         logging.info(market_status)
     elif is_market_open and not is_near_close:
@@ -896,22 +913,32 @@ def create_nse_filings_pipeline(
         print(f"[MARKET] {market_status}")
         logging.warning(market_status)
     else:
-        market_status = f"🔴 MARKET CLOSED - NSE hours: {MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d} - {MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST. Current time: {current_time.strftime('%H:%M:%S')} IST"
+        market_status = f"🔴 MARKET CLOSED - NSE hours: {MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d} - {MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST. Current time: {current_time.strftime('%H:%M:%S')} IST. Skipping signal processing."
         print(f"[MARKET] {market_status}")
         logging.warning(market_status)
     
-    # Skip signal processing only if not in DEMO_MODE and market is closing soon
-    if not DEMO_MODE and current_time >= close_buffer_time:
+    # Skip signal processing only if not in DEMO_MODE and market is closed/closing
+    if not DEMO_MODE and (not is_market_open or is_near_close):
         # Return empty table with correct schema by filtering on a boolean column
         return filings_source.select(
             symbol=pw.this.symbol,
             filing_time=pw.this.sort_date if hasattr(pw.this, 'sort_date') else "",
             signal=pw.apply(lambda s: 0, pw.this.symbol),
-            explanation=pw.apply(lambda s: "Market closing soon - skipping new trades", pw.this.symbol),
+            explanation=pw.apply(lambda s: "Market closed/closing - skipping new trades", pw.this.symbol),
             confidence=pw.apply(lambda s: 0.0, pw.this.symbol),
         ).filter(pw.this.symbol == "__NEVER_MATCH__")
     
     print("[SENTIMENT] Step 1: Processing filings from scraper...")
+    
+    # Log incoming filings
+    def log_filing(symbol, desc, attchmntFile):
+        print(f"[DEBUG] Incoming filing: {symbol} - {desc[:80]}... PDF: {bool(attchmntFile)}")
+        return symbol
+    
+    filings_source = filings_source.select(
+        *pw.this,
+        _debug=pw.apply(log_filing, pw.this.symbol, pw.this.desc, pw.this.attchmntFile)
+    )
     
     # Map filing descriptions to filing types and filter relevant ones
     filings_with_types = filings_source.select(

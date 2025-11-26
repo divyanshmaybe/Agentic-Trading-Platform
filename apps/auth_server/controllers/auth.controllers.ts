@@ -701,7 +701,7 @@ export const updateUserProfile = async (
   }
 };
 
-const VALID_SUBSCRIPTION_AGENTS = ["high_risk", "low_risk", "alpha"] as const;
+const VALID_SUBSCRIPTION_AGENTS = ["high_risk", "low_risk", "alpha", "liquid"] as const;
 type SubscriptionAgent = (typeof VALID_SUBSCRIPTION_AGENTS)[number];
 
 export const updateUserSubscriptions = async (

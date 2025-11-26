@@ -28,18 +28,29 @@ logging.getLogger("pathway.io.sink").setLevel(logging.ERROR)
 logging.getLogger("pathway.io.filesystem").setLevel(logging.ERROR)
 logging.getLogger("pathway.io.kafka").setLevel(logging.ERROR)
 
+# Suppress verbose HTTP and network logging from Prisma/httpx
+logging.getLogger("httpx").setLevel(logging.ERROR)
+logging.getLogger("httpcore").setLevel(logging.ERROR)
+logging.getLogger("httpcore.http11").setLevel(logging.ERROR)
+logging.getLogger("httpcore.connection").setLevel(logging.ERROR)
+logging.getLogger("hpack").setLevel(logging.ERROR)
+logging.getLogger("anyio").setLevel(logging.ERROR)
+
 # Add filter to suppress verbose Pathway sink messages
 class PathwaySinkFilter(logging.Filter):
     """Filter out verbose Pathway sink/publisher log messages"""
     def filter(self, record):
         msg = record.getMessage()
-        # Suppress "Done writing", "Current batch writes", etc.
+        # Suppress "Done writing", "Current batch writes", HTTP requests, position refresh, etc.
         suppress_patterns = [
             "Done writing",
             "Current batch writes took",
             "All writes so far took",
             "entries have been sent to the engine",
             "minibatch(es)",
+            "HTTP Request: POST",
+            "Position refresh:",
+            "Risk monitor stream",
         ]
         return not any(pattern in msg for pattern in suppress_patterns)
 

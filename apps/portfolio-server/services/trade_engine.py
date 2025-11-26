@@ -373,13 +373,39 @@ class TradeEngine:
 
     async def _build_portfolio_snapshot(self, portfolio_id: str) -> Dict:
         """
-        DEPRECATED: Portfolio snapshots are now handled by SnapshotService.
-        current_value field no longer exists on Portfolio model.
+        Build portfolio snapshot with current_value calculation.
+        current_value = available_cash + sum(position values)
         """
-        portfolio = await self.prisma.portfolio.find_unique_or_raise(where={"id": portfolio_id})
+        portfolio = await self.prisma.portfolio.find_unique_or_raise(
+            where={"id": portfolio_id},
+            include={"positions": {"where": {"status": "open"}}}
+        )
+        
+        # Calculate current_value: available_cash + positions value
+        current_value = Decimal(str(portfolio.available_cash))
+        
+        # Add value of all open positions
+        if portfolio.positions:
+            for position in portfolio.positions:
+                try:
+                    # Use latest price from market data
+                    price = self.market_data.get_latest_price(position.symbol)
+                    if price is None:
+                        # Fallback to average price if live price unavailable
+                        price = position.average_price
+                    position_value = Decimal(str(price)) * Decimal(str(position.quantity))
+                    current_value += position_value
+                except Exception as exc:
+                    # Log error but continue with other positions
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        f"Failed to calculate position value for {position.symbol}: {exc}"
+                    )
+        
         return {
             "id": portfolio.id,
             "available_cash": portfolio.available_cash,
+            "current_value": current_value,
             "updated_at": portfolio.updated_at,
         }
 

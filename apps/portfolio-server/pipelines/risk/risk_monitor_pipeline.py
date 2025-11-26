@@ -164,7 +164,7 @@ class StreamingRiskSubject(pw.io.python.ConnectorSubject):
     def set_positions(self, requests: Sequence[RiskMonitorRequest]) -> None:
         """Update the active position set being monitored."""
         self._positions = {req.request_id: req for req in requests}
-        LOGGER.info(f"Risk monitor stream {self._name}: tracking {len(self._positions)} positions")
+        LOGGER.debug(f"Risk monitor stream {self._name}: tracking {len(self._positions)} positions")
 
     def add_position(self, request: RiskMonitorRequest) -> None:
         """Add a single position to monitor (e.g., after trade execution)."""

@@ -250,6 +250,9 @@ class TradeExecutionService:
         if job_row.get("agent_id"):
             trade_data["agent_id"] = job_row["agent_id"]
         
+        # Note: allocation_id is NOT stored in Trade model, only in Position model
+        # The allocation is tracked through the agent relationship
+        
         # Set portfolio_id (direct field, not relation)
         if portfolio_id:
             trade_data["portfolio_id"] = portfolio_id

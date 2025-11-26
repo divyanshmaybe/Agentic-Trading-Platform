@@ -42,6 +42,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Suppress verbose HTTP and network logging
+logging.getLogger("httpx").setLevel(logging.ERROR)
+logging.getLogger("httpcore").setLevel(logging.ERROR)
+logging.getLogger("hpack").setLevel(logging.ERROR)
+logging.getLogger("anyio").setLevel(logging.ERROR)
+
 # Configuration
 ENABLED = os.getenv("STREAMING_RISK_MONITOR_ENABLED", "true").lower() in {"1", "true", "yes"}
 POLL_INTERVAL = float(os.getenv("RISK_MONITOR_POLL_INTERVAL", "0.5"))
@@ -83,6 +89,7 @@ async def get_active_positions() -> List[RiskMonitorRequest]:
     This is called periodically to refresh the position set being monitored.
     """
     try:
+        # Get DBManager instance (will reuse existing client if available)
         manager = get_db_manager()
         await manager.connect()
         client = manager.get_client()
@@ -118,16 +125,34 @@ async def get_active_positions() -> List[RiskMonitorRequest]:
         )
 
         unique_symbols = {req.symbol for req in requests if req.symbol}
-        logger.info(
-            "Position refresh: %s positions across %s symbols",
-            len(requests),
-            len(unique_symbols),
-        )
+        # Only log position refresh every 60 seconds to reduce noise
+        global _last_pos_refresh_log
+        try:
+            _last_pos_refresh_log
+        except NameError:
+            _last_pos_refresh_log = 0
+        import time
+        if time.time() - _last_pos_refresh_log >= 60:
+            logger.info(
+                "Position refresh: %s positions across %s symbols",
+                len(requests),
+                len(unique_symbols),
+            )
+            _last_pos_refresh_log = time.time()
 
         return requests
 
     except Exception as exc:
-        logger.exception(f"Failed to refresh positions: {exc}")
+        # Only log errors every 30 seconds to avoid spam
+        global _last_error_log
+        try:
+            _last_error_log
+        except NameError:
+            _last_error_log = 0
+        import time
+        if time.time() - _last_error_log >= 30:
+            logger.error(f"Failed to refresh positions: {exc}")
+            _last_error_log = time.time()
         return []
 
 
