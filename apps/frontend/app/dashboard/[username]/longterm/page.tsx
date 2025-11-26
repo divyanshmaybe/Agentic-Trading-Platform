@@ -5,18 +5,22 @@ import { DashboardHeader } from "@/components/dashboard/DashboardHeader"
 import { Container } from "@/components/shared/Container"
 import { PageHeading } from "@/components/shared/PageHeading"
 import { useAuth } from "@/hooks/useAuth"
+import { AgentOverview, AgentTradesTable } from "@/components/agent"
+import { useAgentDashboard } from "@/hooks/useAgentDashboard"
 
-export default function HighRiskPage() {
+export default function LongTermPage() {
   const params = useParams()
   const username = params.username as string
   
   // SECURE: Get user data from server-validated token, NOT localStorage
   const { user: authUser, loading: authLoading } = useAuth()
+  
+  const { data: agentData, loading: agentLoading, isAllocating } = useAgentDashboard("low_risk")
 
   // Show loading state while auth is being verified
   if (authLoading || !authUser) {
     return (
-      <div className="min-h-screen bg-[#0c0c0c] text-[#fafafa] flex items-center justify-center">
+      <div className="flex min-h-screen items-center justify-center bg-[#0c0c0c] text-[#fafafa]">
         <div className="text-white/60">Loading...</div>
       </div>
     )
@@ -26,17 +30,17 @@ export default function HighRiskPage() {
     <div className="min-h-screen bg-[#0c0c0c] text-[#fafafa]">
       <DashboardHeader userName={authUser.firstName} username={username} userRole={authUser.role} />
       
-      <Container className="max-w-10xl space-y-6 py-8">
+      <Container className="max-w-10xl space-y-8 px-4 py-10 sm:px-6 lg:px-12 xl:px-16">
         <PageHeading
-          title="Long-Term Trading Strategies"
-          tagline="Monitor your high-risk positions and aggressive strategies."
+          title="Long-Term Strategy Center"
+          tagline="Monitor your low-risk positions and conservative strategies."
         />
 
-        <div className="rounded-lg border border-white/10 bg-black/40 p-8">
-          <p className="text-center text-white/50">Coming soon...</p>
-        </div>
+        <section className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <AgentOverview data={agentData} loading={agentLoading} isAllocating={isAllocating} />
+          <AgentTradesTable trades={agentData?.recent_trades ?? []} loading={agentLoading} />
+        </section>
       </Container>
     </div>
   )
 }
-

@@ -6,12 +6,15 @@ import { AnimatePresence, motion } from "framer-motion"
 import { Plus, X } from "lucide-react"
 import { useParams } from "next/navigation"
 
-import { AlphaChat, AlphaGraph, AlphaStats, TopAlphas, TradeTable } from "@/components/alpha"
+import { AlphaChat, AlphaGraph, TopAlphas } from "@/components/alpha"
+import { AgentOverview } from "@/components/agent/AgentOverview"
+import { AgentTradesTable } from "@/components/agent/AgentTradesTable"
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader"
 import { Container } from "@/components/shared/Container"
 import { PageHeading } from "@/components/shared/PageHeading"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/hooks/useAuth"
+import { useAgentDashboard } from "@/hooks/useAgentDashboard"
 
 type AddAlphaForm = {
   name: string
@@ -167,6 +170,9 @@ export default function AlphasPage() {
 
   // SECURE: Get user data from server-validated token, NOT localStorage
   const { user: authUser, loading: authLoading } = useAuth()
+  
+  // Fetch alpha agent dashboard data
+  const { data: alphaData, loading: alphaLoading, isAllocating: alphaAllocating } = useAgentDashboard("alpha")
 
   // Show loading state while auth is being verified
   if (authLoading || !authUser) {
@@ -199,11 +205,11 @@ export default function AlphasPage() {
 
           <div className="flex flex-col gap-6">
             <div className="grid gap-6 lg:grid-cols-2">
-              <AlphaStats />
+              <AgentOverview data={alphaData} loading={alphaLoading} isAllocating={alphaAllocating} />
               <TopAlphas />
             </div>
             <AlphaGraph />
-            <TradeTable />
+            <AgentTradesTable trades={alphaData?.recent_trades || []} loading={alphaLoading} />
 
             <div className="lg:hidden">
               <div className="mt-6">
