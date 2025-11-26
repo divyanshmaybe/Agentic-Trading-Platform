@@ -47,6 +47,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Generate Prisma Client
+        run: npx prisma generate --schema=./shared/prisma/schema.prisma
+
       - name: Build frontend
         run: pnpm --filter frontend run build
         env:
