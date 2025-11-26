@@ -211,8 +211,18 @@ class DBManager:
             # If loop changed or not connected, always create fresh client (faster than reusing)
             if self._loop is not None and self._loop is not loop:
                 self.logger.info("Event loop changed, creating fresh Prisma client")
-                # Don't try to disconnect old client - just abandon it and create new one
-                # This is faster and avoids connection hangs
+                # CRITICAL: Disconnect old client first to clean up event loop-bound objects
+                if self.client is not None and self.client.is_connected():
+                    try:
+                        # Use asyncio.wait_for to prevent disconnect from hanging
+                        await asyncio.wait_for(self.client.disconnect(), timeout=3.0)
+                        self.logger.debug("✅ Disconnected old Prisma client")
+                    except asyncio.TimeoutError:
+                        self.logger.warning("⚠️ Old client disconnect timed out, proceeding anyway")
+                    except Exception as disc_exc:
+                        self.logger.debug("Old client disconnect failed (may be already closed): %s", disc_exc)
+                
+                # Create new client for new event loop
                 self.client = Prisma(auto_register=True, log_queries=self._client_options.get("log_queries", False))
                 self._connected = False
                 self._loop = None
