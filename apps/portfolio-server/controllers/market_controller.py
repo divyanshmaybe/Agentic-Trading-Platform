@@ -244,9 +244,12 @@ class MarketController:
         todate = time_to.strftime("%Y-%m-%d %H:%M")
 
         # Check if using Angel One adapter
-        from market_data import AngelOneAdapter
+        try:
+            from market_data import AngelOneAdapter
+        except ImportError:
+            AngelOneAdapter = None
         
-        if not isinstance(self.service.adapter, AngelOneAdapter):
+        if AngelOneAdapter is None or not isinstance(self.service.adapter, AngelOneAdapter):
             logger.warning(
                 "Candle data requires Angel One adapter. Current provider: %s",
                 self.service.adapter.name
@@ -254,7 +257,7 @@ class MarketController:
             return None
 
         # Fetch candles from Angel One
-        adapter: AngelOneAdapter = self.service.adapter
+        adapter = self.service.adapter
         candles_raw = adapter.get_historical_candles(
             symbol=provider_symbol,
             interval=angelone_interval,
