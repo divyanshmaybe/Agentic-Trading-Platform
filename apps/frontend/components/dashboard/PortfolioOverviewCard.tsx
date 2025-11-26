@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import type { PortfolioSummary } from "@/lib/dashboardTypes"
 import { formatCurrency } from "@/lib/dashboardData"
 import { cn } from "@/lib/utils"
+import { AllocationLoadingState } from "@/components/shared/AllocationLoadingState"
 
 import { allocationChartOptions, createAllocationChartData, pieDepthPlugin } from "./chartConfig"
 
@@ -119,34 +120,16 @@ export function PortfolioOverviewCard({ summary, loading = false }: PortfolioOve
               <Pie data={allocationChart} options={allocationChartOptions} plugins={[pieDepthPlugin]} />
             </div>
           ) : (
-            <div className="flex w-full flex-col items-center justify-center space-y-4 rounded-xl border border-amber-500/20 bg-gradient-to-br from-amber-500/10 to-orange-500/5 p-8 text-center">
-              <div className="relative">
-                <div className="h-16 w-16 animate-spin rounded-full border-4 border-white/10 border-t-amber-400" />
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="h-8 w-8 rounded-full bg-amber-400/20" />
-                </div>
-              </div>
-              <div className="space-y-2">
-                <h4 className="text-base font-semibold text-amber-200">Balancing Portfolio</h4>
-                <p className="text-xs leading-relaxed text-white/60">
-                  We're currently balancing your investments between long-term, intraday, and algorithmic trading strategies.
-                </p>
-              </div>
-              <div className="flex flex-col space-y-2 text-xs text-white/45">
-                <div className="flex items-center space-x-2">
-                  <div className="h-2 w-2 animate-pulse rounded-full bg-amber-400" />
-                  <span>Analyzing risk profile...</span>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <div className="h-2 w-2 animate-pulse rounded-full bg-amber-400 [animation-delay:200ms]" />
-                  <span>Optimizing allocations...</span>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <div className="h-2 w-2 animate-pulse rounded-full bg-amber-400 [animation-delay:400ms]" />
-                  <span>Configuring strategies...</span>
-                </div>
-              </div>
-            </div>
+            <AllocationLoadingState
+              title="Balancing Portfolio"
+              description="We're currently balancing your investments between long-term, intraday, and algorithmic trading strategies."
+              steps={[
+                "Analyzing risk profile...",
+                "Optimizing allocations...",
+                "Configuring strategies...",
+              ]}
+              className="w-full"
+            />
           )}
         </div>
       </CardContent>
