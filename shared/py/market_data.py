@@ -38,6 +38,30 @@ class MarketDataService:
     _lock = asyncio.Lock()
     
     def __init__(self):
+        # Load environment variables
+        from dotenv import load_dotenv
+        import os
+        
+        # Try to load .env from various possible locations
+        env_loaded = False
+        possible_paths = [
+            os.path.join(os.path.dirname(__file__), "../../.env"),  # shared/py/../../.env
+            os.path.join(os.path.dirname(__file__), "../../../.env"),  # shared/py/../../../.env
+            ".env",  # current directory
+            "../.env",  # parent directory
+            "../../.env",  # grandparent directory
+        ]
+        
+        for env_path in possible_paths:
+            if os.path.exists(env_path):
+                load_dotenv(env_path, override=False)
+                logger.info(f"Loaded environment from {env_path}")
+                env_loaded = True
+                break
+        
+        if not env_loaded:
+            logger.warning("No .env file found, using system environment variables")
+        
         self.client_code = os.getenv("ANGELONE_CLIENT_CODE")
         self.api_key = os.getenv("ANGELONE_API_KEY")
         self.password = os.getenv("ANGELONE_PASSWORD")

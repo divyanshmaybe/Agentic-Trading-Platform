@@ -151,7 +151,7 @@ class MarketController:
             return price, "rest-api", "rest-api"
         
         # Only use WebSocket service if explicitly enabled and REST failed
-        use_websocket = os.getenv("MARKET_DATA_USE_WEBSOCKET", "false").lower() in ("true", "1", "yes")
+        use_websocket = os.getenv("MARKET_DATA_USE_WEBSOCKET", "true").lower() in ("true", "1", "yes")
         if not use_websocket:
             return None, "unavailable", "rest-api-only"
         
