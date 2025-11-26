@@ -112,7 +112,7 @@ async def fetch_affected_users_for_symbol(
         drawdown_pct = ((current_price - average_price) / average_price) * 100.0
         
         # Get threshold from risk tolerance
-        risk_tolerance = (portfolio.risk_tolerance or "moderate").lower()
+        risk_tolerance = (portfolio.risk_tolerance or "medium").lower()
         threshold_pct = DEFAULT_THRESHOLD_MAP.get(risk_tolerance, 5.0)
         
         # Check if threshold is breached

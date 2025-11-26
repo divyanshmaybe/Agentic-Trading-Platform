@@ -68,7 +68,7 @@ async def test_portfolio(prisma_client):
             "available_cash": Decimal("105000"),
             "investment_horizon_years": 3,
             "expected_return_target": Decimal("0.08"),
-            "risk_tolerance": "moderate",
+            "risk_tolerance": "medium",
             "liquidity_needs": "standard",
         }
     )
