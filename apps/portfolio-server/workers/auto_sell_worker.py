@@ -62,7 +62,7 @@ async def _run_auto_sell():
         # Only check Trade records (auto_sell_at field only exists on Trade model)
         trades_to_sell = await client.trade.find_many(
             where={
-                "status": {"in": ["executed", "simulated_executed"]},
+                "status": {"in": ["executed", "executed"]},
                 "auto_sell_at": {"lte": current_time, "not": None},  # Must have auto_sell_at set
                 "side": "BUY",
             },
@@ -220,7 +220,7 @@ async def _sell_trade(trade, trade_service: TradeExecutionService, client, logge
     # Execute the sell trade (pass Trade ID, not TradeExecutionLog ID)
     result = await trade_service.execute_trade(sell_trade.id, simulate=True)
     
-    if result.get("status") in ["simulated_executed", "executed"]:
+    if result.get("status") in ["executed", "executed"]:
         closing_price = result.get("executed_price", reference_price)
         logger.info(
             "✅ Auto-sold Trade %s (15-min window): SELL %s x %d @ ₹%.2f",

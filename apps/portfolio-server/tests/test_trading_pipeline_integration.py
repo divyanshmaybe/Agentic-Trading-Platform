@@ -1019,7 +1019,7 @@ async def test_complete_trading_pipeline_flow(monkeypatch: pytest.MonkeyPatch) -
     assert buy_trade_log.symbol == test_symbol
     assert buy_trade_log.side == "BUY"
     # Status might be pending or already executed depending on the flow
-    assert buy_trade_log.status in ["pending", "executed", "simulated_executed"], f"Unexpected status: {buy_trade_log.status}"
+    assert buy_trade_log.status in ["pending", "executed", "executed"], f"Unexpected status: {buy_trade_log.status}"
     assert buy_trade_log.agent_id == agent.id
     # Convert Decimal to float for comparison
     confidence_val = float(buy_trade_log.confidence) if hasattr(buy_trade_log.confidence, '__float__') else buy_trade_log.confidence
@@ -1036,11 +1036,11 @@ async def test_complete_trading_pipeline_flow(monkeypatch: pytest.MonkeyPatch) -
         # Trade already executed, just get the result
         execution_result = {"status": buy_trade_log.status, "trade_id": buy_trade_log.id}
     
-    assert execution_result["status"] in ["executed", "simulated_executed"], "Trade should execute"
+    assert execution_result["status"] in ["executed", "executed"], "Trade should execute"
     
     # Verify trade log was updated
     updated_log = await fake_client.tradeexecutionlog.find_unique({"id": buy_trade_log.id})
-    assert updated_log.status in ["executed", "simulated_executed"]
+    assert updated_log.status in ["executed", "executed"]
     assert updated_log.executed_price is not None
     assert updated_log.executed_quantity > 0
     
@@ -1153,10 +1153,10 @@ async def test_complete_trading_pipeline_flow(monkeypatch: pytest.MonkeyPatch) -
         simulate=True,
     )
     
-    assert sell_result["status"] in ["executed", "simulated_executed"]
+    assert sell_result["status"] in ["executed", "executed"]
     
     updated_sell_log = await fake_client.tradeexecutionlog.find_unique({"id": sell_trade_log.id})
-    assert updated_sell_log.status in ["executed", "simulated_executed"]
+    assert updated_sell_log.status in ["executed", "executed"]
     
     print(f"✅ SELL trade executed: {updated_sell_log.executed_quantity} shares @ ₹{updated_sell_log.executed_price}")
     
@@ -1249,7 +1249,7 @@ async def test_complete_trading_pipeline_flow(monkeypatch: pytest.MonkeyPatch) -
         # Find expired trades
         expired_trades = await fake_client.trade.find_many(
             where={
-                "status": {"in": ["executed", "simulated_executed"]},
+                "status": {"in": ["executed", "executed"]},
                 "auto_sell_at": {"lte": current_time},
                 "side": "BUY",
             }
@@ -1257,7 +1257,7 @@ async def test_complete_trading_pipeline_flow(monkeypatch: pytest.MonkeyPatch) -
         
         expired_logs = await fake_client.tradeexecutionlog.find_many(
             where={
-                "status": {"in": ["executed", "simulated_executed"]},
+                "status": {"in": ["executed", "executed"]},
                 "auto_sell_at": {"lte": current_time},
                 "side": "BUY",
             }

@@ -1946,7 +1946,7 @@ class PipelineService:
                             # Execute the sell
                             result = await trade_service.execute_trade(sell_log.id, simulate=True)
                             
-                            if result.get("status") in ["simulated_executed", "executed"]:
+                            if result.get("status") in ["executed", "executed"]:
                                 positions_sold += 1
                                 self.logger.info(
                                     "✅ Sold position: SELL %s x %d @ ₹%.2f (market close)",
@@ -2128,7 +2128,7 @@ class PipelineService:
                         result,
                     )
                     
-                    if result.get("status") in ["executed", "simulated_executed"]:
+                    if result.get("status") in ["executed", "executed"]:
                         trades_created += 1
                         self.logger.info(
                             "✅ Trade executed for agent %s: %s %s x %d @ ₹%.2f",

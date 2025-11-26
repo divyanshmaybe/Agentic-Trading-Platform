@@ -280,14 +280,14 @@ class NSEPipelineTester:
                 logger.warning(f"⚠️ Trade {trade_id[:8]} not found")
                 continue
             
-            if trade.status in ["executed", "simulated_executed"]:
+            if trade.status in ["executed", "executed"]:
                 logger.info(f"✅ Trade {trade_id[:8]} already executed: {trade.status}")
                 executed_count += 1
             else:
                 logger.info(f"🔄 Executing trade {trade_id[:8]}...")
                 result = await trade_service.execute_trade(trade_id, simulate=True)
                 
-                if result.get("status") in ["executed", "simulated_executed"]:
+                if result.get("status") in ["executed", "executed"]:
                     logger.info(f"✅ Trade {trade_id[:8]} executed successfully")
                     executed_count += 1
                 else:
@@ -405,7 +405,7 @@ class NSEPipelineTester:
                 "id": {"in": self.created_trade_ids},
                 "side": "BUY",
                 "auto_sell_at": {"not": None},
-                "status": {"in": ["executed", "simulated_executed"]}
+                "status": {"in": ["executed", "executed"]}
             }
         )
         
@@ -494,7 +494,7 @@ class NSEPipelineTester:
             where={
                 "symbol": {"equals": self.test_symbol, "mode": "insensitive"},
                 "side": "SELL",
-                "status": {"in": ["executed", "simulated_executed"]}
+                "status": {"in": ["executed", "executed"]}
             },
             include={"portfolio": True, "agent": True},
             order={"created_at": "desc"},

@@ -458,8 +458,8 @@ class TradeExecutionService:
         )
 
         # Also update corresponding Trade record if execution was successful
-        if status in ["executed", "simulated_executed"] and (executed_price is not None or executed_quantity is not None):
-            trade_update_data = {"status": status}  # Use actual status (executed or simulated_executed)
+        if status in ["executed", "executed"] and (executed_price is not None or executed_quantity is not None):
+            trade_update_data = {"status": status}  # Use actual status (executed or executed)
             if executed_price is not None:
                 trade_update_data["executed_price"] = self._as_decimal(executed_price)
                 trade_update_data["price"] = self._as_decimal(executed_price)  # Update price to executed price

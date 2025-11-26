@@ -127,7 +127,7 @@ async def _run_trade_execution_flow():
         
         result = await service.execute_trade(trade_log.id, simulate=True)
         
-        if result.get("status") == "simulated_executed":
+        if result.get("status") == "executed":
             print("✅ Trade executed successfully!")
             print(f"   Executed Price: ₹{result.get('executed_price')}")
             print(f"   Executed Quantity: {result.get('executed_quantity')}")

@@ -49,7 +49,7 @@ async def main():
             where={
                 "symbol": "TCS",
                 "side": "BUY",
-                "status": {"in": ["executed", "simulated_executed"]},
+                "status": {"in": ["executed", "executed"]},
                 "source": "nse_pipeline",
             },
             order={"created_at": "desc"},
@@ -134,7 +134,7 @@ async def main():
             where={
                 "symbol": "TCS",
                 "side": "SELL",
-                "status": {"in": ["executed", "simulated_executed"]},
+                "status": {"in": ["executed", "executed"]},
             },
             order={"created_at": "desc"},
             take=5,

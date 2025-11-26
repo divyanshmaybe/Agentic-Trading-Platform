@@ -419,9 +419,9 @@ async def test_trade_execution_service_persist_and_execute(monkeypatch: pytest.M
     assert record.agent_id == "agent-1"
 
     result = await service.execute_trade(events[0].trade_id, simulate=True)
-    assert result["status"] == "simulated_executed"
+    assert result["status"] == "executed"
     updated = await fake_manager.get_client().tradeexecutionlog.find_unique({"id": "req-1"})
-    assert updated.status == "simulated_executed"
+    assert updated.status == "executed"
 
 
 class FakePipelineClient(FakeClient):
@@ -663,7 +663,7 @@ async def test_pipeline_service_process_trade_signals(monkeypatch: pytest.Monkey
 
     # Add execute_trade method to FakeTradeService
     async def fake_execute_trade(trade_id: str, simulate: bool = True):
-        return {"status": "simulated_executed", "trade_id": trade_id}
+        return {"status": "executed", "trade_id": trade_id}
     
     FakeTradeService.execute_trade = fake_execute_trade
 
