@@ -300,7 +300,6 @@ def run_news_sentiment_pipeline(self, top_k: int | None = None) -> dict:
 )
 def run_scheduled_rebalance(self) -> dict:
     """Celery task that performs the scheduled portfolio rebalancing sweep."""
-
     server_dir = Path(__file__).resolve().parents[1]
     service = PipelineService(str(server_dir), logger=task_logger)
     audit_path = os.getenv("PORTFOLIO_REBALANCE_AUDIT_PATH")
@@ -318,7 +317,6 @@ def run_scheduled_rebalance(self) -> dict:
 )
 def run_risk_monitor(self) -> dict:
     """Celery task that runs the risk monitoring pipeline once."""
-
     server_dir = Path(__file__).resolve().parents[1]
     service = PipelineService(str(server_dir), logger=task_logger)
     summary = service.run_risk_monitoring()

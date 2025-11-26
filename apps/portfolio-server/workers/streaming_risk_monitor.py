@@ -20,8 +20,9 @@ import logging
 import os
 import signal
 import sys
+import threading
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Coroutine, List, Optional
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -31,6 +32,9 @@ from pipelines.risk.risk_monitor_pipeline import (
     RiskMonitorRequest,
     StreamingRiskMonitor,
 )
+from db import get_db_manager
+from market_data import get_market_data_service
+from utils.risk_monitor import prepare_risk_monitor_requests
 
 logging.basicConfig(
     level=logging.INFO,
@@ -48,6 +52,30 @@ _monitor: Optional[StreamingRiskMonitor] = None
 _shutdown_event = asyncio.Event()
 
 
+# Dedicated event loop for DB lookups invoked from sync callbacks
+_positions_loop = asyncio.new_event_loop()
+
+
+def _start_positions_loop() -> None:
+    asyncio.set_event_loop(_positions_loop)
+    _positions_loop.run_forever()
+
+
+_positions_thread = threading.Thread(
+    target=_start_positions_loop,
+    name="risk-monitor-db-loop",
+    daemon=True,
+)
+_positions_thread.start()
+
+
+def _run_on_positions_loop(
+    coro: Coroutine[Any, Any, List[RiskMonitorRequest]],
+) -> List[RiskMonitorRequest]:
+    future = asyncio.run_coroutine_threadsafe(coro, _positions_loop)
+    return future.result()
+
+
 async def get_active_positions() -> List[RiskMonitorRequest]:
     """
     Fetch all active positions from database that need risk monitoring.
@@ -55,27 +83,49 @@ async def get_active_positions() -> List[RiskMonitorRequest]:
     This is called periodically to refresh the position set being monitored.
     """
     try:
-        from db import get_db_client
-        from utils.symbol_based_risk_monitor import collect_risk_monitor_requests
-        from market_data import get_market_data_service
-        
-        db = get_db_client()
-        market_service = get_market_data_service()
-        
-        # Use existing helper to collect positions
-        requests, metadata = await collect_risk_monitor_requests(
-            db,
-            market_service,
+        manager = get_db_manager()
+        await manager.connect()
+        client = manager.get_client()
+
+        positions = await client.position.find_many(
+            where={"status": "open"},
+            include={"portfolio": True},
+        )
+
+        if not positions:
+            # Only log "no positions" every 30 seconds to reduce noise
+            global _last_no_pos_log
+            try:
+                _last_no_pos_log
+            except NameError:
+                _last_no_pos_log = 0
+            import time
+            if time.time() - _last_no_pos_log >= 30:
+                logger.info("Position refresh: no open positions found")
+                _last_no_pos_log = time.time()
+            return []
+
+        try:
+            market_service = get_market_data_service()
+        except Exception as market_exc:
+            logger.warning("Market data service unavailable: %s", market_exc)
+            market_service = None
+
+        requests = prepare_risk_monitor_requests(
+            positions,
+            market_data_service=market_service,
             logger=logger,
         )
-        
+
+        unique_symbols = {req.symbol for req in requests if req.symbol}
         logger.info(
-            f"Position refresh: {len(requests)} positions across "
-            f"{metadata.get('unique_symbols', 0)} symbols"
+            "Position refresh: %s positions across %s symbols",
+            len(requests),
+            len(unique_symbols),
         )
-        
+
         return requests
-        
+
     except Exception as exc:
         logger.exception(f"Failed to refresh positions: {exc}")
         return []
@@ -84,7 +134,7 @@ async def get_active_positions() -> List[RiskMonitorRequest]:
 def get_positions_sync() -> List[RiskMonitorRequest]:
     """Synchronous wrapper for position callback."""
     try:
-        return asyncio.run(get_active_positions())
+        return _run_on_positions_loop(get_active_positions())
     except Exception as exc:
         logger.exception(f"Position callback failed: {exc}")
         return []

@@ -42,8 +42,8 @@ from workers.pipeline_tasks import start_nse_pipeline, run_news_sentiment_pipeli
 # Get server directory for pipelines
 server_dir = os.path.dirname(__file__)
 
-# Initialize services
-pipeline_service = PipelineService(server_dir, None)
+# Initialize pipeline service
+pipeline_service = PipelineService(server_dir, logger=None)
 
 # Create custom lifespan to start NSE pipeline and Angel One token generation
 def create_lifespan(base_app_instance, pipeline_service_instance):

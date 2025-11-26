@@ -53,6 +53,7 @@ class DBManager:
 
     _instance: Optional["DBManager"] = None
     _lock: asyncio.Lock = None  # Will be created when needed
+    _pid: Optional[int] = None  # Track process ID to detect forks
 
     def __init__(self, database_url: Optional[str] = None, log_queries: bool = False):
         """
@@ -106,8 +107,24 @@ class DBManager:
         Returns:
             The singleton DBManager instance.
         """
+        # Detect process fork - reset instance if PID changed
+        current_pid = os.getpid()
+        
+        # If instance exists but PID is different, we forked
+        if cls._instance is not None and cls._pid is not None and cls._pid != current_pid:
+            logging.getLogger(__name__).info(
+                "🔄 Process fork detected (PID %s → %s), resetting DBManager instance",
+                cls._pid, current_pid
+            )
+            cls.reset_instance()
+        
+        # If instance exists but PID was never set (old code path), set it now
+        if cls._instance is not None and cls._pid is None:
+            cls._pid = current_pid
+        
         if cls._instance is None:
             cls._instance = cls(database_url=database_url, log_queries=log_queries)
+            cls._pid = current_pid
         return cls._instance
 
     @classmethod
@@ -145,6 +162,7 @@ class DBManager:
                 pass  # Best effort cleanup
             
             cls._instance = None
+            cls._pid = None  # Clear PID tracking
 
     async def connect(self) -> None:
         """
@@ -179,36 +197,37 @@ class DBManager:
         self._connecting = True
         
         try:
-            # If loop changed, recreate the Prisma client
+            # If loop changed or not connected, always create fresh client (faster than reusing)
             if self._loop is not None and self._loop is not loop:
-                self.logger.info("Event loop changed, recreating Prisma client")
-                try:
-                    await self.client.disconnect()
-                except Exception:  # pragma: no cover - best effort cleanup
-                    self.logger.debug(
-                        "Failed to disconnect existing Prisma client during loop switch", 
-                        exc_info=True
-                    )
-
-                # Clear Prisma registry before creating new client
+                self.logger.info("Event loop changed, creating fresh Prisma client")
+                # Don't try to disconnect old client - just abandon it and create new one
+                # This is faster and avoids connection hangs
+                
+                # Clear Prisma registry
                 try:
                     from prisma._registry import get_client as get_registered_client, unregister
                     try:
                         existing_client = get_registered_client()
                         if existing_client:
                             unregister(existing_client)
-                            self.logger.debug("Unregistered existing Prisma client from registry")
                     except Exception:
-                        pass  # No client registered
+                        pass
                 except ImportError:
-                    pass  # Old Prisma version without registry
+                    pass
 
-                self.client = Prisma(**self._client_options)
+                # Create completely fresh client with new options to avoid any caching
+                self.client = Prisma(auto_register=True, log_queries=self._client_options.get("log_queries", False))
                 self._connected = False
                 self._loop = None
 
-            # Connect to database
-            await self.client.connect()
+            # Connect to database with timeout to prevent hangs
+            try:
+                await asyncio.wait_for(self.client.connect(), timeout=10.0)
+            except asyncio.TimeoutError:
+                self.logger.error("❌ Prisma connection timed out after 10 seconds")
+                self._connecting = False
+                raise PrismaError("Database connection timeout")
+            
             self._connected = True
             self._loop = loop
             self.logger.info("✅ Connected to database via Prisma (loop_id=%s)", id(loop))
@@ -222,6 +241,10 @@ class DBManager:
                     existing_client = get_registered_client()
                     if existing_client:
                         self.client = existing_client
+                        # Ensure the reused client is actually connected
+                        if not self.client.is_connected():
+                            self.logger.info("Reused client not connected, connecting now...")
+                            await self.client.connect()
                         self._connected = True
                         self._loop = loop
                         self.logger.info("✅ Reusing existing Prisma client (loop_id=%s)", id(loop))

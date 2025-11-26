@@ -68,7 +68,7 @@ else:
     # Fallback: try to load from current directory
     load_dotenv(override=False)
 
-from celery import Celery
+from celery import Celery, signals
 from celery.schedules import crontab
 
 BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
@@ -110,6 +110,7 @@ celery_app = Celery(
         "workers.pipeline_tasks",
         "workers.snapshot_tasks",
         "workers.auto_sell_worker",
+        "workers.streaming_risk_tasks",
     ],
 )
 
@@ -150,35 +151,35 @@ celery_app.conf.update(
     result_persistent=True,
 )
 
-# Ensure all queues are registered explicitly
-_all_queues = [Queue(DEFAULT_QUEUE)]
+# Ensure all queues are registered explicitly with proper routing keys
+_all_queues = [Queue(DEFAULT_QUEUE, routing_key=DEFAULT_QUEUE)]
 for queue_name in ["allocations", "trading", "pipelines", "risk", "orders", "market", "tokens"]:
     if not any(q.name == queue_name for q in _all_queues):
-        _all_queues.append(Queue(queue_name))
+        _all_queues.append(Queue(queue_name, routing_key=queue_name))
 celery_app.conf.task_queues = _all_queues
 
 celery_app.conf.task_routes = {
     # Allocation + trading queues
-    "portfolio.allocate_for_objective": {"queue": QUEUE_NAMES["allocations"]},
-    "portfolio.check_regime_and_rebalance": {"queue": QUEUE_NAMES["allocations"]},
-    "trading.execute_trade_job": {"queue": QUEUE_NAMES["trading"]},
-    "pipeline.trade_execution.process_signal": {"queue": QUEUE_NAMES["trading"]},
-    # Pipelines + data
-    "pipeline.start": {"queue": QUEUE_NAMES["pipelines"]},
-    "pipeline.news_sentiment.run": {"queue": QUEUE_NAMES["pipelines"]},
-    "pipeline.risk_monitor.run": {"queue": QUEUE_NAMES["pipelines"]},
-    "market_data.fetch_via_api": {"queue": QUEUE_NAMES["market"]},
-    "market_data.batch_fetch_via_api": {"queue": QUEUE_NAMES["market"]},
-    "market_data.health_check_api": {"queue": QUEUE_NAMES["market"]},
-    "market_data.generate_angelone_tokens": {"queue": QUEUE_NAMES["tokens"]},
+    "portfolio.allocate_for_objective": {"queue": QUEUE_NAMES["allocations"], "routing_key": "allocations"},
+    "portfolio.check_regime_and_rebalance": {"queue": QUEUE_NAMES["allocations"], "routing_key": "allocations"},
+    "trading.execute_trade_job": {"queue": QUEUE_NAMES["trading"], "routing_key": "trading"},
+    # Pipelines + data - Signal processing goes to pipelines queue (contains pathway streaming)
+    "pipeline.trade_execution.process_signal": {"queue": QUEUE_NAMES["pipelines"], "routing_key": "pipelines"},
+    "pipeline.start": {"queue": QUEUE_NAMES["pipelines"], "routing_key": "pipelines"},
+    "pipeline.news_sentiment.run": {"queue": QUEUE_NAMES["pipelines"], "routing_key": "pipelines"},
+    "pipeline.risk_monitor.run": {"queue": QUEUE_NAMES["pipelines"], "routing_key": "pipelines"},
+    "market_data.fetch_via_api": {"queue": QUEUE_NAMES["market"], "routing_key": "market"},
+    "market_data.batch_fetch_via_api": {"queue": QUEUE_NAMES["market"], "routing_key": "market"},
+    "market_data.health_check_api": {"queue": QUEUE_NAMES["market"], "routing_key": "market"},
+    "market_data.generate_angelone_tokens": {"queue": QUEUE_NAMES["tokens"], "routing_key": "tokens"},
     # Risk + alerts
-    "risk.alerts.send_email": {"queue": QUEUE_NAMES["risk"]},
-    "risk.streaming_monitor.start": {"queue": QUEUE_NAMES["risk"]},
+    "risk.alerts.send_email": {"queue": QUEUE_NAMES["risk"], "routing_key": "risk"},
+    "risk.streaming_monitor.start": {"queue": QUEUE_NAMES["risk"], "routing_key": "risk"},
     # Order monitoring - NOW USING STREAMING (workers/streaming_order_monitor.py)
     # Old polling-based tasks removed
     # Auto-sell worker
-    "trades.auto_sell_expired_trades": {"queue": QUEUE_NAMES["trading"]},
-    "pipeline.sell_high_risk_before_close": {"queue": QUEUE_NAMES["trading"]},
+    "trades.auto_sell_expired_trades": {"queue": QUEUE_NAMES["trading"], "routing_key": "trading"},
+    "pipeline.sell_high_risk_before_close": {"queue": QUEUE_NAMES["trading"], "routing_key": "trading"},
 }
 
 ANNOTATED_TASKS = [
@@ -326,6 +327,7 @@ def _import_tasks():
         allocation_tasks,
         pipeline_tasks,
         trade_tasks,
+        trade_execution_tasks,
         auto_sell_worker,
         market_data_tasks,
         risk_alert_tasks,
@@ -337,6 +339,33 @@ def _import_tasks():
 # Only import tasks when running as Celery worker (not when imported by other modules)
 if os.environ.get("CELERY_WORKER_RUNNING") or "celery" in sys.argv[0]:
     _import_tasks()
+
+
+# Worker process initialization - reset Prisma client on fork
+@signals.worker_process_init.connect
+def init_worker_process(**kwargs):
+    """
+    Reset Prisma client when worker process is forked.
+    
+    This is critical because Prisma clients cannot be shared across process forks.
+    Each forked worker needs its own Prisma client instance.
+    """
+    try:
+        # Add shared/py to path for DBManager import
+        project_root = Path(__file__).resolve().parents[2]
+        shared_py = project_root / "shared" / "py"
+        if str(shared_py) not in sys.path:
+            sys.path.insert(0, str(shared_py))
+        
+        from dbManager import DBManager
+        
+        # Reset the singleton instance - this forces recreation on next connect()
+        DBManager.reset_instance()
+        
+        logger = logging.getLogger(__name__)
+        logger.info("🔄 Worker process initialized - Prisma client reset for PID %s", os.getpid())
+    except Exception as e:
+        logging.error("❌ Failed to reset Prisma client in worker init: %s", e, exc_info=True)
 
 
 __all__ = ["celery_app"]

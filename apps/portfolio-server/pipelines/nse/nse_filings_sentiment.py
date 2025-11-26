@@ -264,7 +264,7 @@ def publish_signal_to_kafka(
         celery_app.send_task(
             "pipeline.trade_execution.process_signal",
             args=[event.model_dump()],
-            queue="trades",  # High-priority queue for trades
+            queue="trading",  # Route to trading queue (matches celery_app routing)
         )
         print(f"[CELERY] ✅ Queued trade execution for {symbol}")
         

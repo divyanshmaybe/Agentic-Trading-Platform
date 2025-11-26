@@ -256,8 +256,22 @@ async def prepare_symbol_based_risk_requests(
     return all_requests, metadata
 
 
+async def collect_risk_monitor_requests(
+    db_client,
+    market_service,
+    logger: Optional[logging.Logger] = None,
+) -> Tuple[List[RiskMonitorRequest], Dict[str, Any]]:
+    """Backward-compatible wrapper used by streaming monitor startup."""
+    return await prepare_symbol_based_risk_requests(
+        db_client=db_client,
+        market_service=market_service,
+        logger=logger,
+    )
+
+
 __all__ = [
     "fetch_unique_holdings",
     "fetch_affected_users_for_symbol",
     "prepare_symbol_based_risk_requests",
+    "collect_risk_monitor_requests",
 ]

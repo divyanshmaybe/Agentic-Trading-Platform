@@ -7,6 +7,7 @@ execution to broker integrations.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -116,8 +117,7 @@ class TradeExecutionService:
         self._manager = get_db_manager()
 
     async def _ensure_client(self):
-        if not self._manager.is_connected():
-            await self._manager.connect()
+        await self._manager.connect()
         return self._manager.get_client()
 
     @staticmethod
@@ -386,8 +386,14 @@ class TradeExecutionService:
         self.logger.info("✅ persist_and_publish: Created %d trade execution log(s) and %d event(s)", len(events), len(events))
         
         if publish_kafka and events:
-            self.logger.info("📤 Publishing %d trade execution event(s) to Kafka...", len(events))
-            publish_trade_execution_events(events, logger=self.logger)
+            self.logger.info("📤 Publishing %d trade execution event(s) to Kafka (async)...", len(events))
+            # Run Kafka publishing in thread pool to avoid blocking
+            try:
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, lambda: publish_trade_execution_events(events, logger=self.logger))
+            except Exception as kafka_exc:
+                # Don't fail the entire operation if Kafka is down - trades are already persisted
+                self.logger.warning("⚠️ Kafka publishing failed (trades still persisted): %s", str(kafka_exc))
         elif not events:
             self.logger.warning("⚠️ No events to publish to Kafka")
 
@@ -450,7 +456,7 @@ class TradeExecutionService:
 
         # Also update corresponding Trade record if execution was successful
         if status in ["executed", "simulated_executed"] and (executed_price is not None or executed_quantity is not None):
-            trade_update_data = {"status": "executed"}
+            trade_update_data = {"status": status}  # Use actual status (executed or simulated_executed)
             if executed_price is not None:
                 trade_update_data["executed_price"] = self._as_decimal(executed_price)
                 trade_update_data["price"] = self._as_decimal(executed_price)  # Update price to executed price
@@ -559,19 +565,22 @@ class TradeExecutionService:
             
             await self.update_status(
                 execution_log_id,  # Use TradeExecutionLog ID, not Trade ID
-                status="simulated_executed",
+                status="executed",
                 executed_price=executed_price,
                 executed_quantity=executed_quantity,
                 metadata=update_data,
             )
             
-            # Update auto_sell_at on the Trade record (not TradeExecutionLog)
+            # Update Trade record with status and auto_sell_at
+            client = await self._ensure_client()
+            trade_update_data = {"status": "executed"}
             if auto_sell_at:
-                client = await self._ensure_client()
-                await client.trade.update(
-                    where={"id": trade_id},  # Use Trade ID
-                    data={"auto_sell_at": auto_sell_at.isoformat() + "Z"},
-                )
+                trade_update_data["auto_sell_at"] = auto_sell_at.isoformat() + "Z"
+            
+            await client.trade.update(
+                where={"id": trade_id},
+                data=trade_update_data,
+            )
             
             agent_type = getattr(record, "agent_type", None)
             if not agent_type and agent_id:
@@ -635,7 +644,7 @@ class TradeExecutionService:
             )
             
             return {
-                "status": "simulated_executed",
+                "status": "executed",
                 "trade_id": trade_id,
                 "executed_price": executed_price,
                 "executed_quantity": executed_quantity,
@@ -1295,7 +1304,7 @@ class TradeExecutionService:
                         len(trades_array),
                     )
                     
-                    # Update PortfolioAllocation allocated_amount
+                    # Update PortfolioAllocation allocated_amount and available_cash
                     if agent.allocation:
                         allocation = agent.allocation
                         allocated_capital = float(getattr(trade_record, "allocated_capital", 0))
@@ -1304,17 +1313,31 @@ class TradeExecutionService:
                         current_allocated = float(getattr(allocation, "allocated_amount", 0) or 0)
                         new_allocated = self._as_decimal(current_allocated + allocated_capital)
                         
+                        # Deduct from available cash for BUY trades
+                        current_available_cash = Decimal(str(getattr(allocation, "available_cash", 0) or 0))
+                        new_available_cash = current_available_cash
+                        if side.upper() == "BUY":
+                            new_available_cash = current_available_cash - Decimal(str(allocated_capital))
+                        elif side.upper() == "SELL":
+                            # Add back to available cash for SELL trades
+                            new_available_cash = current_available_cash + Decimal(str(allocated_capital))
+                        
                         await client.portfolioallocation.update(
                             where={"id": allocation.id},
-                            data={"allocated_amount": new_allocated},
+                            data={
+                                "allocated_amount": new_allocated,
+                                "available_cash": new_available_cash,
+                            },
                         )
                         
                         self.logger.info(
-                            "✅ Updated allocation %s: allocated_amount %.2f → %.2f (+%.2f)",
+                            "✅ Updated allocation %s: allocated_amount %.2f → %.2f (+%.2f), available_cash %.2f → %.2f",
                             allocation.id,
                             current_allocated,
                             float(new_allocated),
                             allocated_capital,
+                            float(current_available_cash),
+                            float(new_available_cash),
                         )
                         
                 except Exception as agent_exc:

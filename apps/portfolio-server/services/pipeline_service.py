@@ -44,7 +44,6 @@ from services.trade_sizing_service import (  # type: ignore  # noqa: E402
 )
 from utils import allocate_portfolios  # type: ignore  # noqa: E402
 from utils.risk_monitor import prepare_risk_monitor_requests  # type: ignore  # noqa: E402
-from utils.symbol_based_risk_monitor import prepare_symbol_based_risk_requests  # type: ignore  # noqa: E402
 from utils.trade_execution import (  # type: ignore  # noqa: E402
     PortfolioSnapshot,
     TradeSignal,
@@ -218,8 +217,7 @@ class PipelineService:
         trigger_reason = trigger_reason or triggered_by
 
         manager = get_db_manager()
-        if not manager.is_connected():
-            await manager.connect()
+        await manager.connect()
         client = manager.get_client()
 
         portfolio = await client.portfolio.find_unique(
@@ -291,8 +289,7 @@ class PipelineService:
         audit_path: Optional[str],
     ) -> Dict[str, Any]:
         manager = get_db_manager()
-        if not manager.is_connected():
-            await manager.connect()
+        await manager.connect()
         client = manager.get_client()
 
         where_clause: Dict[str, Any] = {
@@ -383,8 +380,7 @@ class PipelineService:
         max_positions: Optional[int],
     ) -> Dict[str, Any]:
         manager = get_db_manager()
-        if not manager.is_connected():
-            await manager.connect()
+        await manager.connect()
         client = manager.get_client()
 
         # Get market data service
@@ -395,21 +391,45 @@ class PipelineService:
             self.logger.warning("Risk monitor: market data service unavailable (%s)", exc)
             return {"processed": 0, "alerts": 0, "published": 0, "emails_queued": 0}
 
-        # NEW APPROACH: Symbol-based monitoring (more efficient)
-        # 1. Get unique symbols across all positions
-        # 2. Fetch price ONCE per symbol
-        # 3. Query database for affected users (SQL filtering)
-        requests, monitoring_metadata = await prepare_symbol_based_risk_requests(
-            client,
-            market_service,
+        query_kwargs: Dict[str, Any] = {
+            "where": {"status": "open"},
+            "include": {"portfolio": True},
+        }
+        if max_positions:
+            query_kwargs["take"] = max_positions
+
+        positions = await client.position.find_many(**query_kwargs)
+
+        monitoring_metadata = {
+            "positions_examined": len(positions),
+            "unique_symbols": len({
+                getattr(position, "symbol", None)
+                for position in positions
+                if getattr(position, "symbol", None)
+            }),
+        }
+
+        if not positions:
+            self.logger.info("Risk monitor: no open positions found")
+            return {
+                "processed": 0,
+                "alerts": 0,
+                "published": 0,
+                "emails_queued": 0,
+                "metadata": monitoring_metadata,
+            }
+
+        requests = prepare_risk_monitor_requests(
+            positions,
+            market_data_service=market_service,
             logger=self.logger,
         )
 
         if not requests:
             self.logger.info(
-                "Risk monitor: no affected users (symbols=%s, prices=%s)",
+                "Risk monitor: no affected users (positions=%s, symbols=%s)",
+                monitoring_metadata.get("positions_examined", 0),
                 monitoring_metadata.get("unique_symbols", 0),
-                monitoring_metadata.get("prices_fetched", 0),
             )
             return {
                 "processed": 0,
@@ -1282,8 +1302,14 @@ class PipelineService:
         auto_trade_agents = []
         for agent in agents:
             config = self._clean_json(getattr(agent, "strategy_config", None)) or {}
-            if bool(config.get("auto_trade", False)):
+            auto_enabled = bool(config.get("auto_trade", True))
+            if auto_enabled:
                 auto_trade_agents.append(agent)
+            else:
+                self.logger.debug(
+                    "Skipping agent %s for auto-trade (auto_trade flag disabled)",
+                    getattr(agent, "id", "unknown"),
+                )
         
         if not auto_trade_agents:
             self.logger.warning("⚠️ Found %d high_risk agents but NONE have auto_trade enabled", len(agents))
@@ -1749,8 +1775,7 @@ class PipelineService:
         
         try:
             db_manager = get_db_manager()
-            if not db_manager.is_connected():
-                await db_manager.connect()
+            await db_manager.connect()
             
             client = db_manager.get_client()
             
@@ -1955,8 +1980,7 @@ class PipelineService:
             
             # Get database connection
             db_manager = get_db_manager()
-            if not db_manager.is_connected():
-                await db_manager.connect()
+            await db_manager.connect()
             
             client = db_manager.get_client()
             
