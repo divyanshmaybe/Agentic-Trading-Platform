@@ -16,7 +16,7 @@ PORTFOLIO_SERVER_ROOT = os.path.join(os.path.dirname(__file__), "..")
 if PORTFOLIO_SERVER_ROOT not in sys.path:
     sys.path.insert(0, PORTFOLIO_SERVER_ROOT)
 
-from dbManager import DBManager
+from db_context import get_db_connection
 
 from services.trade_engine import TradeEngine
 
@@ -36,11 +36,7 @@ def process_pending_trade(self, trade_id: str) -> bool:
 
 
 async def _process_pending_trade_async(trade_id: str) -> bool:
-    db_manager = DBManager.get_instance()
-    await db_manager.connect()
-    client = db_manager.get_client()
-
-    try:
+    async with get_db_connection() as client:
         engine = TradeEngine(client)
 
         try:
@@ -53,9 +49,3 @@ async def _process_pending_trade_async(trade_id: str) -> bool:
         except Exception:
             logger.exception("Failed to process pending trade %s", trade_id)
             raise
-    finally:
-        # Clean up database connection to prevent leaks
-        try:
-            await db_manager.disconnect()
-        except Exception as cleanup_err:
-            logger.debug("Error during connection cleanup: %s", cleanup_err)

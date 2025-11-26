@@ -32,7 +32,7 @@ from pipelines.risk.risk_monitor_pipeline import (
     RiskMonitorRequest,
     StreamingRiskMonitor,
 )
-from db import get_db_manager
+from db_context import get_db_connection
 from market_data import get_market_data_service
 from utils.risk_monitor import prepare_risk_monitor_requests
 
@@ -87,38 +87,36 @@ async def get_active_positions() -> List[RiskMonitorRequest]:
     Fetch all active positions from database that need risk monitoring.
     
     This is called periodically to refresh the position set being monitored.
+    Uses context manager to ensure connection is always cleaned up.
     """
     try:
-        # Get DBManager instance (will reuse existing client if available)
-        manager = get_db_manager()
-        await manager.connect()
-        client = manager.get_client()
+        # Use context manager to guarantee cleanup
+        async with get_db_connection() as client:
+            positions = await client.position.find_many(
+                where={"status": "open"},
+                include={"portfolio": True},
+            )
 
-        positions = await client.position.find_many(
-            where={"status": "open"},
-            include={"portfolio": True},
-        )
+            if not positions:
+                # Only log "no positions" every 30 seconds to reduce noise
+                global _last_no_pos_log
+                try:
+                    _last_no_pos_log
+                except NameError:
+                    _last_no_pos_log = 0
+                import time
+                if time.time() - _last_no_pos_log >= 30:
+                    logger.info("Position refresh: no open positions found")
+                    _last_no_pos_log = time.time()
+                return []
 
-        if not positions:
-            # Only log "no positions" every 30 seconds to reduce noise
-            global _last_no_pos_log
             try:
-                _last_no_pos_log
-            except NameError:
-                _last_no_pos_log = 0
-            import time
-            if time.time() - _last_no_pos_log >= 30:
-                logger.info("Position refresh: no open positions found")
-                _last_no_pos_log = time.time()
-            return []
+                market_service = get_market_data_service()
+            except Exception as market_exc:
+                logger.warning("Market data service unavailable: %s", market_exc)
+                market_service = None
 
-        try:
-            market_service = get_market_data_service()
-        except Exception as market_exc:
-            logger.warning("Market data service unavailable: %s", market_exc)
-            market_service = None
-
-        requests = prepare_risk_monitor_requests(
+            requests = prepare_risk_monitor_requests(
             positions,
             market_data_service=market_service,
             logger=logger,

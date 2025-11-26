@@ -72,6 +72,11 @@ class DBManager:
 
         self.logger = logging.getLogger(__name__)
         self.database_url = database_url or os.getenv("DATABASE_URL") or os.getenv("DB_URL")
+        
+        # Set connection pool limit to prevent exhaustion (default Prisma uses 10 connections)
+        # In Celery workers with multiple event loops, this prevents connection buildup
+        self.connection_limit = int(os.getenv("PRISMA_CONNECTION_LIMIT", "5"))
+        self.pool_timeout = int(os.getenv("PRISMA_POOL_TIMEOUT", "10"))
 
         # Default to localhost PostgreSQL if not set (for development)
         if not self.database_url:
@@ -86,6 +91,11 @@ class DBManager:
                 db_user, db_host, db_port, db_name
             )
 
+        # Add connection pool parameters to database URL if not present
+        if "connection_limit" not in self.database_url:
+            separator = "&" if "?" in self.database_url else "?"
+            self.database_url = f"{self.database_url}{separator}connection_limit={self.connection_limit}&pool_timeout={self.pool_timeout}"
+        
         # Ensure Prisma can discover the database connection string
         os.environ.setdefault("DATABASE_URL", self.database_url)
 
@@ -212,15 +222,38 @@ class DBManager:
             if self._loop is not None and self._loop is not loop:
                 self.logger.info("Event loop changed, creating fresh Prisma client")
                 # CRITICAL: Disconnect old client first to clean up event loop-bound objects
-                if self.client is not None and self.client.is_connected():
+                if self.client is not None:
                     try:
-                        # Use asyncio.wait_for to prevent disconnect from hanging
-                        await asyncio.wait_for(self.client.disconnect(), timeout=3.0)
-                        self.logger.debug("✅ Disconnected old Prisma client")
+                        # Force disconnect even if not connected (cleanup engine)
+                        if self.client.is_connected():
+                            await asyncio.wait_for(self.client.disconnect(), timeout=3.0)
+                            self.logger.debug("✅ Disconnected old Prisma client")
+                        
+                        # Force cleanup of Prisma engine to close DB connections
+                        if hasattr(self.client, '_engine') and self.client._engine:
+                            try:
+                                await self.client._engine.stop()
+                                self.logger.debug("✅ Stopped Prisma engine")
+                            except Exception as engine_exc:
+                                self.logger.debug("Engine stop failed: %s", engine_exc)
+                                
                     except asyncio.TimeoutError:
-                        self.logger.warning("⚠️ Old client disconnect timed out, proceeding anyway")
+                        self.logger.warning("⚠️ Old client disconnect timed out, forcing cleanup")
+                        # Force stop engine even on timeout
+                        try:
+                            if hasattr(self.client, '_engine') and self.client._engine:
+                                await self.client._engine.stop()
+                        except Exception:
+                            pass
                     except Exception as disc_exc:
-                        self.logger.debug("Old client disconnect failed (may be already closed): %s", disc_exc)
+                        self.logger.debug("Old client disconnect failed: %s", disc_exc)
+                    finally:
+                        # Always unregister from Prisma registry
+                        try:
+                            from prisma._registry import unregister
+                            unregister(self.client)
+                        except Exception:
+                            pass
                 
                 # Create new client for new event loop
                 self.client = Prisma(auto_register=True, log_queries=self._client_options.get("log_queries", False))
@@ -268,18 +301,38 @@ class DBManager:
         
         Safe to call multiple times. Cleans up connection state.
         """
-        if not self._connected:
+        if not self._connected and self.client is None:
             self.logger.debug("Already disconnected")
             return
 
         try:
-            await self.client.disconnect()
-            self.logger.info("🔌 Disconnected Prisma client")
+            if self.client:
+                # Disconnect client
+                if self.client.is_connected():
+                    await self.client.disconnect()
+                    self.logger.info("🔌 Disconnected Prisma client")
+                
+                # Force stop engine to ensure DB connections are closed
+                if hasattr(self.client, '_engine') and self.client._engine:
+                    try:
+                        await self.client._engine.stop()
+                        self.logger.debug("🔌 Stopped Prisma engine")
+                    except Exception as engine_exc:
+                        self.logger.debug("Engine stop failed: %s", engine_exc)
+                
+                # Unregister from global registry
+                try:
+                    from prisma._registry import unregister
+                    unregister(self.client)
+                except Exception:
+                    pass
+                    
         except Exception as e:
             self.logger.warning("Error during disconnect: %s", e)
         finally:
             self._connected = False
             self._loop = None
+            self.client = None
 
     def get_client(self) -> Prisma:
         """

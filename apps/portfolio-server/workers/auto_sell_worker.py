@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from celery_app import celery_app  # type: ignore
-from dbManager import DBManager
+from db_context import get_db_connection
 from market_data import get_live_price  # type: ignore
 from services.trade_execution_service import TradeExecutionService  # type: ignore
 
@@ -28,11 +28,7 @@ def auto_sell_expired_trades(self):
 
 async def _run_auto_sell():
     """Run auto-sell logic for expired trades."""
-    db_manager = DBManager.get_instance()
-    await db_manager.connect()
-    client = db_manager.get_client()
-    
-    try:
+    async with get_db_connection() as client:
         current_time = datetime.now(timezone.utc)
         
         # Debug: Check all BUY trades with auto_sell_at (query all fields - no select)
@@ -48,7 +44,7 @@ async def _run_auto_sell():
             len(all_auto_sell_trades) if all_auto_sell_trades else 0,
             current_time.isoformat(),
         )
-        
+    
         for trade in all_auto_sell_trades or []:
             logger.info(
                 "🔍 Trade %s: symbol=%s, status=%s, auto_sell_at=%s, expired=%s",
@@ -60,9 +56,10 @@ async def _run_auto_sell():
             )
         
         # Only check Trade records (auto_sell_at field only exists on Trade model)
+        # Auto-sell applies to both executed and pending BUY trades that have expired
         trades_to_sell = await client.trade.find_many(
             where={
-                "status": {"in": ["executed", "executed"]},
+                "status": {"in": ["executed", "pending"]},
                 "auto_sell_at": {"lte": current_time, "not": None},  # Must have auto_sell_at set
                 "side": "BUY",
             },
@@ -115,23 +112,19 @@ async def _run_auto_sell():
             "error_count": error_count,
             "skipped_count": skipped_count,
         }
-    finally:
-        # Clean up database connection
-        try:
-            await db_manager.disconnect()
-        except Exception as cleanup_err:
-            logger.debug("Error during connection cleanup: %s", cleanup_err)
 
 
 async def _sell_trade(trade, trade_service: TradeExecutionService, client, logger):
     """Sell a Trade record."""
     symbol = str(getattr(trade, "symbol", ""))
     portfolio_id = str(getattr(trade, "portfolio_id", ""))
-    executed_quantity = int(getattr(trade, "executed_quantity", 0))
-    executed_price = float(getattr(trade, "executed_price", 0))
+    executed_quantity = int(getattr(trade, "executed_quantity", 0) or 0)
+    executed_price_raw = getattr(trade, "executed_price", None)
+    executed_price = float(executed_price_raw) if executed_price_raw is not None else 0.0
     
     if not symbol or not portfolio_id or executed_quantity == 0:
-        logger.warning("⚠️ Skipping Trade %s: missing required fields", trade.id)
+        logger.warning("⚠️ Skipping Trade %s: missing required fields (symbol=%s, portfolio=%s, qty=%s)", 
+                      trade.id, symbol, portfolio_id, executed_quantity)
         return
     
     logger.info(

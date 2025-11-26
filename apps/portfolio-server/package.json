@@ -17,7 +17,8 @@
 		"test:watch": "python -c \"import sys; sys.path.insert(0, '../../shared/py'); sys.path.insert(0, '../../middleware/py'); sys.path.insert(0, '../..'); import pytest; pytest.main(['tests/', '-v', '--tb=short', '--watch'])\"",
 		"test:unit": "python -c \"import sys; sys.path.insert(0, '../../shared/py'); sys.path.insert(0, '../../middleware/py'); sys.path.insert(0, '../..'); import pytest; pytest.main(['tests/', '-v', '--tb=short', '-m', 'not integration'])\"",
 		"test:integration": "python -c \"import sys; sys.path.insert(0, '../../shared/py'); sys.path.insert(0, '../../middleware/py'); sys.path.insert(0, '../..'); import pytest; pytest.main(['tests/', '-v', '--tb=short', '-m', 'integration'])\"",
-		"studio": "prisma studio --port 5555"
+		"studio": "prisma studio --port 5555",
+		"studio:kafka": "streamlit run ../../kafkaStudio.py"
 	},
 	"dependencies": {},
 	"devDependencies": {}

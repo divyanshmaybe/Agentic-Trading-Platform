@@ -33,6 +33,10 @@
     "studio": {
       "cache": false,
       "persistent": true
+    },
+    "studio:kafka": {
+      "cache": false,
+      "persistent": true
     }
   }
 }

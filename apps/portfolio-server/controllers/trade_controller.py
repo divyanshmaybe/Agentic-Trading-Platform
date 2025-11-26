@@ -265,6 +265,23 @@ class TradeController:
                 result.get("status", "unknown"),
             )
             
+            # Set auto_sell_at if requested (only for BUY orders)
+            if payload.auto_sell_after and payload.side == "BUY":
+                from datetime import datetime, timedelta
+                auto_sell_at = datetime.utcnow() + timedelta(seconds=payload.auto_sell_after)
+                
+                await self.prisma.trade.update(
+                    where={"id": trade_id},
+                    data={"auto_sell_at": auto_sell_at.isoformat() + "Z"}
+                )
+                
+                logger.info(
+                    "🕒 Auto-sell scheduled for trade %s at %s (%d seconds from now)",
+                    trade_id,
+                    auto_sell_at.isoformat(),
+                    payload.auto_sell_after
+                )
+            
             # Fetch completed trade
             trade = await self.prisma.trade.find_unique(where={"id": trade_id})
             if not trade:
