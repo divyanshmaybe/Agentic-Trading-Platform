@@ -7,6 +7,7 @@ interface UseAgentDashboardReturn {
   data: AgentDashboard | null
   loading: boolean
   error: string | null
+  isAllocating: boolean
   refetch: () => Promise<void>
 }
 
@@ -34,11 +35,13 @@ export function useAgentDashboard(agentType: AgentType): UseAgentDashboardReturn
   const [data, setData] = useState<AgentDashboard | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [isAllocating, setIsAllocating] = useState(false)
 
   const fetchAgentData = useCallback(async () => {
     try {
       setLoading(true)
       setError(null)
+      setIsAllocating(false)
 
       const token = getAccessToken()
 
@@ -55,6 +58,12 @@ export function useAgentDashboard(agentType: AgentType): UseAgentDashboardReturn
       )
 
       if (!response.ok) {
+        // Handle 404 specifically - agents are being allocated
+        if (response.status === 404) {
+          setIsAllocating(true)
+          setError(null)
+          return
+        }
         throw new Error(`Failed to fetch agent data: ${response.statusText}`)
       }
 
@@ -73,10 +82,25 @@ export function useAgentDashboard(agentType: AgentType): UseAgentDashboardReturn
     fetchAgentData()
   }, [fetchAgentData])
 
+  // Poll every minute when agents are being allocated
+  useEffect(() => {
+    if (!isAllocating) return
+
+    const pollInterval = setInterval(() => {
+      console.log(`[useAgentDashboard] Polling for ${agentType} agent data...`)
+      fetchAgentData()
+    }, 60000) // Poll every 60 seconds
+
+    return () => {
+      clearInterval(pollInterval)
+    }
+  }, [isAllocating, agentType, fetchAgentData])
+
   return {
     data,
     loading,
     error,
+    isAllocating,
     refetch: fetchAgentData,
   }
 }

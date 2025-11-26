@@ -23,9 +23,54 @@ const item: Variants = {
 interface AgentOverviewProps {
   data: AgentDashboard | null
   loading: boolean
+  isAllocating?: boolean
 }
 
-export function AgentOverview({ data, loading }: AgentOverviewProps) {
+export function AgentOverview({ data, loading, isAllocating = false }: AgentOverviewProps) {
+  // Show allocating message when agents are being created
+  if (isAllocating) {
+    return (
+      <Card className="card-glass flex h-full flex-col rounded-2xl border border-amber-500/20 bg-gradient-to-br from-amber-500/10 to-orange-500/5 text-white/70 shadow-[0_28px_65px_-38px_rgba(0,0,0,0.9)] backdrop-blur">
+        <CardHeader>
+          <CardTitle className="h-title text-xl text-[#fafafa]">Agent Overview</CardTitle>
+          <CardDescription className="text-xs uppercase tracking-[0.3em] text-amber-300/70">
+            Portfolio Setup in Progress
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col items-center justify-center space-y-6 py-8">
+          <div className="relative">
+            <div className="h-16 w-16 animate-spin rounded-full border-4 border-white/10 border-t-amber-400" />
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="h-8 w-8 rounded-full bg-amber-400/20" />
+            </div>
+          </div>
+          <div className="space-y-2 text-center">
+            <h3 className="text-lg font-semibold text-amber-200">
+              Allocating Your Portfolio
+            </h3>
+            <p className="max-w-md text-sm text-white/60">
+              We're setting up your trading agents and allocating your portfolio. This usually takes a few moments.
+            </p>
+          </div>
+          <div className="flex flex-col space-y-2 text-xs text-white/45">
+            <div className="flex items-center space-x-2">
+              <div className="h-2 w-2 animate-pulse rounded-full bg-amber-400" />
+              <span>Creating agent instances...</span>
+            </div>
+            <div className="flex items-center space-x-2">
+              <div className="h-2 w-2 animate-pulse rounded-full bg-amber-400 [animation-delay:200ms]" />
+              <span>Calculating optimal allocations...</span>
+            </div>
+            <div className="flex items-center space-x-2">
+              <div className="h-2 w-2 animate-pulse rounded-full bg-amber-400 [animation-delay:400ms]" />
+              <span>Initializing trading strategies...</span>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+
   if (loading || !data) {
     return (
       <Card className="card-glass flex h-full flex-col rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_28px_65px_-38px_rgba(0,0,0,0.9)] backdrop-blur">

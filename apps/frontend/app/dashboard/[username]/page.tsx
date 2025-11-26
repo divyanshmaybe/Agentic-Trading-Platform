@@ -38,8 +38,6 @@ export default function DashboardPage() {
       <Container className="max-w-none space-y-6 px-4 py-8 sm:px-6 lg:px-12 xl:px-16">
         {error && <ErrorMessage title="Error loading dashboard" message={error} />}
 
-        {allocationError && !portfolioNotFound && <AllocationWarning />}
-
         <main className="grid gap-6 lg:grid-cols-4 xl:grid-cols-5 items-stretch">
           <div className="flex flex-col max-h-screen h-screen overflow-hidden">
             <NotificationCard 
