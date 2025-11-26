@@ -121,45 +121,45 @@ async def get_portfolio_dashboard(
     return await controller.get_dashboard(request_user)
 
 
-@router.get("/agents/{agent_id}/dashboard", response_model=AgentDashboardResponse)
+@router.get("/agents/{agent_type}/dashboard", response_model=AgentDashboardResponse)
 async def get_agent_dashboard(
-    agent_id: str,
+    agent_type: str,
     controller: PortfolioController = Depends(get_portfolio_controller),
     request_user: dict = Depends(get_authenticated_user),
 ) -> AgentDashboardResponse:
     """Get agent-specific dashboard with positions, P&L, and performance metrics"""
-    return await controller.get_agent_dashboard(agent_id, request_user)
+    return await controller.get_agent_dashboard(agent_type, request_user)
 
 
 @router.get("/snapshots", response_model=SnapshotListResponse)
 async def get_portfolio_snapshots(
     controller: PortfolioController = Depends(get_portfolio_controller),
     request_user: dict = Depends(get_authenticated_user),
-    agent_id: Optional[str] = Query(None, description="Filter by specific agent ID"),
+    agent_type: Optional[str] = Query(None, description="Filter by specific agent type (alpha, liquid, low_risk, high_risk)"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of snapshots to return"),
 ) -> SnapshotListResponse:
     """
     Get portfolio snapshot history for timeline charts.
     
-    If agent_id is provided, returns snapshots for that specific agent.
+    If agent_type is provided, returns snapshots for that specific agent.
     Otherwise, returns aggregated snapshots (sum of all agents in portfolio).
     """
-    return await controller.get_snapshots(request_user, agent_id=agent_id, limit=limit)
+    return await controller.get_snapshots(request_user, agent_type=agent_type, limit=limit)
 
 
-@router.get("/agents/{agent_id}/snapshots", response_model=SnapshotListResponse)
+@router.get("/agents/{agent_type}/snapshots", response_model=SnapshotListResponse)
 async def get_trading_agent_snapshots(
-    agent_id: str,
+    agent_type: str,
     controller: PortfolioController = Depends(get_portfolio_controller),
     request_user: dict = Depends(get_authenticated_user),
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of snapshots to return"),
 ) -> SnapshotListResponse:
     """
-    Get trading agent snapshot history for a specific agent.
+    Get trading agent snapshot history for a specific agent type.
     
     Returns portfolio value and realized P&L snapshots over time for the agent.
     """
-    return await controller.get_snapshots(request_user, agent_id=agent_id, limit=limit)
+    return await controller.get_snapshots(request_user, agent_type=agent_type, limit=limit)
 
 
 @router.get("/allocations/{allocation_id}/snapshots", response_model=AllocationSnapshotListResponse)
