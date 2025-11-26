@@ -45,6 +45,7 @@ services:
     image: postgres:16-alpine
     container_name: portfolio_postgres
     restart: unless-stopped
+    command: postgres -c max_connections=50 -c shared_buffers=256MB
     environment:
       POSTGRES_USER: portfolio_user
       POSTGRES_PASSWORD: portfolio_password
@@ -101,6 +102,8 @@ services:
       REDIS_PORT: 6379
       PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
       CLIENT_URL: http://localhost:3000
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
     working_dir: /app/apps/auth_server
     command: >
       sh -c "pnpm prisma generate &&
@@ -119,6 +122,39 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+    networks:
+      - agentInvest
+
+  # Notification Server (Kafka Consumer -> Redis Publisher)
+  notification_server:
+    image: notification_server:latest
+    container_name: notification_server
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: apps/notification_server/Dockerfile
+    env_file:
+      - .env
+      - apps/notification_server/.env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://auth_user:auth_password@postgres:5432/auth_db
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_CLIENT_ID: notification-server
+      KAFKA_GROUP_ID: notifications-consumer
+    working_dir: /app/apps/notification_server
+    command: >
+      sh -c "pnpm prisma generate &&
+             node dist/index.js"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
     networks:
       - agentInvest
 
@@ -144,7 +180,6 @@ services:
       CELERY_BROKER_URL: redis://portfolio_redis:6379/0
       CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/1
       INTERNAL_SERVICE_SECRET: agentinvest-secret
-      GEMINI_API_KEY: dummy
       CLIENT_URL: http://localhost:3000
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
     working_dir: /app/apps/portfolio-server
@@ -179,6 +214,7 @@ services:
       - apps/portfolio-server/docker.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
+      CELERY_WORKER_RUNNING: "1"
       DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
       SHADOW_DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
       AUTH_SERVER_URL: http://auth_server:4000
@@ -188,8 +224,7 @@ services:
       CELERY_BROKER_URL: redis://portfolio_redis:6379/0
       CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/1
       INTERNAL_SERVICE_SECRET: agentinvest-secret
-      GEMINI_API_KEY: dummy
-      PORTFOLIO_RISK_MONITOR_ENABLED: "false"  # Disable legacy batch monitor
+      PORTFOLIO_RISK_MONITOR_ENABLED: "false"
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "python -m prisma generate &&
@@ -197,7 +232,7 @@ services:
                  echo 'Waiting for Postgres...';
                  sleep 2;
                done &&
-               celery -A celery_app:celery_app worker --loglevel=info --beat"
+               celery -A celery_app:celery_app worker --loglevel=info"
     volumes:
       - ./apps/portfolio-server:/app/apps/portfolio-server
       - ./shared:/app/shared
@@ -210,10 +245,10 @@ services:
     networks:
       - agentInvest
 
-  # Streaming Risk Monitor (Real-time position monitoring <1 sec alerts)
-  portfolio_risk_monitor:
+  # Celery Beat (Scheduler for periodic tasks)
+  portfolio_celery_beat:
     image: portfolio_server:latest
-    container_name: portfolio_risk_monitor
+    container_name: portfolio_celery_beat
     restart: unless-stopped
     env_file:
       - .env
@@ -222,14 +257,13 @@ services:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
       DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
       SHADOW_DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
+      AUTH_SERVER_URL: http://auth_server:4000
+      PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
       REDIS_HOST: portfolio_redis
       REDIS_PORT: 6379
+      CELERY_BROKER_URL: redis://portfolio_redis:6379/0
+      CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/1
       INTERNAL_SERVICE_SECRET: agentinvest-secret
-      STREAMING_RISK_MONITOR_ENABLED: "true"
-      RISK_MONITOR_POLL_INTERVAL: "0.5"  # 500ms polling
-      RISK_MONITOR_REFRESH_POSITIONS: "30"  # Refresh every 30 seconds
-      KAFKA_BROKERS: "kafka:9092"
-      RISK_ALERTS_TOPIC: "risk_agent_alerts"
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "python -m prisma generate &&
@@ -237,7 +271,7 @@ services:
                  echo 'Waiting for Postgres...';
                  sleep 2;
                done &&
-               python -m workers.streaming_risk_monitor"
+               celery -A celery_app:celery_app beat --loglevel=info"
     volumes:
       - ./apps/portfolio-server:/app/apps/portfolio-server
       - ./shared:/app/shared
