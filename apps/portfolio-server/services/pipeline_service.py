@@ -1087,7 +1087,7 @@ class PipelineService:
             self.logger.error("Failed to fetch high-risk agents: %s", exc)
             return []
 
-    def _build_portfolio_snapshot(
+    async def _build_portfolio_snapshot(
         self,
         portfolio: Any,
         *,
@@ -1102,11 +1102,33 @@ class PipelineService:
         metadata = self._parse_metadata(getattr(portfolio, "metadata", None))
         cash_available = self._safe_float(metadata.get("cash_available", metadata.get("cash")), default=0.0)
         
-        # Get capital from agent's allocation - this is what should be used for trading
+        # Get capital from agent's allocation - REFETCH from DB to get latest available_cash
         # Try both 'allocation' and 'portfolioAllocation' relation names
         allocation = None
         if agent:
             allocation = getattr(agent, "allocation", None) or getattr(agent, "portfolioAllocation", None)
+            
+            # CRITICAL: Refetch allocation from database to get the LATEST available_cash
+            # This prevents race conditions where multiple signals use stale allocation data
+            if allocation:
+                try:
+                    manager = get_db_manager()
+                    if not manager.is_connected():
+                        await manager.connect()
+                    client = manager.get_client()
+                    
+                    fresh_allocation = await client.portfolioallocation.find_unique(
+                        where={"id": getattr(allocation, "id")}
+                    )
+                    if fresh_allocation:
+                        allocation = fresh_allocation
+                        self.logger.debug(
+                            "🔄 Refetched allocation %s: available_cash=%.2f (was using potentially stale data)",
+                            getattr(allocation, "id"),
+                            self._safe_float(getattr(allocation, "available_cash", 0.0))
+                        )
+                except Exception as e:
+                    self.logger.warning("⚠️ Failed to refetch allocation, using existing data: %s", e)
         
         self.logger.info(
             "🔍 ALLOCATION DEBUG: agent=%s, allocation=%s, has_allocation=%s",
@@ -1115,19 +1137,31 @@ class PipelineService:
             allocation is not None
         )
         
+        # Use available_cash from allocation (this is the current available capital after trades)
+        available_cash_from_allocation = self._safe_float(getattr(allocation, "available_cash", 0.0)) if allocation else 0.0
         allocation_amount = self._safe_float(getattr(allocation, "allocated_amount", 0.0)) if allocation else 0.0
         
         self.logger.info(
-            "🔍 ALLOCATION AMOUNT DEBUG: allocation_amount=%.2f, allocated_amount_raw=%s",
+            "🔍 ALLOCATION AMOUNT DEBUG: allocated_amount=%.2f, available_cash=%.2f, allocated_amount_raw=%s",
             allocation_amount,
+            available_cash_from_allocation,
             getattr(allocation, "allocated_amount", "NO_ATTR") if allocation else "NO_ALLOCATION"
         )
         
-        # Use allocation amount as cash_available for trading (this is the capital_base)
-        if allocation_amount > 0:
+        # Use available_cash from allocation as cash_available for trading (this is the current capital after trades)
+        if available_cash_from_allocation > 0:
+            cash_available = available_cash_from_allocation
+            self.logger.info(
+                "✅ Using allocation available_cash %.2f as cash_available for portfolio %s (agent %s)",
+                available_cash_from_allocation,
+                getattr(portfolio, "id", "unknown"),
+                getattr(agent, "id", "unknown") if agent else "none",
+            )
+        elif allocation_amount > 0:
+            # Fallback: use allocated_amount if available_cash is not set yet
             cash_available = allocation_amount
             self.logger.info(
-                "✅ Using allocation amount %.2f as cash_available for portfolio %s (agent %s)",
+                "✅ Using allocation amount %.2f as cash_available for portfolio %s (agent %s) - available_cash not set",
                 allocation_amount,
                 getattr(portfolio, "id", "unknown"),
                 getattr(agent, "id", "unknown") if agent else "none",
@@ -1375,7 +1409,7 @@ class PipelineService:
                 )
                 continue
 
-            snapshot = self._build_portfolio_snapshot(
+            snapshot = await self._build_portfolio_snapshot(
                 portfolio,
                 agent=active_agent,
                 agent_config=active_config,
