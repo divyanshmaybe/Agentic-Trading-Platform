@@ -154,16 +154,23 @@ export async function enableAITradingSubscription(
 ): Promise<{ success: boolean; message?: string }> {
   try {
     const { updateUserSubscription } = await import("@/lib/auth")
-    const response = await updateUserSubscription(
-      {
-        action: "subscribe",
-        agent: "high_risk",
-      },
-      accessToken,
+    const agents: Array<"high_risk" | "low_risk" | "alpha"> = ["high_risk", "low_risk", "alpha"]
+    
+    await Promise.all(
+      agents.map(agent =>
+        updateUserSubscription(
+          {
+            action: "subscribe",
+            agent,
+          },
+          accessToken,
+        )
+      )
     )
+    
     return {
-      success: response.success,
-      message: "AI trading subscription enabled",
+      success: true,
+      message: "AI trading subscriptions enabled for all agents",
     }
   } catch (error) {
     const errorMessage =
