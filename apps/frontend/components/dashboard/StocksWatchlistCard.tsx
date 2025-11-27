@@ -16,8 +16,7 @@ type StocksWatchlistCardProps = {
 export function StocksWatchlistCard({ stocks, loading = false }: StocksWatchlistCardProps) {
 	return (
 		<Card className={cn(
-			"card-glass flex flex-col rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_32px_70px_-45px_rgba(0,0,0,0.95)] backdrop-blur",
-			stocks.length === 0 && !loading ? "flex-1" : "md:min-h-[50vh]"
+			"card-glass flex flex-1 flex-col rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_32px_70px_-45px_rgba(0,0,0,0.95)] backdrop-blur"
 		)}>
 			<CardHeader className="gap-2">
 				<CardDescription className="text-xs uppercase tracking-[0.3em] text-white/45">
