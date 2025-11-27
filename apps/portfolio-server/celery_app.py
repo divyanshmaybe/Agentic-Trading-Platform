@@ -359,6 +359,16 @@ def _import_tasks():
 # Only import tasks when running as Celery worker (not when imported by other modules)
 if os.environ.get("CELERY_WORKER_RUNNING") or "celery" in sys.argv[0]:
     _import_tasks()
+    
+    # Initialize Prometheus monitoring if enabled
+    if os.getenv("PROMETHEUS_ENABLED", "false").lower() in {"1", "true", "yes"}:
+        try:
+            from monitoring.prometheus_exporter import setup_prometheus_exporter
+            setup_prometheus_exporter()
+        except ImportError:
+            logging.warning("prometheus-client not installed, skipping metrics export")
+        except Exception as e:
+            logging.error("Failed to initialize Prometheus exporter: %s", e)
 
 
 # Worker process initialization - reset Prisma client on fork
@@ -386,6 +396,25 @@ def init_worker_process(**kwargs):
         logger.info("🔄 Worker process initialized - Prisma client reset for PID %s", os.getpid())
     except Exception as e:
         logging.error("❌ Failed to reset Prisma client in worker init: %s", e, exc_info=True)
+
+
+# Initialize Prometheus exporter when worker is ready
+@signals.worker_ready.connect
+def setup_prometheus(**kwargs):
+    """Set up Prometheus exporter when worker is ready."""
+    prometheus_enabled = os.getenv("PROMETHEUS_ENABLED", "true").lower() in ("true", "1", "yes")
+    
+    if not prometheus_enabled:
+        return
+    
+    try:
+        from monitoring.prometheus_exporter import setup_prometheus_exporter
+        
+        # Port is auto-determined based on worker name
+        setup_prometheus_exporter()
+        
+    except Exception as e:
+        logging.error("❌ Failed to initialize Prometheus exporter: %s", e, exc_info=True)
 
 
 __all__ = ["celery_app"]

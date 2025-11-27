@@ -926,41 +926,55 @@ def create_nse_filings_pipeline(
         max(0, MARKET_CLOSE[1] - MARKET_CLOSE_BUFFER_MINUTES)
     )
     
-    # Log market status at pipeline start
-    is_market_open = market_open_time <= current_time <= market_close_time
-    is_near_close = current_time >= close_buffer_time
+    # Check market hours using centralized utility
+    try:
+        # Import centralized market hours utility
+        from utils.market_hours import enforce_market_hours, get_market_status
+        
+        enforce_market_hours()  # Respects DEMO_MODE automatically
+        is_market_open = True
+        is_near_close = False
+    except ValueError:
+        # Market closed - get status for logging
+        status, msg = get_market_status()
+        is_market_open = False
+        is_near_close = False
+        market_status = f"🔴 MARKET CLOSED - {msg}"
+        print(f"[MARKET] {market_status}")
+        logging.warning(market_status)
+        
+        # Skip signal processing if market closed (unless DEMO_MODE)
+        if not DEMO_MODE:
+            return filings_source.select(
+                symbol=pw.this.symbol,
+                filing_time=pw.this.sort_date if hasattr(pw.this, 'sort_date') else "",
+                signal=pw.apply(lambda s: 0, pw.this.symbol),
+                explanation=pw.apply(lambda s: f"Market closed - {msg}", pw.this.symbol),
+                confidence=pw.apply(lambda s: 0.0, pw.this.symbol),
+            ).filter(pw.this.symbol == "__NEVER_MATCH__")
     
-    # Show market status and DEMO_MODE override
+    # Log market status at pipeline start (only if market is open)
     if DEMO_MODE:
-        if not is_market_open:
-            market_status = f"🔴 MARKET CLOSED (NSE: {MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d}-{MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST, Current: {current_time.strftime('%H:%M:%S')} IST) 🔵 DEMO MODE ENABLED - Processing 24/7"
-        elif is_near_close:
-            market_status = f"🟡 MARKET CLOSING SOON (within {MARKET_CLOSE_BUFFER_MINUTES}min of {MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST, Current: {current_time.strftime('%H:%M:%S')} IST) 🔵 DEMO MODE ENABLED - Processing anyway"
-        else:
-            market_status = f"🟢 MARKET OPEN (NSE: {MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d}-{MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST, Current: {current_time.strftime('%H:%M:%S')} IST) 🔵 DEMO MODE ENABLED"
+        market_status = f"🟢 MARKET OPEN (NSE: {MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d}-{MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST, Current: {current_time.strftime('%H:%M:%S')} IST) 🔵 DEMO MODE ENABLED"
         print(f"[MARKET] {market_status}")
         logging.info(market_status)
-    elif is_market_open and not is_near_close:
+    elif is_market_open:
         market_status = f"🟢 MARKET OPEN - NSE trading hours: {MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d} - {MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST. Current time: {current_time.strftime('%H:%M:%S')} IST"
         print(f"[MARKET] {market_status}")
         logging.info(market_status)
-    elif is_near_close:
-        market_status = f"🟡 MARKET CLOSING SOON - Within {MARKET_CLOSE_BUFFER_MINUTES} minutes of close ({MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST). Current time: {current_time.strftime('%H:%M:%S')} IST. Skipping new signal processing."
-        print(f"[MARKET] {market_status}")
-        logging.warning(market_status)
     else:
         market_status = f"🔴 MARKET CLOSED - NSE hours: {MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d} - {MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST. Current time: {current_time.strftime('%H:%M:%S')} IST. Skipping signal processing."
         print(f"[MARKET] {market_status}")
         logging.warning(market_status)
     
-    # Skip signal processing only if not in DEMO_MODE and market is closed/closing
-    if not DEMO_MODE and (not is_market_open or is_near_close):
+    # Skip signal processing only if not in DEMO_MODE and market is closed
+    if not DEMO_MODE and not is_market_open:
         # Return empty table with correct schema by filtering on a boolean column
         return filings_source.select(
             symbol=pw.this.symbol,
             filing_time=pw.this.sort_date if hasattr(pw.this, 'sort_date') else "",
             signal=pw.apply(lambda s: 0, pw.this.symbol),
-            explanation=pw.apply(lambda s: "Market closed/closing - skipping new trades", pw.this.symbol),
+            explanation=pw.apply(lambda s: "Market closed - skipping new trades", pw.this.symbol),
             confidence=pw.apply(lambda s: 0.0, pw.this.symbol),
         ).filter(pw.this.symbol == "__NEVER_MATCH__")
     

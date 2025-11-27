@@ -1,0 +1,65 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'trading-platform'
+    env: 'development'
+
+# Load alert rules
+rule_files:
+  - 'alert-rules.yml'
+
+scrape_configs:
+  # Celery Workers (Local Development)
+  - job_name: 'celery-trading'
+    static_configs:
+      - targets: ['localhost:9101']
+        labels:
+          worker_pool: 'trading'
+          environment: 'local'
+          
+  - job_name: 'celery-pipeline'
+    static_configs:
+      - targets: ['localhost:9102']
+        labels:
+          worker_pool: 'pipeline'
+          environment: 'local'
+          
+  - job_name: 'celery-allocation'
+    static_configs:
+      - targets: ['localhost:9103']
+        labels:
+          worker_pool: 'allocation'
+          environment: 'local'
+          
+  - job_name: 'celery-market'
+    static_configs:
+      - targets: ['localhost:9104']
+        labels:
+          worker_pool: 'market'
+          environment: 'local'
+          
+  - job_name: 'celery-general'
+    static_configs:
+      - targets: ['localhost:9105']
+        labels:
+          worker_pool: 'general'
+          environment: 'local'
+
+  # Celery Workers (Docker)
+  - job_name: 'celery-docker'
+    static_configs:
+      - targets: ['portfolio_celery:9100']
+        labels:
+          worker_pool: 'all'
+          environment: 'docker'
+
+  # Redis Exporter
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['host.docker.internal:9121', 'redis-exporter:9121']
+        
+  # PostgreSQL Exporter
+  - job_name: 'postgresql'
+    static_configs:
+      - targets: ['host.docker.internal:9187', 'postgres-exporter:9187']

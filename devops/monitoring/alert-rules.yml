@@ -1,0 +1,138 @@
+groups:
+  - name: celery_alerts
+    interval: 30s
+    rules:
+      # Worker Down Alert
+      - alert: CeleryWorkerDown
+        expr: celery_worker_up == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: celery
+        annotations:
+          summary: "Celery worker {{ $labels.worker }} is down"
+          description: "Worker {{ $labels.worker }} has been down for more than 1 minute"
+          
+      # High Task Failure Rate
+      - alert: HighTaskFailureRate
+        expr: |
+          (
+            sum(rate(celery_task_failed_total[5m])) by (worker)
+            /
+            (sum(rate(celery_task_succeeded_total[5m])) by (worker) + sum(rate(celery_task_failed_total[5m])) by (worker))
+          ) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: celery
+        annotations:
+          summary: "High task failure rate on {{ $labels.worker }}"
+          description: "Worker {{ $labels.worker }} has a failure rate of {{ $value | humanizePercentage }} over the last 5 minutes"
+          
+      # Task Queue Backlog
+      - alert: TaskQueueBacklog
+        expr: sum(celery_worker_tasks_active) by (worker) > 50
+        for: 10m
+        labels:
+          severity: warning
+          component: celery
+        annotations:
+          summary: "High task backlog on {{ $labels.worker }}"
+          description: "Worker {{ $labels.worker }} has {{ $value }} active tasks for more than 10 minutes"
+          
+      # Slow Task Execution
+      - alert: SlowTaskExecution
+        expr: |
+          histogram_quantile(0.95, 
+            sum(rate(celery_task_duration_seconds_bucket[5m])) by (worker, task_name, le)
+          ) > 300
+        for: 5m
+        labels:
+          severity: warning
+          component: celery
+        annotations:
+          summary: "Slow task execution: {{ $labels.task_name }} on {{ $labels.worker }}"
+          description: "95th percentile task duration is {{ $value }}s for {{ $labels.task_name }} on {{ $labels.worker }}"
+          
+      # High Task Retry Rate
+      - alert: HighTaskRetryRate
+        expr: rate(celery_task_retried_total[5m]) > 1
+        for: 5m
+        labels:
+          severity: warning
+          component: celery
+        annotations:
+          summary: "High retry rate for {{ $labels.task_name }} on {{ $labels.worker }}"
+          description: "Task {{ $labels.task_name }} is retrying at {{ $value }} retries/sec on {{ $labels.worker }}"
+          
+      # No Task Activity
+      - alert: NoTaskActivity
+        expr: rate(celery_task_received_total[10m]) == 0
+        for: 15m
+        labels:
+          severity: info
+          component: celery
+        annotations:
+          summary: "No task activity on {{ $labels.worker }}"
+          description: "Worker {{ $labels.worker }} has not received any tasks in the last 15 minutes"
+          
+      # Worker Pool Near Capacity
+      - alert: WorkerPoolNearCapacity
+        expr: celery_worker_pool_usage > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          component: celery
+        annotations:
+          summary: "Worker pool {{ $labels.worker }} near capacity"
+          description: "Worker {{ $labels.worker }} pool utilization is at {{ $value | humanizePercentage }}"
+
+  - name: trading_platform_alerts
+    interval: 30s
+    rules:
+      # Market Data Pipeline Issues
+      - alert: MarketDataPipelineFailure
+        expr: rate(celery_task_failed_total{task_name=~".*market.*"}[5m]) > 0.5
+        for: 3m
+        labels:
+          severity: critical
+          component: market-data
+        annotations:
+          summary: "Market data pipeline failures on {{ $labels.worker }}"
+          description: "Market data tasks are failing at {{ $value }} failures/sec"
+          
+      # Trade Execution Delays
+      - alert: TradeExecutionDelay
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(celery_task_duration_seconds_bucket{task_name=~".*trade.*"}[5m])) by (le)
+          ) > 30
+        for: 2m
+        labels:
+          severity: warning
+          component: trading
+        annotations:
+          summary: "Trade execution delays detected"
+          description: "95th percentile trade execution time is {{ $value }}s (threshold: 30s)"
+          
+      # NSE Pipeline Processing Issues
+      - alert: NSEPipelineStalled
+        expr: rate(celery_task_received_total{task_name=~".*nse.*"}[10m]) == 0
+        for: 15m
+        labels:
+          severity: warning
+          component: nse-pipeline
+        annotations:
+          summary: "NSE filing pipeline appears stalled"
+          description: "No NSE filing tasks processed in the last 15 minutes"
+          
+      # Risk Alert Processing Failure
+      - alert: RiskAlertProcessingFailure
+        expr: rate(celery_task_failed_total{task_name=~".*risk.*"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          component: risk-management
+        annotations:
+          summary: "Risk alert processing failures"
+          description: "Risk management tasks are failing on {{ $labels.worker }}"
