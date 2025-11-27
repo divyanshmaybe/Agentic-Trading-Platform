@@ -10,7 +10,7 @@ const rowVariants = {
   hidden: { opacity: 0, y: 12 },
   show: { opacity: 1, y: 0, transition: { duration: 0.2 } },
 }
-
+	
 interface AgentTradesTableProps {
   trades: AgentTrade[]
   loading: boolean
@@ -59,6 +59,15 @@ export function AgentTradesTable({ trades, loading }: AgentTradesTableProps) {
     return "bg-gray-500/15 text-gray-200"
   }
 
+  const getStatusBadgeColor = (status: string) => {
+    const statusLower = status.toLowerCase()
+    if (statusLower === "executed" || statusLower === "completed") return "bg-emerald-500/15 text-emerald-200"
+    if (statusLower === "pending") return "bg-amber-500/15 text-amber-200"
+    if (statusLower === "failed" || statusLower === "rejected") return "bg-rose-500/15 text-rose-200"
+    if (statusLower === "cancelled") return "bg-gray-500/15 text-gray-200"
+    return "bg-blue-500/15 text-blue-200"
+  }
+
   return (
     <Card className="card-glass flex h-full flex-col rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_28px_65px_-38px_rgba(0,0,0,0.9)] backdrop-blur">
       <CardHeader>
@@ -80,6 +89,7 @@ export function AgentTradesTable({ trades, loading }: AgentTradesTableProps) {
                   <th className="px-4 py-3">Time</th>
                   <th className="px-4 py-3">Symbol</th>
                   <th className="px-4 py-3">Side</th>
+                  <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Executed Price</th>
                   <th className="px-4 py-3">Net Amount</th>
                   <th className="px-4 py-3 text-right">Trade Type</th>
@@ -109,6 +119,13 @@ export function AgentTradesTable({ trades, loading }: AgentTradesTableProps) {
                           {trade.side}
                         </span>
                       </td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold uppercase ${getStatusBadgeColor(trade.status)}`}
+                        >
+                          {trade.status}
+                        </span>
+                      </td>
                       <td className="px-4 py-3 text-emerald-300">
                         {formatCurrency(trade.executed_price)}
                       </td>
@@ -131,4 +148,3 @@ export function AgentTradesTable({ trades, loading }: AgentTradesTableProps) {
     </Card>
   )
 }
-

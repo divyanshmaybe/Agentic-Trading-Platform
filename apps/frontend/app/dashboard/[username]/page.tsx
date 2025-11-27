@@ -22,7 +22,6 @@ export default function DashboardPage() {
   const { allocations, allocationError } = usePortfolioAllocations()
   const { portfolioSummary, stocks, loading, error, portfolioNotFound } = useDashboardData(allocations)
 
-  // Show loading state while auth is being verified
   if (authLoading || !authUser) {
     return (
       <div className="min-h-screen bg-[#0c0c0c] text-[#fafafa] flex items-center justify-center">

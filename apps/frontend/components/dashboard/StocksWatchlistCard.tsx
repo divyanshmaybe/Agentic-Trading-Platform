@@ -65,10 +65,6 @@ function StockSparklineRow({ stock }: StockSparklineRowProps) {
 						{stock.symbol}
 					</span>
 				</div>
-				<span className={cn("text-sm font-semibold", positive ? "text-[#22c55e]" : "text-[#dc2626]")}>
-					{positive ? "+" : ""}
-					{stock.changePct.toFixed(2)}%
-				</span>
 			</div>
 			<div className="h-16 min-w-[120px] sm:h-16">
 				{hasPriceData ? (
