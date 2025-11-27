@@ -1804,8 +1804,15 @@ class PipelineService:
             return False
     
     async def sell_all_high_risk_positions(self) -> Dict[str, Any]:
-        """Sell all open positions for high_risk trading agents at market close (3:15 PM IST)."""
-        self.logger.info("🔄 Starting to sell all high_risk positions before market close...")
+        """
+        Close all open positions for high_risk trading agents at market close (3:15 PM IST).
+        
+        PRODUCTION BEHAVIOR:
+        - LONG positions (position_type="LONG"): Execute SELL trades
+        - SHORT positions (position_type="SHORT"): Execute COVER (BUY) trades
+        - All intraday positions MUST be closed before market close (NSE requirement)
+        """
+        self.logger.info("🔄 Starting to close all high_risk positions before market close (3:15 PM IST)...")
         
         try:
             db_manager = get_db_manager()
@@ -1825,18 +1832,20 @@ class PipelineService:
             )
             
             if not agents:
-                self.logger.info("No active high_risk agents found - nothing to sell")
+                self.logger.info("No active high_risk agents found - nothing to close")
                 return {
                     "status": "completed",
                     "agents_checked": 0,
-                    "positions_sold": 0,
+                    "long_positions_sold": 0,
+                    "short_positions_covered": 0,
                     "errors": 0,
                 }
             
             self.logger.info("Found %d active high_risk agent(s)", len(agents))
             
             trade_service = TradeExecutionService(logger=self.logger)
-            positions_sold = 0
+            long_positions_sold = 0
+            short_positions_covered = 0
             errors = 0
             
             # For each agent, find all open positions and sell them
@@ -1864,11 +1873,12 @@ class PipelineService:
                         portfolio_id,
                     )
                     
-                    # Sell each position
+                    # Close each position (SELL for LONG, COVER for SHORT)
                     for position in positions:
                         try:
                             symbol = str(getattr(position, "symbol", ""))
                             quantity = int(getattr(position, "quantity", 0))
+                            position_type = str(getattr(position, "position_type", "LONG"))
                             
                             if not symbol or quantity == 0:
                                 continue
@@ -1899,12 +1909,25 @@ class PipelineService:
                             if not user_id:
                                 continue
                             
-                            # Create SELL trade record first
+                            # Determine closing trade side based on position type
+                            # LONG position → SELL to close
+                            # SHORT position → COVER (BUY) to close
                             import uuid
                             import json
                             from decimal import Decimal
+                            
+                            if position_type == "SHORT":
+                                # SHORT position: Execute COVER (BUY) trade to close
+                                trade_side = "COVER"
+                                trade_action = "covered"
+                                order_type_label = "market_close_cover"
+                            else:
+                                # LONG position: Execute SELL trade to close
+                                trade_side = "SELL"
+                                trade_action = "sold"
+                                order_type_label = "market_close_sell"
 
-                            sell_trade_data = {
+                            closing_trade_data = {
                                 "portfolio_id": portfolio_id,
                                 "organization_id": getattr(portfolio, "organization_id", None),
                                 "customer_id": user_id,
@@ -1912,7 +1935,7 @@ class PipelineService:
                                 "symbol": symbol,
                                 "exchange": "NSE",
                                 "segment": "EQUITY",
-                                "side": "SELL",
+                                "side": trade_side,
                                 "order_type": "market",
                                 "quantity": quantity,
                                 "price": Decimal(str(reference_price)),
@@ -1920,36 +1943,45 @@ class PipelineService:
                                 "source": "market_close_worker",
                                 "agent_id": str(getattr(agent, "id", "")),
                                 "metadata": json.dumps({
-                                    "order_type": "market_close_sell",
+                                    "order_type": order_type_label,
                                     "triggered_by": "market_close_worker",
                                     "position_id": str(getattr(position, "id", "")),
+                                    "position_type": position_type,
+                                    "close_reason": "intraday_market_close_3_15_pm",
                                 }),
                             }
 
-                            sell_trade = await client.trade.create(data=sell_trade_data)
+                            closing_trade = await client.trade.create(data=closing_trade_data)
 
-                            # Create SELL trade execution log
-                            sell_log = await client.tradeexecutionlog.create(
+                            # Create trade execution log
+                            closing_log = await client.tradeexecutionlog.create(
                                 data={
-                                    "trade_id": sell_trade.id,
-                                    "request_id": f"market_close_sell_{uuid.uuid4().hex[:12]}",
+                                    "trade_id": closing_trade.id,
+                                    "request_id": f"{order_type_label}_{uuid.uuid4().hex[:12]}",
                                     "status": "pending",
                                     "order_type": "market",
                                     "metadata": json.dumps({
-                                        "order_type": "market_close_sell",
+                                        "order_type": order_type_label,
                                         "triggered_by": "market_close_worker",
                                         "position_id": str(getattr(position, "id", "")),
+                                        "position_type": position_type,
                                     }),
                                 },
                             )
                             
-                            # Execute the sell
-                            result = await trade_service.execute_trade(sell_log.id, simulate=True)
+                            # Execute the closing trade
+                            result = await trade_service.execute_trade(closing_trade.id, simulate=True)
                             
                             if result.get("status") in ["executed", "executed"]:
-                                positions_sold += 1
+                                if position_type == "SHORT":
+                                    short_positions_covered += 1
+                                else:
+                                    long_positions_sold += 1
+                                    
                                 self.logger.info(
-                                    "✅ Sold position: SELL %s x %d @ ₹%.2f (market close)",
+                                    "✅ Closed %s position: %s %s x %d @ ₹%.2f (market close 3:15 PM)",
+                                    position_type,
+                                    trade_side,
                                     symbol,
                                     quantity,
                                     result.get("executed_price", reference_price),
@@ -1980,20 +2012,23 @@ class PipelineService:
                     )
             
             self.logger.info(
-                "✅ Market close sell completed: %d positions sold, %d errors",
-                positions_sold,
+                "✅ Market close (3:15 PM IST) completed: %d LONG positions sold, %d SHORT positions covered, %d errors",
+                long_positions_sold,
+                short_positions_covered,
                 errors,
             )
             
             return {
                 "status": "completed",
                 "agents_checked": len(agents),
-                "positions_sold": positions_sold,
+                "long_positions_sold": long_positions_sold,
+                "short_positions_covered": short_positions_covered,
+                "total_positions_closed": long_positions_sold + short_positions_covered,
                 "errors": errors,
             }
         
         except Exception as exc:
-            self.logger.error("❌ Failed to sell high-risk positions: %s", exc, exc_info=True)
+            self.logger.error("❌ Failed to close high-risk positions at market close: %s", exc, exc_info=True)
             raise
 
     async def _process_signal_for_active_agents(self, signal_payload: Dict[str, Any]) -> None:

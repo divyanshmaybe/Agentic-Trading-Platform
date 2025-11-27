@@ -3,6 +3,11 @@ Trade Execution Service
 
 Provides helpers for persisting auto-trade jobs, publishing events, and delegating
 execution to broker integrations.
+
+PRODUCTION FEATURES:
+- Market hours enforcement (9:15 AM - 3:30 PM IST)
+- Short selling support (SHORT_SELL and COVER trades)
+- Fail-fast validation (no assumptions, no fallbacks)
 """
 
 from __future__ import annotations
@@ -25,6 +30,7 @@ from pipelines.nse.trade_execution_pipeline import (  # type: ignore  # noqa: E4
     publish_trade_execution_events,
 )
 from services.trade_validation_service import TradeValidationService  # noqa: E402
+from utils.market_hours import enforce_market_hours, is_market_hours, get_market_status  # noqa: E402
 
 
 def _parse_metadata(metadata):
@@ -34,7 +40,8 @@ def _parse_metadata(metadata):
     if isinstance(metadata, str):
         try:
             return json.loads(metadata)
-        except:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
+            logging.getLogger(__name__).warning(f"Failed to parse metadata: {e}")
             return {}
     return dict(metadata) if isinstance(metadata, dict) else {}
 
@@ -137,7 +144,19 @@ class TradeExecutionService:
 
         Creates both a Trade record (containing all trade details) and a TradeExecutionLog
         record (tracking execution attempts) linked by trade_id.
+        
+        PRODUCTION SAFETY:
+        - Enforces market hours (9:15 AM - 3:30 PM IST) unless DEMO_MODE=true
+        - Fails fast if outside trading hours
+        - Supports SHORT_SELL and COVER trades
         """
+
+        # PRODUCTION: Enforce market hours before creating trade (respects DEMO_MODE)
+        try:
+            enforce_market_hours()  # Automatically checks DEMO_MODE inside
+        except ValueError as e:
+            self.logger.error("❌ Market hours violation: %s", e)
+            raise ValueError(f"Cannot create trade outside market hours: {e}") from e
 
         client = client or await self._ensure_client()
 
@@ -206,16 +225,20 @@ class TradeExecutionService:
         
         # Calculate fixed TP/SL prices based on side
         if side.upper() == "BUY":
-            # For BUY: TP above entry, SL below entry
+            # For BUY (LONG): TP above entry, SL below entry
             tp_price = reference_price * (Decimal("1") + tp_pct)
             sl_price = reference_price * (Decimal("1") - sl_pct)
-        else:  # SELL
-            # For SELL: TP below entry, SL above entry
+        elif side.upper() == "SHORT_SELL":
+            # For SHORT_SELL: TP below entry (profit when price drops), SL above entry
+            tp_price = reference_price * (Decimal("1") - tp_pct)
+            sl_price = reference_price * (Decimal("1") + sl_pct)
+        else:  # SELL or COVER
+            # For SELL/COVER: TP below entry, SL above entry
             tp_price = reference_price * (Decimal("1") - tp_pct)
             sl_price = reference_price * (Decimal("1") + sl_pct)
         
-        # Set 15-minute auto-sell window from now
-        auto_sell_at = datetime.utcnow() + timedelta(minutes=15)
+        # Set 15-minute auto-close window based on trade side
+        auto_close_time = datetime.utcnow() + timedelta(minutes=15)
         
         trade_data = {
             "organization_id": organization_id,  # From job_row or portfolio
@@ -231,12 +254,20 @@ class TradeExecutionService:
             "status": "pending",
             "source": "nse_pipeline",
             "metadata": json.dumps(metadata),
-            "auto_sell_at": auto_sell_at.isoformat() + "Z",  # 15-minute window with timezone
             "take_profit_pct": tp_pct,
             "stop_loss_pct": sl_pct,
             "take_profit_price": tp_price,
             "stop_loss_price": sl_price,
         }
+        
+        # Set appropriate auto-close timestamp based on trade side
+        if side.upper() == "SHORT_SELL":
+            # SHORT_SELL: Set auto_cover_at (buy to close after 15 min)
+            trade_data["auto_cover_at"] = auto_close_time.isoformat() + "Z"
+        elif side.upper() == "BUY":
+            # BUY (LONG): Set auto_sell_at (sell to close after 15 min)
+            trade_data["auto_sell_at"] = auto_close_time.isoformat() + "Z"
+        # SELL and COVER don't need auto-close (they ARE closing trades)
 
         # Add NSE-specific fields to Trade record
         if job_row.get("signal_id"):
@@ -537,7 +568,8 @@ class TradeExecutionService:
                 if isinstance(meta, str):
                     try:
                         meta = json.loads(meta)
-                    except:
+                    except (json.JSONDecodeError, TypeError, ValueError) as e:
+                        self.logger.warning(f"Failed to parse record metadata: {e}")
                         meta = {}
                 if isinstance(meta, dict) and "agent_id" in meta:
                     agent_id = meta["agent_id"]
@@ -640,12 +672,35 @@ class TradeExecutionService:
             )
             
             # Add trade to portfolio allocation and trigger portfolio update
-            await self._update_portfolio_allocation(
-                record,
-                executed_price=executed_price,
-                executed_quantity=executed_quantity,
-                auto_sell_at=auto_sell_at,
-            )
+            try:
+                await self._update_portfolio_allocation(
+                    record,
+                    executed_price=executed_price,
+                    executed_quantity=executed_quantity,
+                    auto_sell_at=auto_sell_at,
+                )
+            except Exception as portfolio_error:
+                # CRITICAL: Portfolio update failed - mark trade as failed
+                self.logger.error(
+                    "❌ Portfolio update failed for trade %s: %s - marking trade as FAILED",
+                    trade_id,
+                    portfolio_error,
+                    exc_info=True
+                )
+                await self.update_status(
+                    execution_log_id,
+                    status="failed",
+                    error_message=f"Portfolio update failed: {str(portfolio_error)}",
+                )
+                await client.trade.update(
+                    where={"id": trade_id},
+                    data={"status": "failed"},
+                )
+                return {
+                    "status": "failed",
+                    "trade_id": trade_id,
+                    "error": f"Portfolio update failed: {str(portfolio_error)}",
+                }
             
             return {
                 "status": "executed",
@@ -1181,7 +1236,8 @@ class TradeExecutionService:
                 elif isinstance(metadata, dict) and "auto_sell_at" in metadata:
                     try:
                         auto_sell_at = datetime.fromisoformat(metadata["auto_sell_at"])
-                    except:
+                    except (ValueError, TypeError, AttributeError) as e:
+                        self.logger.warning(f"Invalid auto_sell_at in metadata: {e}")
                         pass
 
             if auto_sell_at:
@@ -1399,6 +1455,8 @@ class TradeExecutionService:
                 exc,
                 exc_info=True
             )
+            # Re-raise to ensure trade is marked as failed
+            raise
     
     async def _cancel_pending_tp_sl_orders(
         self,
@@ -1506,14 +1564,14 @@ class TradeExecutionService:
             validation_service = TradeValidationService()
             
             # Validate trade before execution
-            if side.upper() == "BUY":
-                # Calculate total cost
+            if side.upper() in ["BUY", "COVER"]:
+                # BUY (open LONG) or COVER (close SHORT) - both require cash
                 total_cost = Decimal(str(executed_price)) * Decimal(str(quantity))
                 
                 # Validate available cash at portfolio or allocation level
                 validation_result = await validation_service.validate_buy_order(
                     portfolio_id=portfolio_id,
-                    agent_id=agent_id,  # Pass agent_id (can be None for manual trades)
+                    agent_id=agent_id,
                     symbol=symbol,
                     quantity=quantity,
                     price=Decimal(str(executed_price)),
@@ -1521,17 +1579,18 @@ class TradeExecutionService:
                 
                 if not validation_result["valid"]:
                     self.logger.error(
-                        "❌ BUY validation failed for %s: %s",
+                        "❌ %s validation failed for %s: %s",
+                        side.upper(),
                         symbol,
                         validation_result.get("error", "Unknown error")
                     )
                     raise ValueError(f"Insufficient funds: {validation_result.get('error')}")
                 
             elif side.upper() == "SELL":
-                # Validate sufficient holdings
+                # SELL (close LONG) - requires existing long position
                 validation_result = await validation_service.validate_sell_order(
                     portfolio_id=portfolio_id,
-                    agent_id=agent_id,  # Pass agent_id to find position
+                    agent_id=agent_id,
                     symbol=symbol,
                     quantity=quantity,
                 )
@@ -1543,6 +1602,11 @@ class TradeExecutionService:
                         validation_result.get("error", "Unknown error")
                     )
                     raise ValueError(f"Insufficient holdings: {validation_result.get('error')}")
+            
+            elif side.upper() == "SHORT_SELL":
+                # SHORT_SELL - no validation needed (can short without owning)
+                # In production, you might add margin requirements or other checks here
+                pass
             
             # Check if position already exists
             existing_position = await client.position.find_first(
@@ -1829,7 +1893,285 @@ class TradeExecutionService:
                         quantity,
                         portfolio_id,
                     )
+            
+            elif side.upper() == "SHORT_SELL":
+                # SHORT_SELL: Open new short position (sell without owning)
+                # Check if short position already exists
+                existing_short = await client.position.find_first(
+                    where={
+                        "portfolio_id": portfolio_id,
+                        "symbol": symbol,
+                        "position_type": "SHORT",
+                        "status": "open",
+                    }
+                )
+                
+                if existing_short:
+                    # Add to existing short position
+                    old_quantity = int(getattr(existing_short, "quantity", 0))
+                    old_avg_price = float(getattr(existing_short, "average_buy_price", 0))  # avg short price
                     
+                    new_quantity = old_quantity + quantity
+                    new_avg_price = ((old_quantity * old_avg_price) + (quantity * executed_price)) / new_quantity
+                    
+                    position_metadata = {}
+                    if hasattr(existing_short, "metadata") and existing_short.metadata:
+                        meta = getattr(existing_short, "metadata")
+                        if isinstance(meta, str):
+                            try:
+                                position_metadata = json.loads(meta)
+                            except:
+                                position_metadata = {}
+                        elif isinstance(meta, dict):
+                            position_metadata = meta
+                    
+                    trade_ids = position_metadata.get("trade_ids", [])
+                    if not isinstance(trade_ids, list):
+                        trade_ids = []
+                    trade_ids.append(trade_id)
+                    position_metadata["trade_ids"] = trade_ids
+                    position_metadata["last_updated"] = datetime.utcnow().isoformat()
+                    
+                    await client.position.update(
+                        where={"id": existing_short.id},
+                        data={
+                            "quantity": new_quantity,
+                            "average_buy_price": self._as_decimal(new_avg_price),
+                            "updated_at": datetime.utcnow(),
+                            "metadata": json.dumps(position_metadata),
+                        }
+                    )
+                    
+                    self.logger.info(
+                        "✅ Updated SHORT position %s: %s qty %d→%d, avg short price ₹%.2f→₹%.2f",
+                        existing_short.id,
+                        symbol,
+                        old_quantity,
+                        new_quantity,
+                        old_avg_price,
+                        new_avg_price,
+                    )
+                else:
+                    # Create new short position
+                    position_metadata = {
+                        "trade_ids": [trade_id],
+                        "created_at": datetime.utcnow().isoformat(),
+                        "last_updated": datetime.utcnow().isoformat(),
+                    }
+                    
+                    create_data = {
+                        "portfolio_id": portfolio_id,
+                        "symbol": symbol,
+                        "exchange": exchange,
+                        "segment": segment,
+                        "quantity": quantity,
+                        "average_buy_price": self._as_decimal(executed_price),  # Short entry price
+                        "position_type": "SHORT",
+                        "status": "open",
+                        "opened_at": datetime.utcnow(),
+                        "metadata": json.dumps(position_metadata),
+                    }
+                    
+                    if agent_id:
+                        create_data["agent_id"] = agent_id
+                        agent = await client.tradingagent.find_unique(where={"id": agent_id})
+                        if agent and hasattr(agent, "portfolio_allocation_id"):
+                            create_data["allocation_id"] = agent.portfolio_allocation_id
+                        else:
+                            self.logger.warning("⚠️ Agent %s has no allocation_id, skipping SHORT position creation", agent_id)
+                            return
+                    else:
+                        self.logger.warning("⚠️ No agent_id provided for SHORT position creation, skipping")
+                        return
+                    
+                    new_position = await client.position.create(data=create_data)
+                    
+                    self.logger.info(
+                        "✅ Created new SHORT position %s: %s x %d @ ₹%.2f",
+                        new_position.id,
+                        symbol,
+                        quantity,
+                        executed_price,
+                    )
+                
+                # SHORT_SELL receives cash (we sell shares we don't own)
+                sale_proceeds = Decimal(str(executed_price)) * Decimal(str(quantity))
+                
+                allocation_id = None
+                if agent_id:
+                    agent = await client.tradingagent.find_unique(where={"id": agent_id})
+                    if agent:
+                        allocation_id = getattr(agent, "portfolio_allocation_id", None)
+                
+                if allocation_id:
+                    allocation = await client.portfolioallocation.find_unique(where={"id": allocation_id})
+                    if allocation:
+                        current_cash = Decimal(str(getattr(allocation, "available_cash", 0)))
+                        new_cash = current_cash + sale_proceeds
+                        await client.portfolioallocation.update(
+                            where={"id": allocation_id},
+                            data={"available_cash": new_cash}
+                        )
+                        self.logger.info(
+                            "💰 SHORT_SELL added ₹%.2f to allocation %s: ₹%.2f → ₹%.2f",
+                            float(sale_proceeds),
+                            allocation_id,
+                            float(current_cash),
+                            float(new_cash)
+                        )
+                
+                portfolio = await client.portfolio.find_unique(where={"id": portfolio_id})
+                if portfolio:
+                    portfolio_cash = Decimal(str(getattr(portfolio, "available_cash", 0)))
+                    new_portfolio_cash = portfolio_cash + sale_proceeds
+                    await client.portfolio.update(
+                        where={"id": portfolio_id},
+                        data={"available_cash": new_portfolio_cash}
+                    )
+                    self.logger.info(
+                        "💰 SHORT_SELL added ₹%.2f to portfolio %s: ₹%.2f → ₹%.2f",
+                        float(sale_proceeds),
+                        portfolio_id,
+                        float(portfolio_cash),
+                        float(new_portfolio_cash)
+                    )
+            
+            elif side.upper() == "COVER":
+                # COVER: Close short position (buy to cover)
+                existing_short = await client.position.find_first(
+                    where={
+                        "portfolio_id": portfolio_id,
+                        "symbol": symbol,
+                        "position_type": "SHORT",
+                        "status": "open",
+                    }
+                )
+                
+                if existing_short:
+                    old_quantity = int(getattr(existing_short, "quantity", 0))
+                    avg_short_price = float(getattr(existing_short, "average_buy_price", 0))
+                    new_quantity = old_quantity - quantity
+                    
+                    # Calculate realized P&L for SHORT: profit when price drops
+                    # P&L = (short_price - cover_price) * quantity
+                    realized_pnl = quantity * (avg_short_price - executed_price)
+                    old_realized_pnl = float(getattr(existing_short, "realized_pnl", 0))
+                    total_realized_pnl = old_realized_pnl + realized_pnl
+                    
+                    position_metadata = {}
+                    if hasattr(existing_short, "metadata") and existing_short.metadata:
+                        meta = getattr(existing_short, "metadata")
+                        if isinstance(meta, str):
+                            try:
+                                position_metadata = json.loads(meta)
+                            except:
+                                position_metadata = {}
+                        elif isinstance(meta, dict):
+                            position_metadata = meta
+                    
+                    trade_ids = position_metadata.get("trade_ids", [])
+                    if not isinstance(trade_ids, list):
+                        trade_ids = []
+                    trade_ids.append(trade_id)
+                    position_metadata["trade_ids"] = trade_ids
+                    position_metadata["last_updated"] = datetime.utcnow().isoformat()
+                    
+                    if new_quantity <= 0:
+                        # Close short position
+                        await client.position.update(
+                            where={"id": existing_short.id},
+                            data={
+                                "quantity": 0,
+                                "status": "closed",
+                                "realized_pnl": self._as_decimal(total_realized_pnl),
+                                "closed_at": datetime.utcnow(),
+                                "updated_at": datetime.utcnow(),
+                                "metadata": json.dumps(position_metadata),
+                            }
+                        )
+                        
+                        self.logger.info(
+                            "✅ Closed SHORT position %s: %s qty %d→0 (COVER %d), realized P&L ₹%.2f",
+                            existing_short.id,
+                            symbol,
+                            old_quantity,
+                            quantity,
+                            realized_pnl,
+                        )
+                        
+                        # Cancel pending TP/SL orders
+                        await self._cancel_pending_tp_sl_orders(portfolio_id, symbol, client)
+                    else:
+                        # Reduce short position quantity
+                        await client.position.update(
+                            where={"id": existing_short.id},
+                            data={
+                                "quantity": new_quantity,
+                                "realized_pnl": self._as_decimal(total_realized_pnl),
+                                "updated_at": datetime.utcnow(),
+                                "metadata": json.dumps(position_metadata),
+                            }
+                        )
+                        
+                        self.logger.info(
+                            "✅ Updated SHORT position %s: %s qty %d→%d (COVER %d), realized P&L ₹%.2f",
+                            existing_short.id,
+                            symbol,
+                            old_quantity,
+                            new_quantity,
+                            quantity,
+                            realized_pnl,
+                        )
+                    
+                    # COVER costs cash (we buy back shares)
+                    cover_cost = Decimal(str(executed_price)) * Decimal(str(quantity))
+                    
+                    allocation_id = getattr(existing_short, "allocation_id", None)
+                    
+                    if allocation_id:
+                        allocation = await client.portfolioallocation.find_unique(where={"id": allocation_id})
+                        if allocation:
+                            current_cash = Decimal(str(getattr(allocation, "available_cash", 0)))
+                            new_cash = current_cash - cover_cost
+                            await client.portfolioallocation.update(
+                                where={"id": allocation_id},
+                                data={"available_cash": new_cash}
+                            )
+                            self.logger.info(
+                                "💰 COVER deducted ₹%.2f from allocation %s: ₹%.2f → ₹%.2f",
+                                float(cover_cost),
+                                allocation_id,
+                                float(current_cash),
+                                float(new_cash)
+                            )
+                    
+                    portfolio = await client.portfolio.find_unique(where={"id": portfolio_id})
+                    if portfolio:
+                        portfolio_cash = Decimal(str(getattr(portfolio, "available_cash", 0)))
+                        new_portfolio_cash = portfolio_cash - cover_cost
+                        await client.portfolio.update(
+                            where={"id": portfolio_id},
+                            data={"available_cash": new_portfolio_cash}
+                        )
+                        self.logger.info(
+                            "💰 COVER deducted ₹%.2f from portfolio %s: ₹%.2f → ₹%.2f",
+                            float(cover_cost),
+                            portfolio_id,
+                            float(portfolio_cash),
+                            float(new_portfolio_cash)
+                        )
+                else:
+                    error_msg = f"Cannot COVER {symbol} x {quantity}: no open SHORT position found in portfolio {portfolio_id}"
+                    self.logger.error("❌ %s", error_msg)
+                    raise ValueError(error_msg)
+                    
+        except ValueError as ve:
+            # Re-raise validation errors (COVER without position, etc.)
+            self.logger.error(
+                "Validation error for %s %s x %d: %s",
+                side, symbol, quantity, ve
+            )
+            raise
         except Exception as exc:
             self.logger.error(
                 "Failed to create/update position for %s %s x %d: %s",
@@ -1839,6 +2181,7 @@ class TradeExecutionService:
                 exc,
                 exc_info=True
             )
+            raise RuntimeError(f"Position update failed for {symbol}: {exc}") from exc
     
     async def _recalculate_portfolio_value(
         self,

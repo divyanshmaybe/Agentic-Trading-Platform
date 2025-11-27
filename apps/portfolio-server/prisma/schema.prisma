@@ -173,7 +173,7 @@ model Trade {
   symbol            String
   exchange          String
   segment           String
-  side              String
+  side              String    // "BUY" | "SELL" | "SHORT_SELL" | "COVER"
   order_type        String
   quantity          Int
   limit_price       Decimal?  @db.Decimal(20, 4)
@@ -190,7 +190,8 @@ model Trade {
   net_amount        Decimal?  @db.Decimal(20, 4)
   realized_pnl      Decimal?  @db.Decimal(20, 4)
   source            String?
-  auto_sell_at      DateTime?
+  auto_sell_at      DateTime?  // For LONG positions (BUY → auto-sell after 15 min)
+  auto_cover_at     DateTime?  // For SHORT positions (SHORT_SELL → auto-cover after 15 min)
 
   // NSE Pipeline specific fields
   signal_id         String?
@@ -214,6 +215,8 @@ model Trade {
   @@index([customer_id])
   @@index([status])
   @@index([auto_sell_at])
+  @@index([auto_cover_at])
+  @@index([side])
   @@map("trades")
 }
 
@@ -229,9 +232,9 @@ model Position {
   exchange          String
   segment           String
   quantity          Int
-  average_buy_price Decimal   @db.Decimal(20, 4)
+  average_buy_price Decimal   @db.Decimal(20, 4)  // For LONG: buy price, For SHORT: short sell price
   realized_pnl      Decimal   @default(0) @db.Decimal(20, 4)
-  position_type     String
+  position_type     String    // "LONG" | "SHORT"
   status            String    @default("open")
   opened_at         DateTime?
   closed_at         DateTime?
@@ -246,6 +249,7 @@ model Position {
   @@index([agent_id])
   @@index([allocation_id])
   @@index([status])
+  @@index([position_type])
   @@map("positions")
 }
 

@@ -39,3 +39,11 @@ DEFAULT_PORTFOLIO_CASH = os.getenv("DEFAULT_PORTFOLIO_CASH", "100000")
 MAX_TRADE_VALUE = os.getenv("MAX_TRADE_VALUE", "50000")
 MAX_POSITION_VALUE = os.getenv("MAX_POSITION_VALUE", "100000")
 
+# Production Trading Settings
+DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() in {"1", "true", "yes"}
+ANGELONE_TRADING_ENABLED = os.getenv("ANGELONE_TRADING_ENABLED", "false").lower() in {"1", "true", "yes"}
+
+# Short Selling Configuration
+SHORT_SELL_AUTO_CLOSE_MINUTES = int(os.getenv("SHORT_SELL_AUTO_CLOSE_MINUTES", "15"))
+MARKET_CLOSE_SELL_ENABLED = os.getenv("MARKET_CLOSE_SELL_ENABLED", "true").lower() in {"1", "true", "yes"}
+

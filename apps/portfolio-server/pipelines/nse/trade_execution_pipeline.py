@@ -242,7 +242,14 @@ def _calculate_allocation(payload_json: str) -> float:
 
 @pw.udf
 def _resolve_side(payload_json: str) -> str:
-    """Resolve side from signal - UDF works with scalar values only."""
+    """
+    Resolve side from signal - SHORT SELLING ENABLED.
+    
+    Signal > 0 → BUY (open long position)
+    Signal < 0 → SHORT_SELL (open short position)
+    
+    UDF works with scalar values only.
+    """
     # Parse JSON directly to get scalar values (not Pathway expressions)
     try:
         data = json.loads(payload_json)
@@ -254,7 +261,8 @@ def _resolve_side(payload_json: str) -> str:
     if signal > 0:
         return "BUY"
     if signal < 0:
-        return "SELL"
+        # PRODUCTION: SELL signals now trigger SHORT_SELL (not regular SELL)
+        return "SHORT_SELL"
     return "HOLD"
 
 

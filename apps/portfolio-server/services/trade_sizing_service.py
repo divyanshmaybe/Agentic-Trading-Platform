@@ -98,12 +98,14 @@ def _calculate_allocation(data: Dict[str, Any]) -> float:
 
 def _resolve_side(data: Dict[str, Any]) -> str:
     """
-    Resolve trade side from signal value.
+    Resolve trade side from signal value - SHORT SELLING ENABLED.
     
     Signal mapping:
-    - 1 (positive): BUY
-    - -1 (negative): SELL
+    - 1 (positive): BUY (open long position)
+    - -1 (negative): SHORT_SELL (open short position)
     - 0 (neutral): HOLD (filtered out)
+    
+    PRODUCTION: Negative signals trigger SHORT_SELL, not regular SELL.
     """
     try:
         signal = int(data.get("signal", 0))
@@ -113,7 +115,8 @@ def _resolve_side(data: Dict[str, Any]) -> str:
     if signal > 0:
         return "BUY"
     if signal < 0:
-        return "SELL"
+        # PRODUCTION: SHORT_SELL for negative signals
+        return "SHORT_SELL"
     return "HOLD"
 
 

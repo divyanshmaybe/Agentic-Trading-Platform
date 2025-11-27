@@ -21,20 +21,14 @@ logger = logging.getLogger(__name__)
 
 
 class MarketController:
-    """Handles market quote retrieval with live, REST, and fallback sources."""
+    """Handles market quote retrieval with live market data sources."""
 
     def __init__(self) -> None:
         self._service: Optional["MarketDataService"] = None
-
-        self.fallback_enabled = os.getenv("MARKET_DATA_ENABLE_FALLBACK", "true").lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
-        self.fallback_base = Decimal(os.getenv("MARKET_DATA_FALLBACK_BASE", "100.00"))
-        self.fallback_step = Decimal(os.getenv("MARKET_DATA_FALLBACK_STEP", "5.00"))
+        
         self.finnhub_http_url = os.getenv("FINNHUB_HTTP_URL", "https://finnhub.io/api/v1/quote")
+        
+        logger.info("✅ Market controller initialized - No fallback pricing, fail fast on data unavailability")
 
         self.symbol_prefix = os.getenv("MARKET_DATA_SYMBOL_PREFIX", "")
         self.symbol_suffix = os.getenv("MARKET_DATA_SYMBOL_SUFFIX", "")
@@ -85,18 +79,13 @@ class MarketController:
                 if candle_data:
                     candles[symbol] = candle_data
 
-        if missing and self.fallback_enabled:
-            for symbol in list(missing):
-                fallback = self._fallback_price(symbol)
-                quotes.append(
-                    MarketQuote(
-                        symbol=symbol,
-                        price=fallback,
-                        provider="fallback",
-                        source="deterministic-fallback",
-                    )
-                )
-            missing = []
+        if missing:
+            # Fail fast - no fallback pricing allowed
+            logger.error(
+                "❌ Market data unavailable for %d symbol(s): %s",
+                len(missing),
+                ", ".join(missing)
+            )
 
         if not quotes:
             raise HTTPException(
@@ -132,10 +121,6 @@ class MarketController:
         if self.symbol_prefix or self.symbol_suffix:
             return f"{self.symbol_prefix}{mapped}{self.symbol_suffix}"
         return mapped
-
-    def _fallback_price(self, symbol: str) -> Decimal:
-        offset = sum(ord(ch) for ch in symbol) % 20
-        return (self.fallback_base + (self.fallback_step * Decimal(offset))).quantize(Decimal("0.01"))
 
     @property
     def service(self) -> "MarketDataService":
@@ -182,7 +167,7 @@ class MarketController:
                 response = await client.get(self.finnhub_http_url, params=params)
                 if response.status_code != 200:
                     logger.warning(
-                        "REST fallback failed for %s: %s %s",
+                        "REST API failed for %s: %s %s",
                         provider_symbol,
                         response.status_code,
                         response.text,
@@ -190,7 +175,7 @@ class MarketController:
                     return None
                 data = response.json()
         except Exception as exc:
-            logger.warning("REST fallback request failed for %s: %s", provider_symbol, exc)
+            logger.warning("REST API request failed for %s: %s", provider_symbol, exc)
             return None
 
         price = data.get("c") or data.get("current") or data.get("price")
@@ -211,7 +196,7 @@ class MarketController:
         end: Optional[datetime] = None,
     ) -> Optional[List[Dict[str, Decimal]]]:
         """
-        Fetch historical candles: Angel One first, then yfinance fallback.
+        Fetch historical candles from Angel One and yfinance sources.
         
         Supports predefined periods: 1h, 1d, 5d, 7d, 30d, 1y
         Or custom date ranges via start/end parameters.
@@ -295,7 +280,7 @@ class MarketController:
         except Exception as e:
             logger.warning(f"Angel One historical API failed for {provider_symbol}: {e}")
 
-        # Fallback to yfinance
+        # Try yfinance as alternative source
         try:
             import yfinance as yf
             
@@ -357,7 +342,7 @@ class MarketController:
             
             logger.warning(f"yfinance failed for all ticker candidates for {provider_symbol}")
         except Exception as e:
-            logger.error(f"yfinance fallback failed for {provider_symbol}: {e}")
+            logger.error(f"yfinance data fetch failed for {provider_symbol}: {e}")
 
         logger.error(f"No candle data available for {provider_symbol} from any source")
         return None

@@ -235,6 +235,7 @@ def publish_signal_to_kafka(
     signal: int,
     explanation: str,
     confidence: float,
+    stocktechdata: str,
 ) -> str:
     """
     Queue trade execution via Celery, then publish signal to Kafka for analytics.
@@ -252,6 +253,20 @@ def publish_signal_to_kafka(
         signal_value = 0
 
     safe_confidence = float(confidence or 0.0)
+    
+    # Extract reference_price from stocktechdata
+    reference_price = 0.0
+    try:
+        # stocktechdata format: "Current price: 3500.50, timestamp: 2024-01-15 10:30:00"
+        if stocktechdata and "Current price:" in stocktechdata:
+            price_str = stocktechdata.split("Current price:")[1].split(",")[0].strip()
+            reference_price = float(price_str)
+            print(f"[PRICE] ✅ Extracted reference_price={reference_price} for {symbol}")
+        else:
+            print(f"[PRICE] ⚠️ Could not extract price from stocktechdata: {stocktechdata[:100]}")
+    except (ValueError, IndexError, AttributeError) as exc:
+        print(f"[PRICE] ⚠️ Failed to parse reference_price for {symbol}: {exc}")
+    
     event = NSESignalEvent(
         symbol=symbol,
         filing_time=filing_time,
@@ -260,15 +275,19 @@ def publish_signal_to_kafka(
         confidence=safe_confidence,
         generated_at=datetime.utcnow().isoformat() + "Z",
     )
+    
+    # Prepare payload with reference_price for trade execution
+    signal_payload = event.model_dump()
+    signal_payload["reference_price"] = reference_price  # Add price to payload
 
     try:
         # STEP 1: Queue trade execution FIRST (critical path)
         celery_app.send_task(
             "pipeline.trade_execution.process_signal",
-            args=[event.model_dump()],
+            args=[signal_payload],  # Send enriched payload with reference_price
             queue="pipelines",  # Route to pipelines queue (matches celery_app routing)
         )
-        print(f"[CELERY] ✅ Queued trade execution for {symbol}")
+        print(f"[CELERY] ✅ Queued trade execution for {symbol} (price: ₹{reference_price:.2f})")
         
         # STEP 2: Publish to Kafka (non-critical, analytics only)
         # This happens async and doesn't block trade execution
@@ -480,27 +499,44 @@ def fetch_stock_data(symbol: str, filing_time: str) -> str:
     except Exception:
         filing_dt = datetime.utcnow()
 
-    # Check if we're within market hours (NSE: 9:15 AM - 3:30 PM IST)
-    # Use CURRENT time in IST, not filing time!
-    ist = ZoneInfo("Asia/Kolkata")
-    current_time = datetime.now(ist).time()
-    market_open_time = datetime.strptime(f"{MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d}", "%H:%M").time()
-    market_close_time = datetime.strptime(f"{MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d}", "%H:%M").time()
-    
-    is_market_hours = market_open_time <= current_time <= market_close_time
-    
-    # Show market status for logging/monitoring
-    if not is_market_hours:
-        if DEMO_MODE:
-            market_status_msg = f"🔴 MARKET CLOSED for {symbol} (NSE: {MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d}-{MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST, Current: {current_time.strftime('%H:%M:%S')} IST) 🔵 BUT DEMO_MODE ENABLED - Processing anyway"
-            print(f"[MARKET] {market_status_msg}")
-            logging.info(market_status_msg)
-        else:
-            # Market is closed and not in demo mode - skip processing
-            market_status_msg = f"🔴 MARKET CLOSED for {symbol} - NSE hours: {MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d} - {MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST. Current time: {current_time.strftime('%H:%M:%S')} IST, Filing time: {filing_time}"
-            print(f"[MARKET] {market_status_msg}")
-            logging.warning(market_status_msg)
-            return f"Market closed (NSE hours: {MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d} - {MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST). Current time: {current_time.strftime('%H:%M:%S')} IST"
+    # Check if we're within market hours using centralized utility
+    # Import here to avoid circular dependencies
+    try:
+        # Add portfolio-server path to sys.path if not already present
+        portfolio_server_path = Path(__file__).resolve().parents[2]
+        if str(portfolio_server_path) not in sys.path:
+            sys.path.insert(0, str(portfolio_server_path))
+        
+        from utils.market_hours import is_market_hours as check_market_hours, get_market_status
+        
+        market_open = check_market_hours()
+        market_status, market_status_msg = get_market_status()
+        
+        # Show market status for logging/monitoring
+        if not market_open:
+            if DEMO_MODE:
+                msg = f"🔴 {market_status_msg} for {symbol} 🔵 BUT DEMO_MODE ENABLED - Processing anyway"
+                print(f"[MARKET] {msg}")
+                logging.info(msg)
+            else:
+                # Market is closed and not in demo mode - skip processing
+                msg = f"🔴 MARKET CLOSED for {symbol} - {market_status_msg}. Filing time: {filing_time}"
+                print(f"[MARKET] {msg}")
+                logging.warning(msg)
+                return f"Market closed - {market_status_msg}"
+    except ImportError as e:
+        # Fallback to original logic if utils not available
+        logging.warning(f"Could not import market_hours utility, using fallback: {e}")
+        ist = ZoneInfo("Asia/Kolkata")
+        current_time = datetime.now(ist).time()
+        market_open_time = datetime.strptime(f"{MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d}", "%H:%M").time()
+        market_close_time = datetime.strptime(f"{MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d}", "%H:%M").time()
+        market_open = market_open_time <= current_time <= market_close_time
+        
+        if not market_open and not DEMO_MODE:
+            msg = f"Market closed (NSE hours: {MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d} - {MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST)"
+            logging.warning(msg)
+            return msg
 
     try:
         # Get current live price via HTTP API (market_data service)
@@ -1004,6 +1040,7 @@ def create_nse_filings_pipeline(
         signal=parse_trading_signal_value(pw.this.llm_response),
         explanation=parse_trading_signal_explanation(pw.this.llm_response),
         confidence=parse_trading_signal_confidence(pw.this.llm_response),
+        stocktechdata=pw.this.stocktechdata,  # Pass through for price extraction
     )
  
     print("[SENTIMENT] Step 6: Publishing signals to Kafka and writing to disk...")
@@ -1019,6 +1056,7 @@ def create_nse_filings_pipeline(
             pw.this.signal,
             pw.this.explanation,
             pw.this.confidence,
+            pw.this.stocktechdata,  # Pass stocktechdata for price extraction
         ),
     )
 
