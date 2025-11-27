@@ -26,6 +26,26 @@
       "cache": false,
       "persistent": true
     },
+    "celery:trading": {
+      "cache": false,
+      "persistent": true
+    },
+    "celery:pipeline": {
+      "cache": false,
+      "persistent": true
+    },
+    "celery:allocation": {
+      "cache": false,
+      "persistent": true
+    },
+    "celery:market": {
+      "cache": false,
+      "persistent": true
+    },
+    "celery:general": {
+      "cache": false,
+      "persistent": true
+    },
     "celery:beat": {
       "cache": false,
       "persistent": true
