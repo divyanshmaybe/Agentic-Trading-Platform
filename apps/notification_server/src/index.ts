@@ -2,7 +2,6 @@ import { getPrismaClient, databaseManager } from "./prisma/client";
 import { RedisManager } from "../../../shared/js/redisManager";
 import { NotificationPublisher } from "./redis/publisher";
 import { NotificationConsumer } from "./kafka/consumer";
-import { notificationConfig } from "../config";
 
 let consumer: NotificationConsumer | null = null;
 let redis: RedisManager | null = null;
