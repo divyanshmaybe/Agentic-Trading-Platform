@@ -249,8 +249,11 @@ celery_app.conf.beat_schedule = {}
 if NSE_PIPELINE_ENABLED:
     celery_app.conf.beat_schedule["nse-filings-pipeline"] = {
         "task": "pipeline.start",
-        "schedule": timedelta(seconds=60),  # Check every minute, but task has lock to prevent duplicates
-        "options": {"queue": NSE_PIPELINE_QUEUE},
+        "schedule": timedelta(seconds=300),  # Check every 5 minutes (task has internal lock)
+        "options": {
+            "queue": NSE_PIPELINE_QUEUE,
+            "expires": 240,  # Expire after 4 minutes if not picked up
+        },
     }
 
 # Only enable news pipeline via Beat if explicitly configured
@@ -273,7 +276,10 @@ if RISK_MONITOR_ENABLED:
     celery_app.conf.beat_schedule["portfolio-risk-monitor"] = {
         "task": "pipeline.risk_monitor.run",
         "schedule": timedelta(seconds=RISK_MONITOR_INTERVAL),
-        "options": {"queue": RISK_MONITOR_QUEUE},
+        "options": {
+            "queue": RISK_MONITOR_QUEUE,
+            "expires": RISK_MONITOR_INTERVAL - 10,  # Expire before next schedule
+        },
     }
 
 # Order Monitor - NOW USING PATHWAY STREAMING (see workers/streaming_order_monitor.py)
@@ -312,7 +318,10 @@ if AUTO_SELL_ENABLED:
     celery_app.conf.beat_schedule["auto-sell-expired-trades"] = {
         "task": "trades.auto_sell_expired_trades",
         "schedule": timedelta(minutes=1),  # Every minute
-        "options": {"queue": AUTO_SELL_QUEUE},
+        "options": {
+            "queue": AUTO_SELL_QUEUE,
+            "expires": 50,  # Task expires after 50 seconds if not picked up
+        },
     }
 
 # Market closing task - sells all high_risk positions at 3:15 PM IST (9:45 AM UTC)

@@ -15,7 +15,14 @@ from services.trade_execution_service import TradeExecutionService  # type: igno
 logger = logging.getLogger(__name__)
 
 
-@celery_app.task(name="trades.auto_sell_expired_trades", bind=True)
+@celery_app.task(
+    name="trades.auto_sell_expired_trades",
+    bind=True,
+    acks_late=True,
+    reject_on_worker_lost=True,
+    time_limit=50,  # Hard limit - must complete in 50 seconds
+    soft_time_limit=45,  # Soft limit at 45 seconds
+)
 def auto_sell_expired_trades(self):
     """Auto-sell trades that have reached their auto_sell_at timestamp."""
     logger.info("🔄 Starting auto-sell worker...")
