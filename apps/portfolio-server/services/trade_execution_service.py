@@ -631,7 +631,8 @@ class TradeExecutionService:
                 executed_quantity=executed_quantity,
             )
             
-            # Calculate and update realized P&L for SELL trades
+            # CRITICAL: Calculate realized P&L BEFORE updating portfolio allocation
+            # because portfolio recalculation may close/modify the position
             await self._calculate_realized_pnl(
                 record,
                 executed_price=executed_price,
@@ -900,6 +901,9 @@ class TradeExecutionService:
         """
         client = await self._ensure_client()
         
+        # DEBUG: Log function entry
+        self.logger.info("🔍 _calculate_realized_pnl called for trade_record: %s", getattr(trade_record, "id", "unknown"))
+        
         # Get the linked Trade record to access side and other fields
         if not hasattr(trade_record, "trade") or not trade_record.trade:
             self.logger.warning(
@@ -911,8 +915,12 @@ class TradeExecutionService:
         parent_trade = trade_record.trade
         side = str(getattr(parent_trade, "side", "")).upper()
         
+        # DEBUG: Log trade side
+        self.logger.info("🔍 Trade side: %s (will calculate P&L only for SELL)", side)
+        
         # Only calculate realized P&L for SELL trades
         if side != "SELL":
+            self.logger.debug("Skipping P&L calculation for non-SELL trade")
             return
         
         portfolio_id = str(getattr(parent_trade, "portfolio_id", ""))
@@ -927,23 +935,30 @@ class TradeExecutionService:
             )
             return
         
+        self.logger.info("🔍 Looking for position: portfolio=%s, symbol=%s", portfolio_id, symbol)
+        
         try:
             # Find the position for this symbol to get average_buy_price
+            # Query for ANY position (open or closed) since position might be updated during execution
             position = await client.position.find_first(
                 where={
                     "portfolio_id": portfolio_id,
                     "symbol": {"equals": symbol, "mode": "insensitive"},
-                    "status": "open",
-                }
+                },
+                order={"updated_at": "desc"}  # Get most recent position
             )
             
             if not position:
                 self.logger.warning(
-                    "Cannot calculate realized P&L: no open position found for %s in portfolio %s",
+                    "Cannot calculate realized P&L: no position found for %s in portfolio %s",
                     symbol,
                     portfolio_id,
                 )
                 return
+            
+            self.logger.info("🔍 Found position: avg_buy_price=₹%.2f, quantity=%d", 
+                           float(getattr(position, "average_buy_price", 0)),
+                           int(getattr(position, "quantity", 0)))
             
             average_buy_price = float(getattr(position, "average_buy_price", 0))
             if average_buy_price == 0:

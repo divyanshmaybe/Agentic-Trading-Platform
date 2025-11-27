@@ -141,18 +141,27 @@ async def _sell_trade(trade, trade_service: TradeExecutionService, client, logge
     
     # Fetch live market price from Angel One for realistic P&L
     try:
-        from services.angel_one_service import AngelOneService
-        angel_service = AngelOneService()
-        await angel_service.initialize()
+        # Import market data service from shared module
+        import sys
+        import os
+        shared_path = os.path.join(os.path.dirname(__file__), "../../../shared/py")
+        if shared_path not in sys.path:
+            sys.path.insert(0, shared_path)
         
-        # Get current market price
-        market_data = await angel_service.get_market_price(symbol, "NSE")
-        if market_data and market_data.get("ltp"):
-            reference_price = float(market_data["ltp"])
-            logger.info("📈 Using live market price for %s: ₹%.2f (buy was ₹%.2f)", symbol, reference_price, executed_price)
-        else:
-            reference_price = executed_price
-            logger.warning("⚠️ No live price available for %s, using buy price ₹%.2f", symbol, executed_price)
+        from market_data import await_live_price
+        
+        # Get current market price (async)
+        reference_price_decimal = await await_live_price(symbol, timeout=5.0)
+        reference_price = float(reference_price_decimal)
+        
+        # Calculate P&L
+        pnl = (reference_price - executed_price) * executed_quantity
+        pnl_pct = ((reference_price - executed_price) / executed_price) * 100 if executed_price > 0 else 0
+        
+        logger.info(
+            "📈 Using live market price for %s: ₹%.2f (buy: ₹%.2f, P&L: ₹%.2f [%.2f%%])", 
+            symbol, reference_price, executed_price, pnl, pnl_pct
+        )
     except Exception as e:
         logger.warning("⚠️ Failed to fetch live price for %s: %s, using buy price ₹%.2f", symbol, e, executed_price)
         reference_price = executed_price
