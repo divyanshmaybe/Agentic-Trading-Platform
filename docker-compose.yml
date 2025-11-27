@@ -177,6 +177,7 @@ services:
       - apps/portfolio-server/docker.env
     environment:
       PORT: 8000
+      SKIP_DOTENV: "true"
       DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
       SHADOW_DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
       AUTH_SERVER_URL: http://auth_server:4000
@@ -219,6 +220,7 @@ services:
       - apps/portfolio-server/docker.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
+      SKIP_DOTENV: "true"
       CELERY_WORKER_RUNNING: "1"
       DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
       SHADOW_DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
@@ -259,6 +261,7 @@ services:
       - apps/portfolio-server/docker.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
+      SKIP_DOTENV: "true"
       DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
       SHADOW_DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
       AUTH_SERVER_URL: http://auth_server:4000
@@ -290,17 +293,19 @@ services:
 
   # Flower (Celery monitoring dashboard)
   flower:
-    image: mher/flower:latest
+    image: portfolio_server:latest
     container_name: flower
     restart: unless-stopped
     environment:
+      PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
+      SKIP_DOTENV: "true"
       CELERY_BROKER_URL: redis://portfolio_redis:6379/0
       CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/1
-      FLOWER_BASIC_AUTH: admin:admin123
-      FLOWER_PORT: 5555
-      CELERY_APP: celery_app
-      FLOWER_INSPECT_TIMEOUT: 10
-      FLOWER_ENABLE_EVENTS: "true"
+    working_dir: /app/apps/portfolio-server
+    command: >
+      bash -c "python -m prisma generate &&
+               pip install flower &&
+               celery -A celery_app:celery_app flower --port=5555 --basic_auth=admin:admin123"
     ports:
       - "5555:5555"
     depends_on:

@@ -8,7 +8,8 @@ import asyncio
 from dotenv import load_dotenv
 
 # Load environment variables
-load_dotenv()
+if os.getenv("SKIP_DOTENV") != "true":
+    load_dotenv()
 
 # Add project root and shared/middleware directories to path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))

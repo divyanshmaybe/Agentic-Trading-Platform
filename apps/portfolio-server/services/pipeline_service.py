@@ -1875,8 +1875,8 @@ class PipelineService:
                             
                             # Get current live price
                             try:
-                                from market_data import get_live_price  # type: ignore
-                                current_price = get_live_price(symbol)
+                                from market_data import await_live_price  # type: ignore
+                                current_price = await await_live_price(symbol, timeout=5.0)
                                 reference_price = float(current_price)
                             except Exception as price_exc:
                                 self.logger.warning(
@@ -2061,8 +2061,8 @@ class PipelineService:
                     
                     # Get current price or use reference price
                     try:
-                        market_data = get_market_data_service()
-                        current_price = market_data.get_ltp(symbol)
+                        from market_data import await_live_price  # type: ignore
+                        current_price = await await_live_price(symbol, timeout=5.0)
                         if not current_price or current_price <= 0:
                             current_price = reference_price
                     except:
