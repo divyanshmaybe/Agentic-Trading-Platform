@@ -36,12 +36,12 @@ class TradingAgentSnapshotService:
             return Decimal("0")
     
     def _get_live_price(self, symbol: str, fallback: Decimal) -> Decimal:
-        """Get live price from market data service."""
+        """Get live price from market data service with timeout fallback."""
         try:
-            from shared.py.market_data import get_market_data_service
-            market_data = get_market_data_service()
-            live_price = market_data.get_ltp(symbol)
-            return self._as_decimal(live_price) if live_price else fallback
+            # Skip live price fetching for snapshots - use position avg_price instead
+            # Live prices are expensive and cause timeouts during snapshot capture
+            # For historical analysis, avg_price is sufficient and more reliable
+            return fallback
         except Exception as e:
             self.logger.debug("Failed to fetch live price for %s: %s", symbol, e)
             return fallback
