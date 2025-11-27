@@ -104,11 +104,21 @@ _active_tasks = {}
 
 def get_worker_name() -> str:
     """Get the current worker hostname/name."""
-    from celery import current_app
-    hostname = current_app.control.inspect().active()
-    if hostname:
-        return list(hostname.keys())[0] if hostname else 'unknown'
-    return os.getenv('WORKER_NAME', 'unknown')
+    # Prefer environment variable (set by worker startup script)
+    worker_name = os.getenv('WORKER_NAME')
+    if worker_name:
+        return worker_name
+    
+    # Fallback: try to get from Celery inspect (may fail if broker not ready)
+    try:
+        from celery import current_app
+        hostname = current_app.control.inspect().active()
+        if hostname:
+            return list(hostname.keys())[0] if hostname else 'unknown'
+    except Exception:
+        pass
+    
+    return 'unknown'
 
 
 class PrometheusExporter:
@@ -192,6 +202,8 @@ def setup_prometheus_exporter(port: Optional[int] = None):
     """
     global _exporter
     
+    logger.info("📊 Setting up Prometheus exporter (port=%s)", port)
+    
     if _exporter is not None:
         logger.warning("Prometheus exporter already initialized")
         return
@@ -199,18 +211,22 @@ def setup_prometheus_exporter(port: Optional[int] = None):
     _exporter = PrometheusExporter(port=port)
     _exporter.start()
     
+    logger.info("📊 Prometheus exporter started, registering signal handlers")
     # Register Celery signal handlers
     _register_signal_handlers()
+    logger.info("📊 Signal handlers registered successfully")
 
 
 def _register_signal_handlers():
     """Register Celery signal handlers for metrics collection."""
+    logger.info("📊 Registering Celery signal handlers for metrics collection")
     
     @signals.task_received.connect
     def task_received_handler(sender=None, headers=None, body=None, **kwargs):
         """Track when task is received."""
         task_name = headers.get('task', 'unknown') if headers else 'unknown'
         worker_name = get_worker_name()
+        logger.debug(f"📊 Task received: {task_name} on {worker_name}")
         celery_task_received.labels(worker=worker_name, task_name=task_name).inc()
     
     @signals.task_prerun.connect
@@ -218,6 +234,7 @@ def _register_signal_handlers():
         """Track when task starts executing."""
         task_name = task.name if task else sender.name if sender else 'unknown'
         worker_name = get_worker_name()
+        logger.debug(f"📊 Task started: {task_name} on {worker_name}")
         
         celery_task_started.labels(worker=worker_name, task_name=task_name).inc()
         
@@ -256,6 +273,7 @@ def _register_signal_handlers():
         """Track successful task completion."""
         task_name = sender.name if sender else 'unknown'
         worker_name = get_worker_name()
+        logger.debug(f"📊 Task succeeded: {task_name} on {worker_name}")
         
         celery_task_succeeded.labels(worker=worker_name, task_name=task_name).inc()
         celery_tasks_total.labels(worker=worker_name, task_name=task_name, status='success').inc()
@@ -303,9 +321,3 @@ def _register_signal_handlers():
         worker_name = get_worker_name()
         celery_worker_up.labels(worker=worker_name).set(0)
         logger.info("📊 Worker %s shutting down", worker_name)
-
-
-# Auto-initialize if PROMETHEUS_ENABLED=true
-if os.getenv('PROMETHEUS_ENABLED', 'false').lower() in ('true', '1', 'yes'):
-    prometheus_port = os.getenv('PROMETHEUS_PORT')
-    setup_prometheus_exporter(port=int(prometheus_port) if prometheus_port else None)
