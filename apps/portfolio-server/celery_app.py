@@ -186,8 +186,6 @@ celery_app.conf.task_routes = {
     # Risk + alerts
     "risk.alerts.send_email": {"queue": QUEUE_NAMES["risk"], "routing_key": "risk"},
     "risk.streaming_monitor.start": {"queue": QUEUE_NAMES["risk"], "routing_key": "risk"},
-    # Order monitoring - NOW USING STREAMING (workers/streaming_order_monitor.py)
-    # Old polling-based tasks removed
     # Auto-sell worker
     "trades.auto_sell_expired_trades": {"queue": QUEUE_NAMES["trading"], "routing_key": "trading"},
     "pipeline.sell_high_risk_before_close": {"queue": QUEUE_NAMES["trading"], "routing_key": "trading"},
@@ -281,15 +279,6 @@ if RISK_MONITOR_ENABLED:
             "expires": RISK_MONITOR_INTERVAL - 10,  # Expire before next schedule
         },
     }
-
-# Order Monitor - NOW USING PATHWAY STREAMING (see workers/streaming_order_monitor.py)
-# Polling-based order monitor is DISABLED - use streaming version instead
-# if ORDER_MONITOR_ENABLED:
-#     celery_app.conf.beat_schedule["order-monitor-check"] = {
-#         "task": "order_monitor.check_pending_orders_once",
-#         "schedule": timedelta(seconds=ORDER_MONITOR_INTERVAL),
-#         "options": {"queue": ORDER_MONITOR_QUEUE},
-#     }
 
 # Snapshot capture - Every 3 hours (0:00, 3:00, 6:00, 9:00, 12:00, 15:00, 18:00, 21:00 UTC)
 SNAPSHOT_ENABLED = os.getenv("SNAPSHOT_CAPTURE_ENABLED", "true").lower() in {"1", "true", "yes"}
