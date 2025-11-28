@@ -154,7 +154,7 @@ export async function enableAITradingSubscription(
 ): Promise<{ success: boolean; message?: string }> {
   try {
     const { updateUserSubscription } = await import("@/lib/auth")
-    const agents: Array<"high_risk" | "low_risk" | "alpha"> = ["high_risk", "low_risk", "alpha"]
+    const agents: Array<"high_risk" | "low_risk" | "alpha" | "liquid"> = ["high_risk", "low_risk", "alpha", "liquid"]
     
     await Promise.all(
       agents.map(agent =>

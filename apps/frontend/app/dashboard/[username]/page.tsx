@@ -1,5 +1,6 @@
 "use client"
 
+import { useEffect, useRef } from "react"
 import { useParams } from "next/navigation"
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader"
 import { NotificationCard } from "@/components/dashboard/NotificationCard"
@@ -11,6 +12,7 @@ import { useAuth } from "@/hooks/useAuth"
 import { useDashboardNotifications } from "@/components/hooks/useDashboardNotifications"
 import { usePortfolioAllocations } from "@/hooks/usePortfolioAllocations"
 import { useDashboardData } from "@/hooks/useDashboardData"
+import { enableAITradingSubscription } from "@/lib/objectiveIntake"
 import "@/lib/chart"
 
 export default function DashboardPage() {
@@ -21,6 +23,24 @@ export default function DashboardPage() {
   
   const { allocations, allocationError } = usePortfolioAllocations()
   const { portfolioSummary, stocks, loading, error, portfolioNotFound } = useDashboardData(allocations)
+  const subscriptionEnabledRef = useRef(false)
+
+  // Enable AI trading subscriptions when allocations are loaded and complete
+  useEffect(() => {
+    if (
+      !subscriptionEnabledRef.current &&
+      allocations.length > 0 &&
+      !allocationError &&
+      authUser
+    ) {
+      subscriptionEnabledRef.current = true
+      enableAITradingSubscription().catch((err) => {
+        console.error("Failed to enable AI trading subscriptions:", err)
+        // Reset ref on error so it can be retried
+        subscriptionEnabledRef.current = false
+      })
+    }
+  }, [allocations, allocationError, authUser])
 
   if (authLoading || !authUser) {
     return (
