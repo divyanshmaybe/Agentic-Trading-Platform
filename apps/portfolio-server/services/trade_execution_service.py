@@ -663,14 +663,6 @@ class TradeExecutionService:
                 executed_quantity=executed_quantity,
             )
             
-            # CRITICAL: Calculate realized P&L BEFORE updating portfolio allocation
-            # because portfolio recalculation may close/modify the position
-            await self._calculate_realized_pnl(
-                record,
-                executed_price=executed_price,
-                executed_quantity=executed_quantity,
-            )
-            
             # Add trade to portfolio allocation and trigger portfolio update
             try:
                 await self._update_portfolio_allocation(
@@ -702,6 +694,13 @@ class TradeExecutionService:
                     "error": f"Portfolio update failed: {str(portfolio_error)}",
                 }
             
+            # Calculate realized P&L strictly AFTER allocation/positions are updated
+            await self._calculate_realized_pnl(
+                record,
+                executed_price=executed_price,
+                executed_quantity=executed_quantity,
+            )
+
             return {
                 "status": "executed",
                 "trade_id": trade_id,
@@ -1378,14 +1377,11 @@ class TradeExecutionService:
                         len(trades_array),
                     )
                     
-                    # Update PortfolioAllocation allocated_amount and available_cash
+                    # Update PortfolioAllocation available_cash only (do not change allocated_amount)
                     if agent.allocation:
                         allocation = agent.allocation
-                        allocated_capital = float(getattr(trade_record, "allocated_capital", 0))
-                        
-                        # Calculate new allocated amount
-                        current_allocated = float(getattr(allocation, "allocated_amount", 0) or 0)
-                        new_allocated = self._as_decimal(current_allocated + allocated_capital)
+                        # Use allocated_capital from parent Trade, not execution log
+                        allocated_capital = float(getattr(existing_trade, "allocated_capital", 0) or 0)
                         
                         # Deduct from available cash for BUY trades
                         current_available_cash = Decimal(str(getattr(allocation, "available_cash", 0) or 0))
@@ -1399,19 +1395,16 @@ class TradeExecutionService:
                         await client.portfolioallocation.update(
                             where={"id": allocation.id},
                             data={
-                                "allocated_amount": new_allocated,
                                 "available_cash": new_available_cash,
                             },
                         )
                         
                         self.logger.info(
-                            "✅ Updated allocation %s: allocated_amount %.2f → %.2f (+%.2f), available_cash %.2f → %.2f",
+                            "✅ Updated allocation %s: available_cash %.2f  %.2f (trade capital %.2f)",
                             allocation.id,
-                            current_allocated,
-                            float(new_allocated),
-                            allocated_capital,
                             float(current_available_cash),
                             float(new_available_cash),
+                            allocated_capital,
                         )
                         
                 except Exception as agent_exc:
@@ -1694,24 +1687,22 @@ class TradeExecutionService:
                         "metadata": json.dumps(position_metadata),
                     }
                     
-                    # Position requires both agent_id and allocation_id
+                    # Link agent and allocation if available
                     if agent_id:
                         create_data["agent_id"] = agent_id
                         # Fetch allocation_id from agent
                         agent = await client.tradingagent.find_unique(where={"id": agent_id})
-                        if agent and hasattr(agent, "portfolio_allocation_id"):
+                        if agent and hasattr(agent, "portfolio_allocation_id") and agent.portfolio_allocation_id:
                             create_data["allocation_id"] = agent.portfolio_allocation_id
                         else:
                             self.logger.warning(
-                                "⚠️ Agent %s has no allocation_id, skipping position creation",
+                                "⚠️ Agent %s has no allocation_id, position will be created without allocation link",
                                 agent_id
                             )
-                            return
                     else:
                         self.logger.warning(
-                            "⚠️ No agent_id provided for position creation, skipping"
+                            "⚠️ No agent_id provided for position creation, position will be created without agent/allocation link"
                         )
-                        return
                     
                     new_position = await client.position.create(data=create_data)
                     
@@ -1975,14 +1966,12 @@ class TradeExecutionService:
                     if agent_id:
                         create_data["agent_id"] = agent_id
                         agent = await client.tradingagent.find_unique(where={"id": agent_id})
-                        if agent and hasattr(agent, "portfolio_allocation_id"):
+                        if agent and hasattr(agent, "portfolio_allocation_id") and agent.portfolio_allocation_id:
                             create_data["allocation_id"] = agent.portfolio_allocation_id
                         else:
-                            self.logger.warning("⚠️ Agent %s has no allocation_id, skipping SHORT position creation", agent_id)
-                            return
+                            self.logger.warning("⚠️ Agent %s has no allocation_id, SHORT position will be created without allocation link", agent_id)
                     else:
-                        self.logger.warning("⚠️ No agent_id provided for SHORT position creation, skipping")
-                        return
+                        self.logger.warning("⚠️ No agent_id provided for SHORT position creation, position will be created without agent/allocation link")
                     
                     new_position = await client.position.create(data=create_data)
                     

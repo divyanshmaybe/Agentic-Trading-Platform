@@ -61,33 +61,29 @@ class TradeValidationService:
             # Calculate required cash
             required_cash = self._as_decimal(price * Decimal(str(quantity)))
             
-            # Get available cash from portfolio allocation
+            # Get available cash - try allocation first, fallback to portfolio
+            available_cash = Decimal("0")
+            cash_source = "unknown"
+            
             if agent_id:
                 agent = await client.tradingagent.find_unique(
                     where={"id": agent_id},
                     include={"allocation": True},
                 )
                 
-                if not agent:
-                    return {
-                        "valid": False,
-                        "reason": "Trading agent not found",
-                        "available_cash": Decimal("0"),
-                    }
-                
-                allocation = getattr(agent, "allocation", None)
-                if not allocation:
-                    return {
-                        "valid": False,
-                        "reason": "No allocation found for agent",
-                        "available_cash": Decimal("0"),
-                    }
-                
-                # Get liquid cash from allocation
-                available_cash = self._as_decimal(getattr(allocation, "available_cash", 0))
-                
-            else:
-                # Manual trade - check portfolio-level cash
+                if agent:
+                    allocation = getattr(agent, "allocation", None)
+                    if allocation:
+                        # Use allocation cash
+                        available_cash = self._as_decimal(getattr(allocation, "available_cash", 0))
+                        cash_source = f"allocation {allocation.id}"
+                    else:
+                        self.logger.warning("Agent %s has no allocation, falling back to portfolio cash", agent_id)
+                else:
+                    self.logger.warning("Agent %s not found, falling back to portfolio cash", agent_id)
+            
+            # Fallback to portfolio-level cash if allocation cash not found
+            if available_cash == Decimal("0") or cash_source == "unknown":
                 portfolio = await client.portfolio.find_unique(
                     where={"id": portfolio_id}
                 )
@@ -100,6 +96,9 @@ class TradeValidationService:
                     }
                 
                 available_cash = self._as_decimal(getattr(portfolio, "available_cash", 0))
+                cash_source = f"portfolio {portfolio_id}"
+            
+            self.logger.debug("Using cash from %s: ₹%.2f", cash_source, float(available_cash))
             
             # Validate
             if available_cash < required_cash:
@@ -156,17 +155,29 @@ class TradeValidationService:
         await db_manager.connect()
         client = db_manager.get_client()
         try:
-            # Find position
-            where_clause = {
-                "portfolio_id": portfolio_id,
-                "symbol": symbol,
-                "status": "open",
-            }
+            # Find position - first try with agent_id if provided, then fallback to any position
+            position = None
             
             if agent_id:
-                where_clause["agent_id"] = agent_id
+                # Try to find position for this agent specifically
+                position = await client.position.find_first(
+                    where={
+                        "portfolio_id": portfolio_id,
+                        "symbol": symbol,
+                        "status": "open",
+                        "agent_id": agent_id,
+                    }
+                )
             
-            position = await client.position.find_first(where=where_clause)
+            if not position:
+                # Fallback: find any open position for this symbol in portfolio
+                position = await client.position.find_first(
+                    where={
+                        "portfolio_id": portfolio_id,
+                        "symbol": symbol,
+                        "status": "open",
+                    }
+                )
             
             if not position:
                 return {

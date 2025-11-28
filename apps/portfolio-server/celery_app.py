@@ -382,16 +382,21 @@ def init_worker_process(**kwargs):
 @signals.worker_ready.connect
 def setup_prometheus(**kwargs):
     """Set up Prometheus exporter when worker is ready."""
+    logging.info("🔄 WORKER_READY signal fired - setting up Prometheus exporter")
     prometheus_enabled = os.getenv("PROMETHEUS_ENABLED", "true").lower() in ("true", "1", "yes")
     
     if not prometheus_enabled:
+        logging.info("🔄 Prometheus disabled via environment variable")
         return
     
     try:
+        logging.info("🔄 Importing prometheus_exporter module")
         from monitoring.prometheus_exporter import setup_prometheus_exporter
         
+        logging.info("🔄 Calling setup_prometheus_exporter()")
         # Port is auto-determined based on worker name
         setup_prometheus_exporter()
+        logging.info("✅ Prometheus exporter setup completed successfully")
         
     except Exception as e:
         logging.error("❌ Failed to initialize Prometheus exporter: %s", e, exc_info=True)
