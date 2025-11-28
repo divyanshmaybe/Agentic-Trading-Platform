@@ -184,8 +184,7 @@ celery_app.conf.update(
     result_expires=RESULT_TTL,
     result_persistent=True,
     result_extended=True,  # Store additional task metadata
-    # Event settings for monitoring
-    worker_send_task_events=True,
+    # Event settings for monitoring (worker_send_task_events already set above)
     task_send_sent_event=True,
 )
 
