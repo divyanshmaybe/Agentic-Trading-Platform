@@ -1901,7 +1901,7 @@ class PipelineService:
                                 continue
                             
                             # Get portfolio to get user_id
-                            portfolio = client.portfolio.find_unique(where={"id": portfolio_id})
+                            portfolio = await client.portfolio.find_unique(where={"id": portfolio_id})
                             if not portfolio:
                                 continue
                             
