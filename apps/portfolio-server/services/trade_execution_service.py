@@ -1688,12 +1688,13 @@ class TradeExecutionService:
                 )
                 
                 if not validation_result["valid"]:
+                    error_msg = validation_result.get("reason", "Unknown error")
                     self.logger.error(
                         "❌ SELL validation failed for %s: %s",
                         symbol,
-                        validation_result.get("error", "Unknown error")
+                        error_msg
                     )
-                    raise ValueError(f"Insufficient holdings: {validation_result.get('error')}")
+                    raise ValueError(f"Insufficient holdings: {error_msg}")
             
             elif side.upper() == "SHORT_SELL":
                 # SHORT_SELL - no validation needed (can short without owning)
