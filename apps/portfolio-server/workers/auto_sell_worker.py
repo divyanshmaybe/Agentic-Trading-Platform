@@ -21,8 +21,11 @@ logger = logging.getLogger(__name__)
     bind=True,
     acks_late=True,
     reject_on_worker_lost=True,
-    time_limit=50,  # Hard limit - must complete in 50 seconds
-    soft_time_limit=45,  # Soft limit at 45 seconds
+    # Time limits configured in celery_app.py task_annotations
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    max_retries=2,
 )
 def auto_sell_expired_trades(self):
     """

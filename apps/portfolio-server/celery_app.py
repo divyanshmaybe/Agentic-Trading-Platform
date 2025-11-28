@@ -94,6 +94,7 @@ QUEUE_NAMES: Dict[str, str] = {
     "orders": os.getenv("CELERY_QUEUE_ORDERS", "orders"),
     "market": os.getenv("CELERY_QUEUE_MARKET", "market"),
     "tokens": os.getenv("CELERY_QUEUE_TOKENS", "tokens"),
+    "streaming": os.getenv("CELERY_QUEUE_STREAMING", "streaming"),  # Dedicated queue for long-running streaming tasks
 }
 
 
@@ -130,6 +131,9 @@ RESULT_TTL = int(os.getenv("CELERY_RESULT_TTL", "86400"))
 SOFT_TIME_LIMIT = int(os.getenv("CELERY_TASK_SOFT_TIME_LIMIT", "600"))
 HARD_TIME_LIMIT = int(os.getenv("CELERY_TASK_TIME_LIMIT", str(SOFT_TIME_LIMIT + 120)))
 
+# Worker concurrency settings
+WORKER_CONCURRENCY = int(os.getenv("CELERY_WORKER_CONCURRENCY", "8"))
+
 celery_app.conf.update(
     task_serializer="json",
     accept_content=["json"],
@@ -144,27 +148,50 @@ celery_app.conf.update(
     task_default_routing_key=DEFAULT_QUEUE,
     task_default_delivery_mode="persistent",
     task_queue_max_priority=10,
-    worker_max_tasks_per_child=int(os.getenv("CELERY_MAX_TASKS_PER_CHILD", "200")),
-    worker_prefetch_multiplier=int(os.getenv("CELERY_WORKER_PREFETCH_MULTIPLIER", "1")),
+    # Worker settings - prevent task starvation
+    worker_concurrency=WORKER_CONCURRENCY,
+    worker_max_tasks_per_child=int(os.getenv("CELERY_MAX_TASKS_PER_CHILD", "100")),  # Recycle workers more often
+    worker_prefetch_multiplier=1,  # Only prefetch 1 task per worker (prevents blocking)
     worker_redirect_stdouts=False,
     worker_send_task_events=True,
     worker_hijack_root_logger=False,
     worker_disable_rate_limits=False,
+    worker_lost_wait=10,  # Seconds to wait for worker to exit gracefully
+    # Task settings
     task_reject_on_worker_lost=True,
+    task_time_limit=HARD_TIME_LIMIT,  # Global hard limit
+    task_soft_time_limit=SOFT_TIME_LIMIT,  # Global soft limit
+    task_always_eager=False,  # Never run tasks synchronously in production
+    task_store_eager_result=False,
+    task_ignore_result=False,  # Store results for debugging
+    task_compression="gzip",  # Compress task payloads
+    # Broker settings - robust connection handling
     broker_connection_retry_on_startup=True,
+    broker_connection_retry=True,
+    broker_connection_max_retries=10,
+    broker_pool_limit=10,  # Connection pool size
+    broker_heartbeat=30,  # Keep connections alive
     broker_transport_options={
         "visibility_timeout": VISIBILITY_TIMEOUT,
         "fanout_prefix": True,
         "fanout_patterns": True,
-        "max_retries": 3,
+        "max_retries": 5,
+        "interval_start": 0,
+        "interval_step": 0.2,
+        "interval_max": 0.5,
     },
+    # Result backend settings
     result_expires=RESULT_TTL,
     result_persistent=True,
+    result_extended=True,  # Store additional task metadata
+    # Event settings for monitoring
+    worker_send_task_events=True,
+    task_send_sent_event=True,
 )
 
 # Ensure all queues are registered explicitly with proper routing keys
 _all_queues = [Queue(DEFAULT_QUEUE, routing_key=DEFAULT_QUEUE)]
-for queue_name in ["allocations", "trading", "pipelines", "risk", "orders", "market", "tokens"]:
+for queue_name in ["allocations", "trading", "pipelines", "risk", "orders", "market", "tokens", "streaming"]:
     if not any(q.name == queue_name for q in _all_queues):
         _all_queues.append(Queue(queue_name, routing_key=queue_name))
 celery_app.conf.task_queues = _all_queues
@@ -185,27 +212,95 @@ celery_app.conf.task_routes = {
     "market_data.generate_angelone_tokens": {"queue": QUEUE_NAMES["tokens"], "routing_key": "tokens"},
     # Risk + alerts
     "risk.alerts.send_email": {"queue": QUEUE_NAMES["risk"], "routing_key": "risk"},
-    "risk.streaming_monitor.start": {"queue": QUEUE_NAMES["risk"], "routing_key": "risk"},
+    # Streaming monitor gets its own dedicated queue to not block other tasks
+    "risk.streaming_monitor.start": {"queue": QUEUE_NAMES["streaming"], "routing_key": "streaming"},
     # Auto-sell worker
     "trades.auto_sell_expired_trades": {"queue": QUEUE_NAMES["trading"], "routing_key": "trading"},
     "pipeline.sell_high_risk_before_close": {"queue": QUEUE_NAMES["trading"], "routing_key": "trading"},
 }
 
-ANNOTATED_TASKS = [
+# Task categories with different resource requirements
+STANDARD_TASKS = [
     "portfolio.allocate_for_objective",
     "portfolio.check_regime_and_rebalance",
-    "pipeline.risk_monitor.run",
-    "pipeline.news_sentiment.run",
-    "pipeline.trade_execution.process_signal",
     "trading.execute_trade_job",
 ]
 
+# Pipeline tasks - may take longer, rate limited
+PIPELINE_TASKS = [
+    "pipeline.risk_monitor.run",
+    "pipeline.news_sentiment.run",
+    "pipeline.trade_execution.process_signal",
+    "pipeline.start",
+]
+
+# Tasks that should run indefinitely (no time limits) - isolated queue
+LONG_RUNNING_TASKS = [
+    "risk.streaming_monitor.start",
+]
+
+# Quick tasks - should complete fast, higher rate limit
+QUICK_TASKS = [
+    "market_data.fetch_via_api",
+    "market_data.batch_fetch_via_api",
+    "market_data.health_check_api",
+    "risk.alerts.send_email",
+    "snapshot.capture_agent_snapshots",
+    "snapshot.capture_portfolio_snapshots",
+]
+
+# Auto-sell task - needs its own limits
+AUTO_SELL_TASKS = [
+    "trades.auto_sell_expired_trades",
+    "pipeline.sell_high_risk_before_close",
+]
+
 celery_app.conf.task_annotations = {
-    task_name: {
-        "soft_time_limit": SOFT_TIME_LIMIT,
-        "time_limit": HARD_TIME_LIMIT,
-    }
-    for task_name in ANNOTATED_TASKS
+    # Standard tasks - normal limits
+    **{
+        task_name: {
+            "soft_time_limit": SOFT_TIME_LIMIT,
+            "time_limit": HARD_TIME_LIMIT,
+            "rate_limit": "10/m",  # Max 10 per minute
+        }
+        for task_name in STANDARD_TASKS
+    },
+    # Pipeline tasks - longer limits, lower rate
+    **{
+        task_name: {
+            "soft_time_limit": SOFT_TIME_LIMIT + 300,  # 15 min soft
+            "time_limit": HARD_TIME_LIMIT + 300,  # 17 min hard
+            "rate_limit": "2/m",  # Max 2 per minute (pipelines are heavy)
+        }
+        for task_name in PIPELINE_TASKS
+    },
+    # Long-running tasks - no limits, single instance
+    **{
+        task_name: {
+            "soft_time_limit": None,
+            "time_limit": None,
+            "rate_limit": "1/h",  # Only 1 per hour (singleton)
+        }
+        for task_name in LONG_RUNNING_TASKS
+    },
+    # Quick tasks - short limits, high rate
+    **{
+        task_name: {
+            "soft_time_limit": 60,
+            "time_limit": 90,
+            "rate_limit": "60/m",  # 1 per second max
+        }
+        for task_name in QUICK_TASKS
+    },
+    # Auto-sell tasks - medium limits
+    **{
+        task_name: {
+            "soft_time_limit": 270,
+            "time_limit": 300,
+            "rate_limit": "2/m",  # Max 2 per minute
+        }
+        for task_name in AUTO_SELL_TASKS
+    },
 }
 
 celery_app.conf.beat_scheduler = "redbeat.RedBeatScheduler"

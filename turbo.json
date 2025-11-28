@@ -46,6 +46,10 @@
       "cache": false,
       "persistent": true
     },
+    "celery:streaming": {
+      "cache": false,
+      "persistent": true
+    },
     "celery:beat": {
       "cache": false,
       "persistent": true

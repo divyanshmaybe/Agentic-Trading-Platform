@@ -21,7 +21,15 @@ if str(PROJECT_ROOT) not in sys.path:
 logger = logging.getLogger(__name__)
 
 
-@celery_app.task(name="risk.streaming_monitor.start", bind=True, time_limit=None, soft_time_limit=None)
+@celery_app.task(
+    name="risk.streaming_monitor.start",
+    bind=True,
+    time_limit=None,
+    soft_time_limit=None,
+    acks_late=False,  # Ack immediately - don't redeliver on restart
+    max_retries=0,    # Don't retry - this is a long-running monitor
+    ignore_result=True,
+)
 def start_streaming_risk_monitor_task(self):
     """
     Start the streaming risk monitor (long-running background task).
