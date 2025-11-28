@@ -125,6 +125,7 @@ celery_app = Celery(
         "workers.snapshot_tasks",
         "workers.auto_sell_worker",
         "workers.streaming_risk_tasks",
+        "workers.economic_indicators_tasks",
     ],
 )
 
@@ -523,10 +524,47 @@ if ECONOMIC_INDICATORS_ENABLED:
         },
     }
     
+        logging.info(
+            f"📅 Economic indicators scheduled: {ECONOMIC_INDICATORS_UPDATE_DAY}th at "
+            f"{ECONOMIC_INDICATORS_UPDATE_HOUR:02d}:{ECONOMIC_INDICATORS_UPDATE_MINUTE:02d} IST "
+            f"(UTC: {utc_day}th at {utc_hour:02d}:{utc_minute:02d})"
+        )
+
+# Industry Indicators - runs daily (configurable, in IST)
+INDUSTRY_INDICATORS_ENABLED = os.getenv("INDUSTRY_INDICATORS_ENABLED", "true").lower() in {"1", "true", "yes"}
+INDUSTRY_INDICATORS_UPDATE_HOUR = int(os.getenv("INDUSTRY_INDICATORS_UPDATE_HOUR", "3"))  # IST time
+INDUSTRY_INDICATORS_UPDATE_MINUTE = int(os.getenv("INDUSTRY_INDICATORS_UPDATE_MINUTE", "0"))  # IST time
+INDUSTRY_INDICATORS_QUEUE = os.getenv("INDUSTRY_INDICATORS_QUEUE", QUEUE_NAMES["market"])
+
+if INDUSTRY_INDICATORS_ENABLED:
+    # Convert IST to UTC for Celery's crontab
+    ist = pytz.timezone('Asia/Kolkata')
+    ist_time = ist.localize(datetime(
+        datetime.now().year, datetime.now().month, datetime.now().day,
+        INDUSTRY_INDICATORS_UPDATE_HOUR, INDUSTRY_INDICATORS_UPDATE_MINUTE
+    ))
+    utc_time = ist_time.astimezone(pytz.utc)
+
+    utc_hour = utc_time.hour
+    utc_minute = utc_time.minute
+
+    # Schedule daily (every day at specified hour)
+    celery_app.conf.beat_schedule["industry-indicators-update"] = {
+        "task": "economic_indicators.update_industry_indicators",
+        "schedule": crontab(
+            hour=utc_hour,
+            minute=utc_minute,
+        ),
+        "options": {
+            "queue": INDUSTRY_INDICATORS_QUEUE,
+            "routing_key": INDUSTRY_INDICATORS_QUEUE,
+        },
+    }
+
     logging.info(
-        f"📅 Economic indicators scheduled: {ECONOMIC_INDICATORS_UPDATE_DAY}th at "
-        f"{ECONOMIC_INDICATORS_UPDATE_HOUR:02d}:{ECONOMIC_INDICATORS_UPDATE_MINUTE:02d} IST "
-        f"(UTC: {utc_day}th at {utc_hour:02d}:{utc_minute:02d})"
+        f"📅 Industry indicators scheduled: Daily at "
+        f"{INDUSTRY_INDICATORS_UPDATE_HOUR:02d}:{INDUSTRY_INDICATORS_UPDATE_MINUTE:02d} IST "
+        f"(UTC: {utc_hour:02d}:{utc_minute:02d})"
     )
 
 

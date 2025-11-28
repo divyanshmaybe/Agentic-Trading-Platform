@@ -18,6 +18,7 @@ sys.path.insert(0, str(server_dir))
 
 from celery_app import celery_app
 from utils.economic_indicators_storage import get_storage
+import asyncio
 
 task_logger = logging.getLogger(__name__)
 
@@ -136,6 +137,131 @@ def update_cpi_indicators(self) -> Dict[str, Any]:
         raise
 
 
+@celery_app.task(
+    bind=True,
+    name="economic_indicators.update_industry_indicators",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    max_retries=3,
+)
+def update_industry_indicators(self) -> Dict[str, Any]:
+    """
+    Celery task that updates industry indicators data.
+    
+    This task is scheduled to run daily/weekly via Celery Beat.
+    It fetches historical market data from Angel One API and computes
+    technical indicators aggregated by industry.
+    
+    Returns:
+        Dict with update results
+    """
+    import time
+    start_time = time.time()
+    
+    try:
+        task_logger.info("📊 Starting industry indicators update...")
+
+        # Get configuration from environment
+        stocks_csv_path = os.getenv(
+            "INDUSTRY_INDICATORS_STOCKS_CSV",
+            "scripts/nifty_500_stats.csv"
+        )
+        period = os.getenv("INDUSTRY_INDICATORS_PERIOD", "1y")
+        interval = os.getenv("INDUSTRY_INDICATORS_INTERVAL", "1d")
+        benchmark_ticker = os.getenv("INDUSTRY_INDICATORS_BENCHMARK", "^CRSLDX")
+
+        # Check if stocks CSV exists
+        stocks_path = Path(stocks_csv_path)
+        if not stocks_path.is_absolute():
+            # Try relative to server directory first
+            stocks_path = server_dir / stocks_csv_path
+            if not stocks_path.exists():
+                # Try relative to project root
+                project_root = server_dir.parent.parent
+                stocks_path = project_root / stocks_csv_path
+        
+        if not stocks_path.exists():
+            task_logger.error(f"❌ Stocks CSV file not found: {stocks_path}")
+            return {
+                "success": False,
+                "error": f"Stocks CSV file not found: {stocks_path}",
+            }
+
+        # Import required modules
+        from pipelines.low_risk.industry_indicators_pipeline import IndustryIndicatorsPipeline
+        from pipelines.low_risk.angelone_batch_fetcher import create_fetcher_from_market_service
+        from shared.py.market_data import MarketDataService
+
+        # Initialize MarketDataService and create batch fetcher
+        task_logger.info("🔧 Initializing Angel One API connection...")
+        market_service = MarketDataService()
+        fetcher = create_fetcher_from_market_service(market_service)
+
+        # Initialize pipeline
+        task_logger.info(f"📈 Initializing Industry Indicators Pipeline (period={period}, interval={interval})...")
+        pipeline = IndustryIndicatorsPipeline(
+            stocks_csv_path=str(stocks_path),
+            angel_one_fetcher=fetcher,
+            period=period,
+            interval=interval,
+            benchmark_ticker=benchmark_ticker,
+            rsi_length=14
+        )
+
+        # Run computation (async)
+        task_logger.info("🚀 Computing industry indicators...")
+        per_ticker_df, industry_summary_df = pipeline.compute()
+
+        if per_ticker_df.is_empty() or industry_summary_df.is_empty():
+            task_logger.warning("⚠️ Pipeline returned empty data")
+            return {
+                "success": False,
+                "error": "Empty data returned from pipeline",
+                "per_ticker_rows": 0,
+                "industry_rows": 0,
+            }
+
+        # Store data with write lock
+        storage = get_storage()
+        storage.write_industry_indicators(
+            per_ticker_df=per_ticker_df,
+            industry_summary_df=industry_summary_df,
+            metadata={
+                "period": period,
+                "interval": interval,
+                "benchmark_ticker": benchmark_ticker,
+                "stocks_csv": str(stocks_path),
+            }
+        )
+
+        execution_time = time.time() - start_time
+        per_ticker_count = len(per_ticker_df)
+        industry_count = len(industry_summary_df)
+
+        task_logger.info(
+            f"✅ Industry indicators updated: {per_ticker_count} per-ticker rows, "
+            f"{industry_count} industry rows (took {execution_time:.2f}s)"
+        )
+
+        return {
+            "success": True,
+            "per_ticker_rows": per_ticker_count,
+            "industry_rows": industry_count,
+            "execution_time_seconds": round(execution_time, 2),
+            "period": period,
+            "interval": interval,
+        }
+
+    except Exception as exc:
+        execution_time = time.time() - start_time
+        task_logger.error(
+            f"❌ Failed to update industry indicators (took {execution_time:.2f}s): %s",
+            exc,
+            exc_info=True
+        )
+        raise
+
+
 def check_and_update_on_startup():
     """
     Check if data needs updating on startup and trigger updates if needed.
@@ -165,6 +291,24 @@ def check_and_update_on_startup():
                         f"  ✓ {scraper_name} is up to date (last updated: {last_update})"
                     )
 
+        # Check industry indicators
+        industry_indicators_enabled = os.getenv(
+            "INDUSTRY_INDICATORS_ENABLED", "true"
+        ).lower() in {"1", "true", "yes"}
+
+        if industry_indicators_enabled:
+            if storage.check_industry_indicators_update_needed(max_age_days=7):
+                scrapers_to_update.append("industry_indicators")
+                task_logger.info(
+                    "  → industry_indicators needs update (missing or >7 days old)"
+                )
+            else:
+                last_update = storage.get_last_update_time("industry_indicators_summary")
+                if last_update:
+                    task_logger.info(
+                        f"  ✓ industry_indicators is up to date (last updated: {last_update})"
+                    )
+
         # Queue updates for scrapers that need it
         if scrapers_to_update:
             task_logger.info(
@@ -181,6 +325,12 @@ def check_and_update_on_startup():
                 celery_app.send_task(
                     "economic_indicators.update_cpi",
                     queue=os.getenv("ECONOMIC_INDICATORS_QUEUE", "market"),
+                )
+
+            if "industry_indicators" in scrapers_to_update:
+                celery_app.send_task(
+                    "economic_indicators.update_industry_indicators",
+                    queue=os.getenv("INDUSTRY_INDICATORS_QUEUE", "market"),
                 )
 
             task_logger.info("✅ Startup update tasks queued")
