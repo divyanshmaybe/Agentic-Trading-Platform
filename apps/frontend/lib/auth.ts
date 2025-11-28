@@ -281,7 +281,7 @@ export async function updateUser(
 
 export type UpdateSubscriptionPayload = {
   action: "subscribe" | "unsubscribe"
-  agent: "high_risk" | "low_risk" | "alpha"
+  agent: "high_risk" | "low_risk" | "alpha" | "liquid"
 }
 
 export type UpdateSubscriptionResponse = {
