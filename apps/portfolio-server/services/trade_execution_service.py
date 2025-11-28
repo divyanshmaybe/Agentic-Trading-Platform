@@ -1907,23 +1907,28 @@ class TradeExecutionService:
                     position_metadata["trade_ids"] = trade_ids
                     position_metadata["last_updated"] = datetime.utcnow().isoformat()
                     
+                    position_id = str(existing_position.id)
+                    
                     if new_quantity <= 0:
-                        # Close position
-                        await client.position.update(
-                            where={"id": existing_position.id},
-                            data={
-                                "quantity": 0,
-                                "status": "closed",
-                                "realized_pnl": self._as_decimal(total_realized_pnl),
-                                "closed_at": datetime.utcnow(),
-                                "updated_at": datetime.utcnow(),
-                                "metadata": json.dumps(position_metadata),
-                            }
+                        # ATOMIC close position with raw SQL
+                        await client.execute_raw(
+                            '''UPDATE "Position" SET 
+                                quantity = 0,
+                                status = 'closed',
+                                realized_pnl = $1,
+                                closed_at = NOW(),
+                                updated_at = NOW(),
+                                metadata = $2::jsonb
+                                WHERE id = $3 AND quantity >= $4''',
+                            float(total_realized_pnl),
+                            json.dumps(position_metadata),
+                            position_id,
+                            quantity
                         )
                         
                         self.logger.info(
-                            "✅ Closed position %s: %s qty %d→0 (SELL %d), realized P&L ₹%.2f",
-                            existing_position.id,
+                            "✅ ATOMIC closed position %s: %s qty %d→0 (SELL %d), realized P&L ₹%.2f",
+                            position_id,
                             symbol,
                             old_quantity,
                             quantity,
@@ -1933,20 +1938,23 @@ class TradeExecutionService:
                         # Cancel pending TP/SL orders for this symbol
                         await self._cancel_pending_tp_sl_orders(portfolio_id, symbol, client)
                     else:
-                        # Reduce quantity
-                        await client.position.update(
-                            where={"id": existing_position.id},
-                            data={
-                                "quantity": new_quantity,
-                                "realized_pnl": self._as_decimal(total_realized_pnl),
-                                "updated_at": datetime.utcnow(),
-                                "metadata": json.dumps(position_metadata),
-                            }
+                        # ATOMIC reduce quantity with raw SQL
+                        await client.execute_raw(
+                            '''UPDATE "Position" SET 
+                                quantity = GREATEST(0, quantity - $1),
+                                realized_pnl = $2,
+                                updated_at = NOW(),
+                                metadata = $3::jsonb
+                                WHERE id = $4 AND quantity >= $1''',
+                            quantity,
+                            float(total_realized_pnl),
+                            json.dumps(position_metadata),
+                            position_id
                         )
                         
                         self.logger.info(
-                            "✅ Updated position %s: %s qty %d→%d (SELL %d), realized P&L ₹%.2f",
-                            existing_position.id,
+                            "✅ ATOMIC updated position %s: %s qty %d→%d (SELL %d), realized P&L ₹%.2f",
+                            position_id,
                             symbol,
                             old_quantity,
                             new_quantity,
@@ -2048,19 +2056,28 @@ class TradeExecutionService:
                     position_metadata["trade_ids"] = trade_ids
                     position_metadata["last_updated"] = datetime.utcnow().isoformat()
                     
-                    await client.position.update(
-                        where={"id": existing_short.id},
-                        data={
-                            "quantity": new_quantity,
-                            "average_buy_price": self._as_decimal(new_avg_price),
-                            "updated_at": datetime.utcnow(),
-                            "metadata": json.dumps(position_metadata),
-                        }
+                    # ATOMIC SHORT position update using raw SQL
+                    short_id = str(existing_short.id)
+                    await client.execute_raw(
+                        '''UPDATE "Position" SET 
+                            quantity = quantity + $1,
+                            average_buy_price = ((quantity * average_buy_price) + ($1 * $2)) / (quantity + $1),
+                            updated_at = NOW(),
+                            metadata = $3::jsonb
+                            WHERE id = $4 AND position_type = 'SHORT' ''',
+                        quantity,
+                        executed_price,
+                        json.dumps(position_metadata),
+                        short_id
                     )
                     
+                    # Calculate for logging
+                    new_quantity = old_quantity + quantity
+                    new_avg_price = ((old_quantity * old_avg_price) + (quantity * executed_price)) / new_quantity
+                    
                     self.logger.info(
-                        "✅ Updated SHORT position %s: %s qty %d→%d, avg short price ₹%.2f→₹%.2f",
-                        existing_short.id,
+                        "✅ ATOMIC updated SHORT position %s: %s qty %d→%d, avg short price ₹%.2f→₹%.2f",
+                        short_id,
                         symbol,
                         old_quantity,
                         new_quantity,
@@ -2098,15 +2115,53 @@ class TradeExecutionService:
                     else:
                         self.logger.warning("⚠️ No agent_id provided for SHORT position creation, position will be created without agent/allocation link")
                     
-                    new_position = await client.position.create(data=create_data)
-                    
-                    self.logger.info(
-                        "✅ Created new SHORT position %s: %s x %d @ ₹%.2f",
-                        new_position.id,
-                        symbol,
-                        quantity,
-                        executed_price,
-                    )
+                    try:
+                        new_position = await client.position.create(data=create_data)
+                        self.logger.info(
+                            "✅ Created new SHORT position %s: %s x %d @ ₹%.2f",
+                            new_position.id,
+                            symbol,
+                            quantity,
+                            executed_price,
+                        )
+                    except Exception as create_error:
+                        # Race condition: Another worker created SHORT position, retry update
+                        if "Unique constraint" in str(create_error) or "duplicate key" in str(create_error).lower():
+                            self.logger.warning(
+                                "⚠️ SHORT position creation race detected for %s, retrying as update",
+                                symbol
+                            )
+                            # Refetch and update atomically
+                            existing_short = await client.position.find_first(
+                                where={
+                                    "portfolio_id": portfolio_id,
+                                    "symbol": symbol,
+                                    "position_type": "SHORT",
+                                    "status": "open",
+                                }
+                            )
+                            if existing_short:
+                                short_id = str(existing_short.id)
+                                await client.execute_raw(
+                                    '''UPDATE "Position" SET 
+                                        quantity = quantity + $1,
+                                        average_buy_price = ((quantity * average_buy_price) + ($1 * $2)) / (quantity + $1),
+                                        updated_at = NOW(),
+                                        metadata = $3::jsonb
+                                        WHERE id = $4 AND position_type = 'SHORT' ''',
+                                    quantity,
+                                    executed_price,
+                                    json.dumps(position_metadata),
+                                    short_id
+                                )
+                                self.logger.info(
+                                    "✅ Recovered from race: Updated SHORT position %s: %s + %d",
+                                    short_id,
+                                    symbol,
+                                    quantity
+                                )
+                        else:
+                            raise
                 
                 # SHORT_SELL receives cash (we sell shares we don't own)
                 sale_proceeds = Decimal(str(executed_price)) * Decimal(str(quantity))
@@ -2200,23 +2255,28 @@ class TradeExecutionService:
                     position_metadata["trade_ids"] = trade_ids
                     position_metadata["last_updated"] = datetime.utcnow().isoformat()
                     
+                    short_id = str(existing_short.id)
+                    
                     if new_quantity <= 0:
-                        # Close short position
-                        await client.position.update(
-                            where={"id": existing_short.id},
-                            data={
-                                "quantity": 0,
-                                "status": "closed",
-                                "realized_pnl": self._as_decimal(total_realized_pnl),
-                                "closed_at": datetime.utcnow(),
-                                "updated_at": datetime.utcnow(),
-                                "metadata": json.dumps(position_metadata),
-                            }
+                        # ATOMIC close short position with raw SQL
+                        await client.execute_raw(
+                            '''UPDATE "Position" SET 
+                                quantity = 0,
+                                status = 'closed',
+                                realized_pnl = $1,
+                                closed_at = NOW(),
+                                updated_at = NOW(),
+                                metadata = $2::jsonb
+                                WHERE id = $3 AND position_type = 'SHORT' AND quantity >= $4''',
+                            float(total_realized_pnl),
+                            json.dumps(position_metadata),
+                            short_id,
+                            quantity
                         )
                         
                         self.logger.info(
-                            "✅ Closed SHORT position %s: %s qty %d→0 (COVER %d), realized P&L ₹%.2f",
-                            existing_short.id,
+                            "✅ ATOMIC closed SHORT position %s: %s qty %d→0 (COVER %d), realized P&L ₹%.2f",
+                            short_id,
                             symbol,
                             old_quantity,
                             quantity,
@@ -2226,20 +2286,23 @@ class TradeExecutionService:
                         # Cancel pending TP/SL orders
                         await self._cancel_pending_tp_sl_orders(portfolio_id, symbol, client)
                     else:
-                        # Reduce short position quantity
-                        await client.position.update(
-                            where={"id": existing_short.id},
-                            data={
-                                "quantity": new_quantity,
-                                "realized_pnl": self._as_decimal(total_realized_pnl),
-                                "updated_at": datetime.utcnow(),
-                                "metadata": json.dumps(position_metadata),
-                            }
+                        # ATOMIC reduce short position quantity with raw SQL
+                        await client.execute_raw(
+                            '''UPDATE "Position" SET 
+                                quantity = GREATEST(0, quantity - $1),
+                                realized_pnl = $2,
+                                updated_at = NOW(),
+                                metadata = $3::jsonb
+                                WHERE id = $4 AND position_type = 'SHORT' AND quantity >= $1''',
+                            quantity,
+                            float(total_realized_pnl),
+                            json.dumps(position_metadata),
+                            short_id
                         )
                         
                         self.logger.info(
-                            "✅ Updated SHORT position %s: %s qty %d→%d (COVER %d), realized P&L ₹%.2f",
-                            existing_short.id,
+                            "✅ ATOMIC updated SHORT position %s: %s qty %d→%d (COVER %d), realized P&L ₹%.2f",
+                            short_id,
                             symbol,
                             old_quantity,
                             new_quantity,
