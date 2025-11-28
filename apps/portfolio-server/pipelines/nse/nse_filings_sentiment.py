@@ -1104,7 +1104,7 @@ def create_filings_input_from_csv(csv_path: str) -> pw.Table:
         csv_path,
         schema=NSEFilingSchema,
         mode="streaming",
-        autocommit_duration_ms=1000,
+        autocommit_duration_ms=50,  # Minimal latency for trading signals
     )
 
 
@@ -1115,7 +1115,7 @@ def create_filings_input_from_kafka(kafka_settings: dict, topic: str) -> pw.Tabl
         topic=topic,
         schema=NSEFilingSchema,
         format="json",
-        autocommit_duration_ms=1000,
+        autocommit_duration_ms=50,  # Minimal latency for trading signals
     )
 
 
@@ -1139,7 +1139,7 @@ def create_filings_input_from_http(port: int = 8001) -> tuple[pw.Table, pw.io.ht
     filings, writer = pw.io.http.rest_connector(
         webserver=webserver,
         schema=FilingInputSchema,
-        autocommit_duration_ms=1000,
+        autocommit_duration_ms=50,  # Minimal latency for trading signals
         delete_completed_queries=False,
     )
     
