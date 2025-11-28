@@ -316,11 +316,14 @@ celery_app.conf.task_annotations = {
         for task_name in PIPELINE_TASKS
     },
     # Long-running tasks - no limits, single instance
+    # NOTE: Must explicitly set very high limits (not None) to override global config
     **{
         task_name: {
-            "soft_time_limit": None,
-            "time_limit": None,
+            "soft_time_limit": 86400,  # 24 hours (effectively unlimited)
+            "time_limit": 86400,  # 24 hours (effectively unlimited)
             "rate_limit": "1/h",  # Only 1 per hour (singleton)
+            "acks_late": False,  # Acknowledge immediately
+            "max_retries": 0,  # Don't retry long-running tasks
         }
         for task_name in LONG_RUNNING_TASKS
     },
