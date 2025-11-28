@@ -503,7 +503,10 @@ if ECONOMIC_INDICATORS_ENABLED:
             hour=utc_hour,
             minute=utc_minute,
         ),
-        "options": {"queue": ECONOMIC_INDICATORS_QUEUE},
+        "options": {
+            "queue": ECONOMIC_INDICATORS_QUEUE,  # Only market worker should process these
+            "routing_key": ECONOMIC_INDICATORS_QUEUE,
+        },
     }
     
     # CPI indicators - scheduled in IST, converted to UTC
@@ -514,7 +517,10 @@ if ECONOMIC_INDICATORS_ENABLED:
             hour=utc_hour,
             minute=utc_minute,
         ),
-        "options": {"queue": ECONOMIC_INDICATORS_QUEUE},
+        "options": {
+            "queue": ECONOMIC_INDICATORS_QUEUE,  # Only market worker should process these
+            "routing_key": ECONOMIC_INDICATORS_QUEUE,
+        },
     }
     
     logging.info(
