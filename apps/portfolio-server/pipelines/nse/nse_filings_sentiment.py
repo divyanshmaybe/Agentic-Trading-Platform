@@ -281,13 +281,17 @@ def publish_signal_to_kafka(
     signal_payload["reference_price"] = reference_price  # Add price to payload
 
     try:
-        # STEP 1: Queue trade execution FIRST (critical path)
-        celery_app.send_task(
-            "pipeline.trade_execution.process_signal",
-            args=[signal_payload],  # Send enriched payload with reference_price
-            queue="pipelines",  # Route to pipelines queue (matches celery_app routing)
-        )
-        print(f"[CELERY] ✅ Queued trade execution for {symbol} (price: ₹{reference_price:.2f})")
+        # STEP 1: Queue trade execution ONLY for actionable signals (1=BUY, -1=SELL)
+        # Skip signal=0 (HOLD) - no point sending to trading queue
+        if signal_value in (1, -1):
+            celery_app.send_task(
+                "pipeline.trade_execution.process_signal",
+                args=[signal_payload],  # Send enriched payload with reference_price
+                queue="trading",  # Route to TRADING queue (NOT pipelines!)
+            )
+            print(f"[CELERY] ✅ Queued trade execution for {symbol} signal={signal_value} (price: ₹{reference_price:.2f})")
+        else:
+            print(f"[CELERY] ⏭️ Skipping signal=0 (HOLD) for {symbol} - no trade needed")
         
         # STEP 2: Publish to Kafka (non-critical, analytics only)
         # This happens async and doesn't block trade execution

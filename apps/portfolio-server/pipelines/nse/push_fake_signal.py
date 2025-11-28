@@ -69,12 +69,12 @@ def push_fake_signal(
         task = celery_app.send_task(
             "pipeline.trade_execution.process_signal",
             args=[signal_event],
-            queue="pipelines",  # Route to pipelines queue (matches celery_app routing)
+            queue="trading",  # Route to TRADING queue
         )
         print(f"✅ Signal pushed to Celery!")
         print(f"   Task ID: {task.id}")
         print(f"   Task Name: pipeline.trade_execution.process_signal")
-        print(f"   Queue: pipelines")
+        print(f"   Queue: trading")
         print(f"\n💡 Check your Celery worker logs to see trade execution results")
         print(f"   Look for: 'Trade execution pipeline produced X actionable job(s)'")
         return task

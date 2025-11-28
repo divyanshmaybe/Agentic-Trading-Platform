@@ -8,6 +8,8 @@ PRODUCTION FEATURES:
 - Market hours enforcement (9:15 AM - 3:30 PM IST)
 - Short selling support (SHORT_SELL and COVER trades)
 - Fail-fast validation (no assumptions, no fallbacks)
+- Redis-based distributed locking for race condition prevention
+- Atomic cash reservation before trade execution
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ import asyncio
 import json
 import logging
 import uuid
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -32,6 +35,52 @@ from pipelines.nse.trade_execution_pipeline import (  # type: ignore  # noqa: E4
 from services.trade_validation_service import TradeValidationService  # noqa: E402
 from utils.market_hours import enforce_market_hours, is_market_hours, get_market_status  # noqa: E402
 
+# Redis for distributed locking
+try:
+    from redis import Redis
+    REDIS_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
+    _redis_client = Redis.from_url(REDIS_URL, decode_responses=True)
+except Exception:
+    _redis_client = None
+
+
+@asynccontextmanager
+async def allocation_lock(allocation_id: str, timeout: float = 5.0):
+    """
+    Distributed lock for allocation cash operations.
+    Prevents race conditions when multiple trades try to use the same allocation.
+    """
+    lock_key = f"allocation_lock:{allocation_id}"
+    lock_value = str(uuid.uuid4())
+    acquired = False
+    
+    try:
+        if _redis_client:
+            # Try to acquire lock with NX (only if not exists) and EX (expiry)
+            acquired = _redis_client.set(lock_key, lock_value, nx=True, ex=int(timeout))
+            if not acquired:
+                # Wait a bit and retry once
+                await asyncio.sleep(0.1)
+                acquired = _redis_client.set(lock_key, lock_value, nx=True, ex=int(timeout))
+        
+        if not acquired and _redis_client:
+            logging.getLogger(__name__).warning(
+                "⚠️ Could not acquire allocation lock %s - proceeding without lock",
+                allocation_id
+            )
+        
+        yield acquired
+        
+    finally:
+        # Release lock only if we acquired it and value matches
+        if acquired and _redis_client:
+            try:
+                current_value = _redis_client.get(lock_key)
+                if current_value == lock_value:
+                    _redis_client.delete(lock_key)
+            except Exception:
+                pass
+
 
 def _parse_metadata(metadata):
     """Parse metadata from string or dict."""
@@ -47,13 +96,20 @@ def _parse_metadata(metadata):
 
 
 def _calculate_auto_sell_at(record, execution_time, logger, trade_id):
-    """Calculate auto_sell_at timestamp for high-risk NSE pipeline trades."""
-    # Check TradeExecutionLog metadata first
+    """Calculate auto_sell_at timestamp for high-risk NSE pipeline trades.
+    
+    Args:
+        record: Either a Trade object or a TradeExecutionLog object (with nested .trade)
+        execution_time: The time of trade execution
+        logger: Logger instance
+        trade_id: Trade ID for logging
+    """
+    # Get metadata - handle both Trade object and TradeExecutionLog object
     metadata = _parse_metadata(getattr(record, "metadata", None))
     triggered_by = metadata.get("triggered_by", "")
     agent_type = getattr(record, "agent_type", None) or metadata.get("agent_type", "")
     
-    # Also check the Trade record's metadata if TradeExecutionLog doesn't have it
+    # If record is a TradeExecutionLog (has .trade), also check the Trade's metadata
     if hasattr(record, "trade") and record.trade:
         trade_metadata = _parse_metadata(getattr(record.trade, "metadata", None))
         if not triggered_by:
@@ -62,8 +118,8 @@ def _calculate_auto_sell_at(record, execution_time, logger, trade_id):
             agent_type = trade_metadata.get("agent_type", "")
     
     logger.info(
-        "🔍 AUTO_SELL_AT DEBUG for trade %s: triggered_by='%s', agent_type='%s'",
-        trade_id, triggered_by, agent_type
+        "🔍 AUTO_SELL_AT DEBUG for trade %s: triggered_by='%s', agent_type='%s', metadata_keys=%s",
+        trade_id, triggered_by, agent_type, list(metadata.keys()) if metadata else []
     )
     
     is_nse_trade = (
@@ -586,6 +642,70 @@ class TradeExecutionService:
                 self.logger.warning("No linked Trade found for TradeExecutionLog %s", trade_id)
                 return {"status": "missing_trade", "trade_id": trade_id}
 
+            # PRE-EXECUTION CASH CHECK WITH ATOMIC LOCKING
+            # Prevents race conditions when multiple trades execute simultaneously
+            trade_side = str(getattr(trade, "side", "")).upper()
+            if trade_side == "BUY" and agent_id:
+                client = await self._ensure_client()
+                agent = await client.tradingagent.find_unique(
+                    where={"id": agent_id},
+                    include={"allocation": True}
+                )
+                if agent and agent.allocation:
+                    allocation_id = agent.allocation.id
+                    
+                    # Use distributed lock to prevent race conditions
+                    async with allocation_lock(allocation_id, timeout=5.0) as lock_acquired:
+                        # Re-fetch allocation with fresh data inside the lock
+                        fresh_allocation = await client.portfolioallocation.find_unique(
+                            where={"id": allocation_id}
+                        )
+                        
+                        if not fresh_allocation:
+                            self.logger.error("❌ Allocation %s not found during cash check", allocation_id)
+                            return {"status": "rejected", "trade_id": trade_id, "reason": "allocation_not_found"}
+                        
+                        available_cash = float(getattr(fresh_allocation, "available_cash", 0) or 0)
+                        allocated_capital = float(getattr(trade, "allocated_capital", 0) or 0)
+                        trade_value = float(getattr(trade, "quantity", 0) or 0) * float(getattr(trade, "price", 0) or 0)
+                        required_capital = max(allocated_capital, trade_value)
+                        
+                        if available_cash < required_capital:
+                            self.logger.error(
+                                "❌ INSUFFICIENT CASH: Trade %s requires ₹%.2f but only ₹%.2f available. REJECTING.",
+                                trade_id, required_capital, available_cash
+                            )
+                            # Mark trade as rejected
+                            await client.trade.update(
+                                where={"id": trade_id},
+                                data={"status": "rejected"}
+                            )
+                            await self.update_status(
+                                execution_log_id,
+                                status="rejected",
+                                error_message=f"Insufficient cash: requires ₹{required_capital:.2f}, available ₹{available_cash:.2f}"
+                            )
+                            return {
+                                "status": "rejected",
+                                "trade_id": trade_id,
+                                "reason": "insufficient_cash",
+                                "required": required_capital,
+                                "available": available_cash,
+                            }
+                        
+                        # ATOMIC: Reserve the cash NOW (deduct immediately while holding lock)
+                        new_available_cash = Decimal(str(available_cash)) - Decimal(str(required_capital))
+                        await client.portfolioallocation.update(
+                            where={"id": allocation_id},
+                            data={"available_cash": new_available_cash}
+                        )
+                        
+                        self.logger.info(
+                            "✅ ATOMIC cash reserved: Trade %s | ₹%.2f → ₹%.2f (reserved ₹%.2f) | Lock: %s",
+                            trade_id, available_cash, float(new_available_cash), required_capital,
+                            "acquired" if lock_acquired else "not_acquired"
+                        )
+
             # Prefer explicit trade price and quantity (fall back to execution log if present)
             executed_price = float(getattr(trade, "price", None) or getattr(record, "reference_price", 0.0) or 0.0)
             executed_quantity = int(getattr(trade, "quantity", None) or getattr(record, "quantity", 0) or 0)
@@ -610,7 +730,8 @@ class TradeExecutionService:
             client = await self._ensure_client()
             trade_update_data = {"status": "executed"}
             if auto_sell_at:
-                trade_update_data["auto_sell_at"] = auto_sell_at.isoformat() + "Z"
+                # Pass datetime object directly instead of string for Prisma
+                trade_update_data["auto_sell_at"] = auto_sell_at
             
             await client.trade.update(
                 where={"id": trade_id},
@@ -1377,36 +1498,6 @@ class TradeExecutionService:
                         len(trades_array),
                     )
                     
-                    # Update PortfolioAllocation available_cash only (do not change allocated_amount)
-                    if agent.allocation:
-                        allocation = agent.allocation
-                        # Use allocated_capital from parent Trade, not execution log
-                        allocated_capital = float(getattr(existing_trade, "allocated_capital", 0) or 0)
-                        
-                        # Deduct from available cash for BUY trades
-                        current_available_cash = Decimal(str(getattr(allocation, "available_cash", 0) or 0))
-                        new_available_cash = current_available_cash
-                        if side.upper() == "BUY":
-                            new_available_cash = current_available_cash - Decimal(str(allocated_capital))
-                        elif side.upper() == "SELL":
-                            # Add back to available cash for SELL trades
-                            new_available_cash = current_available_cash + Decimal(str(allocated_capital))
-                        
-                        await client.portfolioallocation.update(
-                            where={"id": allocation.id},
-                            data={
-                                "available_cash": new_available_cash,
-                            },
-                        )
-                        
-                        self.logger.info(
-                            "✅ Updated allocation %s: available_cash %.2f  %.2f (trade capital %.2f)",
-                            allocation.id,
-                            float(current_available_cash),
-                            float(new_available_cash),
-                            allocated_capital,
-                        )
-                        
                 except Exception as agent_exc:
                     self.logger.warning(
                         "Failed to update trading agent %s (%s) after execution: %s",
@@ -1715,34 +1806,11 @@ class TradeExecutionService:
                     )
                 
                 # Update cash tracking after BUY
+                # NOTE: Allocation cash is ALREADY deducted atomically in execute_trade()
+                # Here we only update portfolio-level cash
                 total_cost = Decimal(str(executed_price)) * Decimal(str(quantity))
                 
-                # Get allocation_id from agent or position
-                allocation_id = None
-                if agent_id:
-                    agent = await client.tradingagent.find_unique(where={"id": agent_id})
-                    if agent:
-                        allocation_id = getattr(agent, "portfolio_allocation_id", None)
-                
-                if allocation_id:
-                    # Deduct from allocation cash
-                    allocation = await client.portfolioallocation.find_unique(where={"id": allocation_id})
-                    if allocation:
-                        current_cash = Decimal(str(getattr(allocation, "available_cash", 0)))
-                        new_cash = current_cash - total_cost
-                        await client.portfolioallocation.update(
-                            where={"id": allocation_id},
-                            data={"available_cash": new_cash}
-                        )
-                        self.logger.info(
-                            "💰 Deducted ₹%.2f from allocation %s: ₹%.2f → ₹%.2f",
-                            float(total_cost),
-                            allocation_id,
-                            float(current_cash),
-                            float(new_cash)
-                        )
-                
-                # Also update portfolio available_cash
+                # Update portfolio available_cash (allocation cash already deducted atomically)
                 portfolio = await client.portfolio.find_unique(where={"id": portfolio_id})
                 if portfolio:
                     portfolio_cash = Decimal(str(getattr(portfolio, "available_cash", 0)))
@@ -1752,7 +1820,7 @@ class TradeExecutionService:
                         data={"available_cash": new_portfolio_cash}
                     )
                     self.logger.info(
-                        "💰 Deducted ₹%.2f from portfolio %s: ₹%.2f → ₹%.2f",
+                        "💰 BUY deducted ₹%.2f from portfolio %s: ₹%.2f → ₹%.2f (allocation already deducted atomically)",
                         float(total_cost),
                         portfolio_id,
                         float(portfolio_cash),

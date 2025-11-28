@@ -200,8 +200,8 @@ celery_app.conf.task_routes = {
     "portfolio.allocate_for_objective": {"queue": QUEUE_NAMES["allocations"], "routing_key": "allocations"},
     "portfolio.check_regime_and_rebalance": {"queue": QUEUE_NAMES["allocations"], "routing_key": "allocations"},
     "trading.execute_trade_job": {"queue": QUEUE_NAMES["trading"], "routing_key": "trading"},
-    # Pipelines + data - Signal processing goes to pipelines queue (contains pathway streaming)
-    "pipeline.trade_execution.process_signal": {"queue": QUEUE_NAMES["pipelines"], "routing_key": "pipelines"},
+    # Signal processing goes to trading queue (not pipelines - that's blocked by streaming pipeline)
+    "pipeline.trade_execution.process_signal": {"queue": QUEUE_NAMES["trading"], "routing_key": "trading"},
     "pipeline.start": {"queue": QUEUE_NAMES["pipelines"], "routing_key": "pipelines"},
     "pipeline.news_sentiment.run": {"queue": QUEUE_NAMES["pipelines"], "routing_key": "pipelines"},
     "pipeline.risk_monitor.run": {"queue": QUEUE_NAMES["pipelines"], "routing_key": "pipelines"},
@@ -229,8 +229,12 @@ STANDARD_TASKS = [
 PIPELINE_TASKS = [
     "pipeline.risk_monitor.run",
     "pipeline.news_sentiment.run",
-    "pipeline.trade_execution.process_signal",
     "pipeline.start",
+]
+
+# Signal processing tasks - quick execution, goes to trading queue
+SIGNAL_PROCESSING_TASKS = [
+    "pipeline.trade_execution.process_signal",
 ]
 
 # Tasks that should run indefinitely (no time limits) - isolated queue
@@ -291,12 +295,12 @@ celery_app.conf.task_annotations = {
         }
         for task_name in QUICK_TASKS
     },
-    # Auto-sell tasks - medium limits
+    # Auto-sell tasks - tight limits (scan and dispatch, should be fast)
     **{
         task_name: {
-            "soft_time_limit": 270,
-            "time_limit": 300,
-            "rate_limit": "2/m",  # Max 2 per minute
+            "soft_time_limit": 30,  # 30 second soft limit
+            "time_limit": 45,  # 45 second hard limit
+            "rate_limit": "4/m",  # Max 4 per minute
         }
         for task_name in AUTO_SELL_TASKS
     },

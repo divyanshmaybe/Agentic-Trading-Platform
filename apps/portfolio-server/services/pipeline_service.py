@@ -1821,7 +1821,7 @@ class PipelineService:
             client = db_manager.get_client()
             
             # Find all high_risk agents
-            agents = client.tradingagent.find_many(
+            agents = await client.tradingagent.find_many(
                 where={
                     "agent_type": "high_risk",
                     "status": "active",
@@ -1856,7 +1856,7 @@ class PipelineService:
                         continue
                     
                     # Find all open positions for this portfolio
-                    positions = client.position.find_many(
+                    positions = await client.position.find_many(
                         where={
                             "portfolio_id": portfolio_id,
                             "status": "open",
