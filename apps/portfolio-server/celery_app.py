@@ -81,6 +81,8 @@ else:
 
 from celery import Celery, signals
 from celery.schedules import crontab
+from datetime import datetime
+import pytz
 
 BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
 RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/1")
@@ -464,6 +466,63 @@ if MARKET_CLOSE_SELL_ENABLED:
         "options": {"queue": MARKET_CLOSE_SELL_QUEUE},
     }
 
+# Economic Indicators - runs on 21st of each month (configurable, in IST)
+ECONOMIC_INDICATORS_ENABLED = os.getenv("ECONOMIC_INDICATORS_ENABLED", "true").lower() in {"1", "true", "yes"}
+ECONOMIC_INDICATORS_UPDATE_DAY = int(os.getenv("ECONOMIC_INDICATORS_UPDATE_DAY", "21"))
+ECONOMIC_INDICATORS_UPDATE_HOUR = int(os.getenv("ECONOMIC_INDICATORS_UPDATE_HOUR", "2"))  # IST time
+ECONOMIC_INDICATORS_UPDATE_MINUTE = int(os.getenv("ECONOMIC_INDICATORS_UPDATE_MINUTE", "0"))  # IST time
+ECONOMIC_INDICATORS_QUEUE = os.getenv("ECONOMIC_INDICATORS_QUEUE", QUEUE_NAMES["market"])
+
+if ECONOMIC_INDICATORS_ENABLED:
+    # Convert IST time to UTC for Celery schedule
+    # IST is UTC+5:30
+    ist = pytz.timezone("Asia/Kolkata")
+    utc = pytz.UTC
+    
+    # Create a datetime in IST for the specified day/hour/minute
+    # Use a reference month (e.g., January 2024) to calculate the offset
+    ist_datetime = ist.localize(
+        datetime(2024, 1, ECONOMIC_INDICATORS_UPDATE_DAY, ECONOMIC_INDICATORS_UPDATE_HOUR, ECONOMIC_INDICATORS_UPDATE_MINUTE)
+    )
+    utc_datetime = ist_datetime.astimezone(utc)
+    
+    # Calculate UTC hour and minute
+    utc_hour = utc_datetime.hour
+    utc_minute = utc_datetime.minute
+    
+    # Determine UTC day - use the actual UTC day from conversion
+    # Example: 2:00 AM IST on 21st = 8:30 PM UTC on 20th
+    # Example: 10:00 AM IST on 21st = 4:30 AM UTC on 21st
+    utc_day = utc_datetime.day
+    
+    # Trading Economics indicators - scheduled in IST, converted to UTC
+    celery_app.conf.beat_schedule["economic-indicators-trading-economics"] = {
+        "task": "economic_indicators.update_trading_economics",
+        "schedule": crontab(
+            day_of_month=utc_day,
+            hour=utc_hour,
+            minute=utc_minute,
+        ),
+        "options": {"queue": ECONOMIC_INDICATORS_QUEUE},
+    }
+    
+    # CPI indicators - scheduled in IST, converted to UTC
+    celery_app.conf.beat_schedule["economic-indicators-cpi"] = {
+        "task": "economic_indicators.update_cpi",
+        "schedule": crontab(
+            day_of_month=utc_day,
+            hour=utc_hour,
+            minute=utc_minute,
+        ),
+        "options": {"queue": ECONOMIC_INDICATORS_QUEUE},
+    }
+    
+    logging.info(
+        f"📅 Economic indicators scheduled: {ECONOMIC_INDICATORS_UPDATE_DAY}th at "
+        f"{ECONOMIC_INDICATORS_UPDATE_HOUR:02d}:{ECONOMIC_INDICATORS_UPDATE_MINUTE:02d} IST "
+        f"(UTC: {utc_day}th at {utc_hour:02d}:{utc_minute:02d})"
+    )
+
 
 # Lazy import worker modules to avoid circular imports
 # These imports happen when celery worker starts, not when this module is imported
@@ -481,12 +540,22 @@ def _import_tasks():
         risk_alert_tasks,
         snapshot_tasks,
         angelone_token_task,
+        economic_indicators_tasks,
     )
 
 
 # Only import tasks when running as Celery worker (not when imported by other modules)
 if os.environ.get("CELERY_WORKER_RUNNING") or "celery" in sys.argv[0]:
     _import_tasks()
+    
+    # Check and update economic indicators on startup if needed
+    if ECONOMIC_INDICATORS_ENABLED:
+        try:
+            from workers.economic_indicators_tasks import check_and_update_on_startup
+            check_and_update_on_startup()
+        except Exception as e:
+            logging.warning("Failed to run economic indicators startup check: %s", e)
+    
     # Note: Prometheus exporter is initialized via worker_ready signal below
 
 
