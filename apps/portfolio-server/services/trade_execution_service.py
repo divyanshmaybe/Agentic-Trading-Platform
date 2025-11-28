@@ -546,7 +546,7 @@ class TradeExecutionService:
 
         # Also update corresponding Trade record if execution was successful
         if status in ["executed", "executed"] and (executed_price is not None or executed_quantity is not None):
-            trade_update_data = {"status": status}  # Use actual status (executed or executed)
+            trade_update_data = {}  # Remove status update from here - done atomically in execute_trade
             if executed_price is not None:
                 trade_update_data["executed_price"] = self._as_decimal(executed_price)
                 trade_update_data["price"] = self._as_decimal(executed_price)  # Update price to executed price
@@ -563,7 +563,7 @@ class TradeExecutionService:
                     where={"id": linked_trade_id},
                     data=trade_update_data,
                 )
-                self.logger.debug("Updated Trade %s status to executed", linked_trade_id)
+                self.logger.debug("Updated Trade %s with execution details", linked_trade_id)
             except Exception as trade_update_exc:
                 self.logger.warning("Failed to update Trade record %s: %s", linked_trade_id, trade_update_exc)
 

@@ -212,7 +212,8 @@ class FakeTrade:
 
     async def create(self, data: Dict[str, Any]) -> Any:
         row = dict(data)
-        row.setdefault("id", str(uuid.uuid4()))
+        if "id" not in row:
+            row["id"] = str(uuid.uuid4())
         row.setdefault("created_at", datetime.utcnow())
         row.setdefault("updated_at", datetime.utcnow())
         self.rows[row["id"]] = row
@@ -224,6 +225,21 @@ class FakeTrade:
         row.update(data)
         row["updated_at"] = datetime.utcnow()
         return SimpleNamespace(**row)
+
+    async def update_many(self, where: Dict[str, Any], data: Dict[str, Any]) -> int:
+        """Simulate update_many by finding matching rows and updating them."""
+        count = 0
+        for trade_id, row in self.rows.items():
+            matches = True
+            for key, value in where.items():
+                if row.get(key) != value:
+                    matches = False
+                    break
+            if matches:
+                row.update(data)
+                row["updated_at"] = datetime.utcnow()
+                count += 1
+        return count
 
     async def find_unique(self, where: Dict[str, Any], include: Optional[Dict[str, Any]] = None) -> Any:
         trade_id = where["id"]
