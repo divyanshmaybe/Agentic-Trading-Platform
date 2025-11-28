@@ -70,7 +70,7 @@ async def _scan_and_dispatch():
                 "auto_sell_at": {"lte": current_time, "not": None},
                 "side": "BUY",
             },
-            take=50,  # Batch size limit
+            take=200,  # Increased batch size for faster processing
         )
         
         expired_shorts = await client.trade.find_many(
@@ -79,7 +79,7 @@ async def _scan_and_dispatch():
                 "auto_cover_at": {"lte": current_time, "not": None},
                 "side": "SHORT_SELL",
             },
-            take=50,
+            take=200,  # Increased batch size for faster processing
         )
         
         total_found = len(expired_longs or []) + len(expired_shorts or [])

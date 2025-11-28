@@ -726,17 +726,25 @@ class TradeExecutionService:
                 metadata=update_data,
             )
             
-            # Update Trade record with status and auto_sell_at
+            # ATOMIC trade status update - prevent duplicate execution
             client = await self._ensure_client()
             trade_update_data = {"status": "executed"}
             if auto_sell_at:
                 # Pass datetime object directly instead of string for Prisma
                 trade_update_data["auto_sell_at"] = auto_sell_at
             
-            await client.trade.update(
-                where={"id": trade_id},
+            # Only update if still pending (atomic check-and-set)
+            updated_count = await client.trade.update_many(
+                where={"id": trade_id, "status": "pending"},
                 data=trade_update_data,
             )
+            
+            if updated_count == 0:
+                self.logger.warning(
+                    "⚠️ Trade %s already executed by another worker, skipping duplicate",
+                    trade_id
+                )
+                return {"status": "already_executed", "trade_id": trade_id}
             
             agent_type = getattr(record, "agent_type", None)
             if not agent_type and agent_id:
@@ -1703,13 +1711,10 @@ class TradeExecutionService:
             
             if side.upper() == "BUY":
                 if existing_position:
-                    # Update existing position - add to quantity and recalculate average price
+                    # ATOMIC UPDATE: Use raw SQL to prevent race conditions
                     old_quantity = int(getattr(existing_position, "quantity", 0))
                     old_avg_price = float(getattr(existing_position, "average_buy_price", 0))
-                    
-                    new_quantity = old_quantity + quantity
-                    # Calculate new average price: (old_total + new_total) / new_quantity
-                    new_avg_price = ((old_quantity * old_avg_price) + (quantity * executed_price)) / new_quantity
+                    position_id = str(existing_position.id)
                     
                     # Get existing trade IDs array from metadata
                     position_metadata = {}
@@ -1730,26 +1735,30 @@ class TradeExecutionService:
                     position_metadata["trade_ids"] = trade_ids
                     position_metadata["last_updated"] = datetime.utcnow().isoformat()
                     
-                    # Update position
-                    update_data = {
-                        "quantity": new_quantity,
-                        "average_buy_price": self._as_decimal(new_avg_price),
-                        "updated_at": datetime.utcnow(),
-                        "metadata": json.dumps(position_metadata),
-                    }
-                    
-                    # Link agent if provided and not already linked
-                    if agent_id and not getattr(existing_position, "agent_id", None):
-                        update_data["agent_id"] = agent_id
-                    
-                    await client.position.update(
-                        where={"id": existing_position.id},
-                        data=update_data
+                    # ATOMIC position update using raw SQL
+                    # This prevents race conditions where two workers update the same position
+                    await client.execute_raw(
+                        '''UPDATE "Position" SET 
+                            quantity = quantity + $1,
+                            average_buy_price = ((quantity * average_buy_price) + ($1 * $2)) / (quantity + $1),
+                            updated_at = NOW(),
+                            metadata = $3::jsonb,
+                            agent_id = COALESCE(agent_id, $4)
+                            WHERE id = $5''',
+                        quantity,
+                        executed_price,
+                        json.dumps(position_metadata),
+                        agent_id if agent_id and not getattr(existing_position, "agent_id", None) else None,
+                        position_id
                     )
                     
+                    # Calculate new values for logging (not used in update)
+                    new_quantity = old_quantity + quantity
+                    new_avg_price = ((old_quantity * old_avg_price) + (quantity * executed_price)) / new_quantity
+                    
                     self.logger.info(
-                        "✅ Updated position %s: %s qty %d→%d, avg price ₹%.2f→₹%.2f",
-                        existing_position.id,
+                        "✅ ATOMIC position update %s: %s qty %d→%d, avg price ₹%.2f→₹%.2f",
+                        position_id,
                         symbol,
                         old_quantity,
                         new_quantity,
@@ -1757,8 +1766,7 @@ class TradeExecutionService:
                         new_avg_price,
                     )
                 else:
-                    # Create new position
-                    
+                    # Create new position (with race condition handling)
                     position_metadata = {
                         "trade_ids": [trade_id],
                         "created_at": datetime.utcnow().isoformat(),
@@ -1795,32 +1803,73 @@ class TradeExecutionService:
                             "⚠️ No agent_id provided for position creation, position will be created without agent/allocation link"
                         )
                     
-                    new_position = await client.position.create(data=create_data)
-                    
-                    self.logger.info(
-                        "✅ Created new position %s: %s x %d @ ₹%.2f",
-                        new_position.id,
-                        symbol,
-                        quantity,
-                        executed_price,
-                    )
+                    try:
+                        new_position = await client.position.create(data=create_data)
+                        self.logger.info(
+                            "✅ Created new position %s: %s x %d @ ₹%.2f",
+                            new_position.id,
+                            symbol,
+                            quantity,
+                            executed_price,
+                        )
+                    except Exception as create_error:
+                        # Race condition: Another worker created position, retry update
+                        if "Unique constraint" in str(create_error) or "duplicate key" in str(create_error).lower():
+                            self.logger.warning(
+                                "⚠️ Position creation race detected for %s, retrying as update",
+                                symbol
+                            )
+                            # Refetch and update atomically
+                            existing_position = await client.position.find_first(
+                                where={
+                                    "portfolio_id": portfolio_id,
+                                    "symbol": symbol,
+                                    "status": "open",
+                                }
+                            )
+                            if existing_position:
+                                position_id = str(existing_position.id)
+                                await client.execute_raw(
+                                    '''UPDATE "Position" SET 
+                                        quantity = quantity + $1,
+                                        average_buy_price = ((quantity * average_buy_price) + ($1 * $2)) / (quantity + $1),
+                                        updated_at = NOW(),
+                                        metadata = $3::jsonb
+                                        WHERE id = $4''',
+                                    quantity,
+                                    executed_price,
+                                    json.dumps(position_metadata),
+                                    position_id
+                                )
+                                self.logger.info(
+                                    "✅ Recovered from race: Updated position %s: %s + %d",
+                                    position_id,
+                                    symbol,
+                                    quantity
+                                )
+                        else:
+                            raise
                 
                 # Update cash tracking after BUY
                 # NOTE: Allocation cash is ALREADY deducted atomically in execute_trade()
                 # Here we only update portfolio-level cash
                 total_cost = Decimal(str(executed_price)) * Decimal(str(quantity))
                 
-                # Update portfolio available_cash (allocation cash already deducted atomically)
+                # ATOMIC portfolio cash update using raw SQL
                 portfolio = await client.portfolio.find_unique(where={"id": portfolio_id})
                 if portfolio:
                     portfolio_cash = Decimal(str(getattr(portfolio, "available_cash", 0)))
-                    new_portfolio_cash = portfolio_cash - total_cost
-                    await client.portfolio.update(
-                        where={"id": portfolio_id},
-                        data={"available_cash": new_portfolio_cash}
+                    
+                    # Atomic decrement prevents race conditions
+                    await client.execute_raw(
+                        'UPDATE "Portfolio" SET available_cash = available_cash - $1 WHERE id = $2',
+                        float(total_cost),
+                        portfolio_id
                     )
+                    
+                    new_portfolio_cash = portfolio_cash - total_cost
                     self.logger.info(
-                        "💰 BUY deducted ₹%.2f from portfolio %s: ₹%.2f → ₹%.2f (allocation already deducted atomically)",
+                        "💰 ATOMIC BUY deducted ₹%.2f from portfolio %s: ₹%.2f → ₹%.2f",
                         float(total_cost),
                         portfolio_id,
                         float(portfolio_cash),
@@ -1912,34 +1961,42 @@ class TradeExecutionService:
                     allocation_id = getattr(existing_position, "allocation_id", None)
                     
                     if allocation_id:
-                        # Add to allocation cash
-                        allocation = await client.portfolioallocation.find_unique(where={"id": allocation_id})
-                        if allocation:
-                            current_cash = Decimal(str(getattr(allocation, "available_cash", 0)))
-                            new_cash = current_cash + sale_proceeds
-                            await client.portfolioallocation.update(
-                                where={"id": allocation_id},
-                                data={"available_cash": new_cash}
-                            )
-                            self.logger.info(
-                                "💰 Added ₹%.2f to allocation %s: ₹%.2f → ₹%.2f",
-                                float(sale_proceeds),
-                                allocation_id,
-                                float(current_cash),
-                                float(new_cash)
-                            )
+                        # ATOMIC allocation cash update with distributed lock
+                        async with allocation_lock(allocation_id):
+                            allocation = await client.portfolioallocation.find_unique(where={"id": allocation_id})
+                            if allocation:
+                                current_cash = Decimal(str(getattr(allocation, "available_cash", 0)))
+                                
+                                # Atomic increment
+                                await client.execute_raw(
+                                    'UPDATE "PortfolioAllocation" SET available_cash = available_cash + $1 WHERE id = $2',
+                                    float(sale_proceeds),
+                                    allocation_id
+                                )
+                                
+                                new_cash = current_cash + sale_proceeds
+                                self.logger.info(
+                                    "💰 ATOMIC added ₹%.2f to allocation %s: ₹%.2f → ₹%.2f",
+                                    float(sale_proceeds),
+                                    allocation_id,
+                                    float(current_cash),
+                                    float(new_cash)
+                                )
                     
-                    # Also update portfolio available_cash
+                    # ATOMIC portfolio cash update
                     portfolio = await client.portfolio.find_unique(where={"id": portfolio_id})
                     if portfolio:
                         portfolio_cash = Decimal(str(getattr(portfolio, "available_cash", 0)))
-                        new_portfolio_cash = portfolio_cash + sale_proceeds
-                        await client.portfolio.update(
-                            where={"id": portfolio_id},
-                            data={"available_cash": new_portfolio_cash}
+                        
+                        await client.execute_raw(
+                            'UPDATE "Portfolio" SET available_cash = available_cash + $1 WHERE id = $2',
+                            float(sale_proceeds),
+                            portfolio_id
                         )
+                        
+                        new_portfolio_cash = portfolio_cash + sale_proceeds
                         self.logger.info(
-                            "💰 Added ₹%.2f to portfolio %s: ₹%.2f → ₹%.2f",
+                            "💰 ATOMIC added ₹%.2f to portfolio %s: ₹%.2f → ₹%.2f",
                             float(sale_proceeds),
                             portfolio_id,
                             float(portfolio_cash),
@@ -2061,32 +2118,42 @@ class TradeExecutionService:
                         allocation_id = getattr(agent, "portfolio_allocation_id", None)
                 
                 if allocation_id:
-                    allocation = await client.portfolioallocation.find_unique(where={"id": allocation_id})
-                    if allocation:
-                        current_cash = Decimal(str(getattr(allocation, "available_cash", 0)))
-                        new_cash = current_cash + sale_proceeds
-                        await client.portfolioallocation.update(
-                            where={"id": allocation_id},
-                            data={"available_cash": new_cash}
-                        )
-                        self.logger.info(
-                            "💰 SHORT_SELL added ₹%.2f to allocation %s: ₹%.2f → ₹%.2f",
-                            float(sale_proceeds),
-                            allocation_id,
-                            float(current_cash),
-                            float(new_cash)
-                        )
+                    # ATOMIC allocation cash update with distributed lock
+                    async with allocation_lock(allocation_id):
+                        allocation = await client.portfolioallocation.find_unique(where={"id": allocation_id})
+                        if allocation:
+                            current_cash = Decimal(str(getattr(allocation, "available_cash", 0)))
+                            
+                            # Atomic increment
+                            await client.execute_raw(
+                                'UPDATE "PortfolioAllocation" SET available_cash = available_cash + $1 WHERE id = $2',
+                                float(sale_proceeds),
+                                allocation_id
+                            )
+                            
+                            new_cash = current_cash + sale_proceeds
+                            self.logger.info(
+                                "💰 ATOMIC SHORT_SELL added ₹%.2f to allocation %s: ₹%.2f → ₹%.2f",
+                                float(sale_proceeds),
+                                allocation_id,
+                                float(current_cash),
+                                float(new_cash)
+                            )
                 
+                # ATOMIC portfolio cash update
                 portfolio = await client.portfolio.find_unique(where={"id": portfolio_id})
                 if portfolio:
                     portfolio_cash = Decimal(str(getattr(portfolio, "available_cash", 0)))
-                    new_portfolio_cash = portfolio_cash + sale_proceeds
-                    await client.portfolio.update(
-                        where={"id": portfolio_id},
-                        data={"available_cash": new_portfolio_cash}
+                    
+                    await client.execute_raw(
+                        'UPDATE "Portfolio" SET available_cash = available_cash + $1 WHERE id = $2',
+                        float(sale_proceeds),
+                        portfolio_id
                     )
+                    
+                    new_portfolio_cash = portfolio_cash + sale_proceeds
                     self.logger.info(
-                        "💰 SHORT_SELL added ₹%.2f to portfolio %s: ₹%.2f → ₹%.2f",
+                        "💰 ATOMIC SHORT_SELL added ₹%.2f to portfolio %s: ₹%.2f → ₹%.2f",
                         float(sale_proceeds),
                         portfolio_id,
                         float(portfolio_cash),
@@ -2186,32 +2253,42 @@ class TradeExecutionService:
                     allocation_id = getattr(existing_short, "allocation_id", None)
                     
                     if allocation_id:
-                        allocation = await client.portfolioallocation.find_unique(where={"id": allocation_id})
-                        if allocation:
-                            current_cash = Decimal(str(getattr(allocation, "available_cash", 0)))
-                            new_cash = current_cash - cover_cost
-                            await client.portfolioallocation.update(
-                                where={"id": allocation_id},
-                                data={"available_cash": new_cash}
-                            )
-                            self.logger.info(
-                                "💰 COVER deducted ₹%.2f from allocation %s: ₹%.2f → ₹%.2f",
-                                float(cover_cost),
-                                allocation_id,
-                                float(current_cash),
-                                float(new_cash)
-                            )
+                        # ATOMIC allocation cash update with distributed lock
+                        async with allocation_lock(allocation_id):
+                            allocation = await client.portfolioallocation.find_unique(where={"id": allocation_id})
+                            if allocation:
+                                current_cash = Decimal(str(getattr(allocation, "available_cash", 0)))
+                                
+                                # Atomic decrement
+                                await client.execute_raw(
+                                    'UPDATE "PortfolioAllocation" SET available_cash = available_cash - $1 WHERE id = $2',
+                                    float(cover_cost),
+                                    allocation_id
+                                )
+                                
+                                new_cash = current_cash - cover_cost
+                                self.logger.info(
+                                    "💰 ATOMIC COVER deducted ₹%.2f from allocation %s: ₹%.2f → ₹%.2f",
+                                    float(cover_cost),
+                                    allocation_id,
+                                    float(current_cash),
+                                    float(new_cash)
+                                )
                     
+                    # ATOMIC portfolio cash update
                     portfolio = await client.portfolio.find_unique(where={"id": portfolio_id})
                     if portfolio:
                         portfolio_cash = Decimal(str(getattr(portfolio, "available_cash", 0)))
-                        new_portfolio_cash = portfolio_cash - cover_cost
-                        await client.portfolio.update(
-                            where={"id": portfolio_id},
-                            data={"available_cash": new_portfolio_cash}
+                        
+                        await client.execute_raw(
+                            'UPDATE "Portfolio" SET available_cash = available_cash - $1 WHERE id = $2',
+                            float(cover_cost),
+                            portfolio_id
                         )
+                        
+                        new_portfolio_cash = portfolio_cash - cover_cost
                         self.logger.info(
-                            "💰 COVER deducted ₹%.2f from portfolio %s: ₹%.2f → ₹%.2f",
+                            "💰 ATOMIC COVER deducted ₹%.2f from portfolio %s: ₹%.2f → ₹%.2f",
                             float(cover_cost),
                             portfolio_id,
                             float(portfolio_cash),

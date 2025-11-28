@@ -1814,7 +1814,31 @@ class PipelineService:
         """
         self.logger.info("🔄 Starting to close all high_risk positions before market close (3:15 PM IST)...")
         
+        # DISTRIBUTED LOCK: Prevent multiple workers from closing positions simultaneously
+        import os
+        from redis import Redis
+        from config import BROKER_URL
+        
+        redis_client = Redis.from_url(BROKER_URL)
+        lock_key = "market_close_worker:lock"
+        lock_ttl = 300  # 5 minutes
+        
+        # Try to acquire lock
+        lock_acquired = redis_client.set(lock_key, str(os.getpid()), nx=True, ex=lock_ttl)
+        if not lock_acquired:
+            self.logger.info("⚠️ Market close worker already running (lock held), skipping")
+            return {
+                "status": "skipped",
+                "reason": "another_worker_running",
+                "agents_checked": 0,
+                "long_positions_sold": 0,
+                "short_positions_covered": 0,
+                "errors": 0,
+            }
+        
         try:
+            self.logger.info("✅ Market close lock acquired, proceeding with position closure")
+            
             db_manager = get_db_manager()
             await db_manager.connect()
             
@@ -2030,6 +2054,10 @@ class PipelineService:
         except Exception as exc:
             self.logger.error("❌ Failed to close high-risk positions at market close: %s", exc, exc_info=True)
             raise
+        finally:
+            # Release the distributed lock
+            redis_client.delete(lock_key)
+            self.logger.info("🔓 Market close lock released")
 
     async def _process_signal_for_active_agents(self, signal_payload: Dict[str, Any]) -> None:
         """Process a trading signal for all active high_risk trading agents."""
