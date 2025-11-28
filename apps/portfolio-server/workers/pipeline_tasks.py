@@ -329,7 +329,15 @@ def run_risk_monitor(self) -> dict:
     name="pipeline.trade_execution.process_signal",
     autoretry_for=(Exception,),
     retry_backoff=True,
+    retry_backoff_max=30,  # Max backoff 30 seconds
     retry_kwargs={"max_retries": 3},
+    # CRITICAL: No rate limit - signals must process immediately for minimal latency
+    rate_limit=None,
+    # High priority for real-time signal processing
+    priority=9,
+    # Reasonable timeouts
+    soft_time_limit=120,
+    time_limit=180,
 )
 def process_trade_signal(self, signal_payload: dict) -> dict:
     """
@@ -366,7 +374,13 @@ def process_trade_signal(self, signal_payload: dict) -> dict:
     name="pipeline.sell_high_risk_before_close",
     autoretry_for=(Exception,),
     retry_backoff=True,
+    retry_backoff_max=60,  # Max backoff 60 seconds
     retry_kwargs={"max_retries": 3},
+    # Higher priority for market close operations
+    priority=8,
+    # Longer timeouts - closing multiple positions can take time
+    soft_time_limit=180,
+    time_limit=240,
 )
 def sell_high_risk_before_close(self) -> dict:
     """Sell all high_risk agent positions before market close (3:15 PM IST)."""

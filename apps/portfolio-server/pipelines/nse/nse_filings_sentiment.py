@@ -288,8 +288,9 @@ def publish_signal_to_kafka(
                 "pipeline.trade_execution.process_signal",
                 args=[signal_payload],  # Send enriched payload with reference_price
                 queue="trading",  # Route to TRADING queue (NOT pipelines!)
+                priority=9,  # HIGH PRIORITY - execute immediately
             )
-            print(f"[CELERY] ✅ Queued trade execution for {symbol} signal={signal_value} (price: ₹{reference_price:.2f})")
+            print(f"[CELERY] ✅ Queued HIGH-PRIORITY trade execution for {symbol} signal={signal_value} (price: ₹{reference_price:.2f})")
         else:
             print(f"[CELERY] ⏭️ Skipping signal=0 (HOLD) for {symbol} - no trade needed")
         

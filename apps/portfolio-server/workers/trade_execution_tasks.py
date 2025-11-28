@@ -32,7 +32,15 @@ async def _execute_trade_job_async(trade_id: str, simulate: Optional[bool]) -> d
     name="trading.execute_trade_job",
     autoretry_for=(Exception,),
     retry_backoff=True,
+    retry_backoff_max=30,  # Max backoff 30 seconds
     retry_kwargs={"max_retries": 3},
+    # CRITICAL: No rate limit - trades must execute immediately
+    rate_limit=None,
+    # High priority for trading tasks
+    priority=9,
+    # Reasonable timeouts for trade execution
+    soft_time_limit=120,
+    time_limit=180,
 )
 def execute_trade_job(self, trade_id: str, simulate: Optional[bool] = None) -> dict[str, Any]:
     """Celery task that executes a persisted trade job."""

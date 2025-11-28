@@ -169,7 +169,7 @@ celery_app.conf.update(
     broker_connection_retry_on_startup=True,
     broker_connection_retry=True,
     broker_connection_max_retries=10,
-    broker_pool_limit=10,  # Connection pool size
+    broker_pool_limit=20,  # Increased connection pool size for better concurrency
     broker_heartbeat=30,  # Keep connections alive
     broker_transport_options={
         "visibility_timeout": VISIBILITY_TIMEOUT,
@@ -177,8 +177,10 @@ celery_app.conf.update(
         "fanout_patterns": True,
         "max_retries": 5,
         "interval_start": 0,
-        "interval_step": 0.2,
-        "interval_max": 0.5,
+        "interval_step": 0.1,  # Faster retry (reduced from 0.2)
+        "interval_max": 0.3,  # Lower max interval (reduced from 0.5)
+        "socket_keepalive": True,  # Keep sockets alive
+        "socket_connect_timeout": 5,  # Fast connection timeout
     },
     # Result backend settings
     result_expires=RESULT_TTL,
@@ -188,11 +190,19 @@ celery_app.conf.update(
     task_send_sent_event=True,
 )
 
-# Ensure all queues are registered explicitly with proper routing keys
+# Ensure all queues are registered explicitly with proper routing keys and priority support
 _all_queues = [Queue(DEFAULT_QUEUE, routing_key=DEFAULT_QUEUE)]
 for queue_name in ["allocations", "trading", "pipelines", "risk", "orders", "market", "tokens", "streaming"]:
     if not any(q.name == queue_name for q in _all_queues):
-        _all_queues.append(Queue(queue_name, routing_key=queue_name))
+        # Trading queue gets priority support for real-time signal execution
+        if queue_name == "trading":
+            _all_queues.append(Queue(
+                queue_name, 
+                routing_key=queue_name,
+                queue_arguments={"x-max-priority": 10}  # Enable priority 0-10
+            ))
+        else:
+            _all_queues.append(Queue(queue_name, routing_key=queue_name))
 celery_app.conf.task_queues = _all_queues
 
 celery_app.conf.task_routes = {
@@ -222,7 +232,6 @@ celery_app.conf.task_routes = {
 STANDARD_TASKS = [
     "portfolio.allocate_for_objective",
     "portfolio.check_regime_and_rebalance",
-    "trading.execute_trade_job",
 ]
 
 # Pipeline tasks - may take longer, rate limited
@@ -232,9 +241,17 @@ PIPELINE_TASKS = [
     "pipeline.start",
 ]
 
-# Signal processing tasks - quick execution, goes to trading queue
+# Signal processing tasks - HIGHEST PRIORITY, NO RATE LIMITS for minimal latency
+# These are the core real-time trading tasks that must execute immediately
 SIGNAL_PROCESSING_TASKS = [
     "pipeline.trade_execution.process_signal",
+]
+
+# Trade execution - high priority, fast execution
+TRADE_EXECUTION_TASKS = [
+    "trading.execute_trade_job",
+    "trading.process_pending_trade",
+    "trades.execute_auto_close",  # Auto-close individual trades
 ]
 
 # Tasks that should run indefinitely (no time limits) - isolated queue
@@ -264,9 +281,30 @@ celery_app.conf.task_annotations = {
         task_name: {
             "soft_time_limit": SOFT_TIME_LIMIT,
             "time_limit": HARD_TIME_LIMIT,
-            "rate_limit": "10/m",  # Max 10 per minute
+            "rate_limit": "30/m",  # Max 30 per minute (increased from 10)
         }
         for task_name in STANDARD_TASKS
+    },
+    # Signal processing - CRITICAL: NO RATE LIMIT for real-time trading
+    # These must execute immediately when signals come in
+    **{
+        task_name: {
+            "soft_time_limit": 120,  # 2 min soft limit (trade execution can take time)
+            "time_limit": 180,  # 3 min hard limit
+            "rate_limit": None,  # NO RATE LIMIT - execute immediately!
+            "priority": 9,  # HIGH PRIORITY (0-9, 9 is highest)
+        }
+        for task_name in SIGNAL_PROCESSING_TASKS
+    },
+    # Trade execution - CRITICAL: NO RATE LIMIT
+    **{
+        task_name: {
+            "soft_time_limit": 120,  # 2 min soft limit
+            "time_limit": 180,  # 3 min hard limit
+            "rate_limit": None,  # NO RATE LIMIT - execute immediately!
+            "priority": 9,  # HIGH PRIORITY
+        }
+        for task_name in TRADE_EXECUTION_TASKS
     },
     # Pipeline tasks - longer limits, lower rate
     **{
@@ -291,16 +329,16 @@ celery_app.conf.task_annotations = {
         task_name: {
             "soft_time_limit": 60,
             "time_limit": 90,
-            "rate_limit": "60/m",  # 1 per second max
+            "rate_limit": "120/m",  # 2 per second (increased from 1/s)
         }
         for task_name in QUICK_TASKS
     },
-    # Auto-sell tasks - tight limits (scan and dispatch, should be fast)
+    # Auto-sell tasks - reasonable limits (DB operations take time)
     **{
         task_name: {
-            "soft_time_limit": 30,  # 30 second soft limit
-            "time_limit": 45,  # 45 second hard limit
-            "rate_limit": "4/m",  # Max 4 per minute
+            "soft_time_limit": 60,  # 60 second soft limit (increased from 30)
+            "time_limit": 90,  # 90 second hard limit (increased from 45)
+            "rate_limit": "10/m",  # Max 10 per minute (increased from 4)
         }
         for task_name in AUTO_SELL_TASKS
     },

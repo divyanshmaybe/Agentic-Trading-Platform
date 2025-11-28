@@ -73,10 +73,10 @@ class DBManager:
         self.logger = logging.getLogger(__name__)
         self.database_url = database_url or os.getenv("DATABASE_URL") or os.getenv("DB_URL")
         
-        # Set connection pool limit to prevent exhaustion (default Prisma uses 10 connections)
-        # In Celery workers with multiple event loops, this prevents connection buildup
-        self.connection_limit = int(os.getenv("PRISMA_CONNECTION_LIMIT", "5"))
-        self.pool_timeout = int(os.getenv("PRISMA_POOL_TIMEOUT", "10"))
+        # Set connection pool limit to prevent exhaustion
+        # Higher limit for Celery workers with multiple concurrent tasks
+        self.connection_limit = int(os.getenv("PRISMA_CONNECTION_LIMIT", "10"))
+        self.pool_timeout = int(os.getenv("PRISMA_POOL_TIMEOUT", "15"))
 
         # Default to localhost PostgreSQL if not set (for development)
         if not self.database_url:
