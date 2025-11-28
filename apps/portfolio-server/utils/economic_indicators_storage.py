@@ -269,12 +269,20 @@ class EconomicIndicatorsStorage:
         else:
             # Convert to pandas temporarily for JSON serialization
             per_ticker_pd = per_ticker_df.to_pandas()
+            # Convert datetime columns to strings
+            for col in per_ticker_pd.columns:
+                if pd.api.types.is_datetime64_any_dtype(per_ticker_pd[col]):
+                    per_ticker_pd[col] = per_ticker_pd[col].dt.strftime('%Y-%m-%d %H:%M:%S')
             per_ticker_records = per_ticker_pd.replace({pd.NA: None}).to_dict("records")
         
         if industry_summary_df.is_empty():
             industry_records = []
         else:
             industry_pd = industry_summary_df.to_pandas()
+            # Convert datetime columns to strings
+            for col in industry_pd.columns:
+                if pd.api.types.is_datetime64_any_dtype(industry_pd[col]):
+                    industry_pd[col] = industry_pd[col].dt.strftime('%Y-%m-%d %H:%M:%S')
             industry_records = industry_pd.replace({pd.NA: None}).to_dict("records")
         
         # Prepare data structures

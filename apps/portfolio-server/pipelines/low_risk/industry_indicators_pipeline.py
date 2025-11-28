@@ -234,8 +234,8 @@ class IndustryIndicatorsPipeline:
         # Compute indicators using Polars expressions
         df = df.with_columns([
             # EMAs
-            pl.col("Close").exp_moving_avg(span=50, adjust=False, min_periods=20).alias("EMA50"),
-            pl.col("Close").exp_moving_avg(span=200, adjust=False, min_periods=100).alias("EMA200"),
+            pl.col("Close").ewm_mean(span=50, adjust=False, min_periods=20).alias("EMA50"),
+            pl.col("Close").ewm_mean(span=200, adjust=False, min_periods=100).alias("EMA200"),
             
             # SMAs
             pl.col("Close").rolling_mean(window_size=50).alias("SMA50"),
@@ -309,7 +309,7 @@ class IndustryIndicatorsPipeline:
         
         # Add industry column to tidy data
         tidy = tidy.with_columns([
-            pl.col("Ticker").map_dict(self.ticker_industry_map, default="Unknown").alias("Industry")
+            pl.col("Ticker").replace(self.ticker_industry_map, default="Unknown").alias("Industry")
         ])
         
         # Compute date-wise median close per industry
@@ -431,8 +431,8 @@ class IndustryIndicatorsPipeline:
         industry_close_filtered = industry_close.filter(pl.col("Industry") == industry)
         if not industry_close_filtered.is_empty():
             close_series = industry_close_filtered["median_close"]
-            ema50 = close_series.exp_moving_avg(span=50, adjust=False, min_periods=20)
-            ema200 = close_series.exp_moving_avg(span=200, adjust=False, min_periods=100)
+            ema50 = close_series.ewm_mean(span=50, adjust=False, min_periods=20)
+            ema200 = close_series.ewm_mean(span=200, adjust=False, min_periods=100)
             ema50_val = ema50[-1] if len(ema50) > 0 else None
             ema200_val = ema200[-1] if len(ema200) > 0 else None
         else:
