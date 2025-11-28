@@ -1,0 +1,106 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'trading-platform'
+    env: 'development'
+
+# Load alert rules
+rule_files:
+  - 'alert-rules.yml'
+
+scrape_configs:
+  # Celery Workers (Local Development)
+  - job_name: 'celery-trading'
+    static_configs:
+      - targets: ['localhost:9101']
+        labels:
+          worker_pool: 'trading'
+          environment: 'local'
+          
+  - job_name: 'celery-pipeline'
+    static_configs:
+      - targets: ['localhost:9102']
+        labels:
+          worker_pool: 'pipeline'
+          environment: 'local'
+          
+  - job_name: 'celery-allocation'
+    static_configs:
+      - targets: ['localhost:9103']
+        labels:
+          worker_pool: 'allocation'
+          environment: 'local'
+          
+  - job_name: 'celery-market'
+    static_configs:
+      - targets: ['localhost:9104']
+        labels:
+          worker_pool: 'market'
+          environment: 'local'
+          
+  - job_name: 'celery-general'
+    static_configs:
+      - targets: ['localhost:9105']
+        labels:
+          worker_pool: 'general'
+          environment: 'local'
+
+  # Celery Workers (Docker - Distributed Architecture)
+  - job_name: 'celery-docker-trading'
+    static_configs:
+      - targets: ['portfolio_celery_trading:9101']
+        labels:
+          worker_pool: 'trading'
+          environment: 'docker'
+          queue: 'trading'
+
+  - job_name: 'celery-docker-pipeline'
+    static_configs:
+      - targets: ['portfolio_celery_pipeline:9102']
+        labels:
+          worker_pool: 'pipeline'
+          environment: 'docker'
+          queue: 'pipelines'
+
+  - job_name: 'celery-docker-allocation'
+    static_configs:
+      - targets: ['portfolio_celery_allocation:9103']
+        labels:
+          worker_pool: 'allocation'
+          environment: 'docker'
+          queue: 'allocations'
+
+  - job_name: 'celery-docker-market'
+    static_configs:
+      - targets: ['portfolio_celery_market:9104']
+        labels:
+          worker_pool: 'market'
+          environment: 'docker'
+          queue: 'market,tokens'
+
+  - job_name: 'celery-docker-general'
+    static_configs:
+      - targets: ['portfolio_celery_general:9105']
+        labels:
+          worker_pool: 'general'
+          environment: 'docker'
+          queue: 'general,risk,orders'
+
+  - job_name: 'celery-docker-streaming'
+    static_configs:
+      - targets: ['portfolio_celery_streaming:9106']
+        labels:
+          worker_pool: 'streaming'
+          environment: 'docker'
+          queue: 'streaming'
+
+  # Redis Exporter
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['host.docker.internal:9121', 'redis-exporter:9121']
+        
+  # PostgreSQL Exporter
+  - job_name: 'postgresql'
+    static_configs:
+      - targets: ['host.docker.internal:9187', 'postgres-exporter:9187']

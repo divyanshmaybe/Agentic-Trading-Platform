@@ -135,6 +135,7 @@ services:
       dockerfile: apps/notification_server/Dockerfile
     env_file:
       - .env
+      - apps/notification_server/.env
     environment:
       NODE_ENV: production
       DATABASE_URL: postgresql://auth_user:auth_password@postgres:5432/auth_db
@@ -174,6 +175,7 @@ services:
       context: .
       dockerfile: apps/portfolio-server/Dockerfile
     env_file:
+      - .env
       - apps/portfolio-server/docker.env
     environment:
       PORT: 8000
@@ -189,6 +191,10 @@ services:
       INTERNAL_SERVICE_SECRET: agentinvest-secret
       CLIENT_URL: http://localhost:3000
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
+      # Override Kafka config for Docker networking
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_CLIENT_ID: portfolio-server
+      KAFKA_ENABLED: "true"
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "python -m prisma generate &&
@@ -211,12 +217,13 @@ services:
     networks:
       - agentInvest
 
-  # Celery worker (Portfolio pipelines & tasks)
-  portfolio_celery:
+  # Celery Worker - Trading Queue (Real-time trade execution)
+  portfolio_celery_trading:
     image: portfolio_server:latest
-    container_name: portfolio_celery
+    container_name: portfolio_celery_trading
     restart: unless-stopped
     env_file:
+      - .env
       - apps/portfolio-server/docker.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
@@ -231,9 +238,13 @@ services:
       CELERY_BROKER_URL: redis://portfolio_redis:6379/0
       CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/1
       INTERNAL_SERVICE_SECRET: agentinvest-secret
-      PORTFOLIO_RISK_MONITOR_ENABLED: "false"
       PROMETHEUS_ENABLED: "true"
-      PROMETHEUS_PORT: "9100"
+      PROMETHEUS_PORT: "9101"
+      WORKER_NAME: trading@docker
+      # Override Kafka config for Docker networking
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_CLIENT_ID: portfolio-celery-trading
+      KAFKA_ENABLED: "true"
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "python -m prisma generate &&
@@ -241,9 +252,254 @@ services:
                  echo 'Waiting for Postgres...';
                  sleep 2;
                done &&
-               celery -A celery_app:celery_app worker --loglevel=info"
+               celery -A celery_app:celery_app worker --loglevel=info -Q trading --concurrency=4 --hostname=trading@%h --max-tasks-per-child=100 --prefetch-multiplier=1"
     ports:
-      - "9100:9100"
+      - "9101:9101"
+    volumes:
+      - ./apps/portfolio-server:/app/apps/portfolio-server
+      - ./shared:/app/shared
+      - ./middleware:/app/middleware
+    depends_on:
+      portfolio_postgres:
+        condition: service_healthy
+      portfolio_redis:
+        condition: service_healthy
+    networks:
+      - agentInvest
+
+  # Celery Worker - Pipeline Queue (NSE filings sentiment)
+  portfolio_celery_pipeline:
+    image: portfolio_server:latest
+    container_name: portfolio_celery_pipeline
+    restart: unless-stopped
+    env_file:
+      - .env
+      - apps/portfolio-server/docker.env
+    environment:
+      PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
+      SKIP_DOTENV: "true"
+      CELERY_WORKER_RUNNING: "1"
+      DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
+      SHADOW_DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
+      AUTH_SERVER_URL: http://auth_server:4000
+      PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
+      REDIS_HOST: portfolio_redis
+      REDIS_PORT: 6379
+      CELERY_BROKER_URL: redis://portfolio_redis:6379/0
+      CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/1
+      INTERNAL_SERVICE_SECRET: agentinvest-secret
+      PROMETHEUS_ENABLED: "true"
+      PROMETHEUS_PORT: "9102"
+      WORKER_NAME: pipeline@docker
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_CLIENT_ID: portfolio-celery-pipeline
+      KAFKA_ENABLED: "true"
+    working_dir: /app/apps/portfolio-server
+    command: >
+      bash -c "python -m prisma generate &&
+               until python -m prisma db push --accept-data-loss; do
+                 echo 'Waiting for Postgres...';
+                 sleep 2;
+               done &&
+               celery -A celery_app:celery_app worker --loglevel=info -Q pipelines --concurrency=2 --hostname=pipeline@%h --max-tasks-per-child=50 --prefetch-multiplier=1"
+    ports:
+      - "9102:9102"
+    volumes:
+      - ./apps/portfolio-server:/app/apps/portfolio-server
+      - ./shared:/app/shared
+      - ./middleware:/app/middleware
+    depends_on:
+      portfolio_postgres:
+        condition: service_healthy
+      portfolio_redis:
+        condition: service_healthy
+    networks:
+      - agentInvest
+
+  # Celery Worker - Allocation Queue (Portfolio allocation & rebalancing)
+  portfolio_celery_allocation:
+    image: portfolio_server:latest
+    container_name: portfolio_celery_allocation
+    restart: unless-stopped
+    env_file:
+      - .env
+      - apps/portfolio-server/docker.env
+    environment:
+      PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
+      SKIP_DOTENV: "true"
+      CELERY_WORKER_RUNNING: "1"
+      DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
+      SHADOW_DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
+      AUTH_SERVER_URL: http://auth_server:4000
+      PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
+      REDIS_HOST: portfolio_redis
+      REDIS_PORT: 6379
+      CELERY_BROKER_URL: redis://portfolio_redis:6379/0
+      CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/1
+      INTERNAL_SERVICE_SECRET: agentinvest-secret
+      PROMETHEUS_ENABLED: "true"
+      PROMETHEUS_PORT: "9103"
+      WORKER_NAME: allocation@docker
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_CLIENT_ID: portfolio-celery-allocation
+      KAFKA_ENABLED: "true"
+    working_dir: /app/apps/portfolio-server
+    command: >
+      bash -c "python -m prisma generate &&
+               until python -m prisma db push --accept-data-loss; do
+                 echo 'Waiting for Postgres...';
+                 sleep 2;
+               done &&
+               celery -A celery_app:celery_app worker --loglevel=info -Q allocations --concurrency=2 --hostname=allocation@%h --max-tasks-per-child=100 --prefetch-multiplier=1"
+    ports:
+      - "9103:9103"
+    volumes:
+      - ./apps/portfolio-server:/app/apps/portfolio-server
+      - ./shared:/app/shared
+      - ./middleware:/app/middleware
+    depends_on:
+      portfolio_postgres:
+        condition: service_healthy
+      portfolio_redis:
+        condition: service_healthy
+    networks:
+      - agentInvest
+
+  # Celery Worker - Market Queue (Market data & token management)
+  portfolio_celery_market:
+    image: portfolio_server:latest
+    container_name: portfolio_celery_market
+    restart: unless-stopped
+    env_file:
+      - .env
+      - apps/portfolio-server/docker.env
+    environment:
+      PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
+      SKIP_DOTENV: "true"
+      CELERY_WORKER_RUNNING: "1"
+      DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
+      SHADOW_DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
+      AUTH_SERVER_URL: http://auth_server:4000
+      PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
+      REDIS_HOST: portfolio_redis
+      REDIS_PORT: 6379
+      CELERY_BROKER_URL: redis://portfolio_redis:6379/0
+      CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/1
+      INTERNAL_SERVICE_SECRET: agentinvest-secret
+      PROMETHEUS_ENABLED: "true"
+      PROMETHEUS_PORT: "9104"
+      WORKER_NAME: market@docker
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_CLIENT_ID: portfolio-celery-market
+      KAFKA_ENABLED: "true"
+    working_dir: /app/apps/portfolio-server
+    command: >
+      bash -c "python -m prisma generate &&
+               until python -m prisma db push --accept-data-loss; do
+                 echo 'Waiting for Postgres...';
+                 sleep 2;
+               done &&
+               celery -A celery_app:celery_app worker --loglevel=info -Q market,tokens --concurrency=4 --hostname=market@%h --max-tasks-per-child=500 --prefetch-multiplier=1"
+    ports:
+      - "9104:9104"
+    volumes:
+      - ./apps/portfolio-server:/app/apps/portfolio-server
+      - ./shared:/app/shared
+      - ./middleware:/app/middleware
+    depends_on:
+      portfolio_postgres:
+        condition: service_healthy
+      portfolio_redis:
+        condition: service_healthy
+    networks:
+      - agentInvest
+
+  # Celery Worker - General Queue (Misc tasks, risk, orders)
+  portfolio_celery_general:
+    image: portfolio_server:latest
+    container_name: portfolio_celery_general
+    restart: unless-stopped
+    env_file:
+      - .env
+      - apps/portfolio-server/docker.env
+    environment:
+      PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
+      SKIP_DOTENV: "true"
+      CELERY_WORKER_RUNNING: "1"
+      DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
+      SHADOW_DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
+      AUTH_SERVER_URL: http://auth_server:4000
+      PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
+      REDIS_HOST: portfolio_redis
+      REDIS_PORT: 6379
+      CELERY_BROKER_URL: redis://portfolio_redis:6379/0
+      CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/1
+      INTERNAL_SERVICE_SECRET: agentinvest-secret
+      PROMETHEUS_ENABLED: "true"
+      PROMETHEUS_PORT: "9105"
+      WORKER_NAME: general@docker
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_CLIENT_ID: portfolio-celery-general
+      KAFKA_ENABLED: "true"
+    working_dir: /app/apps/portfolio-server
+    command: >
+      bash -c "python -m prisma generate &&
+               until python -m prisma db push --accept-data-loss; do
+                 echo 'Waiting for Postgres...';
+                 sleep 2;
+               done &&
+               celery -A celery_app:celery_app worker --loglevel=info -Q general,risk,orders --concurrency=4 --hostname=general@%h --max-tasks-per-child=200 --prefetch-multiplier=1"
+    ports:
+      - "9105:9105"
+    volumes:
+      - ./apps/portfolio-server:/app/apps/portfolio-server
+      - ./shared:/app/shared
+      - ./middleware:/app/middleware
+    depends_on:
+      portfolio_postgres:
+        condition: service_healthy
+      portfolio_redis:
+        condition: service_healthy
+    networks:
+      - agentInvest
+
+  # Celery Worker - Streaming Queue (Long-running streaming tasks)
+  portfolio_celery_streaming:
+    image: portfolio_server:latest
+    container_name: portfolio_celery_streaming
+    restart: unless-stopped
+    env_file:
+      - .env
+      - apps/portfolio-server/docker.env
+    environment:
+      PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
+      SKIP_DOTENV: "true"
+      CELERY_WORKER_RUNNING: "1"
+      DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
+      SHADOW_DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
+      AUTH_SERVER_URL: http://auth_server:4000
+      PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
+      REDIS_HOST: portfolio_redis
+      REDIS_PORT: 6379
+      CELERY_BROKER_URL: redis://portfolio_redis:6379/0
+      CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/1
+      INTERNAL_SERVICE_SECRET: agentinvest-secret
+      PROMETHEUS_ENABLED: "true"
+      PROMETHEUS_PORT: "9106"
+      WORKER_NAME: streaming@docker
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_CLIENT_ID: portfolio-celery-streaming
+      KAFKA_ENABLED: "true"
+    working_dir: /app/apps/portfolio-server
+    command: >
+      bash -c "python -m prisma generate &&
+               until python -m prisma db push --accept-data-loss; do
+                 echo 'Waiting for Postgres...';
+                 sleep 2;
+               done &&
+               celery -A celery_app:celery_app worker --loglevel=info -Q streaming --concurrency=1 --hostname=streaming@%h --max-tasks-per-child=1 --prefetch-multiplier=1 --without-heartbeat --without-gossip"
+    ports:
+      - "9106:9106"
     volumes:
       - ./apps/portfolio-server:/app/apps/portfolio-server
       - ./shared:/app/shared
@@ -262,6 +518,7 @@ services:
     container_name: portfolio_celery_beat
     restart: unless-stopped
     env_file:
+      - .env
       - apps/portfolio-server/docker.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
@@ -276,6 +533,10 @@ services:
       CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/1
       INTERNAL_SERVICE_SECRET: agentinvest-secret
       PROMETHEUS_ENABLED: "false"
+      # Override Kafka config for Docker networking
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_CLIENT_ID: portfolio-celery-beat
+      KAFKA_ENABLED: "true"
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "python -m prisma generate &&
@@ -293,6 +554,18 @@ services:
         condition: service_healthy
       portfolio_redis:
         condition: service_healthy
+      portfolio_celery_trading:
+        condition: service_started
+      portfolio_celery_pipeline:
+        condition: service_started
+      portfolio_celery_allocation:
+        condition: service_started
+      portfolio_celery_market:
+        condition: service_started
+      portfolio_celery_general:
+        condition: service_started
+      portfolio_celery_streaming:
+        condition: service_started
     networks:
       - agentInvest
 
@@ -316,7 +589,7 @@ services:
     depends_on:
       portfolio_redis:
         condition: service_healthy
-      portfolio_celery:
+      portfolio_celery_trading:
         condition: service_started
     networks:
       - agentInvest
@@ -354,8 +627,8 @@ services:
 
   # Apache Kafka (KRaft mode)
   kafka:
-    image: ${KAFKA_IMAGE:-apache/kafka:3.8.0}
-    container_name: ${KAFKA_CONTAINER_NAME:-pathway-kafka}
+    image: apache/kafka:3.8.0
+    container_name: pathway-kafka
     restart: unless-stopped
     ports:
       - "9092:9092"
@@ -363,10 +636,10 @@ services:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
@@ -425,7 +698,7 @@ services:
     ports:
       - "9090:9090"
     volumes:
-      - ./devops/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./docker_manifests/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -490,6 +763,38 @@ services:
     profiles:
       - monitoring
 
+  # Loki (Log Aggregation)
+  loki:
+    image: grafana/loki:latest
+    container_name: loki
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./docker_manifests/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - agentInvest
+    profiles:
+      - monitoring
+
+  # Promtail (Log Shipping to Loki)
+  promtail:
+    image: grafana/promtail:latest
+    container_name: promtail
+    restart: unless-stopped
+    volumes:
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./docker_manifests/promtail-config.yml:/etc/promtail/config.yml:ro
+    command: -config.file=/etc/promtail/config.yml
+    networks:
+      - agentInvest
+    profiles:
+      - monitoring
+
 networks:
   agentInvest:
     driver: bridge
@@ -508,4 +813,6 @@ volumes:
   prometheus_data:
     driver: local
   grafana_data:
+    driver: local
+  loki_data:
     driver: local
