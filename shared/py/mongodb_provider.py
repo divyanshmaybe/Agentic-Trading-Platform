@@ -1,8 +1,10 @@
 """
 MongoDB Provider for FastAPI applications
 
-Provides MongoDB connection management with singleton pattern.
+Provides MongoDB Atlas connection management with singleton pattern.
 Uses motor (async MongoDB driver) for async operations.
+
+MongoDB Atlas only - requires mongodb+srv:// connection string.
 
 Usage:
     ```python
@@ -38,8 +40,9 @@ from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
 
 class MongoDBProvider:
     """
-    Singleton MongoDB connection manager using Motor (async driver).
+    Singleton MongoDB Atlas connection manager using Motor (async driver).
     
+    MongoDB Atlas only - requires mongodb+srv:// connection string.
     Provides robust connection management with automatic reconnection.
     Thread-safe and event loop aware.
     """
@@ -50,12 +53,15 @@ class MongoDBProvider:
 
     def __init__(self, connection_string: Optional[str] = None):
         """
-        Initialize MongoDBProvider.
+        Initialize MongoDBProvider for MongoDB Atlas only.
         
         Args:
-            connection_string: MongoDB connection string. If not provided, uses MONGODB_URI env var.
+            connection_string: MongoDB Atlas connection string (mongodb+srv://).
+                              If not provided, uses MONGODB_URI env var.
             
         Note: Use get_instance() instead of direct instantiation.
+        Raises:
+            ValueError: If connection string is not provided or not a mongodb+srv:// URL.
         """
         if MongoDBProvider._instance is not None:
             raise RuntimeError(
@@ -64,33 +70,41 @@ class MongoDBProvider:
 
         self.logger = logging.getLogger(__name__)
         
-        # Get connection string from parameter or environment
-        self.connection_string = connection_string or os.getenv(
-            "MONGODB_URI"
-        ) or os.getenv("MONGODB_URL") or os.getenv("MONGO_URL")
+        # Get MongoDB Atlas connection string (mongodb+srv:// only)
+        self.connection_string = connection_string or os.getenv("MONGODB_URI") or os.getenv("MONGODB_URL")
         
-        # Build connection string from components if not provided
         if not self.connection_string:
-            mongo_host = os.getenv("MONGODB_HOST", "localhost")
-            mongo_port = int(os.getenv("MONGODB_PORT", "27017"))
-            mongo_user = os.getenv("MONGODB_USER")
-            mongo_password = os.getenv("MONGODB_PASSWORD")
-            mongo_db = os.getenv("MONGODB_DB", "portfolio_db")
-            
-            if mongo_user and mongo_password:
-                self.connection_string = (
-                    f"mongodb://{mongo_user}:{mongo_password}@{mongo_host}:{mongo_port}/{mongo_db}"
-                )
-            else:
-                self.connection_string = f"mongodb://{mongo_host}:{mongo_port}/{mongo_db}"
-            
-            self.logger.info(
-                "MONGODB_URI not set, using default config: mongodb://%s:***@%s:%s/%s",
-                mongo_user or "no-auth", mongo_host, mongo_port, mongo_db
+            raise ValueError(
+                "MONGODB_URI environment variable is required. "
+                "Please set your MongoDB Atlas connection string: "
+                "mongodb+srv://username:password@cluster.mongodb.net/database"
             )
+        
+        # Validate that it's a MongoDB Atlas connection (mongodb+srv://)
+        if not self.connection_string.startswith("mongodb+srv://"):
+            raise ValueError(
+                "Only MongoDB Atlas connections (mongodb+srv://) are supported. "
+                f"Received: {self.connection_string[:30]}..."
+            )
+        
+        self.logger.info("✅ Using MongoDB Atlas connection")
+        
+        # Extract database name from Atlas connection string
+        # Format: mongodb+srv://user:pass@cluster.mongodb.net/dbname?options
+        try:
+            after_at = self.connection_string.split("@")[-1]
+            if "/" in after_at:
+                db_part = after_at.split("/")[1].split("?")[0]
+                if db_part:
+                    self.database_name = db_part
+                else:
+                    self.database_name = os.getenv("MONGODB_DB", "portfolio_db")
+            else:
+                self.database_name = os.getenv("MONGODB_DB", "portfolio_db")
+        except Exception:
+            self.database_name = os.getenv("MONGODB_DB", "portfolio_db")
 
         self.client: Optional[AsyncIOMotorClient] = None
-        self.database_name: str = os.getenv("MONGODB_DB", "portfolio_db")
         self._connected: bool = False
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._connecting: bool = False
@@ -101,7 +115,7 @@ class MongoDBProvider:
         Get or create the shared MongoDBProvider singleton instance.
         
         Args:
-            connection_string: MongoDB connection string (only used on first call).
+            connection_string: MongoDB Atlas connection string (only used on first call).
             
         Returns:
             The singleton MongoDBProvider instance.
@@ -144,7 +158,7 @@ class MongoDBProvider:
 
     async def connect(self) -> None:
         """
-        Establish connection to MongoDB.
+        Establish connection to MongoDB Atlas.
         
         Handles event loop changes by recreating the client if needed.
         Safe to call multiple times.
@@ -162,7 +176,7 @@ class MongoDBProvider:
 
         # If already connected to the same event loop, return
         if self._connected and self._loop is loop:
-            self.logger.debug("Already connected to MongoDB (same event loop)")
+            self.logger.debug("Already connected to MongoDB Atlas (same event loop)")
             return
 
         # If already connecting, wait for it to complete
@@ -189,37 +203,53 @@ class MongoDBProvider:
 
             # Create client if needed
             if self.client is None:
+                # MongoDB Atlas connection parameters
+                client_kwargs = {
+                    "serverSelectionTimeoutMS": 10000,
+                    "connectTimeoutMS": 10000,
+                    "socketTimeoutMS": 30000,
+                    "tls": True,
+                    "tlsAllowInvalidCertificates": False,
+                }
+                
+                # Ensure standard Atlas parameters are present
+                if "?" not in self.connection_string:
+                    self.connection_string = f"{self.connection_string}?retryWrites=true&w=majority"
+                elif "retryWrites" not in self.connection_string:
+                    separator = "&" if "?" in self.connection_string else "?"
+                    self.connection_string = f"{self.connection_string}{separator}retryWrites=true&w=majority"
+                
+                self.logger.debug("Configuring MongoDB Atlas connection with SSL/TLS")
+                
                 self.client = AsyncIOMotorClient(
                     self.connection_string,
-                    serverSelectionTimeoutMS=5000,
-                    connectTimeoutMS=5000,
-                    socketTimeoutMS=5000,
+                    **client_kwargs
                 )
 
-            # Test connection
+            # Test connection (Atlas requires longer timeout due to network latency)
             await asyncio.wait_for(
                 self.client.admin.command("ping"),
-                timeout=5.0
+                timeout=15.0
             )
 
             self._connected = True
             self._loop = loop
             self.logger.info(
-                "✅ Connected to MongoDB (database: %s, loop_id=%s)",
+                "✅ Connected to MongoDB Atlas (database: %s, loop_id=%s)",
                 self.database_name, id(loop)
             )
 
         except asyncio.TimeoutError:
-            self.logger.error("❌ MongoDB connection timed out after 5 seconds")
+            self.logger.error("❌ MongoDB Atlas connection timed out after 15 seconds")
             self._connecting = False
-            raise ConnectionFailure("MongoDB connection timeout")
+            raise ConnectionFailure("MongoDB Atlas connection timeout")
         except (ConnectionFailure, ServerSelectionTimeoutError) as e:
-            self.logger.error("❌ Failed to connect to MongoDB: %s", e)
+            self.logger.error("❌ Failed to connect to MongoDB Atlas: %s", e)
             self._connected = False
             self._loop = None
             raise
         except Exception as e:
-            self.logger.error("❌ Unexpected error during MongoDB connection: %s", e, exc_info=True)
+            self.logger.error("❌ Unexpected error during MongoDB Atlas connection: %s", e, exc_info=True)
             self._connected = False
             self._loop = None
             raise
@@ -227,17 +257,17 @@ class MongoDBProvider:
             self._connecting = False
 
     async def disconnect(self) -> None:
-        """Close MongoDB connection if active."""
+        """Close MongoDB Atlas connection if active."""
         if not self._connected and self.client is None:
-            self.logger.debug("Already disconnected from MongoDB")
+            self.logger.debug("Already disconnected from MongoDB Atlas")
             return
 
         try:
             if self.client:
                 self.client.close()
-                self.logger.info("🔌 Disconnected from MongoDB")
+                self.logger.info("🔌 Disconnected from MongoDB Atlas")
         except Exception as e:
-            self.logger.warning("Error during MongoDB disconnect: %s", e)
+            self.logger.warning("Error during MongoDB Atlas disconnect: %s", e)
         finally:
             self._connected = False
             self._loop = None
@@ -248,7 +278,7 @@ class MongoDBProvider:
         Get MongoDB database instance.
         
         Args:
-            database_name: Database name. If not provided, uses default from config.
+            database_name: Database name. If not provided, uses default from connection string or config.
             
         Returns:
             AsyncIOMotorDatabase instance.
@@ -258,22 +288,22 @@ class MongoDBProvider:
         """
         if not self._connected:
             raise RuntimeError(
-                "MongoDB not connected. Call await connect() before accessing the database."
+                "MongoDB Atlas not connected. Call await connect() before accessing the database."
             )
         
         db_name = database_name or self.database_name
         return self.client[db_name]
 
     def is_connected(self) -> bool:
-        """Check if MongoDB connection is active."""
+        """Check if MongoDB Atlas connection is active."""
         return self._connected
 
     async def health_check(self) -> bool:
         """
-        Perform health check against MongoDB.
+        Perform health check against MongoDB Atlas.
         
         Returns:
-            True if MongoDB is healthy, False otherwise.
+            True if MongoDB Atlas is healthy, False otherwise.
         """
         if not self._connected:
             return False
@@ -281,13 +311,12 @@ class MongoDBProvider:
         try:
             await asyncio.wait_for(
                 self.client.admin.command("ping"),
-                timeout=2.0
+                timeout=5.0
             )
             return True
         except Exception as exc:
-            self.logger.warning("MongoDB health check failed: %s", exc)
+            self.logger.warning("MongoDB Atlas health check failed: %s", exc)
             return False
 
 
 __all__ = ["MongoDBProvider"]
-
