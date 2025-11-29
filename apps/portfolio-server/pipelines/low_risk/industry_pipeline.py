@@ -377,7 +377,7 @@ def industry_selector(
 
     # Set module user_id for standalone function logging
     set_module_user_id(user_id)
-    
+
     # Invoke agent
     msg = "🤖 Invoking industry selection agent..."
     logger.info(msg)
@@ -395,7 +395,7 @@ def industry_selector(
             to_send = {
                 "user_id": user_id,
                 "type": "industry",
-                "fetching": 1,
+                "status": "fetching",
                 "content": {
                     "industries": ind_list,
                 }
@@ -407,7 +407,7 @@ def industry_selector(
             to_send = {
                 "user_id": user_id,
                 "type": "industry",
-                "fetching": 0,
+                "status": "fetched",
                 "content": {
                     "industries": list(metrics.keys()),
                     "metrics": metrics,
@@ -529,7 +529,7 @@ class IndustrySelectionPipeline:
         msg = f"✓ Latest CPI value: {cpi_val}"
         logger.info(msg)
         self._publish_log(msg, stage="cpi_latest", cpi_value=cpi_val)
-        
+
         msg = f"✓ Latest PMI value: {pmi_val}"
         logger.info(msg)
         self._publish_log(msg, stage="pmi_latest", pmi_value=pmi_val)
