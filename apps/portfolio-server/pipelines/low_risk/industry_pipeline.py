@@ -19,6 +19,8 @@ from jinja2 import Environment, StrictUndefined
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain.agents import create_agent
+
 
 from utils.economic_indicators_storage import EconomicIndicatorsStorage, get_storage
 from .industry_indicators_pipeline import IndustryIndicatorsPipeline
@@ -276,7 +278,7 @@ def create_industry_metrics_tool(
     return industry_metrics
 
 
-def load_prompt_template() -> str:
+def load_prompt_template(prompt_file: str) -> str:
     """
     Load the industry selector prompt template from YAML file.
 
@@ -285,7 +287,7 @@ def load_prompt_template() -> str:
     """
     # Get template file path
     template_dir = Path(__file__).resolve().parent.parent.parent / "templates"
-    template_file = template_dir / "industry_selector_prompt.yaml"
+    template_file = template_dir / f"{prompt_file}"
 
     if not template_file.exists():
         raise FileNotFoundError(
@@ -326,74 +328,25 @@ def create_industry_selection_agent(
     industry_metrics_tool = create_industry_metrics_tool(pipeline)
 
     # Load and render prompt template
-    prompt_template = load_prompt_template()
-    env = Environment(undefined=StrictUndefined)
-    template = env.from_string(prompt_template)
+    prompt_template = load_prompt_template("industry_selector_prompt.yaml")
 
-    rendered_prompt = template.render(
+
+    rendered_prompt = Environment(undefined=StrictUndefined).from_string(prompt_template).render(
         economic_regime=economic_regime.lower(),
         cpi_val=cpi_val,
         pmi_val=pmi_val,
     )
 
     # Create LLM
-    llm = ChatGoogleGenerativeAI(
+    gemini2 = ChatGoogleGenerativeAI(
         model="gemini-2.5-flash",
-        temperature=0.7,
         google_api_key=gemini_api_key,
     )
-
-    # Bind tools to LLM
-    llm_with_tools = llm.bind_tools([industry_metrics_tool])
-
-    # Create system message
-    system_message = SystemMessage(content=rendered_prompt)
-
-    # Create agent that handles tool calls
-    class SimpleAgent:
-        def __init__(self, llm, system_message, tool):
-            self.llm = llm
-            self.system_message = system_message
-            self.tool = tool
-            self.max_iterations = 10  # Prevent infinite loops
-
-        def invoke(self, user_message: str) -> Dict[str, Any]:
-            """Invoke the agent with a user message, handling tool calls."""
-            messages = [self.system_message, HumanMessage(content=user_message)]
-            iteration = 0
-
-            while iteration < self.max_iterations:
-                iteration += 1
-                response = self.llm.invoke(messages)
-
-                # Check if response has tool calls
-                if hasattr(response, "tool_calls") and response.tool_calls:
-                    # Execute tool calls
-                    for tool_call in response.tool_calls:
-                        tool_name = tool_call.get("name", "")
-                        tool_args = tool_call.get("args", {})
-
-                        if tool_name == "industry_metrics":
-                            # Execute the tool
-                            tool_result = self.tool.invoke(tool_args)
-                            # Add tool result to messages
-                            tool_message = ToolMessage(
-                                content=json.dumps(tool_result),
-                                tool_call_id=tool_call.get("id", ""),
-                            )
-                            messages.append(response)  # Add LLM response with tool calls
-                            messages.append(tool_message)  # Add tool result
-                        else:
-                            logger.warning(f"Unknown tool: {tool_name}")
-                    # Continue loop to get final response
-                else:
-                    # No tool calls, this is the final response
-                    messages.append(response)
-                    break
-
-            return {"messages": messages}
-
-    agent = SimpleAgent(llm_with_tools, system_message, industry_metrics_tool)
+    agent = create_agent(
+        model=gemini2,
+        tools=[industry_metrics_tool],
+        system_prompt=SystemMessage(rendered_prompt)
+    )
     return agent
 
 
@@ -425,7 +378,8 @@ def industry_selector(
 
     # Invoke agent
     logger.info("🤖 Invoking industry selection agent...")
-    result = agent.invoke("suggest industries")
+    #TODO send notif to frontend kafka
+    result = agent.invoke({"messages": [HumanMessage("suggest industries")]})
 
     # Extract response from agent output
     messages = result.get("messages", [])
@@ -489,6 +443,7 @@ def industry_selector(
         else:
             raise ValueError("Total percentage is zero or negative")
 
+    #TODO send notif to kafka frontend
     logger.info(
         f"✅ Industry selection complete: {len(industry_list)} industries, "
         f"total allocation: {sum(item['percentage'] for item in industry_list):.1f}%"
@@ -542,6 +497,7 @@ class IndustrySelectionPipeline:
             List of industry allocation dictionaries:
             [{"name": str, "percentage": float, "reasoning": str}, ...]
         """
+        #TODO send to kafka frontend
         logger.info("🚀 Starting industry selection pipeline...")
 
         # Get PMI
@@ -570,7 +526,9 @@ class IndustrySelectionPipeline:
 
         # Get latest CPI value
         cpi_val = cpi_list[-1]
+        #TODO send to kafka frontend
         logger.info(f"✓ Latest CPI value: {cpi_val}")
+        logger.info(f"✓ Latest PMI value: {pmi_val}")
 
         # Select industries using LLM agent
         try:
@@ -581,6 +539,7 @@ class IndustrySelectionPipeline:
                 pmi_val,
                 self.gemini_api_key,
             )
+            #TODO send to kafka frontend
             logger.info(f"✅ Industry selection complete: {len(industry_list)} industries")
             return industry_list
         except Exception as e:
