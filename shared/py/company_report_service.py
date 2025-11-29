@@ -42,8 +42,12 @@ from datetime import datetime
 
 from pymongo.errors import DuplicateKeyError
 
-from .mongodb_provider import MongoDBProvider
-from .redisManager import RedisManager
+try:
+    from .mongodb_provider import MongoDBProvider
+    from .redisManager import RedisManager
+except ImportError:
+    from mongodb_provider import MongoDBProvider
+    from redisManager import RedisManager
 
 
 class CompanyReportService:

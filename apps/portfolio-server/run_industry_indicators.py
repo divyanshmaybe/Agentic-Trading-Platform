@@ -66,6 +66,7 @@ def main():
             rsi_length=14
         )
         
+        
         logger.info(f"✅ Pipeline initialized")
         logger.info(f"   Total industries: {len(pipeline.industry_ticker_map)}")
         logger.info(f"   Total tickers: {len(pipeline.ticker_industry_map)}")
@@ -76,6 +77,8 @@ def main():
         print("=" * 80)
         
         per_ticker_df, industry_summary_df = pipeline.compute()
+
+        print(pipeline.raw_data)
         
         print("\n✅ Computation Complete!")
         

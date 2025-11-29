@@ -6,7 +6,7 @@ Provides Redis connection and operations
 import redis.asyncio as redis
 import os
 import logging
-from typing import Optional, Any, Dict
+from typing import Optional, Any, Dict, List
 from contextlib import asynccontextmanager
 
 

@@ -1,10 +1,10 @@
 """
 MongoDB Provider for FastAPI applications
 
-Provides MongoDB Atlas connection management with singleton pattern.
+Provides MongoDB Atlas and local MongoDB connection management with singleton pattern.
 Uses motor (async MongoDB driver) for async operations.
 
-MongoDB Atlas only - requires mongodb+srv:// connection string.
+Supports both MongoDB Atlas (mongodb+srv://) and local MongoDB (mongodb://) connections.
 
 Usage:
     ```python
@@ -40,9 +40,9 @@ from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
 
 class MongoDBProvider:
     """
-    Singleton MongoDB Atlas connection manager using Motor (async driver).
+    Singleton MongoDB connection manager using Motor (async driver).
     
-    MongoDB Atlas only - requires mongodb+srv:// connection string.
+    Supports both MongoDB Atlas (mongodb+srv://) and local MongoDB (mongodb://) connections.
     Provides robust connection management with automatic reconnection.
     Thread-safe and event loop aware.
     """
@@ -53,15 +53,17 @@ class MongoDBProvider:
 
     def __init__(self, connection_string: Optional[str] = None):
         """
-        Initialize MongoDBProvider for MongoDB Atlas only.
+        Initialize MongoDBProvider for MongoDB Atlas or local MongoDB.
         
         Args:
-            connection_string: MongoDB Atlas connection string (mongodb+srv://).
-                              If not provided, uses MONGODB_URI env var.
+            connection_string: MongoDB connection string.
+                              For Atlas: mongodb+srv://username:password@cluster.mongodb.net/database
+                              For local: mongodb://localhost:27017/database
+                              If not provided, uses MONGODB_URI or MONGODB_URL env var.
             
         Note: Use get_instance() instead of direct instantiation.
         Raises:
-            ValueError: If connection string is not provided or not a mongodb+srv:// URL.
+            ValueError: If connection string is not provided or not a valid MongoDB URI.
         """
         if MongoDBProvider._instance is not None:
             raise RuntimeError(
@@ -80,14 +82,17 @@ class MongoDBProvider:
                 "mongodb+srv://username:password@cluster.mongodb.net/database"
             )
         
-        # Validate that it's a MongoDB Atlas connection (mongodb+srv://)
-        if not self.connection_string.startswith("mongodb+srv://"):
+        # Validate that it's a MongoDB Atlas connection (mongodb+srv://) or local (mongodb://)
+        if not (self.connection_string.startswith("mongodb+srv://") or self.connection_string.startswith("mongodb://")):
             raise ValueError(
-                "Only MongoDB Atlas connections (mongodb+srv://) are supported. "
+                "Only MongoDB Atlas connections (mongodb+srv://) or local MongoDB (mongodb://) are supported. "
                 f"Received: {self.connection_string[:30]}..."
             )
         
-        self.logger.info("✅ Using MongoDB Atlas connection")
+        if self.connection_string.startswith("mongodb+srv://"):
+            self.logger.info("✅ Using MongoDB Atlas connection")
+        else:
+            self.logger.info("✅ Using local MongoDB connection")
         
         # Extract database name from Atlas connection string
         # Format: mongodb+srv://user:pass@cluster.mongodb.net/dbname?options
@@ -115,7 +120,7 @@ class MongoDBProvider:
         Get or create the shared MongoDBProvider singleton instance.
         
         Args:
-            connection_string: MongoDB Atlas connection string (only used on first call).
+            connection_string: MongoDB connection string (Atlas or local, only used on first call).
             
         Returns:
             The singleton MongoDBProvider instance.
@@ -158,7 +163,7 @@ class MongoDBProvider:
 
     async def connect(self) -> None:
         """
-        Establish connection to MongoDB Atlas.
+        Establish connection to MongoDB (Atlas or local).
         
         Handles event loop changes by recreating the client if needed.
         Safe to call multiple times.
@@ -203,23 +208,31 @@ class MongoDBProvider:
 
             # Create client if needed
             if self.client is None:
-                # MongoDB Atlas connection parameters
+                # MongoDB connection parameters
                 client_kwargs = {
                     "serverSelectionTimeoutMS": 10000,
                     "connectTimeoutMS": 10000,
                     "socketTimeoutMS": 30000,
-                    "tls": True,
-                    "tlsAllowInvalidCertificates": False,
                 }
                 
-                # Ensure standard Atlas parameters are present
-                if "?" not in self.connection_string:
-                    self.connection_string = f"{self.connection_string}?retryWrites=true&w=majority"
-                elif "retryWrites" not in self.connection_string:
-                    separator = "&" if "?" in self.connection_string else "?"
-                    self.connection_string = f"{self.connection_string}{separator}retryWrites=true&w=majority"
-                
-                self.logger.debug("Configuring MongoDB Atlas connection with SSL/TLS")
+                # Add Atlas-specific parameters only for Atlas connections
+                if self.connection_string.startswith("mongodb+srv://"):
+                    client_kwargs.update({
+                        "tls": True,
+                        "tlsAllowInvalidCertificates": False,
+                    })
+                    
+                    # Ensure standard Atlas parameters are present
+                    if "?" not in self.connection_string:
+                        self.connection_string = f"{self.connection_string}?retryWrites=true&w=majority"
+                    elif "retryWrites" not in self.connection_string:
+                        separator = "&" if "?" in self.connection_string else "?"
+                        self.connection_string = f"{self.connection_string}{separator}retryWrites=true&w=majority"
+                    
+                    self.logger.debug("Configuring MongoDB Atlas connection with SSL/TLS")
+                else:
+                    # Local MongoDB - no TLS required
+                    self.logger.debug("Configuring local MongoDB connection")
                 
                 self.client = AsyncIOMotorClient(
                     self.connection_string,
@@ -257,7 +270,7 @@ class MongoDBProvider:
             self._connecting = False
 
     async def disconnect(self) -> None:
-        """Close MongoDB Atlas connection if active."""
+        """Close MongoDB connection if active."""
         if not self._connected and self.client is None:
             self.logger.debug("Already disconnected from MongoDB Atlas")
             return
@@ -300,10 +313,10 @@ class MongoDBProvider:
 
     async def health_check(self) -> bool:
         """
-        Perform health check against MongoDB Atlas.
+        Perform health check against MongoDB.
         
         Returns:
-            True if MongoDB Atlas is healthy, False otherwise.
+            True if MongoDB is healthy, False otherwise.
         """
         if not self._connected:
             return False

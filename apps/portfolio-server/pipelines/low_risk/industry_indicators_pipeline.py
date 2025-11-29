@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 import polars as pl
 import pandas as pd
 import numpy as np
-
+from .angelone_batch_fetcher import AngelOneBatchFetcher
 logger = logging.getLogger(__name__)
 
 
