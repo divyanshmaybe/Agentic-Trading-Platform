@@ -255,7 +255,7 @@ def publish_signal_to_kafka(
     safe_confidence = float(confidence or 0.0)
     
     # Extract reference_price from stocktechdata
-    reference_price = 0.0
+    reference_price = None  # Use None instead of 0.0 to indicate missing price
     try:
         # stocktechdata format: "Current price: 3500.50, timestamp: 2024-01-15 10:30:00"
         if stocktechdata and "Current price:" in stocktechdata:
@@ -263,9 +263,9 @@ def publish_signal_to_kafka(
             reference_price = float(price_str)
             print(f"[PRICE] ✅ Extracted reference_price={reference_price} for {symbol}")
         else:
-            print(f"[PRICE] ⚠️ Could not extract price from stocktechdata: {stocktechdata[:100]}")
+            print(f"[PRICE] ⚠️ Could not extract price from stocktechdata (will be fetched later): {stocktechdata[:100] if stocktechdata else 'None'}")
     except (ValueError, IndexError, AttributeError) as exc:
-        print(f"[PRICE] ⚠️ Failed to parse reference_price for {symbol}: {exc}")
+        print(f"[PRICE] ⚠️ Failed to parse reference_price for {symbol}: {exc} (will be fetched later)")
     
     event = NSESignalEvent(
         symbol=symbol,
@@ -555,25 +555,29 @@ def fetch_stock_data(symbol: str, filing_time: str) -> str:
             "X-Service-Secret": internal_secret,
         }
         
-        with httpx.Client(timeout=5.0) as client:
+        # Increased timeout from 5s to 15s to prevent timeouts during signal generation
+        with httpx.Client(timeout=15.0) as client:
             response = client.get(url, params=params, headers=headers)
             if response.status_code == 200:
                 data = response.json()
                 if data.get("data") and len(data["data"]) > 0:
                     price = data["data"][0].get("price")
                     if price:
+                        print(f"[PRICE] ✅ Fetched live price for {symbol}: ₹{price}")
                         return f"Current price: {price}, timestamp: {filing_time}"
             
-            # If API call failed, return error
+            # If API call failed, log but DON'T return error - will trigger fallback
             error_msg = f"HTTP {response.status_code}: {response.text[:100]}"
             print(f"[WARN] Market service API call failed for {symbol}: {error_msg}")
             logging.warning(f"Market service API call failed for {symbol}: {error_msg}")
-            return f"Error fetching price: {error_msg[:200]}"
+            # Return empty string to trigger fallback in signal processing
+            return ""
     except Exception as exc:
         error_msg = str(exc)
         print(f"[WARN] Market service price fetch failed for {symbol}: {exc}")
         logging.warning(f"Market service price fetch failed for {symbol}: {exc}")
-        return f"Error fetching price: {error_msg[:200]}"
+        # Return empty string to trigger fallback in signal processing
+        return ""
 
 
 # ============================================================================

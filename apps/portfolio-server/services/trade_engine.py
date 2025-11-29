@@ -46,20 +46,18 @@ class TradeEngine:
         await self._ensure_portfolio(payload.portfolio_id)
 
         if payload.order_type == "market":
-            # For manual trades, use longer timeout and fallback to get_or_fetch_price
+            # NO FALLBACK - Fail fast if price not available
             try:
-                # First try with longer timeout (15 seconds for manual trades)
-                execution_price = await await_live_price(payload.symbol, timeout=15.0)
-            except RuntimeError:
-                # If await_live_price times out, fallback to get_or_fetch_price
-                # This handles cases where the symbol isn't subscribed yet or market data is busy
-                self.market_data.register_symbol(payload.symbol)
-                price = self.market_data.get_latest_price(payload.symbol)
-                if price is None:
-                    price = self.market_data.get_or_fetch_price(payload.symbol)
-                if price is None:
-                    raise RuntimeError(f"Unable to fetch price for {payload.symbol} after timeout and fallback attempts")
-                execution_price = price
+                execution_price = await await_live_price(payload.symbol, timeout=10.0)
+            except RuntimeError as price_error:
+                logger.error(
+                    f"❌ Price unavailable for {payload.symbol}: {price_error}. "
+                    f"Trade will be rejected - no fallback pricing."
+                )
+                raise RuntimeError(
+                    f"Cannot execute trade for {payload.symbol}: Price data unavailable. "
+                    f"Check if symbol is valid in Angel One token map."
+                ) from price_error
             
             trade = await self._execute_market_order(payload, execution_price)
             trades = [trade]
@@ -73,11 +71,26 @@ class TradeEngine:
         return TradeExecutionResult(trades=trades, pending_orders=pending, portfolio=portfolio_snapshot)
 
     async def process_pending_trade(self, trade_id: str) -> bool:
+        import time
+        start_time = time.time()
+        
         trade = await self.prisma.trade.find_unique(where={"id": trade_id})
         if not trade or trade.status != "pending":
             return False
 
-        price = await await_live_price(trade.symbol, timeout=15.0)
+        # Use shorter timeout for TP/SL orders (should have cached price from WebSocket)
+        price_start = time.time()
+        try:
+            price = await await_live_price(trade.symbol, timeout=3.0)
+            price_time = (time.time() - price_start) * 1000
+            print(f"[PERF] Price fetch for {trade.symbol} took {price_time:.1f}ms")
+        except RuntimeError as price_error:
+            price_time = (time.time() - price_start) * 1000
+            print(
+                f"⚠️  [SKIP] TP/SL order {trade_id} for {trade.symbol} skipped - "
+                f"price unavailable after {price_time:.1f}ms: {price_error}"
+            )
+            return False  # Skip this order, will be retried in next monitoring cycle
 
         should_execute = False
         if trade.order_type == "limit" and trade.limit_price:
@@ -126,8 +139,18 @@ class TradeEngine:
                 )
         
         # Create payload for execution (will create/update TradeExecutionLog)
+        exec_start = time.time()
         updated_trade = await self._execute_market_order(payload, price, existing_trade_id=trade.id)
+        exec_time = (time.time() - exec_start) * 1000
+        print(f"[PERF] Market order execution for {trade.symbol} took {exec_time:.1f}ms")
+        
+        portfolio_start = time.time()
         portfolio_snapshot = await self._build_portfolio_snapshot(trade.portfolio_id)
+        portfolio_time = (time.time() - portfolio_start) * 1000
+        print(f"[PERF] Portfolio snapshot for TP/SL order took {portfolio_time:.1f}ms")
+        
+        total_time = (time.time() - start_time) * 1000
+        print(f"[PERF] Total TP/SL order processing for {trade.symbol} took {total_time:.1f}ms")
 
         return True
 

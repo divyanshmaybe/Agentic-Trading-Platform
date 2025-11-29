@@ -123,17 +123,38 @@ class MarketDataService:
         return cls._instance
     
     def _load_token_map(self):
-        """Load token map from cache file"""
+        """Load token map from Angel One API - ALL symbols"""
         try:
-            from angelone_token_generator import load_angelone_token_map
-            token_file = os.path.join(
-                os.path.dirname(__file__),
-                "../../apps/portfolio-server/docs/angelone_tokens.json"
-            )
-            self._token_map = load_angelone_token_map(token_file)
-            logger.info(f"✅ Loaded {len(self._token_map):,} tokens")
+            import httpx
+            
+            # Fetch directly from Angel One API
+            url = "https://margincalculator.angelone.in/OpenAPI_File/files/OpenAPIScripMaster.json"
+            response = httpx.get(url, timeout=30)
+            response.raise_for_status()
+            
+            instruments = response.json()
+            
+            # Load ALL symbols (no filtering)
+            token_map = {}
+            for instrument in instruments:
+                symbol = instrument.get("symbol", "")
+                if symbol:  # Only skip if symbol is empty
+                    token_map[symbol] = {
+                        "token": instrument["token"],
+                        "symbol": symbol,
+                        "name": instrument.get("name", ""),
+                        "expiry": instrument.get("expiry", ""),
+                        "strike": instrument.get("strike", ""),
+                        "lotsize": instrument.get("lotsize", "1"),
+                        "instrumenttype": instrument.get("instrumenttype", ""),
+                        "exch_seg": instrument.get("exch_seg", ""),
+                        "tick_size": instrument.get("tick_size", "0.05"),
+                    }
+            
+            self._token_map = token_map
+            logger.info(f"✅ Loaded {len(self._token_map):,} symbols from Angel One API (all exchanges)")
         except Exception as e:
-            logger.warning(f"Failed to load token map: {e}")
+            logger.error(f"❌ Failed to load token map from Angel One API: {e}")
             self._token_map = {}
     
     def _login(self):
@@ -222,6 +243,24 @@ class MarketDataService:
         """Get token info for symbol"""
         normalized = self._normalize_symbol(symbol)
         return self._token_map.get(normalized)
+    
+    def has_symbol(self, symbol: str) -> bool:
+        """Check if symbol exists in Angel One token map"""
+        normalized = self._normalize_symbol(symbol)
+        return normalized in self._token_map
+    
+    def search_similar_symbols(self, symbol: str, limit: int = 5) -> List[str]:
+        """Find similar symbols in token map (for debugging invalid symbols)"""
+        normalized = self._normalize_symbol(symbol).upper()
+        matches = []
+        
+        for token_symbol in self._token_map.keys():
+            if normalized in token_symbol or token_symbol in normalized:
+                matches.append(token_symbol)
+                if len(matches) >= limit:
+                    break
+        
+        return matches
     
     async def _start_websocket(self):
         """Start WebSocket connection in background"""
@@ -444,25 +483,19 @@ class MarketDataService:
         # Get the token map symbol for subscription (might be different format)
         token_info = self._get_token_info(normalized)
         if not token_info:
-            # FALLBACK: Try Yahoo Finance if symbol not in Angel One token map
-            logger.warning(f"Symbol {normalized} not in Angel One token map, trying Yahoo Finance fallback...")
-            try:
-                import yfinance as yf
-                # For NSE stocks, try with .NS suffix
-                ticker_symbol = f"{normalized}.NS" if not normalized.endswith(".NS") else normalized
-                ticker = yf.Ticker(ticker_symbol)
-                hist = ticker.history(period="1d", interval="1m")
-                if not hist.empty:
-                    latest_price = Decimal(str(hist['Close'].iloc[-1]))
-                    logger.info(f"✅ Fetched {normalized} from Yahoo Finance: ₹{latest_price:.2f}")
-                    # Cache it for future use
-                    self._prices[normalized] = latest_price
-                    return latest_price
-                else:
-                    raise RuntimeError(f"Yahoo Finance returned no data for {ticker_symbol}")
-            except Exception as yf_error:
-                logger.error(f"Yahoo Finance fallback failed for {normalized}: {yf_error}")
-                raise RuntimeError(f"Symbol {normalized} not in token map and Yahoo Finance fallback failed: {yf_error}")
+            # NO FALLBACK - Fail fast if symbol not in Angel One token map
+            similar = self.search_similar_symbols(normalized, limit=3)
+            similar_msg = f" Similar symbols found: {', '.join(similar)}" if similar else ""
+            
+            logger.error(
+                f"❌ Symbol {normalized} not found in Angel One token map. "
+                f"This symbol is either delisted, invalid, or not supported by Angel One. "
+                f"Total available symbols: {len(self._token_map):,}.{similar_msg}"
+            )
+            raise RuntimeError(
+                f"Symbol '{normalized}' not found in Angel One token map. "
+                f"Check if the symbol is valid and supported by Angel One.{similar_msg}"
+            )
 
         
         # Use the token map key for subscription

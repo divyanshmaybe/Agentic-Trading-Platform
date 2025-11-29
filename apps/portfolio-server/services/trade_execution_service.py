@@ -344,6 +344,112 @@ class TradeExecutionService:
         if portfolio_id:
             trade_data["portfolio_id"] = portfolio_id
 
+        # ============================================================
+        # DEDUPLICATION: Check for existing trades before creating
+        # ============================================================
+        # Check 1: Is there already a PENDING/ACTIVE trade for this symbol?
+        # Check 2: Was there a recent trade in the last 5 minutes?
+        # Check 3: For BUY/SHORT_SELL: Is there already an OPEN position?
+        
+        symbol = trade_data["symbol"]
+        trade_side = trade_data["side"].upper()
+        dedup_window_minutes = 5
+        cutoff_time = datetime.utcnow() - timedelta(minutes=dedup_window_minutes)
+        
+        # Check for pending/active trades for this symbol in this portfolio
+        existing_pending_trades = await client.trade.find_many(
+            where={
+                "symbol": symbol,
+                "portfolio_id": portfolio_id,
+                "status": {"in": ["pending", "active"]},
+            },
+            take=1,
+        )
+        
+        if existing_pending_trades:
+            existing_trade = existing_pending_trades[0]
+            self.logger.warning(
+                "⚠️ DUPLICATE TRADE PREVENTED: Trade %s already exists for %s (status: %s, side: %s) in portfolio %s. Skipping new %s trade.",
+                existing_trade.id,
+                symbol,
+                existing_trade.status,
+                existing_trade.side,
+                portfolio_id,
+                trade_side,
+            )
+            # Return the existing trade wrapped in a TradeExecutionRecord
+            # We need to find or create a TradeExecutionLog for it
+            existing_log = await client.tradeexecutionlog.find_first(
+                where={"trade_id": existing_trade.id},
+            )
+            if existing_log:
+                return TradeExecutionRecord(
+                    id=existing_log.id,
+                    request_id=existing_log.request_id,
+                    status=existing_log.status,
+                    broker_order_id=getattr(existing_log, "broker_order_id", None),
+                )
+            else:
+                # Create a minimal log if none exists (shouldn't happen)
+                self.logger.warning("Creating fallback TradeExecutionLog for existing trade %s", existing_trade.id)
+                fallback_log = await client.tradeexecutionlog.create(
+                    data={
+                        "trade_id": existing_trade.id,
+                        "request_id": job_row["request_id"],
+                        "status": "pending",
+                        "order_type": "market",
+                        "metadata": json.dumps({"deduplication": "fallback_log"}),
+                    }
+                )
+                return TradeExecutionRecord(
+                    id=fallback_log.id,
+                    request_id=fallback_log.request_id,
+                    status=fallback_log.status,
+                    broker_order_id=None,
+                )
+        
+        # Check for recent trades (within last 5 minutes)
+        recent_trades = await client.trade.find_many(
+            where={
+                "symbol": symbol,
+                "portfolio_id": portfolio_id,
+                "created_at": {"gte": cutoff_time},
+            },
+            take=1,
+        )
+        
+        if recent_trades:
+            recent_trade = recent_trades[0]
+            self.logger.warning(
+                "⚠️ DUPLICATE TRADE PREVENTED: Recent trade %s for %s created at %s (within %d min window) in portfolio %s. Skipping new %s trade.",
+                recent_trade.id,
+                symbol,
+                recent_trade.created_at,
+                dedup_window_minutes,
+                portfolio_id,
+                trade_side,
+            )
+            # Return existing log
+            existing_log = await client.tradeexecutionlog.find_first(
+                where={"trade_id": recent_trade.id},
+            )
+            if existing_log:
+                return TradeExecutionRecord(
+                    id=existing_log.id,
+                    request_id=existing_log.request_id,
+                    status=existing_log.status,
+                    broker_order_id=getattr(existing_log, "broker_order_id", None),
+                )
+        
+        # ============================================================
+        # All deduplication checks passed - create the trade
+        # ============================================================
+        # Note: We don't check for open positions here because:
+        # 1. Layer 1 (signal deduplication) already prevents duplicate signals
+        # 2. Recent trade check (5 min window) catches duplicates
+        # 3. Pending/active trade check prevents concurrent duplicates
+        # 4. Position checks would prevent legitimate adding to positions
+
         # Create Trade record first
         trade_record = await client.trade.create(data=trade_data)
         self.logger.debug("✅ Created Trade record: %s", trade_record.id)
@@ -1515,6 +1621,9 @@ class TradeExecutionService:
                     )
 
             # Create or update position for this trade
+            import time
+            position_start = time.time()
+            
             self.logger.info(
                 "🔄 Calling _create_or_update_position: portfolio=%s, symbol=%s, side=%s, qty=%d, price=%.2f, trade=%s, agent=%s",
                 portfolio_id,
@@ -1535,10 +1644,15 @@ class TradeExecutionService:
                 client=client,
                 agent_id=agent_id,  # Link position to trading agent
             )
-            self.logger.info("✅ _create_or_update_position completed for %s", symbol)
+            position_time = (time.time() - position_start) * 1000
+            self.logger.info("✅ [PERF] Position update for %s took %.1fms", symbol, position_time)
 
             # Trigger portfolio value recalculation
+            portfolio_start = time.time()
             await self._recalculate_portfolio_value(portfolio_id, client)
+            portfolio_time = (time.time() - portfolio_start) * 1000
+            if portfolio_time > 10:
+                self.logger.info("✅ [PERF] Portfolio recalc took %.1fms", portfolio_time)
             
         except Exception as exc:
             self.logger.error(

@@ -524,11 +524,11 @@ if ECONOMIC_INDICATORS_ENABLED:
         },
     }
     
-        logging.info(
-            f"📅 Economic indicators scheduled: {ECONOMIC_INDICATORS_UPDATE_DAY}th at "
-            f"{ECONOMIC_INDICATORS_UPDATE_HOUR:02d}:{ECONOMIC_INDICATORS_UPDATE_MINUTE:02d} IST "
-            f"(UTC: {utc_day}th at {utc_hour:02d}:{utc_minute:02d})"
-        )
+    logging.info(
+        f"📅 Economic indicators scheduled: {ECONOMIC_INDICATORS_UPDATE_DAY}th at "
+        f"{ECONOMIC_INDICATORS_UPDATE_HOUR:02d}:{ECONOMIC_INDICATORS_UPDATE_MINUTE:02d} IST "
+        f"(UTC: {utc_day}th at {utc_hour:02d}:{utc_minute:02d})"
+    )
 
 # Industry Indicators - runs daily (configurable, in IST)
 INDUSTRY_INDICATORS_ENABLED = os.getenv("INDUSTRY_INDICATORS_ENABLED", "true").lower() in {"1", "true", "yes"}

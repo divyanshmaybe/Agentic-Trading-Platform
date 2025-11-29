@@ -66,7 +66,7 @@ logger = logging.getLogger(__name__)
 # Configuration
 ENABLED = os.getenv("STREAMING_ORDER_MONITOR_ENABLED", "true").lower() in {"1", "true", "yes"}
 REFRESH_INTERVAL = float(os.getenv("ORDER_MONITOR_REFRESH_INTERVAL", "10"))  # Refresh orders every 10s
-CHECK_INTERVAL = float(os.getenv("ORDER_MONITOR_CHECK_INTERVAL", "0.5"))  # Check conditions every 0.5s
+CHECK_INTERVAL = float(os.getenv("ORDER_MONITOR_CHECK_INTERVAL", "0.1"))  # Check conditions every 0.1s (100ms for sub-second response)
 
 # Global monitor instance
 _monitor: Optional[PathwayOrderMonitor] = None

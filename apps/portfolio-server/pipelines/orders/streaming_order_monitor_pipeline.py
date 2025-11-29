@@ -343,6 +343,9 @@ class PathwayOrderMonitor:
         
         self._executing.add(signal.order_id)
         
+        import time
+        exec_start = time.time()
+        
         try:
             logger.info(
                 f"🎯 Executing order {signal.order_id} ({signal.symbol}): "
@@ -356,8 +359,10 @@ class PathwayOrderMonitor:
             if signal.source_model == "trade":
                 executed = await engine.process_pending_trade(signal.order_id)
                 
+                exec_time = (time.time() - exec_start) * 1000
+                
                 if executed:
-                    logger.info(f"✅ Order {signal.order_id} executed successfully")
+                    logger.info(f"✅ Order {signal.order_id} executed successfully in {exec_time:.1f}ms")
                     
                     # Remove from pending orders cache
                     if signal.order_id in self._pending_orders:
@@ -369,7 +374,7 @@ class PathwayOrderMonitor:
                             if not self._orders_by_symbol[order.symbol]:
                                 del self._orders_by_symbol[order.symbol]
                 else:
-                    logger.warning(f"⚠️  Order {signal.order_id} execution returned False")
+                    logger.warning(f"⚠️  Order {signal.order_id} execution returned False (took {exec_time:.1f}ms)")
             
             # Call custom callback if provided
             if self.execution_callback:

@@ -33,7 +33,7 @@ class IndustryIndicatorsPipeline:
         angel_one_fetcher=None,
         period: str = "1y",
         interval: str = "1d",
-        benchmark_ticker: str = "^CRSLDX",
+        benchmark_ticker: str = "NIFTY 50",
         rsi_length: int = 14
     ):
         """
@@ -56,39 +56,67 @@ class IndustryIndicatorsPipeline:
         if not self.angel_one_fetcher:
             raise ValueError("angel_one_fetcher is required (AngelOneBatchFetcher instance)")
 
-        # Load stock data (use pandas for CSV reading, then convert to Polars)
-        # Try semicolon delimiter first (common in some CSV files), fallback to comma
+        # Load stock data - CSV uses semicolon delimiter
+        logger.info(f"Loading stocks from {stocks_csv_path}")
         try:
             stocks_df_pd = pd.read_csv(stocks_csv_path, sep=';')
-        except Exception:
-            stocks_df_pd = pd.read_csv(stocks_csv_path)
+            logger.info(f"Loaded {len(stocks_df_pd)} stocks with columns: {stocks_df_pd.columns.tolist()}")
+        except Exception as e:
+            logger.error(f"Failed to load CSV: {e}")
+            raise
         
-        # Handle column name variations (Symbol vs symbol)
-        symbol_col = None
-        for col in ['Symbol', 'symbol', 'SYMBOL']:
-            if col in stocks_df_pd.columns:
-                symbol_col = col
-                break
+        # Normalize column names - strip whitespace and convert to lowercase
+        stocks_df_pd.columns = stocks_df_pd.columns.str.strip().str.lower()
         
-        if symbol_col is None:
-            raise ValueError(f"No 'Symbol' column found in CSV. Available columns: {stocks_df_pd.columns.tolist()}")
+        # Verify required columns exist
+        required_cols = ['symbol', 'industry']
+        missing_cols = [col for col in required_cols if col not in stocks_df_pd.columns]
+        if missing_cols:
+            raise ValueError(f"Missing required columns: {missing_cols}. Available: {stocks_df_pd.columns.tolist()}")
         
-        # Filter out dummy symbols
-        stocks_df_pd = stocks_df_pd.loc[
-            stocks_df_pd[symbol_col] != 'DUMMYSKFIN', :
+        # Filter out dummy/invalid symbols
+        stocks_df_pd = stocks_df_pd[
+            (stocks_df_pd['symbol'].notna()) & 
+            (stocks_df_pd['symbol'] != '') &
+            (stocks_df_pd['symbol'] != 'DUMMYSKFIN') &
+            (stocks_df_pd['industry'].notna())
         ].reset_index(drop=True)
         
-        # Normalize column names to lowercase for consistency
-        stocks_df_pd.columns = stocks_df_pd.columns.str.lower()
-        if 'symbol' not in stocks_df_pd.columns:
-            raise ValueError(f"After normalization, 'symbol' column not found. Columns: {stocks_df_pd.columns.tolist()}")
+        logger.info(f"After filtering: {len(stocks_df_pd)} valid stocks")
         
         # Convert to Polars
         self.stocks_df = pl.from_pandas(stocks_df_pd)
 
-        # Create mappings
+        # Create mappings (symbols are plain, no .NS suffix for Angel One)
         self.industry_ticker_map = self._create_industry_ticker_map()
         self.ticker_industry_map = self._create_ticker_industry_map()
+        
+        # Filter out symbols without valid tokens (if fetcher provided)
+        if self.angel_one_fetcher:
+            valid_tickers = []
+            invalid_count = 0
+            for ticker in self.ticker_industry_map.keys():
+                token_info = self.angel_one_fetcher._get_token_info(ticker)
+                if token_info and token_info.get('token'):
+                    valid_tickers.append(ticker)
+                else:
+                    invalid_count += 1
+            
+            if invalid_count > 0:
+                logger.warning(f"Filtered out {invalid_count} symbols without valid tokens")
+                # Update mappings to only include valid tickers
+                self.ticker_industry_map = {t: self.ticker_industry_map[t] for t in valid_tickers}
+                # Rebuild industry_ticker_map with only valid tickers
+                new_industry_map = {}
+                for ticker in valid_tickers:
+                    industry = self.ticker_industry_map[ticker]
+                    if industry not in new_industry_map:
+                        new_industry_map[industry] = []
+                    new_industry_map[industry].append(ticker)
+                self.industry_ticker_map = new_industry_map
+
+        logger.info(f"Total industries: {len(self.industry_ticker_map)}")
+        logger.info(f"Total tickers: {len(self.ticker_industry_map)}")
 
         # Cached results (Polars DataFrames)
         self.per_ticker_df: Optional[pl.DataFrame] = None
@@ -150,6 +178,11 @@ class IndustryIndicatorsPipeline:
         Returns:
             Polars Series with RSI values
         """
+        # Need at least length+1 points to calculate RSI
+        if len(close_series) < length + 1:
+            # Not enough data, return nulls
+            return pl.Series([None] * len(close_series))
+        
         # Calculate price changes
         delta = close_series.diff()
         
@@ -158,19 +191,21 @@ class IndustryIndicatorsPipeline:
         losses = (-delta).clip(lower_bound=0)
         
         # Calculate rolling averages
-        avg_gain = gains.rolling_mean(window_size=length)
-        avg_loss = losses.rolling_mean(window_size=length)
+        avg_gain = gains.rolling_mean(window_size=length, min_periods=length)
+        avg_loss = losses.rolling_mean(window_size=length, min_periods=length)
         
         # Calculate RS (relative strength)
         rs = avg_gain / avg_loss
         
         # Handle division by zero (when avg_loss is 0, RSI = 100)
+        # Replace inf with large number, then calculate RSI
         rs = rs.fill_nan(0.0)
+        rs = pl.when(rs.is_infinite()).then(100.0).otherwise(rs)
         
         # Calculate RSI
         rsi = 100 - (100 / (1 + rs))
         
-        return rsi.fill_nan(50.0)  # Default to 50 if calculation fails
+        return rsi  # Keep nulls for warm-up period
 
     @staticmethod
     def _ensure_tidy_polars(raw: pl.DataFrame) -> pl.DataFrame:

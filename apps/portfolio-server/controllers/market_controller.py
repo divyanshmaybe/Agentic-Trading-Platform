@@ -130,25 +130,45 @@ class MarketController:
         return self._service
 
     async def _get_price(self, provider_symbol: str) -> tuple[Optional[Decimal], str, str]:
-        # For live price (no candles), use WebSocket only to avoid REST API calls
-        # Only use WebSocket service if explicitly enabled
-        use_websocket = os.getenv("MARKET_DATA_USE_WEBSOCKET", "true").lower() in ("true", "1", "yes")
-        if not use_websocket:
-            return None, "unavailable", "websocket-disabled"
+        # NO FALLBACK: Fail fast if price not available
+        # 1. Check cache (instant)
+        # 2. Wait for WebSocket (up to 10s)
+        # 3. If both fail, return None (no REST API fallback)
         
-        # WebSocket for live prices
-        try:
-            price = self.service.get_latest_price(provider_symbol)
-            if price is not None:
-                return price, "cache", self.service.adapter.name
+        import time
+        start_time = time.time()
+        
+        use_websocket = os.getenv("MARKET_DATA_USE_WEBSOCKET", "true").lower() in ("true", "1", "yes")
+        
+        # Try WebSocket first if enabled
+        if use_websocket:
+            try:
+                # Check cache first (instant)
+                price = self.service.get_latest_price(provider_symbol)
+                if price is not None:
+                    logger.debug(f"[PERF] {provider_symbol} from cache in {(time.time()-start_time)*1000:.1f}ms")
+                    return price, "cache", self.service.adapter.name
 
-            self.service.register_symbol(provider_symbol)
-            price = await self.service.await_price(provider_symbol, timeout=3.0)
-            if price is not None:
-                return price, "live-stream", self.service.adapter.name
-        except RuntimeError:
-            price = None
+                # Subscribe and wait (10s timeout)
+                self.service.register_symbol(provider_symbol)
+                ws_start = time.time()
+                price = await self.service.await_price(provider_symbol, timeout=10.0)
+                if price is not None:
+                    logger.info(f"[PERF] {provider_symbol} from WebSocket in {(time.time()-ws_start)*1000:.1f}ms")
+                    return price, "live-stream", self.service.adapter.name
+            except RuntimeError as ws_err:
+                logger.error(
+                    f"❌ {provider_symbol} not available after {(time.time()-start_time)*1000:.1f}ms: {ws_err}. "
+                    f"Symbol may not be in Angel One token map or connection failed."
+                )
+            except Exception as ws_exc:
+                logger.error(f"❌ WebSocket error for {provider_symbol}: {ws_exc}")
 
+        # NO FALLBACK - fail fast
+        logger.error(
+            f"❌ Price unavailable for {provider_symbol} after {(time.time()-start_time)*1000:.1f}ms. "
+            f"Check if symbol exists in Angel One token map."
+        )
         return None, "unavailable", self.service.adapter.name if self._service else "unavailable"
 
     async def _fetch_rest_price(self, provider_symbol: str) -> Optional[Decimal]:

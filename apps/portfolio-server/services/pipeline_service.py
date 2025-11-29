@@ -61,6 +61,16 @@ class PipelineService:
         self.status_file = Path(self.server_dir) / "pipeline_status.json"
         self.news_status_file = Path(self.server_dir) / "news_pipeline_status.json"
         self._env_loaded = False
+        
+        # Initialize Redis for signal deduplication tracking
+        try:
+            from redis import Redis
+            redis_url = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
+            self._redis_client = Redis.from_url(redis_url, decode_responses=True)
+            self.logger.debug("✅ Redis client initialized for signal deduplication")
+        except Exception as redis_exc:
+            self._redis_client = None
+            self.logger.warning("⚠️ Redis client not available for signal deduplication: %s", redis_exc)
 
     # ---------------------------------------------------------------------
     # Public API
@@ -1645,6 +1655,52 @@ class PipelineService:
                     # Process trade signal immediately for active agents using Celery task
                     if signal in [1, -1]:  # Only process BUY (1) or SELL (-1) signals
                         try:
+                            # ============================================================
+                            # SIGNAL DEDUPLICATION: Prevent duplicate signals from being sent to workers
+                            # ============================================================
+                            signal_direction = "BUY" if signal == 1 else "SELL"
+                            dedup_key = f"signal:processed:{symbol}:{signal_direction}"
+                            dedup_window_seconds = 300  # 5 minutes
+                            
+                            # Check if we already processed this exact signal recently
+                            if self._redis_client:
+                                try:
+                                    existing_signal = self._redis_client.get(dedup_key)
+                                    if existing_signal:
+                                        self.logger.warning(
+                                            "⚠️ DUPLICATE SIGNAL BLOCKED: %s %s signal already processed in last %d seconds. Skipping to prevent duplicate trades.",
+                                            symbol,
+                                            signal_direction,
+                                            dedup_window_seconds
+                                        )
+                                        return  # Skip this duplicate signal
+                                    
+                                    # Mark this signal as processed (with expiry)
+                                    self._redis_client.setex(
+                                        dedup_key,
+                                        dedup_window_seconds,
+                                        datetime.utcnow().isoformat()
+                                    )
+                                    self.logger.debug(
+                                        "✅ Signal deduplication key set: %s (expires in %ds)",
+                                        dedup_key,
+                                        dedup_window_seconds
+                                    )
+                                except Exception as redis_exc:
+                                    self.logger.warning(
+                                        "⚠️ Redis deduplication check failed for %s: %s. Proceeding without deduplication.",
+                                        symbol, redis_exc
+                                    )
+                            else:
+                                self.logger.debug(
+                                    "⚠️ Redis not available - signal deduplication disabled for %s",
+                                    symbol
+                                )
+                            
+                            # ============================================================
+                            # Proceed with signal processing after deduplication check
+                            # ============================================================
+                            
                             from workers.pipeline_tasks import process_trade_signal
                             from celery_app import celery_app
                             
@@ -1670,20 +1726,34 @@ class PipelineService:
                                 # Store signal for manual retry
                                 self.logger.warning(
                                     "⚠️  Signal stored in trading_signals.jsonl for manual processing: %s %s @ confidence=%.2f",
-                                    symbol, "BUY" if signal == 1 else "SELL", row.get("confidence", 0.7)
+                                    symbol, signal_direction, row.get("confidence", 0.7)
                                 )
+                                # Clear the deduplication key if we couldn't enqueue
+                                if self._redis_client:
+                                    try:
+                                        self._redis_client.delete(dedup_key)
+                                    except:
+                                        pass
                             else:
                                 # Enqueue trade signal processing via Celery (async, non-blocking)
                                 task = process_trade_signal.apply_async(args=[signal_payload])
                                 self.logger.info(
                                     "🚀 Enqueued trade signal processing for %s (signal: %s) - Task ID: %s",
-                                    symbol, "BUY" if signal == 1 else "SELL", task.id
+                                    symbol, signal_direction, task.id
                                 )
                         except Exception as trade_exc:
                             self.logger.error(
                                 "❌ Failed to enqueue trade for signal %s (%s): %s",
                                 symbol, signal, trade_exc, exc_info=True
                             )
+                            # Clear deduplication key on error to allow retry
+                            if self._redis_client:
+                                try:
+                                    signal_direction = "BUY" if signal == 1 else "SELL"
+                                    dedup_key = f"signal:processed:{symbol}:{signal_direction}"
+                                    self._redis_client.delete(dedup_key)
+                                except:
+                                    pass
 
             def on_signal_end():
                 self.logger.info("[PIPELINE] Signal stream ended")
