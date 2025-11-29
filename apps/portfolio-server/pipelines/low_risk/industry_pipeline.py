@@ -14,15 +14,19 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 
 import pandas as pd
-import yaml
 from jinja2 import Environment, StrictUndefined
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.agents import create_agent
 
-
 from utils.economic_indicators_storage import EconomicIndicatorsStorage, get_storage
+from utils.low_risk_utils import (
+    load_prompt_from_template,
+    render_prompt_template,
+    clean_and_parse_agent_json_response,
+    validate_percentage_list,
+)
 from .industry_indicators_pipeline import IndustryIndicatorsPipeline
 
 logger = logging.getLogger(__name__)
@@ -278,32 +282,6 @@ def create_industry_metrics_tool(
     return industry_metrics
 
 
-def load_prompt_template(prompt_file: str) -> str:
-    """
-    Load the industry selector prompt template from YAML file.
-
-    Returns:
-        Prompt template string
-    """
-    # Get template file path
-    template_dir = Path(__file__).resolve().parent.parent.parent / "templates"
-    template_file = template_dir / f"{prompt_file}"
-
-    if not template_file.exists():
-        raise FileNotFoundError(
-            f"Prompt template not found at {template_file}"
-        )
-
-    with open(template_file, "r") as f:
-        template_data = yaml.safe_load(f)
-
-    prompt = template_data.get("prompt", "")
-    if not prompt:
-        raise ValueError("Prompt template is empty in YAML file")
-
-    return prompt
-
-
 def create_industry_selection_agent(
     pipeline: IndustryIndicatorsPipeline,
     gemini_api_key: str,
@@ -328,10 +306,9 @@ def create_industry_selection_agent(
     industry_metrics_tool = create_industry_metrics_tool(pipeline)
 
     # Load and render prompt template
-    prompt_template = load_prompt_template("industry_selector_prompt.yaml")
-
-
-    rendered_prompt = Environment(undefined=StrictUndefined).from_string(prompt_template).render(
+    prompt_template = load_prompt_from_template("industry_selector_prompt.yaml")
+    rendered_prompt = render_prompt_template(
+        prompt_template,
         economic_regime=economic_regime.lower(),
         cpi_val=cpi_val,
         pmi_val=pmi_val,
@@ -381,67 +358,16 @@ def industry_selector(
     #TODO send notif to frontend kafka
     result = agent.invoke({"messages": [HumanMessage("suggest industries")]})
 
-    # Extract response from agent output
-    messages = result.get("messages", [])
-    if not messages:
-        raise ValueError("Agent returned no messages")
-
-    # Get the last message (agent response)
-    last_message = messages[-1]
-    response_text = last_message.content if hasattr(last_message, "content") else str(last_message)
-
-    # Clean response text (remove markdown code blocks if present)
-    response_text = re.sub(r"```(?:python|json)?\s*\n?", "", response_text)
-    response_text = re.sub(r"```\s*$", "", response_text)
-    response_text = response_text.strip()
-
-    # Try to extract JSON from response
-    # Look for JSON array pattern
-    json_match = re.search(r"\[.*\]", response_text, re.DOTALL)
-    if json_match:
-        response_text = json_match.group(0)
-
-    # Parse JSON
-    try:
-        industry_list = json.loads(response_text)
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse agent response as JSON: {e}")
-        logger.error(f"Response text: {response_text[:500]}")
-        raise ValueError(f"Agent response is not valid JSON: {e}")
-
-    # Validate response format
-    if not isinstance(industry_list, list):
-        raise ValueError(f"Expected list, got {type(industry_list)}")
-
-    # Validate each item
-    total_percentage = 0.0
-    for item in industry_list:
-        if not isinstance(item, dict):
-            raise ValueError(f"Expected dict in list, got {type(item)}")
-        required_keys = ["name", "percentage", "reasoning"]
-        for key in required_keys:
-            if key not in item:
-                raise ValueError(f"Missing required key '{key}' in industry allocation")
-
-        # Validate percentage is numeric
-        try:
-            percentage = float(item["percentage"])
-            total_percentage += percentage
-            item["percentage"] = percentage  # Ensure it's a float
-        except (ValueError, TypeError):
-            raise ValueError(f"Invalid percentage value: {item['percentage']}")
-
-    # Check if percentages sum to 100 (allow small rounding errors)
-    if abs(total_percentage - 100.0) > 1.0:
-        logger.warning(
-            f"Industry allocations sum to {total_percentage}%, not 100%. Adjusting..."
-        )
-        # Normalize percentages to sum to 100
-        if total_percentage > 0:
-            for item in industry_list:
-                item["percentage"] = (item["percentage"] / total_percentage) * 100.0
-        else:
-            raise ValueError("Total percentage is zero or negative")
+    # Parse and validate response using common utility
+    industry_list = clean_and_parse_agent_json_response(result, expected_type=list)
+    
+    # Validate and normalize percentages
+    industry_list = validate_percentage_list(
+        industry_list,
+        required_keys=["name", "percentage", "reasoning"],
+        normalize=True,
+        tolerance=1.0
+    )
 
     #TODO send notif to kafka frontend
     logger.info(

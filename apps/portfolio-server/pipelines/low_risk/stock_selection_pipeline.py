@@ -10,18 +10,22 @@ import json
 import logging
 import os
 import re
-from pathlib import Path
 from typing import Dict, List, Optional, Any
 
 import pandas as pd
-import yaml
 from jinja2 import Environment, StrictUndefined
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.agents import create_agent
 
-from utils.low_risk_utils import trade_converter
+from utils.low_risk_utils import (
+    trade_converter,
+    load_prompt_from_template,
+    render_prompt_template,
+    parse_json_response,
+    clean_and_parse_agent_json_response,
+)
 from .industry_pipeline import IndustrySelectionPipeline
 
 logger = logging.getLogger(__name__)
@@ -29,36 +33,6 @@ logger = logging.getLogger(__name__)
 
 # Cache for company reports to avoid regenerating
 company_report_db: Dict[str, Dict[str, Any]] = {}
-
-
-def load_prompt_from_template(template_name: str) -> str:
-    """
-    Load a prompt template from YAML file.
-
-    Args:
-        template_name: Name of the template file (without .yaml extension)
-
-    Returns:
-        Prompt template string
-
-    Raises:
-        FileNotFoundError: If template file not found
-        ValueError: If prompt is empty in template
-    """
-    template_dir = Path(__file__).resolve().parent.parent.parent / "templates"
-    template_file = template_dir / f"{template_name}.yaml"
-
-    if not template_file.exists():
-        raise FileNotFoundError(f"Prompt template not found at {template_file}")
-
-    with open(template_file, "r") as f:
-        template_data = yaml.safe_load(f)
-
-    prompt = template_data.get("prompt", "")
-    if not prompt:
-        raise ValueError(f"Prompt template '{template_name}' is empty in YAML file")
-
-    return prompt
 
 
 def generate_company_report(ticker: str, gemini_api_key: str) -> Dict[str, Any]:
@@ -96,19 +70,15 @@ def generate_company_report(ticker: str, gemini_api_key: str) -> Dict[str, Any]:
         response = model_with_search.invoke(messages)
         report_text = response.content
 
-        # Clean response (remove markdown code blocks if present)
-        if "`" in report_text:
-            report_text = report_text.replace("```json", "").replace("```python", "").replace("```", "").strip()
-
-        # Parse JSON
-        try:
-            report = json.loads(report_text)
-            logger.info(f"✓ Company report generated for {ticker}")
-            return report
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse company report as JSON: {e}")
-            logger.error(f"Report text: {report_text[:500]}")
-            raise ValueError(f"Company report is not valid JSON: {e}")
+        # Parse JSON using common utility
+        report = parse_json_response(
+            report_text,
+            expected_type=dict,
+            clean_markdown=True,
+            extract_json=True
+        )
+        logger.info(f"✓ Company report generated for {ticker}")
+        return report
 
     except Exception as e:
         logger.error(f"Error generating company report for {ticker}: {e}", exc_info=True)
@@ -242,7 +212,8 @@ def stock_selection_indwise(
         company_prompt = get_company_prompt(industry, company_df)
 
         # Render system prompt with company and strategy info
-        rendered_prompt = Environment(undefined=StrictUndefined).from_string(stock_selection_prompt).render(
+        rendered_prompt = render_prompt_template(
+            stock_selection_prompt,
             company_prompt=company_prompt,
             strategy_prompt=strategy_prompt
         )
@@ -275,36 +246,8 @@ def stock_selection_indwise(
             ]
         })
 
-        # Extract response
-        messages = result.get("messages", [])
-        if not messages:
-            raise ValueError(f"Agent returned no messages for {industry}")
-
-        # Get the last message (agent response)
-        last_message = messages[-1]
-        response_text = last_message.content if hasattr(last_message, "content") else str(last_message)
-
-        # Clean response text (remove markdown code blocks if present)
-        response_text = re.sub(r"```(?:python|json)?\s*\n?", "", response_text)
-        response_text = re.sub(r"```\s*$", "", response_text)
-        response_text = response_text.strip()
-
-        # Try to extract JSON from response
-        json_match = re.search(r"\[.*\]", response_text, re.DOTALL)
-        if json_match:
-            response_text = json_match.group(0)
-
-        # Parse JSON
-        try:
-            ind_portfolio = json.loads(response_text)
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse stock selection response as JSON: {e}")
-            logger.error(f"Response text: {response_text[:500]}")
-            raise ValueError(f"Stock selection response is not valid JSON: {e}")
-
-        # Validate response format
-        if not isinstance(ind_portfolio, list):
-            raise ValueError(f"Expected list, got {type(ind_portfolio)}")
+        # Parse response using common utility
+        ind_portfolio = clean_and_parse_agent_json_response(result, expected_type=list)
 
         # Adjust percentages based on industry allocation
         # Portfolio percentages are relative to the industry, convert to absolute
