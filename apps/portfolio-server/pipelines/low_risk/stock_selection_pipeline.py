@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Any
 
 import pandas as pd
 from jinja2 import Environment, StrictUndefined
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.agents import create_agent
@@ -117,13 +117,37 @@ def create_company_report_tool(gemini_api_key: str) -> Any:
         """
         # Check cache first
         if ticker in company_report_db:
+            #TODO send to kafka
+            to_send = {
+                "type": "report",
+                "status": "cached",
+                "content": {
+                    "ticker": ticker
+                }
+            }
             logger.info(f"📋 Using cached report for {ticker}")
             return company_report_db[ticker]
 
         # Generate new report
         try:
+            to_send = {
+                "type": "report",
+                "status": "generating",
+                "content": {
+                    "ticker": ticker
+                }
+            }
+            #TODO send to kafka
             report = generate_company_report(ticker, gemini_api_key)
             company_report_db[ticker] = report
+            to_send = {
+                "type": "report",
+                "status": "generated",
+                "content": {
+                    "ticker": ticker
+                }
+            }
+            #TODO send to kafka
             return report
         except Exception as e:
             logger.error(f"company_report_tool failed for {ticker}: {e}")
@@ -161,14 +185,14 @@ def get_company_prompt(industry: str, company_df: pd.DataFrame) -> str:
         String containing company names and descriptions
     """
     company_prompt = ""
-    
+
     # Filter companies by industry
     industry_companies = company_df[company_df["Industry"] == industry]
-    
+
     if industry_companies.empty:
         logger.warning(f"No companies found for industry: {industry}")
         return f"No companies available for {industry}"
-    
+
     # Build company prompt
     for _, row in industry_companies.iterrows():
         company_name = row.get("Company Name", "")
@@ -178,7 +202,7 @@ def get_company_prompt(industry: str, company_df: pd.DataFrame) -> str:
             if company_brief:
                 company_prompt += f" - {company_brief}"
             company_prompt += "\n"
-    
+
     return company_prompt.strip()
 
 
@@ -202,6 +226,7 @@ def stock_selection_indwise(
         [{"ticker": str, "percentage": float, "reasoning": str}, ...]
     """
     try:
+        #TODO send to kafka
         logger.info(f"🎯 Selecting stocks for {industry} ({industry_allocation}% allocation)...")
 
         # Load prompts
@@ -236,27 +261,43 @@ def stock_selection_indwise(
 
         # Invoke agent
         logger.info(f"🤖 Invoking stock selection agent for {industry}...")
-        result = stock_selection_agent.invoke({
-            "messages": [
-                HumanMessage(
-                    content="Suggest appropriate number of stocks. "
-                    "Think about both over-diversification and under-diversification. "
-                    "Select 3-7 stocks that best fit the investment strategy."
-                )
-            ]
-        })
-
+        messages = []
+        logs = []
+        for chunk in stock_selection_agent.stream(
+            {
+                "messages": [
+                    HumanMessage(
+                        content="Select 3-5 stocks that best fit the investment strategy."
+                    )
+                ]
+            },
+            stream_mode="updates"
+        ):
+            new_message = list(chunk.values())[0]["messages"]
+            messages.extend(new_message)
+            fnc_call = new_message[0].additional_kwargs.get(["function_call"], None)
+            if fnc_call is not None:
+                ticker = json.loads(fnc_call["arguments"])["ticker"]
+                to_send = {
+                    "type": "stock",
+                    "status": "fetching",
+                    "content": {
+                        "content": ticker,
+                    }
+                }
+            logs.append(to_send)
+        result = {"messages": messages}
         # Parse response using common utility
         ind_portfolio = clean_and_parse_agent_json_response(result, expected_type=list)
 
         # Adjust percentages based on industry allocation
         # Portfolio percentages are relative to the industry, convert to absolute
         total_stock_percentage = sum(item.get("percentage", 0) for item in ind_portfolio)
-        
+
         for item in ind_portfolio:
             if not isinstance(item, dict):
                 raise ValueError(f"Expected dict in list, got {type(item)}")
-            
+
             required_keys = ["ticker", "percentage", "reasoning"]
             for key in required_keys:
                 if key not in item:
@@ -315,7 +356,7 @@ def generate_stock_portfolio(
                 industry_name,
                 industry_allocation,
                 company_df,
-                gemini_api_key  
+                gemini_api_key
             )
 
             # Add to final portfolio
@@ -490,8 +531,8 @@ def run_complete_low_risk_pipeline(
         Dictionary containing industry_list, final_portfolio, and trade_list
     """
     pipeline = StockSelectionPipeline(
-        company_df, 
-        industry_selection_pipeline, 
+        company_df,
+        industry_selection_pipeline,
         gemini_api_key
     )
     return pipeline.run(fund_allocated)
