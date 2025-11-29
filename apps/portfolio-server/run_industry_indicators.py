@@ -62,7 +62,7 @@ def main():
             angel_one_fetcher=fetcher,
             period="1y",           # 1 year of historical data
             interval="1d",          # Daily candles
-            benchmark_ticker="^CRSLDX",
+            benchmark_ticker="Nifty 500",  # Angel One index name (token: 99926004)
             rsi_length=14
         )
         

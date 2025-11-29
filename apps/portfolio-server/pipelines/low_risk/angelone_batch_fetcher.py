@@ -26,7 +26,7 @@ async def get_httpx_client() -> httpx.AsyncClient:
         limits = httpx.Limits(max_connections=100, max_keepalive_connections=20)
         _HTTPX_CLIENT = httpx.AsyncClient(
             limits=limits,
-            timeout=30.0,
+            timeout=60.0,  # Increased to 60s for slow Angel One responses
             verify=True
         )
     return _HTTPX_CLIENT
@@ -82,14 +82,46 @@ class AngelOneBatchFetcher:
         self._token_map = token_map
     
     def _get_token_info(self, symbol: str) -> Optional[Dict[str, Any]]:
-        """Get token info for symbol. Angel One uses symbol-EQ format."""
-        # Always use -EQ suffix for NSE stocks
-        symbol_key = f"{symbol}-EQ" if not symbol.endswith("-EQ") else symbol
+        """
+        Get token info for symbol with automatic fallback.
         
-        if symbol_key in self._token_map:
-            return self._token_map[symbol_key]
+        For indices (e.g., "Nifty 500"), checks symbol directly.
+        For equities, tries EQ → BE → BL → N1 → N2 variants.
         
-        logger.warning(f"Symbol {symbol} (key: {symbol_key}) not found in token map")
+        For data (OHLC/LTP), EQ and BE are interchangeable as they represent
+        the same underlying stock, just different trading mechanisms:
+        - EQ: Regular equity segment (intraday allowed)
+        - BE: Trade-to-trade segment (delivery only, no intraday)
+        """
+        # Hardcoded indices with their tokens (not in token map JSON)
+        HARDCODED_INDICES = {
+            "Nifty 500": {"token": "99926004", "name": "Nifty 500", "symbol": "Nifty 500"},
+            "NIFTY 500": {"token": "99926004", "name": "NIFTY 500", "symbol": "NIFTY 500"},
+            "Nifty 50": {"token": "99926000", "name": "Nifty 50", "symbol": "Nifty 50"},
+            "NIFTY 50": {"token": "99926000", "name": "NIFTY 50", "symbol": "NIFTY 50"},
+        }
+        
+        # Check hardcoded indices first
+        if symbol in HARDCODED_INDICES:
+            logger.debug(f"Using hardcoded token for index: {symbol}")
+            return HARDCODED_INDICES[symbol]
+        
+        # Try symbol as-is (for other indices in token map)
+        if symbol in self._token_map:
+            return self._token_map[symbol]
+        
+        # Then try equity variants: EQ → BE → BL → N1 → N2
+        # Just append -EQ, -BE, etc. to the symbol as-is (don't strip existing hyphens)
+        variants = ['EQ', 'BE', 'BL', 'N1', 'N2']
+        
+        for variant in variants:
+            symbol_key = f"{symbol}-{variant}"
+            if symbol_key in self._token_map:
+                if variant != 'EQ':
+                    logger.info(f"Symbol {symbol}: Using {variant} variant (EQ not found)")
+                return self._token_map[symbol_key]
+        
+        logger.warning(f"Symbol {symbol} not found in token map (tried: {symbol}, {', '.join(f'{symbol}-{v}' for v in variants)})")
         return None
     
     async def fetch_single_symbol(
@@ -149,8 +181,20 @@ class AngelOneBatchFetcher:
         try:
             client = await get_httpx_client()
             
-            # Single attempt - fail fast
-            response = await client.post(self.base_url, json=payload, headers=headers)
+            # Retry logic: try up to 2 times on timeout
+            max_retries = 2
+            for attempt in range(max_retries):
+                try:
+                    response = await client.post(self.base_url, json=payload, headers=headers, timeout=45.0)
+                    break  # Success, exit retry loop
+                except httpx.TimeoutException:
+                    if attempt < max_retries - 1:
+                        logger.warning(f"Timeout for {symbol}, retrying ({attempt + 1}/{max_retries})...")
+                        await asyncio.sleep(1)  # Brief delay before retry
+                        continue
+                    else:
+                        logger.error(f"Timeout for {symbol} after {max_retries} attempts, skipping")
+                        return []  # Skip this symbol
             
             if response.status_code == 200:
                     data = response.json()
@@ -209,7 +253,7 @@ class AngelOneBatchFetcher:
         exchange: str = "NSE"
     ) -> pl.DataFrame:
         """
-        Fetch historical candles for multiple symbols concurrently.
+        Fetch historical candles for multiple symbols sequentially with rate limiting.
         
         Args:
             symbols: List of symbol names
@@ -226,42 +270,51 @@ class AngelOneBatchFetcher:
         
         logger.info(f"📡 Fetching {len(symbols)} symbols from Angel One API...")
         
-        # Create tasks for concurrent fetching
-        tasks = [
-            self.fetch_single_symbol(symbol, interval, fromdate, todate, exchange)
-            for symbol in symbols
-        ]
-        
-        # Process all with semaphore concurrency control
+        # Process symbols one by one with 1-second delay (like drawdown_nse_pipeline.py)
         all_candles = []
-        batch_size = 100  # Large batches for speed
+        failed_symbols = []
         
-        for i in range(0, len(tasks), batch_size):
-            batch_tasks = tasks[i:i + batch_size]
+        for i, symbol in enumerate(symbols):
+            try:
+                # Fetch single symbol
+                candles = await self.fetch_single_symbol(symbol, interval, fromdate, todate, exchange)
+                
+                if candles and len(candles) > 0:
+                    all_candles.extend(candles)
+                else:
+                    failed_symbols.append(symbol)
+                
+                # Log progress every 50 symbols
+                if (i + 1) % 50 == 0 or (i + 1) == len(symbols):
+                    success_count = len(set(c['symbol'] for c in all_candles))
+                    logger.info(f"✓ Progress: {i+1}/{len(symbols)} symbols | Success: {success_count} | Failed: {len(failed_symbols)}")
+                
+                # Rate limit: 1 second delay between requests (except for last symbol)
+                if i < len(symbols) - 1:
+                    await asyncio.sleep(1)
             
-            # Use semaphore to limit concurrent requests
-            semaphore = asyncio.Semaphore(self.max_concurrent)
-            
-            async def fetch_with_semaphore(task):
-                async with semaphore:
-                    return await task
-            
-            wrapped_tasks = [fetch_with_semaphore(task) for task in batch_tasks]
-            results = await asyncio.gather(*wrapped_tasks, return_exceptions=True)
-            
-            for result in results:
-                if isinstance(result, list):
-                    all_candles.extend(result)
-                elif isinstance(result, Exception):
-                    logger.error(f"Error fetching batch: {result}")
-            
-            progress = min(i + batch_size, len(tasks))
-            if progress % 50 == 0 or progress == len(tasks):
-                logger.info(f"✓ Progress: {progress}/{len(tasks)} symbols ({progress*100//len(tasks)}%)")
+            except Exception as e:
+                logger.error(f"Failed to fetch {symbol}: {e}")
+                failed_symbols.append(symbol)
+                continue
         
         if not all_candles:
-            logger.warning("No candles fetched from Angel One API")
+            logger.warning(
+                f"⚠️ No candles fetched from Angel One API. "
+                f"Total symbols attempted: {len(symbols)}, Failed: {len(failed_symbols)}"
+            )
+            if failed_symbols[:5]:  # Show first 5 failed symbols
+                logger.warning(f"Sample failed symbols: {failed_symbols[:5]}")
             return pl.DataFrame()
+        
+        # Log final summary
+        unique_symbols_fetched = len(set(c['symbol'] for c in all_candles))
+        logger.info(
+            f"✅ Batch fetch complete: {unique_symbols_fetched}/{len(symbols)} symbols successful, "
+            f"{len(failed_symbols)} failed"
+        )
+        if failed_symbols and len(failed_symbols) <= 10:
+            logger.debug(f"Failed symbols: {failed_symbols}")
         
         # Convert to Polars DataFrame
         df = pl.DataFrame(all_candles)
@@ -345,27 +398,42 @@ def create_fetcher_from_market_service(market_service) -> AngelOneBatchFetcher:
         
         instruments = response.json()
         
-        # Build token map for NSE equity symbols (exch_seg = "NSE", symbol ends with "-EQ")
+        # Build token map for NSE equity symbols and indices
         token_map = {}
+        index_count = 0
+        
         for instrument in instruments:
             # Angel One API format: {"token":"11536","symbol":"TCS-EQ","name":"TCS","exch_seg":"NSE",...}
             exch_seg = instrument.get("exch_seg", "")
             symbol = instrument.get("symbol", "")
+            token = instrument.get("token", "")
+            name = instrument.get("name", "")
             
-            # Focus on NSE equity (exch_seg="NSE" and symbol ends with "-EQ")
-            if exch_seg == "NSE" and symbol.endswith("-EQ"):
-                token = instrument.get("token", "")
-                name = instrument.get("name", "")
-                
-                if symbol and token:
-                    # Store with full info - key is already in "SYMBOL-EQ" format from API
+            if not (symbol and token):
+                continue
+            
+            # Include NSE equities (EQ, BE, BL series) and indices
+            if exch_seg == "NSE":
+                # NSE equity symbols ending with -EQ, -BE, -BL, -N1, -N2
+                if any(symbol.endswith(suffix) for suffix in ["-EQ", "-BE", "-BL", "-N1", "-N2"]):
                     token_map[symbol] = {
                         "token": token,
-                        "name": name if name else symbol.replace("-EQ", ""),
+                        "name": name if name else symbol.split("-")[0],
                         "symbol": symbol
                     }
+                # NSE indices (NIFTY 50 = 99926000, NIFTY 500 = 99926004, etc.)
+                # These don't have suffixes - name contains "Nifty"
+                elif "NIFTY" in name.upper() or "NIFTY" in symbol.upper():
+                    # Store with name as key for easy lookup (e.g., "Nifty 500")
+                    token_map[name] = {
+                        "token": token,
+                        "name": name,
+                        "symbol": symbol
+                    }
+                    index_count += 1
         
-        logger.info(f"✅ Loaded {len(token_map):,} NSE equity tokens from Angel One API")
+        equity_count = len(token_map) - index_count
+        logger.info(f"✅ Loaded {equity_count:,} NSE equity tokens and {index_count} indices from Angel One API")
         
         # Log sample tokens for debugging
         if token_map:

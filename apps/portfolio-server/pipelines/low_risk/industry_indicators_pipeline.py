@@ -30,10 +30,10 @@ class IndustryIndicatorsPipeline:
     def __init__(
         self,
         stocks_csv_path: str,
-        angel_one_fetcher=None,
+        angel_one_fetcher=None, 
         period: str = "1y",
         interval: str = "1d",
-        benchmark_ticker: str = "NIFTY 50",
+        benchmark_ticker: str = "Nifty 500",
         rsi_length: int = 14
     ):
         """
@@ -56,17 +56,23 @@ class IndustryIndicatorsPipeline:
         if not self.angel_one_fetcher:
             raise ValueError("angel_one_fetcher is required (AngelOneBatchFetcher instance)")
 
-        # Load stock data - CSV uses semicolon delimiter
+        # Load stock data - try multiple delimiters (semicolon, comma)
         logger.info(f"Loading stocks from {stocks_csv_path}")
         try:
+            # First try semicolon delimiter
             stocks_df_pd = pd.read_csv(stocks_csv_path, sep=';')
+            
+            # If all columns are in one, try comma delimiter
+            if len(stocks_df_pd.columns) == 1:
+                stocks_df_pd = pd.read_csv(stocks_csv_path, sep=',')
+            
             logger.info(f"Loaded {len(stocks_df_pd)} stocks with columns: {stocks_df_pd.columns.tolist()}")
         except Exception as e:
             logger.error(f"Failed to load CSV: {e}")
             raise
         
         # Normalize column names - strip whitespace and convert to lowercase
-        stocks_df_pd.columns = stocks_df_pd.columns.str.strip().str.lower()
+        stocks_df_pd.columns = stocks_df_pd.columns.str.strip().str.lower().str.replace(' ', '_')
         
         # Verify required columns exist
         required_cols = ['symbol', 'industry']
@@ -90,33 +96,10 @@ class IndustryIndicatorsPipeline:
         # Create mappings (symbols are plain, no .NS suffix for Angel One)
         self.industry_ticker_map = self._create_industry_ticker_map()
         self.ticker_industry_map = self._create_ticker_industry_map()
-        
-        # Filter out symbols without valid tokens (if fetcher provided)
-        if self.angel_one_fetcher:
-            valid_tickers = []
-            invalid_count = 0
-            for ticker in self.ticker_industry_map.keys():
-                token_info = self.angel_one_fetcher._get_token_info(ticker)
-                if token_info and token_info.get('token'):
-                    valid_tickers.append(ticker)
-                else:
-                    invalid_count += 1
-            
-            if invalid_count > 0:
-                logger.warning(f"Filtered out {invalid_count} symbols without valid tokens")
-                # Update mappings to only include valid tickers
-                self.ticker_industry_map = {t: self.ticker_industry_map[t] for t in valid_tickers}
-                # Rebuild industry_ticker_map with only valid tickers
-                new_industry_map = {}
-                for ticker in valid_tickers:
-                    industry = self.ticker_industry_map[ticker]
-                    if industry not in new_industry_map:
-                        new_industry_map[industry] = []
-                    new_industry_map[industry].append(ticker)
-                self.industry_ticker_map = new_industry_map
 
         logger.info(f"Total industries: {len(self.industry_ticker_map)}")
         logger.info(f"Total tickers: {len(self.ticker_industry_map)}")
+        logger.info(f"Note: Token validation will happen during data fetch (with EQ→BE fallback)")
 
         # Cached results (Polars DataFrames)
         self.per_ticker_df: Optional[pl.DataFrame] = None
@@ -131,9 +114,13 @@ class IndustryIndicatorsPipeline:
         # Convert to pandas for easier iteration (small dataset)
         stocks_pd = self.stocks_df.to_pandas()
         
-        # Handle column name variations
-        industry_col = 'industry' if 'industry' in stocks_pd.columns else 'Industry'
-        symbol_col = 'symbol' if 'symbol' in stocks_pd.columns else 'Symbol'
+        # Column names are already normalized to lowercase with underscores
+        industry_col = 'industry'
+        symbol_col = 'symbol'
+        
+        if industry_col not in stocks_pd.columns or symbol_col not in stocks_pd.columns:
+            logger.error(f"Required columns missing. Available: {stocks_pd.columns.tolist()}")
+            raise ValueError(f"Columns 'symbol' and 'industry' required after normalization")
         
         for _, row in stocks_pd.iterrows():
             industry = row[industry_col]
@@ -153,9 +140,13 @@ class IndustryIndicatorsPipeline:
         # Convert to pandas for easier iteration
         stocks_pd = self.stocks_df.to_pandas()
         
-        # Handle column name variations
-        industry_col = 'industry' if 'industry' in stocks_pd.columns else 'Industry'
-        symbol_col = 'symbol' if 'symbol' in stocks_pd.columns else 'Symbol'
+        # Column names are already normalized to lowercase with underscores
+        industry_col = 'industry'
+        symbol_col = 'symbol'
+        
+        if industry_col not in stocks_pd.columns or symbol_col not in stocks_pd.columns:
+            logger.error(f"Required columns missing. Available: {stocks_pd.columns.tolist()}")
+            raise ValueError(f"Columns 'symbol' and 'industry' required after normalization")
         
         for _, row in stocks_pd.iterrows():
             ticker = row[symbol_col]
@@ -365,10 +356,17 @@ class IndustryIndicatorsPipeline:
         
         # Get benchmark return
         benchmark_ret_6m = None
+        
         if self.benchmark_ticker:
             bench_rows = last_rows.filter(pl.col("Ticker") == self.benchmark_ticker)
             if not bench_rows.is_empty():
                 benchmark_ret_6m = bench_rows["ret_6m"][0]
+                logger.info(f"✓ Benchmark {self.benchmark_ticker} return (6m): {benchmark_ret_6m}")
+            else:
+                logger.warning(f"⚠️ Benchmark {self.benchmark_ticker} not found in ticker data")
+                # Debug: show available tickers
+                available_tickers = last_rows["Ticker"].unique().to_list()
+                logger.debug(f"Available tickers: {available_tickers[:10]}...")
         
         # Aggregate per industry
         rows = []
@@ -459,8 +457,17 @@ class IndustryIndicatorsPipeline:
             try:
                 if float(benchmark_ret_6m) != 0:
                     RS = float(industry_ret_6m) / float(benchmark_ret_6m)
-            except Exception:
+                    logger.debug(f"{industry}: RS = {RS:.4f} (industry_ret_6m={industry_ret_6m:.4f}, benchmark_ret_6m={benchmark_ret_6m:.4f})")
+                else:
+                    logger.warning(f"{industry}: Benchmark return is zero, cannot compute RS")
+            except Exception as e:
+                logger.error(f"{industry}: RS calculation failed: {e}")
                 RS = None
+        else:
+            if benchmark_ret_6m is None:
+                logger.debug(f"{industry}: RS is None (benchmark_ret_6m is None)")
+            if industry_ret_6m is None:
+                logger.debug(f"{industry}: RS is None (industry_ret_6m is None)")
         
         # Industry-level EMA (from median close time series)
         industry_close_filtered = industry_close.filter(pl.col("Industry") == industry)
@@ -511,13 +518,21 @@ class IndustryIndicatorsPipeline:
             for t in ts if t
         })
         
-        # Add benchmark if specified
+        # Add benchmark if specified (Nifty 500 with token 99926004)
         download_tickers = list(all_tickers)
         if self.benchmark_ticker and self.benchmark_ticker not in download_tickers:
-            # Remove ^ prefix if present
-            benchmark_clean = self.benchmark_ticker.replace("^", "")
+            # For Nifty 500, use exact symbol from Angel One
+            # Symbol: "Nifty 500", Token: 99926004
+            benchmark_clean = self.benchmark_ticker.replace("^", "").strip()
             if benchmark_clean not in download_tickers:
                 download_tickers.append(benchmark_clean)
+                logger.info(f"📍 Added benchmark ticker: {benchmark_clean}")
+                # Verify token exists
+                token_info = self.angel_one_fetcher._get_token_info(benchmark_clean)
+                if token_info:
+                    logger.info(f"✓ Benchmark token verified: {token_info.get('token')} for {benchmark_clean}")
+                else:
+                    logger.error(f"❌ Benchmark token NOT FOUND for {benchmark_clean}")
         
         # Map period to days
         period_days_map = {
@@ -551,6 +566,16 @@ class IndustryIndicatorsPipeline:
         
         logger.info("🔧 Computing technical indicators...")
         
+        # Log fetched symbols
+        if not self.raw_data.is_empty():
+            fetched_symbols = self.raw_data["symbol"].unique().to_list()
+            logger.info(f"📊 Fetched data for {len(fetched_symbols)} symbols")
+            if self.benchmark_ticker in fetched_symbols:
+                logger.info(f"✓ Benchmark '{self.benchmark_ticker}' found in fetched data")
+            else:
+                logger.warning(f"⚠️ Benchmark '{self.benchmark_ticker}' NOT in fetched data")
+                logger.debug(f"Available symbols: {fetched_symbols[:10]}...")
+        
         # Convert to tidy format
         tidy = self._ensure_tidy_polars(self.raw_data)
         
@@ -569,6 +594,19 @@ class IndustryIndicatorsPipeline:
         
         if ticker_groups:
             self.per_ticker_df = pl.concat(ticker_groups)
+            # Verify benchmark is in per_ticker_df
+            if self.benchmark_ticker:
+                tickers_with_data = self.per_ticker_df["Ticker"].unique().to_list()
+                if self.benchmark_ticker in tickers_with_data:
+                    logger.info(f"✓ Benchmark '{self.benchmark_ticker}' has computed indicators")
+                    # Check if benchmark has return data
+                    bench_data = self.per_ticker_df.filter(pl.col("Ticker") == self.benchmark_ticker)
+                    if not bench_data.is_empty():
+                        last_bench = bench_data.tail(1)
+                        ret_6m = last_bench["ret_6m"][0] if "ret_6m" in last_bench.columns else None
+                        logger.info(f"📈 Benchmark ret_6m preview: {ret_6m}")
+                else:
+                    logger.error(f"❌ Benchmark '{self.benchmark_ticker}' NOT in computed indicators!")
         else:
             self.per_ticker_df = pl.DataFrame()
         
