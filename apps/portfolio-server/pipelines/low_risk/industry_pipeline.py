@@ -355,12 +355,43 @@ def industry_selector(
 
     # Invoke agent
     logger.info("🤖 Invoking industry selection agent...")
+    messages = []
+    logs = []
+    for chunk in agent.stream(
+            {"messages": [HumanMessage("suggest industries")]},
+            stream_mode="updates",
+        ):
+        new_message = list(chunk.values())[0]["messages"]
+        messages.extend(new_message)
+        fnc_call = new_message[0].additional_kwargs.get("function_call", None)
+        if fnc_call is not None:
+            ind_list = json.loads(fnc_call["arguments"])["industries"]
+            to_send = {
+                "type": "industry",
+                "fetching": 1,
+                "content": {
+                    "industries": ind_list,
+                }
+            }
+        elif isinstance(new_message[0], ToolMessage):
+            metrics = json.loads(new_message[0].content)
+            to_send = {
+                "type": "industry",
+                "fetching": 0,
+                "content": {
+                    "industries": list(metrics.keys()),
+                    "metrics": metrics,
+                }
+            }
+        logs.append(to_send)
+
     #TODO send notif to frontend kafka
-    result = agent.invoke({"messages": [HumanMessage("suggest industries")]})
+    # result = agent.invoke({"messages": [HumanMessage("suggest industries")]})
 
     # Parse and validate response using common utility
+    result = {"messages": messages}
     industry_list = clean_and_parse_agent_json_response(result, expected_type=list)
-    
+
     # Validate and normalize percentages
     industry_list = validate_percentage_list(
         industry_list,
