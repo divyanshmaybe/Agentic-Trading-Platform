@@ -19,6 +19,14 @@ from .llm_response_utils import (
     clean_and_parse_agent_json_response,
     validate_percentage_list,
 )
+from .kafka_utils import (
+    setup_kafka_publisher,
+    get_module_publisher,
+    set_module_user_id,
+    get_module_user_id,
+    publish_log,
+    publish_notification,
+)
 
 __all__ = [
     # Trade conversion
@@ -34,4 +42,11 @@ __all__ = [
     'extract_message_content_from_agent_result',
     'clean_and_parse_agent_json_response',
     'validate_percentage_list',
+    # Kafka utilities
+    'setup_kafka_publisher',
+    'get_module_publisher',
+    'set_module_user_id',
+    'get_module_user_id',
+    'publish_log',
+    'publish_notification',
 ]

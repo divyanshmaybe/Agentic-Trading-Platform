@@ -12,9 +12,9 @@ import os
 import re
 from pathlib import Path
 from typing import Dict, List, Optional, Any
+from datetime import datetime
 
 import pandas as pd
-from jinja2 import Environment, StrictUndefined
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -26,8 +26,22 @@ from utils.low_risk_utils import (
     render_prompt_template,
     clean_and_parse_agent_json_response,
     validate_percentage_list,
+    setup_kafka_publisher,
+    publish_log,
+    publish_notification,
+    set_module_user_id,
 )
 from .industry_indicators_pipeline import IndustryIndicatorsPipeline
+
+# Import KafkaPublisher type for type hints
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    import sys
+    from pathlib import Path as _TmpPath
+    _shared_dir = _TmpPath(__file__).resolve().parent.parent.parent.parent / "shared" / "py"
+    if str(_shared_dir) not in sys.path:
+        sys.path.insert(0, str(_shared_dir))
+    from kafka_service import KafkaPublisher
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +139,9 @@ def get_pmi(storage: EconomicIndicatorsStorage) -> float:
 
     try:
         pmi_val = float(pmi_str)
-        logger.info(f"✓ Extracted PMI value: {pmi_val}")
+        msg = f"✓ Extracted PMI value: {pmi_val}"
+        logger.info(msg)
+        publish_log(msg, function="get_pmi", pmi_value=pmi_val)
         return pmi_val
     except (ValueError, TypeError) as e:
         raise ValueError(
@@ -208,7 +224,9 @@ def get_cpi_list(storage: EconomicIndicatorsStorage) -> List[float]:
     if not cpi_values:
         raise ValueError("No valid CPI values found in data")
 
-    logger.info(f"✓ Extracted {len(cpi_values)} CPI values (range: {min(cpi_values):.2f} to {max(cpi_values):.2f})")
+    msg = f"✓ Extracted {len(cpi_values)} CPI values (range: {min(cpi_values):.2f} to {max(cpi_values):.2f})"
+    logger.info(msg)
+    publish_log(msg, function="get_cpi_list", cpi_count=len(cpi_values), cpi_min=min(cpi_values), cpi_max=max(cpi_values))
     return cpi_values
 
 
@@ -333,6 +351,8 @@ def industry_selector(
     cpi_val: float,
     pmi_val: float,
     gemini_api_key: str,
+    user_id: str,
+    publisher: Optional[KafkaPublisher] = None,
 ) -> List[Dict[str, Any]]:
     """
     Select industries using LLM agent based on economic regime.
@@ -343,6 +363,8 @@ def industry_selector(
         cpi_val: Current CPI value
         pmi_val: Current PMI value
         gemini_api_key: Gemini API key
+        user_id: User identifier for Kafka messages
+        publisher: Optional KafkaPublisher for sending agent logs
 
     Returns:
         List of dictionaries with industry allocations:
@@ -353,10 +375,14 @@ def industry_selector(
         pipeline, gemini_api_key, economic_regime, cpi_val, pmi_val
     )
 
+    # Set module user_id for standalone function logging
+    set_module_user_id(user_id)
+    
     # Invoke agent
-    logger.info("🤖 Invoking industry selection agent...")
+    msg = "🤖 Invoking industry selection agent..."
+    logger.info(msg)
+    publish_log(msg, user_id=user_id, function="industry_selector", economic_regime=economic_regime)
     messages = []
-    logs = []
     for chunk in agent.stream(
             {"messages": [HumanMessage("suggest industries")]},
             stream_mode="updates",
@@ -367,15 +393,19 @@ def industry_selector(
         if fnc_call is not None:
             ind_list = json.loads(fnc_call["arguments"])["industries"]
             to_send = {
+                "user_id": user_id,
                 "type": "industry",
                 "fetching": 1,
                 "content": {
                     "industries": ind_list,
                 }
             }
+            # Publish to_send to Kafka
+            publish_notification(to_send, publisher=publisher, user_id=user_id)
         elif isinstance(new_message[0], ToolMessage):
             metrics = json.loads(new_message[0].content)
             to_send = {
+                "user_id": user_id,
                 "type": "industry",
                 "fetching": 0,
                 "content": {
@@ -383,10 +413,8 @@ def industry_selector(
                     "metrics": metrics,
                 }
             }
-        logs.append(to_send)
-
-    #TODO send notif to frontend kafka
-    # result = agent.invoke({"messages": [HumanMessage("suggest industries")]})
+            # Publish to_send to Kafka
+            publish_notification(to_send, publisher=publisher, user_id=user_id)
 
     # Parse and validate response using common utility
     result = {"messages": messages}
@@ -400,11 +428,9 @@ def industry_selector(
         tolerance=1.0
     )
 
-    #TODO send notif to kafka frontend
-    logger.info(
-        f"✅ Industry selection complete: {len(industry_list)} industries, "
-        f"total allocation: {sum(item['percentage'] for item in industry_list):.1f}%"
-    )
+    msg = f"✅ Industry selection complete: {len(industry_list)} industries, total allocation: {sum(item['percentage'] for item in industry_list):.1f}%"
+    logger.info(msg)
+    publish_log(msg, user_id=user_id, function="industry_selector", industry_count=len(industry_list), total_allocation=sum(item['percentage'] for item in industry_list))
 
     return industry_list
 
@@ -417,6 +443,7 @@ class IndustrySelectionPipeline:
     def __init__(
         self,
         industry_pipeline: IndustryIndicatorsPipeline,
+        user_id: str,
         gemini_api_key: Optional[str] = None,
         storage: Optional[EconomicIndicatorsStorage] = None,
     ):
@@ -425,10 +452,12 @@ class IndustrySelectionPipeline:
 
         Args:
             industry_pipeline: IndustryIndicatorsPipeline instance (must have computed data)
+            user_id: User identifier for logging and partitioning
             gemini_api_key: Gemini API key (if None, will try to get from env)
             storage: EconomicIndicatorsStorage instance (if None, will use get_storage())
         """
         self.industry_pipeline = industry_pipeline
+        self.user_id = user_id
         self.storage = storage or get_storage()
 
         # Get Gemini API key
@@ -440,11 +469,18 @@ class IndustrySelectionPipeline:
                 )
         self.gemini_api_key = gemini_api_key
 
+        # Initialize Kafka publisher for agent logs
+        self.publisher = setup_kafka_publisher()
+
         # Verify industry pipeline has computed data
         if not industry_pipeline._is_computed:
             raise RuntimeError(
                 "IndustryIndicatorsPipeline must have computed data. Call compute() first."
             )
+
+    def _publish_log(self, message: str, level: str = "info", **extra_data):
+        """Publish log message to Kafka along with user_id."""
+        publish_log(message, publisher=self.publisher, user_id=self.user_id, level=level, **extra_data)
 
     def run(self) -> List[Dict[str, Any]]:
         """
@@ -454,13 +490,16 @@ class IndustrySelectionPipeline:
             List of industry allocation dictionaries:
             [{"name": str, "percentage": float, "reasoning": str}, ...]
         """
-        #TODO send to kafka frontend
-        logger.info("🚀 Starting industry selection pipeline...")
+        msg = "🚀 Starting industry selection pipeline..."
+        logger.info(msg)
+        self._publish_log(msg, stage="start")
 
         # Get PMI
         try:
             pmi_val = get_pmi(self.storage)
-            logger.info(f"✓ PMI value: {pmi_val}")
+            msg = f"✓ PMI value: {pmi_val}"
+            logger.info(msg)
+            self._publish_log(msg, stage="pmi", pmi_value=pmi_val)
         except Exception as e:
             logger.error(f"Failed to get PMI: {e}", exc_info=True)
             raise
@@ -468,7 +507,9 @@ class IndustrySelectionPipeline:
         # Get CPI list
         try:
             cpi_list = get_cpi_list(self.storage)
-            logger.info(f"✓ CPI data: {len(cpi_list)} values")
+            msg = f"✓ CPI data: {len(cpi_list)} values"
+            logger.info(msg)
+            self._publish_log(msg, stage="cpi", cpi_count=len(cpi_list))
         except Exception as e:
             logger.error(f"Failed to get CPI data: {e}", exc_info=True)
             raise
@@ -476,16 +517,22 @@ class IndustrySelectionPipeline:
         # Classify regime
         try:
             economic_regime = classify_macro_regime(pmi_val, cpi_list)
-            logger.info(f"✓ Economic regime: {economic_regime}")
+            msg = f"✓ Economic regime: {economic_regime}"
+            logger.info(msg)
+            self._publish_log(msg, stage="regime", economic_regime=economic_regime)
         except Exception as e:
             logger.error(f"Failed to classify regime: {e}", exc_info=True)
             raise
 
         # Get latest CPI value
         cpi_val = cpi_list[-1]
-        #TODO send to kafka frontend
-        logger.info(f"✓ Latest CPI value: {cpi_val}")
-        logger.info(f"✓ Latest PMI value: {pmi_val}")
+        msg = f"✓ Latest CPI value: {cpi_val}"
+        logger.info(msg)
+        self._publish_log(msg, stage="cpi_latest", cpi_value=cpi_val)
+        
+        msg = f"✓ Latest PMI value: {pmi_val}"
+        logger.info(msg)
+        self._publish_log(msg, stage="pmi_latest", pmi_value=pmi_val)
 
         # Select industries using LLM agent
         try:
@@ -495,9 +542,12 @@ class IndustrySelectionPipeline:
                 cpi_val,
                 pmi_val,
                 self.gemini_api_key,
+                self.user_id,
+                self.publisher,
             )
-            #TODO send to kafka frontend
-            logger.info(f"✅ Industry selection complete: {len(industry_list)} industries")
+            msg = f"✅ Industry selection complete: {len(industry_list)} industries"
+            logger.info(msg)
+            self._publish_log(msg, stage="complete", industry_count=len(industry_list), industries=industry_list)
             return industry_list
         except Exception as e:
             logger.error(f"Failed to select industries: {e}", exc_info=True)
