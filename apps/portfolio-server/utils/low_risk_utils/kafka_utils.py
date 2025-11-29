@@ -1,8 +1,8 @@
 """
 Kafka utilities for low_risk pipelines.
 
-Provides reusable Kafka publisher setup and logging helpers for
-publishing agent logs and notifications to Kafka topics.
+Provides reusable Kafka publisher setup and helper for
+publishing agent logs and events to Kafka topics.
 """
 
 import logging
@@ -86,65 +86,44 @@ def get_module_user_id() -> Optional[str]:
     return _module_user_id
 
 
-def publish_log(
-    message: str,
+def publish_to_kafka(
+    data: Dict[str, Any],
     publisher: Optional[KafkaPublisher] = None,
     user_id: Optional[str] = None,
-    level: str = "info",
-    **extra_data
+    message_type: str = "info",
 ) -> None:
     """
-    Publish log message to Kafka with user_id and metadata.
+    Publish data to Kafka with consistent structure.
+    
+    All messages follow this structure:
+    {
+        "user_id": str,
+        "timestamp": str (ISO format),
+        "type": str,
+        ...additional data from 'data' dict
+    }
     
     Args:
-        message: Log message to publish
+        data: Dictionary containing the message data
         publisher: KafkaPublisher instance (uses module publisher if None)
         user_id: User identifier (uses module user_id if None)
-        level: Log level (default: "info")
-        **extra_data: Additional data to include in the log payload
+        message_type: Message type identifier (default: "info")
     """
     pub = publisher or get_module_publisher()
     uid = user_id or _module_user_id
     
     if pub:
         try:
-            log_data = {
+            # Build message with consistent structure
+            message = {
                 "user_id": uid,
                 "timestamp": datetime.utcnow().isoformat(),
-                "level": level,
-                "message": message,
-                **extra_data
+                "type": message_type,
+                **data
             }
-            pub.publish(log_data, block=False)
+            pub.publish(message, block=False)
         except Exception as e:
-            logger.warning(f"Failed to publish log to Kafka: {e}")
-
-
-def publish_notification(
-    notification_data: Dict[str, Any],
-    publisher: Optional[KafkaPublisher] = None,
-    user_id: Optional[str] = None,
-) -> None:
-    """
-    Publish notification/event data to Kafka.
-    
-    Args:
-        notification_data: Dictionary containing notification data
-        publisher: KafkaPublisher instance (uses module publisher if None)
-        user_id: User identifier to add to notification (uses module user_id if None)
-    """
-    pub = publisher or get_module_publisher()
-    uid = user_id or _module_user_id
-    
-    if pub:
-        try:
-            # Add user_id if not already present
-            if "user_id" not in notification_data and uid:
-                notification_data = {"user_id": uid, **notification_data}
-            
-            pub.publish(notification_data, block=False)
-        except Exception as e:
-            logger.warning(f"Failed to publish notification to Kafka: {e}")
+            logger.warning(f"Failed to publish to Kafka: {e}")
 
 
 __all__ = [
@@ -152,6 +131,5 @@ __all__ = [
     "get_module_publisher",
     "set_module_user_id",
     "get_module_user_id",
-    "publish_log",
-    "publish_notification",
+    "publish_to_kafka",
 ]

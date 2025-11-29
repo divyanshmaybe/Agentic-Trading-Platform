@@ -27,8 +27,7 @@ from utils.low_risk_utils import (
     clean_and_parse_agent_json_response,
     validate_percentage_list,
     setup_kafka_publisher,
-    publish_log,
-    publish_notification,
+    publish_to_kafka,
     set_module_user_id,
 )
 from .industry_indicators_pipeline import IndustryIndicatorsPipeline
@@ -141,7 +140,7 @@ def get_pmi(storage: EconomicIndicatorsStorage) -> float:
         pmi_val = float(pmi_str)
         msg = f"✓ Extracted PMI value: {pmi_val}"
         logger.info(msg)
-        publish_log(msg, function="get_pmi", pmi_value=pmi_val)
+        publish_to_kafka({"message": msg, "function": "get_pmi", "pmi_value": pmi_val})
         return pmi_val
     except (ValueError, TypeError) as e:
         raise ValueError(
@@ -226,7 +225,7 @@ def get_cpi_list(storage: EconomicIndicatorsStorage) -> List[float]:
 
     msg = f"✓ Extracted {len(cpi_values)} CPI values (range: {min(cpi_values):.2f} to {max(cpi_values):.2f})"
     logger.info(msg)
-    publish_log(msg, function="get_cpi_list", cpi_count=len(cpi_values), cpi_min=min(cpi_values), cpi_max=max(cpi_values))
+    publish_to_kafka({"message": msg, "function": "get_cpi_list", "cpi_count": len(cpi_values), "cpi_min": min(cpi_values), "cpi_max": max(cpi_values)})
     return cpi_values
 
 
@@ -352,7 +351,7 @@ def industry_selector(
     pmi_val: float,
     gemini_api_key: str,
     user_id: str,
-    publisher: Optional[KafkaPublisher] = None,
+    publisher: Optional["KafkaPublisher"] = None,
 ) -> List[Dict[str, Any]]:
     """
     Select industries using LLM agent based on economic regime.
@@ -381,7 +380,7 @@ def industry_selector(
     # Invoke agent
     msg = "🤖 Invoking industry selection agent..."
     logger.info(msg)
-    publish_log(msg, user_id=user_id, function="industry_selector", economic_regime=economic_regime)
+    publish_to_kafka({"message": msg, "function": "industry_selector", "economic_regime": economic_regime}, user_id=user_id)
     messages = []
     for chunk in agent.stream(
             {"messages": [HumanMessage("suggest industries")]},
@@ -401,7 +400,7 @@ def industry_selector(
                 }
             }
             # Publish to_send to Kafka
-            publish_notification(to_send, publisher=publisher, user_id=user_id)
+            publish_to_kafka(to_send, publisher=publisher, user_id=user_id, message_type="industry")
         elif isinstance(new_message[0], ToolMessage):
             metrics = json.loads(new_message[0].content)
             to_send = {
@@ -414,7 +413,7 @@ def industry_selector(
                 }
             }
             # Publish to_send to Kafka
-            publish_notification(to_send, publisher=publisher, user_id=user_id)
+            publish_to_kafka(to_send, publisher=publisher, user_id=user_id, message_type="industry")
 
     # Parse and validate response using common utility
     result = {"messages": messages}
@@ -430,7 +429,7 @@ def industry_selector(
 
     msg = f"✅ Industry selection complete: {len(industry_list)} industries, total allocation: {sum(item['percentage'] for item in industry_list):.1f}%"
     logger.info(msg)
-    publish_log(msg, user_id=user_id, function="industry_selector", industry_count=len(industry_list), total_allocation=sum(item['percentage'] for item in industry_list))
+    publish_to_kafka({"message": msg, "function": "industry_selector", "industry_count": len(industry_list), "total_allocation": sum(item['percentage'] for item in industry_list)}, user_id=user_id)
 
     return industry_list
 
@@ -478,9 +477,10 @@ class IndustrySelectionPipeline:
                 "IndustryIndicatorsPipeline must have computed data. Call compute() first."
             )
 
-    def _publish_log(self, message: str, level: str = "info", **extra_data):
+    def _publish_log(self, message: str, message_type: str = "info", **extra_data):
         """Publish log message to Kafka along with user_id."""
-        publish_log(message, publisher=self.publisher, user_id=self.user_id, level=level, **extra_data)
+        data = {"message": message, **extra_data}
+        publish_to_kafka(data, publisher=self.publisher, user_id=self.user_id, message_type=message_type)
 
     def run(self) -> List[Dict[str, Any]]:
         """

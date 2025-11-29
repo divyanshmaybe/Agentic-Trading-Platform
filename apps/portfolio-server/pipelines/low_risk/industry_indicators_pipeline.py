@@ -59,12 +59,12 @@ class IndustryIndicatorsPipeline:
         # Load stock data - try multiple delimiters (semicolon, comma)
         logger.info(f"Loading stocks from {stocks_csv_path}")
         try:
-            # First try semicolon delimiter
-            stocks_df_pd = pd.read_csv(stocks_csv_path, sep=';')
+            # First try comma delimiter (default)
+            stocks_df_pd = pd.read_csv(stocks_csv_path)
             
-            # If all columns are in one, try comma delimiter
+            # If only one column, try semicolon delimiter
             if len(stocks_df_pd.columns) == 1:
-                stocks_df_pd = pd.read_csv(stocks_csv_path, sep=',')
+                stocks_df_pd = pd.read_csv(stocks_csv_path, sep=';')
             
             logger.info(f"Loaded {len(stocks_df_pd)} stocks with columns: {stocks_df_pd.columns.tolist()}")
         except Exception as e:

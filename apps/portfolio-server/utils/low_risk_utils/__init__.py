@@ -24,8 +24,7 @@ from .kafka_utils import (
     get_module_publisher,
     set_module_user_id,
     get_module_user_id,
-    publish_log,
-    publish_notification,
+    publish_to_kafka,
 )
 
 __all__ = [
@@ -47,6 +46,5 @@ __all__ = [
     'get_module_publisher',
     'set_module_user_id',
     'get_module_user_id',
-    'publish_log',
-    'publish_notification',
+    'publish_to_kafka',
 ]
