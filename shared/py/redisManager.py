@@ -110,3 +110,26 @@ class RedisManager:
             return True
         except Exception:
             return False
+
+    async def scan_keys(self, pattern: str = "*", count: int = 100) -> List[str]:
+        """
+        Scan Redis keys matching a pattern.
+        
+        Args:
+            pattern: Key pattern (e.g., "prefix:*")
+            count: Number of keys to scan per iteration
+            
+        Returns:
+            List of matching keys
+        """
+        if not self.client:
+            return []
+        
+        keys = []
+        cursor = 0
+        while True:
+            cursor, batch = await self.client.scan(cursor, match=pattern, count=count)
+            keys.extend(batch)
+            if cursor == 0:
+                break
+        return keys

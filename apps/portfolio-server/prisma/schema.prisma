@@ -346,3 +346,32 @@ model TradingAgentSnapshot {
   @@index([agent_type])
   @@map("trading_agent_snapshots")
 }
+
+/// --------------------
+/// Company Reports (MongoDB - schema for reference only)
+/// Note: This model is for documentation. Actual storage uses MongoDB via mongodb_provider.
+/// --------------------
+model CompanyReport {
+  id                      String   @id @default(uuid())
+  company_name           String
+  ticker                  String   @unique
+  market_cap              String?
+  company_description     String?
+  business_model          String?
+  segment_exposure        String?
+  geographic_exposure      String?
+  major_clients           String?
+  major_partnerships       String?
+  leadership_governance    String?
+  recent_strategic_actions String?
+  rnd_intensity           String?
+  brand_value_drivers     String?
+  negatives_risks         String?
+  metadata                Json?    @default("{}")
+  created_at              DateTime @default(now())
+  updated_at              DateTime @updatedAt
+
+  @@index([ticker])
+  @@index([company_name])
+  @@map("company_reports")
+}

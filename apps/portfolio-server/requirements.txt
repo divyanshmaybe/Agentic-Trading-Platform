@@ -18,10 +18,12 @@ langgraph==1.0.4
 langgraph-checkpoint==3.0.1
 langgraph-prebuilt==1.0.5
 matplotlib==3.10.7
+motor==3.6.0
 numpy==1.26.4
 pandas==2.3.3
 pathway==0.26.4
 polars==1.20.0
+pymongo==4.10.1
 pdf2image==1.17.0
 pdfplumber==0.11.7
 prisma==0.15.0
