@@ -5,7 +5,16 @@ Market Regime Classifier built on Hidden Markov Models.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Dict, List, Optional
+
+# CRITICAL: Disable NumPy/OpenBLAS threading before imports to prevent SIGSEGV
+# in multiprocessing contexts (e.g., Celery workers)
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "1")
 
 import numpy as np
 import pandas as pd
@@ -121,6 +130,9 @@ class MarketRegimeClassifier:
     def fit(self, data: pd.DataFrame) -> "MarketRegimeClassifier":
         """
         Train the HMM model on historical data.
+        
+        NOTE: This method assumes NumPy/OpenBLAS threading is disabled
+        via environment variables to prevent SIGSEGV in multiprocessing contexts.
         """
         logger.info("Preparing technical features for HMM training")
         features = self.prepare_features(data)
@@ -130,9 +142,28 @@ class MarketRegimeClassifier:
             len(self.feature_names or []),
         )
 
-        features_scaled = self.scaler.fit_transform(features)
-        self.model.fit(features_scaled)
-        hidden_states = self.model.predict(features_scaled)
+        # Ensure single-threaded mode for BLAS operations
+        # This prevents SIGSEGV in multiprocessing (Celery) contexts
+        original_threads = {
+            "OPENBLAS_NUM_THREADS": os.environ.get("OPENBLAS_NUM_THREADS", "1"),
+            "MKL_NUM_THREADS": os.environ.get("MKL_NUM_THREADS", "1"),
+            "OMP_NUM_THREADS": os.environ.get("OMP_NUM_THREADS", "1"),
+        }
+        
+        # Force single-threaded mode
+        os.environ["OPENBLAS_NUM_THREADS"] = "1"
+        os.environ["MKL_NUM_THREADS"] = "1"
+        os.environ["OMP_NUM_THREADS"] = "1"
+        
+        try:
+            features_scaled = self.scaler.fit_transform(features)
+            self.model.fit(features_scaled)
+            hidden_states = self.model.predict(features_scaled)
+        finally:
+            # Restore original thread settings (though we want single-threaded anyway)
+            for key, value in original_threads.items():
+                if value:
+                    os.environ[key] = value
 
         self.regime_names = self._label_regimes(features, hidden_states)
         self.is_trained = True

@@ -418,9 +418,11 @@ def run_portfolio_allocation_requests(
     logger = logger or LOGGER
     event_queue: "queue.Queue[Optional[Dict[str, Any]]]" = queue.Queue()
     stop_event = threading.Event()
-    subject = _AllocationSubject(str(uuid.uuid4()), event_queue, stop_event)
+    unique_id = str(uuid.uuid4())
+    subject = _AllocationSubject(unique_id, event_queue, stop_event)
 
-    results_table = build_portfolio_allocation_pipeline(subject)
+    # Pass unique name to avoid Pathway connector name conflicts
+    results_table = build_portfolio_allocation_pipeline(subject, name=f"portfolio_allocation_{unique_id}")
 
     collector = _AllocationCollector()
     pw.io.subscribe(results_table, collector)

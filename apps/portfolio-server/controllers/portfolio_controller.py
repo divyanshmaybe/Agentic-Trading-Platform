@@ -105,9 +105,28 @@ class PortfolioController:
         if organization_id:
             filters["organization_id"] = organization_id
 
+        # First, try to find a portfolio that has allocations (prioritize portfolios with allocations)
+        # This ensures we get the portfolio that actually has allocations rather than an empty one
+        where_with_allocations = {
+            "AND": [
+                filters,
+                {"allocations": {"some": {}}}  # Has at least one allocation
+            ]
+        }
+        portfolios_with_allocations = await self.prisma.portfolio.find_many(
+            where=where_with_allocations,
+            include={"allocations": True},
+            order={"updated_at": "desc"},
+        )
+        
+        if portfolios_with_allocations:
+            # Return the most recently updated portfolio that has allocations
+            return portfolios_with_allocations[0]
+        
+        # Fallback: if no portfolio has allocations, return the most recently updated one
         return await self.prisma.portfolio.find_first(
             where=filters,
-            order={"created_at": "asc"},
+            order={"updated_at": "desc"},
         )
 
     # ------------------------------------------------------------------
@@ -132,13 +151,8 @@ class PortfolioController:
                 detail="Unable to resolve customer for user",
             )
 
-        portfolio = await self.prisma.portfolio.find_first(
-            where={
-                "organization_id": organization_id,
-                "customer_id": customer_id,
-            },
-            order={"created_at": "asc"},
-        )
+        # Use the same logic as _get_portfolio_for_user to prioritize portfolios with allocations
+        portfolio = await self._get_portfolio_for_user(customer_id, organization_id)
 
         if portfolio is None:
             defaults = {

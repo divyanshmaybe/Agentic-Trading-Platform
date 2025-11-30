@@ -63,10 +63,10 @@ class TradingAgentSnapshotService:
             Snapshot record dict or None if failed
         """
         db_manager = DBManager.get_instance()
-        await db_manager.connect()
-        client = db_manager.get_client()
-        try:
-            # Fetch agent with positions and allocation
+        
+        async with db_manager.session() as client:
+            try:
+                # Fetch agent with positions and allocation
                 agent = await client.tradingagent.find_unique(
                     where={"id": agent_id},
                     include={
@@ -159,20 +159,14 @@ class TradingAgentSnapshotService:
                     "unrealized_pnl": float(unrealized_pnl),
                 }
                 
-        except Exception as exc:
-            self.logger.error(
-                "Failed to capture agent snapshot %s: %s",
-                agent_id,
-                exc,
-                exc_info=True,
-            )
-            return None
-        finally:
-            # Clean up database connection
-            try:
-                await db_manager.disconnect()
-            except Exception as cleanup_err:
-                self.logger.debug("Error during connection cleanup: %s", cleanup_err)
+            except Exception as exc:
+                self.logger.error(
+                    "Failed to capture agent snapshot %s: %s",
+                    agent_id,
+                    exc,
+                    exc_info=True,
+                )
+                return None
 
     async def capture_all_active_agents(self) -> Dict[str, Any]:
         """
@@ -182,10 +176,10 @@ class TradingAgentSnapshotService:
             Dict with summary of snapshots captured
         """
         db_manager = DBManager.get_instance()
-        await db_manager.connect()
-        client = db_manager.get_client()
-        try:
-            # Find all active agents
+        
+        async with db_manager.session() as client:
+            try:
+                # Find all active agents
                 agents = await client.tradingagent.find_many(
                     where={"status": "active"},
                 )
@@ -218,15 +212,9 @@ class TradingAgentSnapshotService:
                     "failed": failed,
                 }
                 
-        except Exception as exc:
-            self.logger.error("Failed to capture all agent snapshots: %s", exc, exc_info=True)
-            return {"total_agents": 0, "snapshots_captured": 0, "failed": 0}
-        finally:
-            # Clean up database connection
-            try:
-                await db_manager.disconnect()
-            except Exception as cleanup_err:
-                self.logger.debug("Error during connection cleanup: %s", cleanup_err)
+            except Exception as exc:
+                self.logger.error("Failed to capture all agent snapshots: %s", exc, exc_info=True)
+                return {"total_agents": 0, "snapshots_captured": 0, "failed": 0}
     
     async def capture_portfolio_snapshot(self, portfolio_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -244,90 +232,84 @@ class TradingAgentSnapshotService:
             Snapshot record dict or None if failed
         """
         db_manager = DBManager.get_instance()
-        await db_manager.connect()
-        client = db_manager.get_client()
-        try:
-            portfolio = await client.portfolio.find_unique(
-                where={"id": portfolio_id},
-                include={"positions": {"where": {"status": "open"}}}
-            )
-            
-            if not portfolio:
-                return None
-            
-            available_cash = self._as_decimal(getattr(portfolio, "available_cash", 0))
-            realized_pnl = self._as_decimal(getattr(portfolio, "total_realized_pnl", 0))
-            
-            # Calculate positions value and unrealized P&L
-            positions = getattr(portfolio, "positions", []) or []
-            positions_value = Decimal("0")
-            unrealized_pnl = Decimal("0")
-            
-            # Batch fetch all prices first (more efficient than per-position)
-            symbols_needed = {str(getattr(p, "symbol", "")) for p in positions 
-                            if str(getattr(p, "symbol", "")) and int(getattr(p, "quantity", 0)) != 0}
-            
-            # Pre-fetch all prices from cache (WebSocket already has them)
-            price_cache = {}
-            for symbol in symbols_needed:
-                price_cache[symbol] = self._get_live_price(symbol, Decimal("0"))
-            
-            for pos in positions:
-                symbol = str(getattr(pos, "symbol", ""))
-                quantity = int(getattr(pos, "quantity", 0))
-                avg_buy_price = self._as_decimal(getattr(pos, "average_buy_price", 0))
-                
-                if not symbol or quantity == 0:
-                    continue
-                
-                # Use pre-fetched price (fallback to avg if not in cache)
-                current_price = price_cache.get(symbol, avg_buy_price)
-                if current_price == Decimal("0"):
-                    current_price = avg_buy_price
-                
-                position_value = current_price * Decimal(str(quantity))
-                cost_basis = avg_buy_price * Decimal(str(quantity))
-                
-                positions_value += position_value
-                unrealized_pnl += (position_value - cost_basis)
-            
-            current_value = available_cash + positions_value
-            
-            # Create snapshot with relation to portfolio
-            snapshot = await client.portfoliosnapshot.create(
-                data={
-                    "portfolio": {"connect": {"id": portfolio_id}},
-                    "snapshot_at": datetime.utcnow(),
-                    "current_value": current_value,
-                    "realized_pnl": realized_pnl,
-                    "unrealized_pnl": unrealized_pnl
-                }
-            )
-            
-            self.logger.info(
-                "📸 Portfolio snapshot: value=₹%.2f, realized=₹%.2f, unrealized=₹%.2f",
-                float(current_value),
-                float(realized_pnl),
-                float(unrealized_pnl)
-            )
-            
-            return {
-                "id": snapshot.id,
-                "portfolio_id": portfolio_id,
-                "current_value": float(current_value),
-                "realized_pnl": float(realized_pnl),
-                "unrealized_pnl": float(unrealized_pnl)
-            }
         
-        except Exception as exc:
-            self.logger.error("Portfolio snapshot failed: %s", exc, exc_info=True)
-            return None
-        finally:
-            # Clean up database connection
+        async with db_manager.session() as client:
             try:
-                await db_manager.disconnect()
-            except Exception as cleanup_err:
-                self.logger.debug("Error during connection cleanup: %s", cleanup_err)
+                portfolio = await client.portfolio.find_unique(
+                    where={"id": portfolio_id},
+                    include={"positions": {"where": {"status": "open"}}}
+                )
+                
+                if not portfolio:
+                    return None
+                
+                available_cash = self._as_decimal(getattr(portfolio, "available_cash", 0))
+                realized_pnl = self._as_decimal(getattr(portfolio, "total_realized_pnl", 0))
+                
+                # Calculate positions value and unrealized P&L
+                positions = getattr(portfolio, "positions", []) or []
+                positions_value = Decimal("0")
+                unrealized_pnl = Decimal("0")
+                
+                # Batch fetch all prices first (more efficient than per-position)
+                symbols_needed = {str(getattr(p, "symbol", "")) for p in positions 
+                                if str(getattr(p, "symbol", "")) and int(getattr(p, "quantity", 0)) != 0}
+                
+                # Pre-fetch all prices from cache (WebSocket already has them)
+                price_cache = {}
+                for symbol in symbols_needed:
+                    price_cache[symbol] = self._get_live_price(symbol, Decimal("0"))
+                
+                for pos in positions:
+                    symbol = str(getattr(pos, "symbol", ""))
+                    quantity = int(getattr(pos, "quantity", 0))
+                    avg_buy_price = self._as_decimal(getattr(pos, "average_buy_price", 0))
+                    
+                    if not symbol or quantity == 0:
+                        continue
+                    
+                    # Use pre-fetched price (fallback to avg if not in cache)
+                    current_price = price_cache.get(symbol, avg_buy_price)
+                    if current_price == Decimal("0"):
+                        current_price = avg_buy_price
+                    
+                    position_value = current_price * Decimal(str(quantity))
+                    cost_basis = avg_buy_price * Decimal(str(quantity))
+                    
+                    positions_value += position_value
+                    unrealized_pnl += (position_value - cost_basis)
+                
+                current_value = available_cash + positions_value
+                
+                # Create snapshot with relation to portfolio
+                snapshot = await client.portfoliosnapshot.create(
+                    data={
+                        "portfolio": {"connect": {"id": portfolio_id}},
+                        "snapshot_at": datetime.utcnow(),
+                        "current_value": current_value,
+                        "realized_pnl": realized_pnl,
+                        "unrealized_pnl": unrealized_pnl
+                    }
+                )
+                
+                self.logger.info(
+                    "📸 Portfolio snapshot: value=₹%.2f, realized=₹%.2f, unrealized=₹%.2f",
+                    float(current_value),
+                    float(realized_pnl),
+                    float(unrealized_pnl)
+                )
+                
+                return {
+                    "id": snapshot.id,
+                    "portfolio_id": portfolio_id,
+                    "current_value": float(current_value),
+                    "realized_pnl": float(realized_pnl),
+                    "unrealized_pnl": float(unrealized_pnl)
+                }
+            
+            except Exception as exc:
+                self.logger.error("Portfolio snapshot failed: %s", exc, exc_info=True)
+                return None
 
     async def capture_all_portfolio_snapshots(self) -> Dict[str, Any]:
         """
@@ -337,50 +319,44 @@ class TradingAgentSnapshotService:
             Dict with summary of snapshots captured
         """
         db_manager = DBManager.get_instance()
-        await db_manager.connect()
-        client = db_manager.get_client()
-        try:
-            portfolios = await client.portfolio.find_many(
-                where={"status": "active"},
-            )
-            
-            if not portfolios:
-                self.logger.info("No active portfolios found for snapshot capture")
-                return {"total_portfolios": 0, "snapshots_captured": 0, "failed": 0}
-            
-            snapshots_captured = 0
-            failed = 0
-            
-            for portfolio in portfolios:
-                portfolio_id = str(getattr(portfolio, "id", ""))
-                result = await self.capture_portfolio_snapshot(portfolio_id)
-                if result:
-                    snapshots_captured += 1
-                else:
-                    failed += 1
-            
-            self.logger.info(
-                "📸 Portfolio snapshots complete: %d/%d captured, %d failed",
-                snapshots_captured,
-                len(portfolios),
-                failed,
-            )
-            
-            return {
-                "total_portfolios": len(portfolios),
-                "snapshots_captured": snapshots_captured,
-                "failed": failed,
-            }
         
-        except Exception as exc:
-            self.logger.error("Failed to capture all portfolio snapshots: %s", exc, exc_info=True)
-            return {"total_portfolios": 0, "snapshots_captured": 0, "failed": 0}
-        finally:
-            # Clean up database connection
+        async with db_manager.session() as client:
             try:
-                await db_manager.disconnect()
-            except Exception as cleanup_err:
-                self.logger.debug("Error during connection cleanup: %s", cleanup_err)
+                portfolios = await client.portfolio.find_many(
+                    where={"status": "active"},
+                )
+                
+                if not portfolios:
+                    self.logger.info("No active portfolios found for snapshot capture")
+                    return {"total_portfolios": 0, "snapshots_captured": 0, "failed": 0}
+                
+                snapshots_captured = 0
+                failed = 0
+                
+                for portfolio in portfolios:
+                    portfolio_id = str(getattr(portfolio, "id", ""))
+                    result = await self.capture_portfolio_snapshot(portfolio_id)
+                    if result:
+                        snapshots_captured += 1
+                    else:
+                        failed += 1
+                
+                self.logger.info(
+                    "📸 Portfolio snapshots complete: %d/%d captured, %d failed",
+                    snapshots_captured,
+                    len(portfolios),
+                    failed,
+                )
+                
+                return {
+                    "total_portfolios": len(portfolios),
+                    "snapshots_captured": snapshots_captured,
+                    "failed": failed,
+                }
+            
+            except Exception as exc:
+                self.logger.error("Failed to capture all portfolio snapshots: %s", exc, exc_info=True)
+                return {"total_portfolios": 0, "snapshots_captured": 0, "failed": 0}
     
     async def get_agent_snapshot_history(
         self,
@@ -398,34 +374,34 @@ class TradingAgentSnapshotService:
             List of snapshot records ordered by snapshot_at (descending)
         """
         db_manager = DBManager.get_instance()
-        await db_manager.connect()
-        client = db_manager.get_client()
-        try:
-            snapshots = await client.tradingagentsnapshot.find_many(
-                where={"agent_id": agent_id},
-                order={"snapshot_at": "desc"},
-                take=limit,
-            )
-            
-            return [
-                {
-                    "id": snapshot.id,
-                    "snapshot_at": snapshot.snapshot_at.isoformat() if hasattr(snapshot.snapshot_at, "isoformat") else str(snapshot.snapshot_at),
-                    "current_value": float(self._as_decimal(snapshot.current_value)),
-                    "realized_pnl": float(self._as_decimal(snapshot.realized_pnl)),
-                    "unrealized_pnl": float(self._as_decimal(snapshot.unrealized_pnl)),
-                }
-                for snapshot in snapshots
-            ]
+        
+        async with db_manager.session() as client:
+            try:
+                snapshots = await client.tradingagentsnapshot.find_many(
+                    where={"agent_id": agent_id},
+                    order={"snapshot_at": "desc"},
+                    take=limit,
+                )
                 
-        except Exception as exc:
-            self.logger.error(
-                "Failed to get snapshot history for agent %s: %s",
-                agent_id,
-                exc,
-                exc_info=True,
-            )
-            return []
+                return [
+                    {
+                        "id": snapshot.id,
+                        "snapshot_at": snapshot.snapshot_at.isoformat() if hasattr(snapshot.snapshot_at, "isoformat") else str(snapshot.snapshot_at),
+                        "current_value": float(self._as_decimal(snapshot.current_value)),
+                        "realized_pnl": float(self._as_decimal(snapshot.realized_pnl)),
+                        "unrealized_pnl": float(self._as_decimal(snapshot.unrealized_pnl)),
+                    }
+                    for snapshot in snapshots
+                ]
+                    
+            except Exception as exc:
+                self.logger.error(
+                    "Failed to get snapshot history for agent %s: %s",
+                    agent_id,
+                    exc,
+                    exc_info=True,
+                )
+                return []
 
     async def get_portfolio_snapshot_history(
         self,
@@ -443,30 +419,30 @@ class TradingAgentSnapshotService:
             List of snapshot records ordered by snapshot_at (descending)
         """
         db_manager = DBManager.get_instance()
-        await db_manager.connect()
-        client = db_manager.get_client()
-        try:
-            snapshots = await client.portfoliosnapshot.find_many(
-                where={"portfolio_id": portfolio_id},
-                order={"snapshot_at": "desc"},
-                take=limit,
-            )
-            
-            return [
-                {
-                    "id": snapshot.id,
-                    "snapshot_at": snapshot.snapshot_at.isoformat() if hasattr(snapshot.snapshot_at, "isoformat") else str(snapshot.snapshot_at),
-                    "current_value": float(self._as_decimal(snapshot.current_value)),
-                    "realized_pnl": float(self._as_decimal(snapshot.realized_pnl)),
-                    "unrealized_pnl": float(self._as_decimal(snapshot.unrealized_pnl)),
-                }
-                for snapshot in snapshots
-            ]
+        
+        async with db_manager.session() as client:
+            try:
+                snapshots = await client.portfoliosnapshot.find_many(
+                    where={"portfolio_id": portfolio_id},
+                    order={"snapshot_at": "desc"},
+                    take=limit,
+                )
                 
-        except Exception as exc:
-            self.logger.error(
-                "Failed to get portfolio snapshot history: %s",
-                exc,
-                exc_info=True,
-            )
-            return []
+                return [
+                    {
+                        "id": snapshot.id,
+                        "snapshot_at": snapshot.snapshot_at.isoformat() if hasattr(snapshot.snapshot_at, "isoformat") else str(snapshot.snapshot_at),
+                        "current_value": float(self._as_decimal(snapshot.current_value)),
+                        "realized_pnl": float(self._as_decimal(snapshot.realized_pnl)),
+                        "unrealized_pnl": float(self._as_decimal(snapshot.unrealized_pnl)),
+                    }
+                    for snapshot in snapshots
+                ]
+                    
+            except Exception as exc:
+                self.logger.error(
+                    "Failed to get portfolio snapshot history: %s",
+                    exc,
+                    exc_info=True,
+                )
+                return []

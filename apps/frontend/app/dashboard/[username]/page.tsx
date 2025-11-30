@@ -23,23 +23,35 @@ export default function DashboardPage() {
   
   const { allocations, allocationError } = usePortfolioAllocations()
   const { portfolioSummary, stocks, loading, error, portfolioNotFound } = useDashboardData(allocations)
-  const subscriptionEnabledRef = useRef(false)
+  
+  const subscriptionsEnabledRef = useRef(false)
 
-  // Enable AI trading subscriptions when allocations are loaded and complete
+  // Auto-subscribe to all agents when allocations are loaded
   useEffect(() => {
-    if (
-      !subscriptionEnabledRef.current &&
-      allocations.length > 0 &&
-      !allocationError &&
-      authUser
-    ) {
-      subscriptionEnabledRef.current = true
-      enableAITradingSubscription().catch((err) => {
-        console.error("Failed to enable AI trading subscriptions:", err)
-        // Reset ref on error so it can be retried
-        subscriptionEnabledRef.current = false
-      })
+    async function autoSubscribeAgents() {
+      if (
+        allocations.length > 0 && 
+        !allocationError && 
+        !subscriptionsEnabledRef.current &&
+        authUser
+      ) {
+        subscriptionsEnabledRef.current = true
+        try {
+          const result = await enableAITradingSubscription()
+          if (result.success) {
+            console.log("✅ AI trading agents auto-subscribed:", result.message)
+          } else {
+            console.warn("⚠️ Failed to auto-subscribe agents:", result.message)
+            subscriptionsEnabledRef.current = false
+          }
+        } catch (err) {
+          console.error("❌ Error auto-subscribing to agents:", err)
+          subscriptionsEnabledRef.current = false
+        }
+      }
     }
+
+    autoSubscribeAgents()
   }, [allocations, allocationError, authUser])
 
   if (authLoading || !authUser) {
