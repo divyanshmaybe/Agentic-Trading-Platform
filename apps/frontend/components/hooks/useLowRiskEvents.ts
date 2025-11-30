@@ -37,6 +37,7 @@ interface UseLowRiskEventsReturn {
   startStreaming: () => void;
   stopStreaming: () => void;
   streaming: boolean;
+  hasSummary: boolean;
 }
 
 export function useLowRiskEvents(): UseLowRiskEventsReturn {
@@ -46,6 +47,7 @@ export function useLowRiskEvents(): UseLowRiskEventsReturn {
   const [streaming, setStreaming] = useState(false);
 
   const eventSourceRef = useRef<EventSource | null>(null);
+  const autoStartAttemptedRef = useRef<boolean>(false);
 
   // Helper function to merge events and deduplicate by ID
   const mergeEvents = useCallback((existing: LowRiskEvent[], incoming: LowRiskEvent[]): LowRiskEvent[] => {
@@ -191,6 +193,27 @@ export function useLowRiskEvents(): UseLowRiskEventsReturn {
     }
   }, []);
 
+  // Calculate if events contain a summary event
+  const hasSummary = events.some((event) => event.kind === "summary");
+
+  // Auto-start streaming if events exist but no summary
+  useEffect(() => {
+    // Only attempt auto-start once and when conditions are met
+    if (
+      !loading &&
+      events.length > 0 &&
+      !hasSummary &&
+      !streaming &&
+      !eventSourceRef.current &&
+      !autoStartAttemptedRef.current
+    ) {
+      console.log("[LowRisk Events] Auto-starting stream (events exist but no summary)");
+      autoStartAttemptedRef.current = true;
+      startStreaming();
+    }
+  }, [loading, events.length, hasSummary, streaming, startStreaming]);
+
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -210,6 +233,7 @@ export function useLowRiskEvents(): UseLowRiskEventsReturn {
     startStreaming,
     stopStreaming,
     streaming,
+    hasSummary,
   };
 }
 
