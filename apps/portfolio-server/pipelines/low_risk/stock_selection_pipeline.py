@@ -6,13 +6,23 @@ Uses LLM agents with Google Search for company report generation and strategic
 stock selection based on fundamental analysis.
 """
 
+import asyncio
 import json
 import logging
 import os
 import re
+import sys
+from pathlib import Path
 from typing import Dict, List, Optional, Any
 
+# Add shared/py to sys.path BEFORE any imports that depend on it
+# Path: low_risk -> pipelines -> portfolio-server -> apps -> Pathway-Inter-IIT -> shared/py
+shared_dir = Path(__file__).resolve().parent.parent.parent.parent.parent / "shared" / "py"
+if str(shared_dir) not in sys.path:
+    sys.path.insert(0, str(shared_dir))
+
 import pandas as pd
+from company_report_service import CompanyReportService
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -92,12 +102,108 @@ class StockSelectionPipeline:
                     "GEMINI_API_KEY not provided and not found in environment variables"
                 )
         self.gemini_api_key = gemini_api_key
+        
+        # Initialize CompanyReportService for storing reports
+        self.report_service = CompanyReportService.get_instance()
+        # Initialize service asynchronously (will be done on first use if not already)
+        try:
+            loop = asyncio.get_event_loop()
+            if not loop.is_running():
+                loop.run_until_complete(self.report_service.initialize())
+        except RuntimeError:
+            # Will initialize on first use
+            pass
 
         logger.info(f"✓ Stock selection pipeline initialized with {len(company_df)} companies")
     
-    def generate_company_report(self, ticker: str) -> Dict[str, Any]:
+    def _generate_report_sync(self, ticker: str) -> Dict[str, Any]:
+        """
+        Generate company report synchronously (for thread pool context).
+        Checks MongoDB first, generates if not found, stores to DB in background.
+        """
+        try:
+            # Check MongoDB first (using a new event loop for this sync context)
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    existing_report = loop.run_until_complete(
+                        self.report_service.get_report_by_ticker(ticker)
+                    )
+                    if existing_report:
+                        logger.info(f"📋 Found existing report in DB for {ticker}")
+                        return existing_report
+                finally:
+                    loop.close()
+            except Exception as db_err:
+                logger.warning(f"Could not check MongoDB for {ticker}: {db_err}")
+                # Continue to generate
+            
+            # Load company report generation prompt
+            company_report_prompt = load_prompt_from_template("company_report_generation_prompt")
+
+            # Create LLM with Google Search tool
+            model = ChatGoogleGenerativeAI(
+                model="gemini-2.5-pro",
+                google_api_key=self.gemini_api_key,
+            )
+            model_with_search = model.bind_tools([{"google_search": {}}])
+
+            # Generate report
+            messages = [
+                SystemMessage(content=company_report_prompt),
+                HumanMessage(content=f"Generate a report on the company {ticker}")
+            ]
+            msg = f"🔍 Generating company report for {ticker}..."
+            logger.info(msg)
+            publish_to_kafka({"content": msg}, user_id=self.user_id)
+            
+            response = model_with_search.invoke(messages)
+            report_text = response.content
+
+            # Parse JSON using common utility
+            report = parse_json_response(
+                report_text,
+                expected_type=dict,
+                clean_markdown=True,
+                extract_json=True
+            )
+            
+            # Add ticker to report if not present
+            if "ticker" not in report:
+                report["ticker"] = ticker
+            
+            # Store to MongoDB in background (new event loop)
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    logger.info(f"💾 Storing report to MongoDB for {ticker}...")
+                    loop.run_until_complete(self.report_service.upsert_report(report))
+                    logger.info(f"✅ Report stored to MongoDB for {ticker}")
+                finally:
+                    loop.close()
+            except Exception as db_err:
+                logger.error(f"Failed to store report to MongoDB for {ticker}: {db_err}")
+                # Continue anyway - report is still valid
+            
+            msg = f"✅ Company report generated for {ticker}"
+            logger.info(msg)
+            publish_to_kafka({"content": msg}, user_id=self.user_id)
+            
+            return report
+
+        except Exception as e:
+            logger.error(f"Error generating company report for {ticker}: {e}", exc_info=True)
+            if "rate limit" in str(e).lower() or "quota" in str(e).lower():
+                logger.warning(f"Rate limit error for {ticker}, will retry later")
+                raise ValueError(f"Rate limit error: {e}")
+            raise ValueError(f"Failed to generate company report: {e}")
+    
+    async def generate_company_report(self, ticker: str) -> Dict[str, Any]:
         """
         Generate a comprehensive company report using LLM with Google Search.
+        Stores the report to MongoDB and waits for storage before publishing to Kafka.
 
         Args:
             ticker: NIFTY ticker symbol of the company
@@ -109,6 +215,13 @@ class StockSelectionPipeline:
             ValueError: If report generation fails
         """
         try:
+            # Check MongoDB first
+            await self.report_service.initialize()
+            existing_report = await self.report_service.get_report_by_ticker(ticker)
+            if existing_report:
+                logger.info(f"📋 Found existing report in DB for {ticker}")
+                return existing_report
+            
             # Load company report generation prompt
             company_report_prompt = load_prompt_from_template("company_report_generation_prompt")
 
@@ -126,7 +239,7 @@ class StockSelectionPipeline:
             ]
             msg=f"🔍 Generating company report for {ticker}..."
             logger.info(msg)
-            publish_to_kafka({"content": msg}, publisher=self.publisher, user_id=self.user_id)
+            publish_to_kafka({"content": msg}, user_id=self.user_id)
             response = model_with_search.invoke(messages)
             report_text = response.content
 
@@ -137,9 +250,21 @@ class StockSelectionPipeline:
                 clean_markdown=True,
                 extract_json=True
             )
-            msg=f"✅ Company report generated for {ticker}"
+            
+            # Add ticker to report if not present
+            if "ticker" not in report:
+                report["ticker"] = ticker
+            
+            # Store to MongoDB ALWAYS
+            logger.info(f"💾 Storing report to MongoDB for {ticker}...")
+            await self.report_service.upsert_report(report)
+            logger.info(f"✅ Report stored to MongoDB for {ticker}")
+            
+            # Publish to Kafka after storage is complete
+            msg=f"✅ Company report generated and stored for {ticker}"
             logger.info(msg)
-            publish_to_kafka({"content": msg}, publisher=self.publisher, user_id=self.user_id)
+            publish_to_kafka({"content": msg}, user_id=self.user_id)
+            
             return report
 
         except Exception as e:
@@ -165,8 +290,7 @@ class StockSelectionPipeline:
         @tool
         def company_report_tool(ticker: str) -> Dict[str, Any]:
             """
-            Generate a company report for            logger.info(f"✓ Company report generated for {ticker}")
- the given ticker.
+            Generate a company report for the given ticker.
 
             Input:
             - ticker: NIFTY ticker symbol of the company.
@@ -178,9 +302,8 @@ class StockSelectionPipeline:
             leadership_governance, recent_strategic_actions, rnd_intensity,
             brand_value_drivers, negatives_risks
             """
-            # Check cache first
+            # Check memory cache first
             if ticker in company_report_db:
-                #TODO send to kafka
                 to_send = {
                     "status": "cached",
                     "content": {
@@ -188,10 +311,10 @@ class StockSelectionPipeline:
                     }
                 }
                 logger.info(f"📋 Using cached report for {ticker}")
-                publish_to_kafka(to_send, publisher=self.publisher, user_id=self.user_id,message_type="report")
+                publish_to_kafka(to_send, user_id=self.user_id, message_type="report")
                 return company_report_db[ticker]
 
-            # Generate new report
+            # Generate new report (async operation)
             try:
                 to_send = {
                     "status": "generating",
@@ -199,8 +322,13 @@ class StockSelectionPipeline:
                         "ticker": ticker
                     }
                 }
-                publish_to_kafka(to_send, publisher=self.publisher, user_id=self.user_id,message_type="report")
-                report = self.generate_company_report(ticker)
+                publish_to_kafka(to_send, user_id=self.user_id, message_type="report")
+                
+                # Generate report synchronously in thread pool context
+                # We can't use MongoDB/Redis here due to event loop conflicts
+                # So we generate fresh and cache in memory only
+                report = self._generate_report_sync(ticker)
+                
                 company_report_db[ticker] = report
                 to_send = {
                     "status": "generated",
@@ -208,7 +336,7 @@ class StockSelectionPipeline:
                         "ticker": ticker
                     }
                 }
-                publish_to_kafka(to_send, publisher=self.publisher, user_id=self.user_id,message_type="report")
+                publish_to_kafka(to_send, user_id=self.user_id, message_type="report")
                 return report
             except Exception as e:
                 logger.error(f"company_report_tool failed for {ticker}: {e}")
@@ -291,7 +419,7 @@ class StockSelectionPipeline:
             
             msg=f"🎯 Selecting stocks for {industry} ({industry_allocation}% allocation)..."
             logger.info(msg)
-            publish_to_kafka({"content": msg}, publisher=self.publisher, user_id=self.user_id)
+            publish_to_kafka({"content": msg}, user_id=self.user_id)
 
             # Load prompts
             stock_selection_prompt = load_prompt_from_template("stock_selection_system_prompt")
@@ -325,7 +453,7 @@ class StockSelectionPipeline:
             # Invoke agent
             msg = f"🤖 Invoking stock selection agent for {industry}..."
             logger.info(msg)
-            publish_to_kafka({"content": msg}, publisher=self.publisher, user_id=self.user_id)
+            publish_to_kafka({"content": msg}, user_id=self.user_id)
 
             # Include system prompt in messages
             messages = []
@@ -352,7 +480,7 @@ class StockSelectionPipeline:
                                 "content": ticker,
                             }
                         }
-                        publish_to_kafka(to_send, publisher=self.publisher, user_id=self.user_id,message_type="stock")
+                        publish_to_kafka(to_send, user_id=self.user_id,message_type="stock")
             result = {"messages": messages}
             # Parse response using common utility
             ind_portfolio = clean_and_parse_agent_json_response(result, expected_type=list)
@@ -375,7 +503,7 @@ class StockSelectionPipeline:
                 item["percentage"] = absolute_percentage
             msg=f"✅ Stock selection complete for {industry}: {len(ind_portfolio)} stocks selected.\n"
             logger.info(msg)
-            publish_to_kafka({"content": msg}, publisher=self.publisher, user_id=self.user_id)
+            publish_to_kafka({"content": msg}, user_id=self.user_id)
 
             return ind_portfolio
 
@@ -404,7 +532,7 @@ class StockSelectionPipeline:
         """
         msg = f"📊 Generating stock portfolio across {len(industry_list)} industries..."
         logger.info(msg)
-        publish_to_kafka({"content": msg}, publisher=self.publisher, user_id=self.user_id)
+        publish_to_kafka({"content": msg}, user_id=self.user_id)
 
         final_portfolio = []
 
@@ -433,21 +561,22 @@ class StockSelectionPipeline:
                 # Continue with other industries
                 continue
 
-            # Validate final portfolio
-            if not final_portfolio:
-                raise ValueError("No stocks selected in final portfolio")
+        # Validate final portfolio (AFTER processing all industries)
+        if not final_portfolio:
+            raise ValueError("No stocks selected in final portfolio")
 
-            total_allocation = sum(item["percentage"] for item in final_portfolio)
-            msg=f"✅ Stock portfolio complete: {len(final_portfolio)} stocks, total allocation: {total_allocation:.1f}%"
-            logger.info(msg)
-            publish_to_kafka({"content": msg}, publisher=self.publisher, user_id=self.user_id)
-            # Normalize if total is not close to 100%
-            if abs(total_allocation - 100.0) > 1.0:
-                logger.warning(f"Normalizing portfolio allocation from {total_allocation}% to 100%")
-                for item in final_portfolio:
-                    item["percentage"] = (item["percentage"] / total_allocation) * 100.0
+        total_allocation = sum(item["percentage"] for item in final_portfolio)
+        msg=f"✅ Stock portfolio complete: {len(final_portfolio)} stocks, total allocation: {total_allocation:.1f}%"
+        logger.info(msg)
+        publish_to_kafka({"content": msg}, user_id=self.user_id)
+        
+        # Normalize if total is not close to 100%
+        if abs(total_allocation - 100.0) > 1.0:
+            logger.warning(f"Normalizing portfolio allocation from {total_allocation}% to 100%")
+            for item in final_portfolio:
+                item["percentage"] = (item["percentage"] / total_allocation) * 100.0
 
-            return final_portfolio
+        return final_portfolio
 
     def run(
             self,
@@ -470,7 +599,7 @@ class StockSelectionPipeline:
             """
             msg=f"🚀 Starting stock selection pipeline..."
             logger.info(msg)
-            publish_to_kafka({"content": msg}, publisher=self.publisher, user_id=self.user_id)
+            publish_to_kafka({"content": msg}, user_id=self.user_id)
 
             # Validate inputs
             if fund_allocated <= 0:
@@ -480,11 +609,11 @@ class StockSelectionPipeline:
             try:
                 msg=f"📊 Running industry selection pipeline..."
                 logger.info(msg)
-                publish_to_kafka({"content": msg}, publisher=self.publisher, user_id=self.user_id)
+                publish_to_kafka({"content": msg}, user_id=self.user_id)
                 industry_list = self.industry_list
                 msg=f"✅ Generated industry allocations: {len(industry_list)} industries"
                 logger.info(msg)
-                publish_to_kafka({"content": msg}, publisher=self.publisher, user_id=self.user_id)
+                publish_to_kafka({"content": msg}, user_id=self.user_id)
             except Exception as e:
                 logger.error(f"Failed to generate industry list: {e}", exc_info=True)
                 raise
@@ -504,11 +633,11 @@ class StockSelectionPipeline:
             try:
                 msg=f"💰 Converting portfolio to trades (fund: ₹{fund_allocated:,.2f})..."
                 logger.info(msg)
-                publish_to_kafka({"content": msg}, publisher=self.publisher, user_id=self.user_id)  
+                publish_to_kafka({"content": msg}, user_id=self.user_id)  
                 trade_list = trade_converter(final_portfolio, fund_allocated)
                 msg=f"✅ Trade list generated: {len(trade_list)} trades"
                 logger.info(msg)
-                publish_to_kafka({"content": msg}, publisher=self.publisher, user_id=self.user_id)
+                publish_to_kafka({"content": msg}, user_id=self.user_id)
             except Exception as e:
                 logger.error(f"Failed to convert portfolio to trades: {e}", exc_info=True)
                 raise
@@ -534,7 +663,7 @@ class StockSelectionPipeline:
                     "utilization_rate": (total_invested / fund_allocated) * 100.0
                 }
             }
-            publish_to_kafka({"content": res}, publisher=self.publisher, user_id=self.user_id,message_type="summary")
+            publish_to_kafka({"content": res}, user_id=self.user_id,message_type="summary")
             return res
 
 def run_complete_low_risk_pipeline(

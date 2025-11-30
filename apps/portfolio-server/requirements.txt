@@ -45,5 +45,6 @@ uvicorn==0.38.0
 yfinance==0.2.51
 websockets==15.0.1
 brotli==1.2.0
+nest-asyncio==1.6.0
 prometheus-client==0.21.1
 PyYAML==6.0.2

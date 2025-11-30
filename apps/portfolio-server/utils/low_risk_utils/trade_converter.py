@@ -6,15 +6,60 @@ with share quantities and investment amounts.
 """
 
 import logging
-import yfinance as yf
+import asyncio
+import sys
+from pathlib import Path
 from typing import List, Dict, Any
+from decimal import Decimal
+
+# Add shared/py to sys.path
+shared_dir = Path(__file__).resolve().parent.parent.parent.parent.parent / "shared" / "py"
+if str(shared_dir) not in sys.path:
+    sys.path.insert(0, str(shared_dir))
+
+from market_data import get_market_data_service
 
 logger = logging.getLogger(__name__)
+
+
+async def _fetch_price_from_market_service(ticker: str) -> Decimal:
+    """
+    Fetch current price using market service.
+    
+    Args:
+        ticker: NSE ticker symbol
+        
+    Returns:
+        Current price as Decimal
+        
+    Raises:
+        ValueError: If price not available
+    """
+    try:
+        market_service = get_market_data_service()
+        
+        # Check if symbol exists in Angel One token map first
+        if not market_service.has_symbol(ticker):
+            similar = market_service.search_similar_symbols(ticker, limit=3)
+            similar_msg = f" Similar: {', '.join(similar)}" if similar else ""
+            logger.warning(f"⚠️ Symbol {ticker} not found in Angel One token map.{similar_msg}")
+            raise ValueError(f"Symbol '{ticker}' not available in Angel One.{similar_msg}")
+        
+        # Use await_price() with longer timeout for WebSocket data
+        logger.debug(f"📡 Fetching price for {ticker}...")
+        price = await market_service.await_price(ticker, timeout=10.0)
+        logger.debug(f"✅ Got price for {ticker}: ₹{price}")
+        return price
+        
+    except Exception as e:
+        logger.error(f"Error fetching price for {ticker} from market service: {e}")
+        raise ValueError(f"Failed to fetch price for {ticker}: {e}")
 
 
 def trade_converter(final_portfolio: List[Dict[str, Any]], fund_allocated: float) -> List[Dict[str, Any]]:
     """
     Convert portfolio recommendations into trade records with share quantities.
+    Uses market service for live price data.
     
     Args:
         final_portfolio: List of ticker dictionaries with 'ticker', 'percentage', 'reasoning'
@@ -25,35 +70,58 @@ def trade_converter(final_portfolio: List[Dict[str, Any]], fund_allocated: float
         
     Example:
         >>> final_portfolio = [
-        ...     {'ticker': 'RELIANCE.NS', 'percentage': 0.3, 'reasoning': 'Strong fundamentals'},
-        ...     {'ticker': 'TCS.NS', 'percentage': 0.25, 'reasoning': 'IT sector leader'}
+        ...     {'ticker': 'RELIANCE', 'percentage': 0.3, 'reasoning': 'Strong fundamentals'},
+        ...     {'ticker': 'TCS', 'percentage': 0.25, 'reasoning': 'IT sector leader'}
         ... ]
         >>> trades = trade_converter(final_portfolio, fund_allocated=100000)
     """
-    trade_list = []
-
-    for ticker_dict in final_portfolio:
-        trade_record = {}
-        ticker = ticker_dict['ticker']
+    
+    async def _convert_async():
+        trade_list = []
         
-        # Add .NS suffix for NSE tickers if not already present
-        yf_ticker = ticker if ticker.endswith('.NS') else f"{ticker}.NS"
+        for ticker_dict in final_portfolio:
+            ticker = ticker_dict['ticker']
+            
+            try:
+                # Fetch price from market service
+                current_price = await _fetch_price_from_market_service(ticker)
+                
+                amount_to_invest = Decimal(str(fund_allocated)) * Decimal(str(ticker_dict['percentage']))
+                n_shares = int(amount_to_invest // current_price)
+                
+                if n_shares > 0:
+                    trade_record = {
+                        'ticker': ticker,
+                        'amount_invested': float(current_price * n_shares),
+                        'no_of_shares_bought': n_shares,
+                        'price_bought': float(current_price),
+                        'reasoning': ticker_dict['reasoning'],
+                        'percentage': ticker_dict['percentage']
+                    }
+                    trade_list.append(trade_record)
+                    logger.info(f"✓ Trade created for {ticker}: {n_shares} shares @ ₹{current_price}")
+                else:
+                    logger.warning(f"⚠ Insufficient funds to buy {ticker} at ₹{current_price}")
+                    
+            except Exception as e:
+                logger.error(f"❌ Failed to create trade for {ticker}: {e}")
+                continue
         
+        return trade_list
+    
+    # Run async function in event loop
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # If loop is already running, create a new task
+            import nest_asyncio
+            nest_asyncio.apply()
+        return loop.run_until_complete(_convert_async())
+    except RuntimeError:
+        # Create new event loop if none exists
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         try:
-            current_price = yf.Ticker(yf_ticker).history(period='1d')['Close'].iloc[-1]
-        except Exception as e:
-            logger.error(f"Error fetching price for {ticker}: {e}")
-            current_price = 0
-            continue
-
-        amount_to_invest = fund_allocated * ticker_dict['percentage']
-        n_shares = amount_to_invest // current_price
-
-        trade_record['ticker'] = ticker
-        trade_record['amount_invested'] = current_price * n_shares
-        trade_record['no_of_shares_bought'] = n_shares
-        trade_record['reasoning'] = ticker_dict['reasoning']
-        trade_record['percentage'] = ticker_dict['percentage']
-        trade_list.append(trade_record)
-        
-    return trade_list
+            return loop.run_until_complete(_convert_async())
+        finally:
+            loop.close()

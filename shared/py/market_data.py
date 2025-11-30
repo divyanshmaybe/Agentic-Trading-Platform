@@ -139,6 +139,16 @@ class MarketDataService:
             for instrument in instruments:
                 symbol = instrument.get("symbol", "")
                 if symbol:  # Only skip if symbol is empty
+                    # Map exch_seg to exchangeType for WebSocket subscription
+                    exch_seg = instrument.get("exch_seg", "")
+                    exchange_type = 1  # Default to NSE
+                    if exch_seg == "NSE":
+                        exchange_type = 1
+                    elif exch_seg == "BSE":
+                        exchange_type = 3
+                    elif exch_seg in ["NFO", "MCX", "CDS"]:
+                        exchange_type = 2
+                    
                     token_map[symbol] = {
                         "token": instrument["token"],
                         "symbol": symbol,
@@ -147,7 +157,8 @@ class MarketDataService:
                         "strike": instrument.get("strike", ""),
                         "lotsize": instrument.get("lotsize", "1"),
                         "instrumenttype": instrument.get("instrumenttype", ""),
-                        "exch_seg": instrument.get("exch_seg", ""),
+                        "exch_seg": exch_seg,
+                        "exchangeType": exchange_type,  # Add exchangeType for WebSocket
                         "tick_size": instrument.get("tick_size", "0.05"),
                     }
             

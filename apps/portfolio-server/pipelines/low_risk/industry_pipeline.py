@@ -398,7 +398,7 @@ def industry_selector(
     # Invoke agent
     msg = "🤖 Invoking industry selection agent..."
     logger.info(msg)
-    publish_to_kafka({"content": msg}, user_id=user_id,publisher=publisher)
+    publish_to_kafka({"content": msg}, user_id=user_id)
     messages = []
     for chunk in agent.stream(
             {"messages": [HumanMessage("suggest industries")]},
@@ -509,7 +509,7 @@ class IndustrySelectionPipeline:
             pmi_val = get_pmi(self.storage)
             msg = f"✓ PMI value: {pmi_val}"
             logger.info(msg)
-            publish_to_kafka({"content": msg}, publisher=self.publisher, user_id=self.user_id)
+            publish_to_kafka({"content": msg}, user_id=self.user_id)
         except Exception as e:
             logger.error(f"Failed to get PMI: {e}", exc_info=True)
             raise
@@ -519,7 +519,7 @@ class IndustrySelectionPipeline:
             cpi_list = get_cpi_list(self.storage)
             msg = f"✓ CPI data: {len(cpi_list)} values"
             logger.info(msg)
-            publish_to_kafka({"content": msg}, publisher=self.publisher, user_id=self.user_id)
+            publish_to_kafka({"content": msg}, user_id=self.user_id)
         except Exception as e:
             logger.error(f"Failed to get CPI data: {e}", exc_info=True)
             raise
@@ -529,7 +529,7 @@ class IndustrySelectionPipeline:
             economic_regime = classify_macro_regime(pmi_val, cpi_list)
             msg = f"✓ Economic regime: {economic_regime}"
             logger.info(msg)
-            publish_to_kafka({"content": msg}, publisher=self.publisher, user_id=self.user_id)
+            publish_to_kafka({"content": msg}, user_id=self.user_id)
         except Exception as e:
             logger.error(f"Failed to classify regime: {e}", exc_info=True)
             raise
@@ -538,11 +538,11 @@ class IndustrySelectionPipeline:
         cpi_val = cpi_list[-1]
         msg = f"✓ Latest CPI value: {cpi_val}"
         logger.info(msg)
-        publish_to_kafka({"content": msg}, publisher=self.publisher, user_id=self.user_id)
+        publish_to_kafka({"content": msg}, user_id=self.user_id)
 
         msg = f"✓ Latest PMI value: {pmi_val}"
         logger.info(msg)
-        publish_to_kafka({"content": msg}, publisher=self.publisher, user_id=self.user_id)
+        publish_to_kafka({"content": msg}, user_id=self.user_id)
         # Select industries using LLM agent
         try:
             industry_list = industry_selector(
@@ -556,7 +556,7 @@ class IndustrySelectionPipeline:
             )
             msg = f"✅ Industry selection complete: {len(industry_list)} industries"
             logger.info(msg)
-            publish_to_kafka({"content": msg}, publisher=self.publisher, user_id=self.user_id)
+            publish_to_kafka({"content": msg}, user_id=self.user_id)
             return industry_list
         except Exception as e:
             logger.error(f"Failed to select industries: {e}", exc_info=True)

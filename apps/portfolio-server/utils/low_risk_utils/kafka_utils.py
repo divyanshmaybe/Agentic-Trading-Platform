@@ -111,7 +111,6 @@ class LowRiskKafkaPublisher:
         Message structure:
         {
             "user_id": str,
-            "timestamp": str (ISO format),
             "type": str,
             ...additional data from 'data' dict
         }
@@ -131,7 +130,6 @@ class LowRiskKafkaPublisher:
             # Build message with consistent structure
             message = {
                 "user_id": user_id,
-                "timestamp": datetime.utcnow().isoformat(),
                 "type": message_type,
                 **data
             }
