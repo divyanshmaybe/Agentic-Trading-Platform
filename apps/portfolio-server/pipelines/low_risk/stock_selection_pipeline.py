@@ -599,7 +599,7 @@ class StockSelectionPipeline:
             """
             msg=f"🚀 Starting stock selection pipeline..."
             logger.info(msg)
-            publish_to_kafka({"content": msg}, user_id=self.user_id)
+            publish_to_kafka({"content": msg}, user_id=self.user_id,message_type="start")
 
             # Validate inputs
             if fund_allocated <= 0:

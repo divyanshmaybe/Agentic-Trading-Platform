@@ -140,7 +140,6 @@ class LowRiskKafkaPublisher:
 
 def publish_to_kafka(
     data: Dict[str, Any],
-    publisher: Optional[KafkaPublisher] = None,
     user_id: Optional[str] = None,
     message_type: str = "info",
 ) -> None:
