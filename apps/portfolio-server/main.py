@@ -38,6 +38,7 @@ from routes.trade_routes import router as trade_router
 from routes.regime_routes import router as regime_router
 from routes.internal_routes import router as internal_router
 from routes.company_routes import router as company_router
+from routes.low_risk_routes import router as low_risk_router
 from utils.pipeline_utils import get_pipeline_status
 from workers.pipeline_tasks import start_nse_pipeline, run_news_sentiment_pipeline
 
@@ -202,6 +203,7 @@ base_app.add_routes("/api", create_objective_routes(pipeline_service))
 base_app.add_routes("/api", internal_router)
 base_app.add_routes("/api", regime_router)
 base_app.add_routes("/api", company_router)
+base_app.add_routes("/api", low_risk_router)
 base_app.add_routes("", create_health_routes(pipeline_service, server_dir))
 
 # Override root endpoint
