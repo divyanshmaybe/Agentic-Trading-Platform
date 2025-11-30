@@ -166,7 +166,7 @@ def publish_event(
 now_ts = utc_timestamp()
 
 # Low Risk Pipeline Log Messages
-user_id = "user_12345"
+user_id = "86d157fb-f02b-4d8e-8477-c32bc834bd83"
 
 # Log Event 1
 publish_event(
