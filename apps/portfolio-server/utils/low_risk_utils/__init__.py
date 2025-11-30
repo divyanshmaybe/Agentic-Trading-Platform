@@ -20,10 +20,7 @@ from .llm_response_utils import (
     validate_percentage_list,
 )
 from .kafka_utils import (
-    setup_kafka_publisher,
-    get_module_publisher,
-    set_module_user_id,
-    get_module_user_id,
+    LowRiskKafkaPublisher,
     publish_to_kafka,
 )
 
@@ -42,9 +39,6 @@ __all__ = [
     'clean_and_parse_agent_json_response',
     'validate_percentage_list',
     # Kafka utilities
-    'setup_kafka_publisher',
-    'get_module_publisher',
-    'set_module_user_id',
-    'get_module_user_id',
+    'LowRiskKafkaPublisher',
     'publish_to_kafka',
 ]

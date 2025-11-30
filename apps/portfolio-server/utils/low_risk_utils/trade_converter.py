@@ -36,8 +36,11 @@ def trade_converter(final_portfolio: List[Dict[str, Any]], fund_allocated: float
         trade_record = {}
         ticker = ticker_dict['ticker']
         
+        # Add .NS suffix for NSE tickers if not already present
+        yf_ticker = ticker if ticker.endswith('.NS') else f"{ticker}.NS"
+        
         try:
-            current_price = yf.Ticker(ticker).history(period='1d')['Close'].iloc[-1]
+            current_price = yf.Ticker(yf_ticker).history(period='1d')['Close'].iloc[-1]
         except Exception as e:
             logger.error(f"Error fetching price for {ticker}: {e}")
             current_price = 0

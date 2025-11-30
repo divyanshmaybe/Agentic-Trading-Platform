@@ -14,9 +14,15 @@ import os
 import sys
 from pathlib import Path
 
-# Add project root to path
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT))
+# Add server directory and project root to path
+server_dir = Path(__file__).resolve().parent
+project_root = server_dir.parent.parent
+sys.path.insert(0, str(server_dir.parent))  # portfolio-server
+sys.path.insert(0, str(project_root))
+sys.path.insert(0, str(project_root / "shared" / "py"))
+sys.path.insert(0, str(project_root / "middleware" / "py"))
+
+PROJECT_ROOT = server_dir.parent  # For backwards compatibility
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -119,7 +125,7 @@ def main():
             try:
                 scraper = IndiaEconomicScraper()
                 te_df = scraper.scrape()
-                storage.write_indicators("trading_economics", te_df)
+                storage.write_indicators("trading_economics", te_df.to_dict("records"))
                 logger.info(f"✓ Scraped and saved {len(te_df)} trading economics indicators")
             except Exception as e:
                 logger.error(f"Failed to scrape trading economics data: {e}")
@@ -134,7 +140,7 @@ def main():
             try:
                 cpi_scraper = CPIScraperFixed()
                 cpi_df = cpi_scraper.scrape()
-                storage.write_indicators("cpi", cpi_df)
+                storage.write_indicators("cpi", cpi_df.to_dict("records"))
                 logger.info(f"✓ Scraped and saved {len(cpi_df)} CPI data points")
             except Exception as e:
                 logger.error(f"Failed to scrape CPI data: {e}")
@@ -144,30 +150,23 @@ def main():
         
         # Create market data service and AngelOne fetcher
         logger.info("\n🔧 Initializing market data service and AngelOne fetcher...")
-        import sys
-        shared_path = PROJECT_ROOT.parent.parent / "shared" / "py"
-        if str(shared_path) not in sys.path:
-            sys.path.insert(0, str(shared_path))
+        from market_data import MarketDataService
+        from pipelines.low_risk.angelone_batch_fetcher import create_fetcher_from_market_service
         
-        from market_data import get_market_data_service
-        from pipelines.low_risk.angelone_batch_fetcher import AngelOneBatchFetcher
+        logger.info("✅ Modules imported successfully")
         
-        market_service = get_market_data_service()
-        
-        # Create AngelOne batch fetcher with credentials from market service
-        angel_fetcher = AngelOneBatchFetcher(
-            jwt_token=market_service.jwt_token,
-            api_key=market_service.api_key,
-            client_code=market_service.client_code
-        )
-        # Set token map from market service
-        angel_fetcher.set_token_map(market_service._token_map)
+        # Initialize Angel One API
+        logger.info("🔧 Initializing Angel One API connection...")
+        market_service = MarketDataService()
+        angel_fetcher = create_fetcher_from_market_service(market_service)
+        logger.info("✅ Angel One fetcher created (rate limited: 1 req/sec)")
         
         # Create industry indicators pipeline
         logger.info("\n📈 Computing industry indicators...")
         industry_indicators = IndustryIndicatorsPipeline(
             stocks_csv_path=str(nifty_500_path),
-            angel_one_fetcher=angel_fetcher
+            angel_one_fetcher=angel_fetcher,
+            Demo=True
         )
         industry_indicators.compute()
         
@@ -179,13 +178,15 @@ def main():
             gemini_api_key=gemini_api_key,
             storage=storage
         )
-        
+        industry_list = industry_pipeline.run()
+        print(industry_list)
         # Create stock selection pipeline
         logger.info("\n📈 Creating stock selection pipeline...")
         stock_pipeline = StockSelectionPipeline(
             company_df=company_df,
-            industry_selection_pipeline=industry_pipeline,
-            gemini_api_key=gemini_api_key
+            industry_list=industry_list,
+            gemini_api_key=gemini_api_key,
+            user_id=args.user,
         )
         
         # Run pipeline

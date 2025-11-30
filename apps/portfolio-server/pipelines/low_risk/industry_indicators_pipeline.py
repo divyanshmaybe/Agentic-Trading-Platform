@@ -8,6 +8,7 @@ Uses Polars for fast DataFrame operations and Angel One API for data fetching.
 import logging
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime, timedelta
+from pathlib import Path
 import polars as pl
 import pandas as pd
 import numpy as np
@@ -34,7 +35,8 @@ class IndustryIndicatorsPipeline:
         period: str = "1y",
         interval: str = "1d",
         benchmark_ticker: str = "Nifty 500",
-        rsi_length: int = 14
+        rsi_length: int = 14,
+        Demo: bool = False
     ):
         """
         Initialize the pipeline with stock data and parameters.
@@ -52,7 +54,7 @@ class IndustryIndicatorsPipeline:
         self.benchmark_ticker = benchmark_ticker
         self.rsi_length = rsi_length
         self.angel_one_fetcher = angel_one_fetcher
-
+        self.Demo = Demo
         if not self.angel_one_fetcher:
             raise ValueError("angel_one_fetcher is required (AngelOneBatchFetcher instance)")
 
@@ -553,13 +555,20 @@ class IndustryIndicatorsPipeline:
         }
         angel_interval = interval_map.get(self.interval, "ONE_DAY")
         
-        # Fetch data using Angel One batch fetcher
-        self.raw_data = await self.angel_one_fetcher.fetch_all_batched(
-            all_symbols=download_tickers,
-            interval=angel_interval,
-            period_days=period_days
-        )
-        
+
+        data_dir = Path(__file__).resolve().parents[2] / "data" / "market_data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        if self.Demo:
+            csv_path = data_dir / "debug_raw_data_20251130_062228.csv"
+            self.raw_data = pl.read_csv(csv_path, try_parse_dates=True)
+        else :
+            # Fetch data using Angel One batch fetcher
+            self.raw_data = await self.angel_one_fetcher.fetch_all_batched(
+                all_symbols=download_tickers,
+                interval=angel_interval,
+                period_days=period_days
+            )
+
         if self.raw_data.is_empty():
             logger.warning("⚠️ No data fetched from Angel One API")
             return pl.DataFrame(), pl.DataFrame()

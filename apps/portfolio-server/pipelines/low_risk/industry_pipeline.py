@@ -26,9 +26,8 @@ from utils.low_risk_utils import (
     render_prompt_template,
     clean_and_parse_agent_json_response,
     validate_percentage_list,
-    setup_kafka_publisher,
+    LowRiskKafkaPublisher,
     publish_to_kafka,
-    set_module_user_id,
 )
 from .industry_indicators_pipeline import IndustryIndicatorsPipeline
 
@@ -140,7 +139,6 @@ def get_pmi(storage: EconomicIndicatorsStorage) -> float:
         pmi_val = float(pmi_str)
         msg = f"✓ Extracted PMI value: {pmi_val}"
         logger.info(msg)
-        publish_to_kafka({"message": msg, "function": "get_pmi", "pmi_value": pmi_val})
         return pmi_val
     except (ValueError, TypeError) as e:
         raise ValueError(
@@ -165,54 +163,78 @@ def get_cpi_list(storage: EconomicIndicatorsStorage) -> List[float]:
     if df is None or df.empty:
         raise ValueError("CPI data not found or empty")
 
-    # CPI data should have date and value columns
-    # Check common column names
+    # Filter for All India data if State column exists
+    if "State" in df.columns:
+        df = df[df["State"].str.upper().str.contains("ALL INDIA", na=False)]
+        if df.empty:
+            raise ValueError("No All India CPI data found")
+        logger.info(f"✓ Filtered to {len(df)} All India CPI records")
+
+    # Check if we have Year, Month, Combined columns (actual CPI data structure)
+    if "Year" in df.columns and "Month" in df.columns and "Combined" in df.columns:
+        # Create datetime from Year and Month
+        month_map = {
+            "January": 1, "February": 2, "March": 3, "April": 4,
+            "May": 5, "June": 6, "July": 7, "August": 8,
+            "September": 9, "October": 10, "November": 11, "December": 12
+        }
+        
+        df["date"] = pd.to_datetime(
+            df["Year"].astype(str) + "-" + df["Month"].map(month_map).astype(str) + "-01",
+            format="%Y-%m-%d"
+        )
+        df = df.sort_values("date")
+        
+        # Extract Combined CPI values
+        cpi_values = df["Combined"].astype(float).tolist()
+        
+        msg = f"✓ Extracted {len(cpi_values)} CPI values (range: {min(cpi_values):.2f} to {max(cpi_values):.2f})"
+        logger.info(msg)
+        return cpi_values
+    
+    # Fallback: Try to identify date and value columns
     date_col = None
     value_col = None
 
     for col in df.columns:
         col_lower = col.lower()
-        if "date" in col_lower or "month" in col_lower or "period" in col_lower:
+        if "date" in col_lower or "period" in col_lower:
             date_col = col
         if "value" in col_lower or "index" in col_lower or "cpi" in col_lower:
             value_col = col
 
     if date_col is None or value_col is None:
-        # Try to infer from data structure
-        # CPI scraper might return columns like "Month", "CPI", etc.
         logger.warning(
             f"Could not find date/value columns. Available columns: {df.columns.tolist()}"
         )
-        # Try common patterns
-        if "Month" in df.columns:
-            date_col = "Month"
         if "CPI" in df.columns:
             value_col = "CPI"
         elif "Index" in df.columns:
             value_col = "Index"
         elif len(df.columns) >= 2:
-            # Assume first is date, second is value
             date_col = df.columns[0]
             value_col = df.columns[1]
 
-    if date_col is None or value_col is None:
+    if value_col is None:
         raise ValueError(
-            f"Cannot identify date and value columns in CPI data. Columns: {df.columns.tolist()}"
+            f"Cannot identify value column in CPI data. Columns: {df.columns.tolist()}"
         )
 
-    # Sort by date
-    try:
-        df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
-        df = df.sort_values(date_col).dropna(subset=[date_col, value_col])
-    except Exception as e:
-        logger.warning(f"Could not parse dates, using original order: {e}")
+    # Sort by date if available
+    if date_col:
+        try:
+            df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+            df = df.sort_values(date_col).dropna(subset=[value_col])
+        except Exception as e:
+            logger.warning(f"Could not parse dates, using original order: {e}")
+            df = df.dropna(subset=[value_col])
+    else:
         df = df.dropna(subset=[value_col])
 
     # Extract values as floats
     cpi_values = []
     for val in df[value_col]:
         try:
-            # Clean value (remove commas, etc.)
             val_str = str(val).strip().replace(",", "")
             cpi_val = float(val_str)
             cpi_values.append(cpi_val)
@@ -225,7 +247,6 @@ def get_cpi_list(storage: EconomicIndicatorsStorage) -> List[float]:
 
     msg = f"✓ Extracted {len(cpi_values)} CPI values (range: {min(cpi_values):.2f} to {max(cpi_values):.2f})"
     logger.info(msg)
-    publish_to_kafka({"message": msg, "function": "get_cpi_list", "cpi_count": len(cpi_values), "cpi_min": min(cpi_values), "cpi_max": max(cpi_values)})
     return cpi_values
 
 
@@ -374,13 +395,10 @@ def industry_selector(
         pipeline, gemini_api_key, economic_regime, cpi_val, pmi_val
     )
 
-    # Set module user_id for standalone function logging
-    set_module_user_id(user_id)
-
     # Invoke agent
     msg = "🤖 Invoking industry selection agent..."
     logger.info(msg)
-    publish_to_kafka({"message": msg, "function": "industry_selector", "economic_regime": economic_regime}, user_id=user_id)
+    publish_to_kafka({"content": msg}, user_id=user_id,publisher=publisher)
     messages = []
     for chunk in agent.stream(
             {"messages": [HumanMessage("suggest industries")]},
@@ -392,8 +410,6 @@ def industry_selector(
         if fnc_call is not None:
             ind_list = json.loads(fnc_call["arguments"])["industries"]
             to_send = {
-                "user_id": user_id,
-                "type": "industry",
                 "status": "fetching",
                 "content": {
                     "industries": ind_list,
@@ -404,8 +420,6 @@ def industry_selector(
         elif isinstance(new_message[0], ToolMessage):
             metrics = json.loads(new_message[0].content)
             to_send = {
-                "user_id": user_id,
-                "type": "industry",
                 "status": "fetched",
                 "content": {
                     "industries": list(metrics.keys()),
@@ -429,7 +443,7 @@ def industry_selector(
 
     msg = f"✅ Industry selection complete: {len(industry_list)} industries, total allocation: {sum(item['percentage'] for item in industry_list):.1f}%"
     logger.info(msg)
-    publish_to_kafka({"message": msg, "function": "industry_selector", "industry_count": len(industry_list), "total_allocation": sum(item['percentage'] for item in industry_list)}, user_id=user_id)
+    publish_to_kafka({"message": msg}, user_id=user_id, publisher=publisher)
 
     return industry_list
 
@@ -468,19 +482,16 @@ class IndustrySelectionPipeline:
                 )
         self.gemini_api_key = gemini_api_key
 
-        # Initialize Kafka publisher for agent logs
-        self.publisher = setup_kafka_publisher()
+        # Get singleton Kafka publisher instance
+        self.kafka = LowRiskKafkaPublisher()
+        self.publisher = self.kafka.get_publisher()
+        self.user_id = user_id  # Store user_id for publish calls
 
         # Verify industry pipeline has computed data
         if not industry_pipeline._is_computed:
             raise RuntimeError(
                 "IndustryIndicatorsPipeline must have computed data. Call compute() first."
             )
-
-    def _publish_log(self, message: str, message_type: str = "info", **extra_data):
-        """Publish log message to Kafka along with user_id."""
-        data = {"message": message, **extra_data}
-        publish_to_kafka(data, publisher=self.publisher, user_id=self.user_id, message_type=message_type)
 
     def run(self) -> List[Dict[str, Any]]:
         """
@@ -492,14 +503,13 @@ class IndustrySelectionPipeline:
         """
         msg = "🚀 Starting industry selection pipeline..."
         logger.info(msg)
-        self._publish_log(msg, stage="start")
 
         # Get PMI
         try:
             pmi_val = get_pmi(self.storage)
             msg = f"✓ PMI value: {pmi_val}"
             logger.info(msg)
-            self._publish_log(msg, stage="pmi", pmi_value=pmi_val)
+            publish_to_kafka({"content": msg}, publisher=self.publisher, user_id=self.user_id)
         except Exception as e:
             logger.error(f"Failed to get PMI: {e}", exc_info=True)
             raise
@@ -509,7 +519,7 @@ class IndustrySelectionPipeline:
             cpi_list = get_cpi_list(self.storage)
             msg = f"✓ CPI data: {len(cpi_list)} values"
             logger.info(msg)
-            self._publish_log(msg, stage="cpi", cpi_count=len(cpi_list))
+            publish_to_kafka({"content": msg}, publisher=self.publisher, user_id=self.user_id)
         except Exception as e:
             logger.error(f"Failed to get CPI data: {e}", exc_info=True)
             raise
@@ -519,7 +529,7 @@ class IndustrySelectionPipeline:
             economic_regime = classify_macro_regime(pmi_val, cpi_list)
             msg = f"✓ Economic regime: {economic_regime}"
             logger.info(msg)
-            self._publish_log(msg, stage="regime", economic_regime=economic_regime)
+            publish_to_kafka({"content": msg}, publisher=self.publisher, user_id=self.user_id)
         except Exception as e:
             logger.error(f"Failed to classify regime: {e}", exc_info=True)
             raise
@@ -528,12 +538,11 @@ class IndustrySelectionPipeline:
         cpi_val = cpi_list[-1]
         msg = f"✓ Latest CPI value: {cpi_val}"
         logger.info(msg)
-        self._publish_log(msg, stage="cpi_latest", cpi_value=cpi_val)
+        publish_to_kafka({"content": msg}, publisher=self.publisher, user_id=self.user_id)
 
         msg = f"✓ Latest PMI value: {pmi_val}"
         logger.info(msg)
-        self._publish_log(msg, stage="pmi_latest", pmi_value=pmi_val)
-
+        publish_to_kafka({"content": msg}, publisher=self.publisher, user_id=self.user_id)
         # Select industries using LLM agent
         try:
             industry_list = industry_selector(
@@ -547,7 +556,7 @@ class IndustrySelectionPipeline:
             )
             msg = f"✅ Industry selection complete: {len(industry_list)} industries"
             logger.info(msg)
-            self._publish_log(msg, stage="complete", industry_count=len(industry_list), industries=industry_list)
+            publish_to_kafka({"content": msg}, publisher=self.publisher, user_id=self.user_id)
             return industry_list
         except Exception as e:
             logger.error(f"Failed to select industries: {e}", exc_info=True)

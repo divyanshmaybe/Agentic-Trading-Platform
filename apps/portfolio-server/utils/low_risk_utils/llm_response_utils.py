@@ -155,6 +155,21 @@ def extract_message_content_from_agent_result(result: Dict[str, Any]) -> str:
     else:
         content = str(last_message)
 
+    # Handle content that is a list of content blocks (Gemini format)
+    # e.g., [{'type': 'text', 'text': '...'}]
+    if isinstance(content, list) and len(content) > 0:
+        # Extract text from content blocks
+        text_parts = []
+        for block in content:
+            if isinstance(block, dict):
+                if 'text' in block:
+                    text_parts.append(block['text'])
+                elif 'content' in block:
+                    text_parts.append(block['content'])
+            else:
+                text_parts.append(str(block))
+        content = '\n'.join(text_parts)
+
     return content
 
 
