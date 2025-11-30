@@ -125,7 +125,7 @@ def main():
             try:
                 scraper = IndiaEconomicScraper()
                 te_df = scraper.scrape()
-                storage.write_indicators("trading_economics", te_df.to_dict("records"))
+                storage.write_indicators("trading_economics", te_df)
                 logger.info(f"✓ Scraped and saved {len(te_df)} trading economics indicators")
             except Exception as e:
                 logger.error(f"Failed to scrape trading economics data: {e}")
@@ -140,7 +140,7 @@ def main():
             try:
                 cpi_scraper = CPIScraperFixed()
                 cpi_df = cpi_scraper.scrape()
-                storage.write_indicators("cpi", cpi_df.to_dict("records"))
+                storage.write_indicators("cpi", cpi_df)
                 logger.info(f"✓ Scraped and saved {len(cpi_df)} CPI data points")
             except Exception as e:
                 logger.error(f"Failed to scrape CPI data: {e}")

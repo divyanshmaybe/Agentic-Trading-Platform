@@ -559,16 +559,27 @@ class IndustryIndicatorsPipeline:
         data_dir = Path(__file__).resolve().parents[2] / "data" / "market_data"
         data_dir.mkdir(parents=True, exist_ok=True)
         if self.Demo:
-            csv_path = data_dir / "debug_raw_data_20251130_062228.csv"
-            self.raw_data = pl.read_csv(csv_path, try_parse_dates=True)
-        else :
+            csv_path = data_dir / "raw_data_20251201_031506.csv"
+            if csv_path.exists():
+                self.raw_data = pl.read_csv(csv_path, try_parse_dates=True)
+                logger.info(f"📂 Loaded demo data from {csv_path}")
+            else:
+                logger.warning(f"⚠️ Demo mode enabled but file not found: {csv_path}")
+                logger.info("📡 Falling back to fetching data from Angel One API...")
+                self.raw_data = await self.angel_one_fetcher.fetch_all_batched(
+                    all_symbols=download_tickers,
+                    interval=angel_interval,
+                    period_days=period_days
+                )
+        else:
             # Fetch data using Angel One batch fetcher
             self.raw_data = await self.angel_one_fetcher.fetch_all_batched(
                 all_symbols=download_tickers,
                 interval=angel_interval,
                 period_days=period_days
             )
-
+        logger.info(f"✅ Fetched raw data with {self.raw_data.height} rows")
+        # self.raw_data.write_csv(data_dir / f"raw_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
         if self.raw_data.is_empty():
             logger.warning("⚠️ No data fetched from Angel One API")
             return pl.DataFrame(), pl.DataFrame()
