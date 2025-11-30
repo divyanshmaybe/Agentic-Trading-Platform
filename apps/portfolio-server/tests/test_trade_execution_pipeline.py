@@ -252,6 +252,55 @@ class FakeTrade:
                 return result
         return SimpleNamespace(**row) if row else None
 
+    async def find_many(self, where: Optional[Dict[str, Any]] = None, take: Optional[int] = None, include: Optional[Dict[str, Any]] = None) -> List[Any]:
+        """Find multiple trades matching the where clause."""
+        results = []
+        for row in self.rows.values():
+            if where:
+                matches = True
+                for key, value in where.items():
+                    if key == "symbol":
+                        if row.get(key) != value:
+                            matches = False
+                            break
+                    elif key == "portfolio_id":
+                        if row.get(key) != value:
+                            matches = False
+                            break
+                    elif key == "status":
+                        if isinstance(value, dict) and "in" in value:
+                            # Handle {"in": ["pending", "active"]}
+                            if row.get(key) not in value["in"]:
+                                matches = False
+                                break
+                        elif row.get(key) != value:
+                            matches = False
+                            break
+                    elif key == "created_at":
+                        if isinstance(value, dict) and "gte" in value:
+                            # Handle {"gte": cutoff_time}
+                            if row.get(key) and row[key] < value["gte"]:
+                                matches = False
+                                break
+                        else:
+                            if row.get(key) != value:
+                                matches = False
+                                break
+                    else:
+                        if row.get(key) != value:
+                            matches = False
+                            break
+                if not matches:
+                    continue
+            result = SimpleNamespace(**row)
+            if include and "trade" in include:
+                # Add trade relation if requested
+                result.trade = SimpleNamespace(id=row.get("trade_id"))
+            results.append(result)
+            if take and len(results) >= take:
+                break
+        return results
+
 
 class FakeClient:
     def __init__(self) -> None:
