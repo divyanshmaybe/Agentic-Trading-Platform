@@ -416,7 +416,7 @@ def industry_selector(
                 }
             }
             # Publish to_send to Kafka
-            publish_to_kafka(to_send, publisher=publisher, user_id=user_id, message_type="industry")
+            publish_to_kafka(to_send, user_id=user_id, message_type="industry")
         elif isinstance(new_message[0], ToolMessage):
             metrics = json.loads(new_message[0].content)
             to_send = {

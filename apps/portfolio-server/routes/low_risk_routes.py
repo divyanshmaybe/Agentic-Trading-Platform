@@ -12,19 +12,16 @@ import logging
 
 from utils.auth import get_authenticated_user
 from workers.low_risk_tasks import run_low_risk_pipeline, get_low_risk_pipeline_status
+from shared.py.dbManager import DBManager
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/low-risk", tags=["low-risk-pipeline"])
+router = APIRouter(prefix="/low-risk", tags=["low-risk-pipeline"])
 
 
 class PipelineTriggerRequest(BaseModel):
     """Request model for triggering low-risk pipeline"""
-    fund_allocated: float = Field(
-        default=100000.0,
-        gt=0,
-        description="Total fund amount to allocate (must be positive)"
-    )
+    pass  # No fund_allocated needed - will be fetched from allocation
 
 
 class PipelineTriggerResponse(BaseModel):
@@ -48,7 +45,6 @@ class PipelineStatusResponse(BaseModel):
 
 @router.post("/trigger", response_model=PipelineTriggerResponse)
 async def trigger_low_risk_pipeline(
-    request: PipelineTriggerRequest,
     user: dict = Depends(get_authenticated_user)
 ) -> PipelineTriggerResponse:
     """
@@ -114,9 +110,79 @@ async def trigger_low_risk_pipeline(
     if not user_id:
         raise HTTPException(status_code=401, detail="User ID not found in token")
     
-    logger.info(f"📨 Low-risk pipeline trigger request from user {user_id} with fund: ₹{request.fund_allocated:,.2f}")
+    logger.info(f"📨 Low-risk pipeline trigger request from user {user_id}")
     
-    # Check current status first
+    # Initialize DB connection
+    db_manager = DBManager()
+    await db_manager.connect()
+    
+    try:
+        db = db_manager.get_client()
+        
+        # 1. Fetch user's portfolio
+        portfolio = await db.portfolio.find_first(
+            where={"customer_id": user_id},
+            include={"allocations": {"include": {"tradingAgent": True}}}
+        )
+        
+        if not portfolio:
+            raise HTTPException(status_code=404, detail="Portfolio not found for user")
+        
+        # 2. Find low_risk allocation
+        low_risk_allocation = None
+        for allocation in portfolio.allocations:
+            if allocation.allocation_type == "low_risk":
+                low_risk_allocation = allocation
+                break
+        
+        if not low_risk_allocation:
+            raise HTTPException(
+                status_code=404, 
+                detail="Low-risk allocation not found. Please set up portfolio allocations first."
+            )
+        
+        # 3. Check trading agent exists and is active
+        trading_agent = low_risk_allocation.tradingAgent
+        
+        if not trading_agent:
+            raise HTTPException(
+                status_code=404,
+                detail="Trading agent not found for low_risk allocation"
+            )
+        
+        agent_status = str(trading_agent.status).lower()
+        if agent_status == "paused":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Trading agent is paused. Please activate the agent before running pipeline."
+            )
+        
+        if agent_status not in ["active", "running"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Trading agent status is '{agent_status}'. Expected 'active' or 'running'."
+            )
+        
+        # 4. Get allocated cash from low_risk allocation
+        allocated_cash = float(low_risk_allocation.allocated_amount or 0)
+        available_cash = float(low_risk_allocation.available_cash or 0)
+        
+        if allocated_cash <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No cash allocated to low_risk strategy. Allocated: ₹{allocated_cash:,.2f}"
+            )
+        
+        logger.info(
+            f"✅ Low-risk agent validated | User: {user_id} | Agent: {trading_agent.id} | "
+            f"Status: {agent_status} | Allocated: ₹{allocated_cash:,.2f} | Available: ₹{available_cash:,.2f}"
+        )
+    
+    finally:
+        await db_manager.disconnect()
+    
+    # Check current pipeline status
+    # Check current pipeline status
     try:
         status = get_low_risk_pipeline_status.delay(user_id).get(timeout=5)
         
@@ -130,16 +196,16 @@ async def trigger_low_risk_pipeline(
                 message=message,
                 task_id=None,
                 user_id=user_id,
-                fund_allocated=request.fund_allocated
+                fund_allocated=allocated_cash
             )
     except Exception as e:
         logger.warning(f"Failed to check pipeline status: {e}. Proceeding with trigger...")
     
-    # Trigger pipeline asynchronously
+    # Trigger pipeline asynchronously with allocated cash
     try:
         result = run_low_risk_pipeline.delay(
             user_id=user_id,
-            fund_allocated=request.fund_allocated
+            fund_allocated=allocated_cash
         )
         
         logger.info(f"✅ Low-risk pipeline triggered for user {user_id}, task_id: {result.id}")
@@ -149,7 +215,7 @@ async def trigger_low_risk_pipeline(
             message="Low-risk pipeline started successfully. Selecting stocks...",
             task_id=result.id,
             user_id=user_id,
-            fund_allocated=request.fund_allocated
+            fund_allocated=allocated_cash
         )
         
     except Exception as e:

@@ -19,7 +19,7 @@ from celery.utils.log import get_task_logger
 from redis import Redis
 
 # Add project paths
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]  # Fixed: was [2], now [3] to get to Pathway-Inter-IIT/
 SHARED_PY_PATH = PROJECT_ROOT / "shared" / "py"
 if str(SHARED_PY_PATH) not in sys.path:
     sys.path.insert(0, str(SHARED_PY_PATH))
@@ -226,6 +226,8 @@ def run_low_risk_pipeline(
         from pipelines.low_risk.angelone_batch_fetcher import create_fetcher_from_market_service
         
         # Load company data
+        # PROJECT_ROOT is /home/manav/dev_ws/Pathway-Inter-IIT
+        # File is at /home/manav/dev_ws/Pathway-Inter-IIT/scripts/ind_nifty500listbrief.csv
         nifty_500_path = PROJECT_ROOT / "scripts" / "ind_nifty500listbrief.csv"
         if not nifty_500_path.exists():
             raise FileNotFoundError(
