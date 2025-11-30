@@ -12,8 +12,6 @@ Requirements:
 
 import streamlit as st
 from kafka import KafkaAdminClient, KafkaConsumer
-from kafka.admin import NewTopic
-from kafka.errors import KafkaError
 import json
 import os
 from typing import List, Dict, Any
@@ -70,7 +68,7 @@ def get_topic_messages(topic: str, limit: int = 100) -> List[Dict[str, Any]]:
                 'key': message.key.decode('utf-8') if message.key else None,
                 'value': message.value,
                 'timestamp': message.timestamp,
-                'headers': dict(message.headers) if message.headers else {}
+                'headers': {k: v.decode('utf-8') if isinstance(v, bytes) else v for k, v in (message.headers or [])}
             }
             messages.append(msg_data)
         consumer.close()
@@ -128,14 +126,23 @@ def main():
             if selected_topic:
                 st.subheader(f"Topic: {selected_topic}")
 
-                col1, col2 = st.columns(2)
+                col1, col2, col3 = st.columns(3)
                 with col1:
                     limit = st.slider("Number of messages to show", 10, 500, 1000)
                 with col2:
                     if st.button("Refresh Messages"):
                         st.rerun()
+                with col3:
+                    messages = get_topic_messages(selected_topic, limit)
+                    if messages:
+                        json_data = json.dumps(messages, indent=2)
+                        st.download_button(
+                            label="Export as JSON",
+                            data=json_data,
+                            file_name=f"{selected_topic}_messages.json",
+                            mime="application/json"
+                        )
 
-                messages = get_topic_messages(selected_topic, limit)
                 if messages:
                     st.subheader("Messages")
                     for msg in messages:
@@ -158,7 +165,17 @@ def main():
 
                 details = get_consumer_group_details(admin_client, selected_group)
                 if details:
-                    st.json(details)
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.json(details)
+                    with col2:
+                        json_data = json.dumps(details, indent=2)
+                        st.download_button(
+                            label="Export as JSON",
+                            data=json_data,
+                            file_name=f"{selected_group}_details.json",
+                            mime="application/json"
+                        )
                 else:
                     st.info("No details available")
 
