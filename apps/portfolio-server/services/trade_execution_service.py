@@ -45,7 +45,7 @@ except Exception:
 
 
 @asynccontextmanager
-async def allocation_lock(allocation_id: str, timeout: float = 5.0):
+async def allocation_lock(allocation_id: str, timeout: float = 15.0):
     """
     Distributed lock for allocation cash operations.
     Prevents race conditions when multiple trades try to use the same allocation.
@@ -761,7 +761,7 @@ class TradeExecutionService:
                     allocation_id = agent.allocation.id
                     
                     # Use distributed lock to prevent race conditions
-                    async with allocation_lock(allocation_id, timeout=5.0) as lock_acquired:
+                    async with allocation_lock(allocation_id, timeout=15.0) as lock_acquired:
                         # Re-fetch allocation with fresh data inside the lock
                         fresh_allocation = await client.portfolioallocation.find_unique(
                             where={"id": allocation_id}
@@ -811,6 +811,10 @@ class TradeExecutionService:
                             trade_id, available_cash, float(new_available_cash), required_capital,
                             "acquired" if lock_acquired else "not_acquired"
                         )
+                        
+                        # Store reserved amount for potential rollback
+                        reserved_cash_amount = required_capital
+                        cash_rollback_needed = True
 
             # Prefer explicit trade price and quantity (fall back to execution log if present)
             executed_price = float(getattr(trade, "price", None) or getattr(record, "reference_price", 0.0) or 0.0)
@@ -906,14 +910,40 @@ class TradeExecutionService:
                     executed_quantity=executed_quantity,
                     auto_sell_at=auto_sell_at,
                 )
+                # Mark cash as successfully used (no rollback needed)
+                cash_rollback_needed = False
             except Exception as portfolio_error:
-                # CRITICAL: Portfolio update failed - mark trade as failed
+                # CRITICAL: Portfolio update failed - mark trade as failed AND rollback cash
                 self.logger.error(
-                    "❌ Portfolio update failed for trade %s: %s - marking trade as FAILED",
+                    "❌ Portfolio update failed for trade %s: %s - marking trade as FAILED and rolling back cash",
                     trade_id,
                     portfolio_error,
                     exc_info=True
                 )
+                
+                # ROLLBACK: Return reserved cash to allocation
+                if 'reserved_cash_amount' in locals() and 'allocation_id' in locals() and cash_rollback_needed:
+                    try:
+                        async with allocation_lock(allocation_id, timeout=15.0):
+                            rollback_allocation = await client.portfolioallocation.find_unique(
+                                where={"id": allocation_id}
+                            )
+                            if rollback_allocation:
+                                rollback_cash = Decimal(str(getattr(rollback_allocation, "available_cash", 0))) + Decimal(str(reserved_cash_amount))
+                                await client.portfolioallocation.update(
+                                    where={"id": allocation_id},
+                                    data={"available_cash": rollback_cash}
+                                )
+                                self.logger.info(
+                                    "✅ ROLLBACK: Returned ₹%.2f to allocation %s after failed trade",
+                                    reserved_cash_amount, allocation_id
+                                )
+                    except Exception as rollback_error:
+                        self.logger.error(
+                            "❌ CRITICAL: Cash rollback failed for trade %s: %s - MANUAL RECONCILIATION REQUIRED",
+                            trade_id, rollback_error
+                        )
+                
                 await self.update_status(
                     execution_log_id,
                     status="failed",
@@ -1808,6 +1838,7 @@ class TradeExecutionService:
                         symbol,
                         error_msg
                     )
+                    # Raise ValueError to trigger rollback if cash was already reserved
                     raise ValueError(f"Insufficient holdings: {error_msg}")
             
             elif side.upper() == "SHORT_SELL":
@@ -2026,7 +2057,8 @@ class TradeExecutionService:
                     
                     if new_quantity <= 0:
                         # ATOMIC close position with raw SQL
-                        await client.execute_raw(
+                        # Use optimistic locking: only close if current quantity matches expected
+                        result = await client.execute_raw(
                             '''UPDATE "Position" SET 
                                 quantity = 0,
                                 status = 'closed',
@@ -2034,12 +2066,37 @@ class TradeExecutionService:
                                 closed_at = NOW(),
                                 updated_at = NOW(),
                                 metadata = $2::jsonb
-                                WHERE id = $3 AND quantity >= $4''',
+                                WHERE id = $3 AND status = 'open' AND quantity = $4
+                                RETURNING id''',
                             float(total_realized_pnl),
                             json.dumps(position_metadata),
                             position_id,
-                            quantity
+                            old_quantity  # Optimistic lock: only update if quantity hasn't changed
                         )
+                        
+                        if not result:
+                            self.logger.warning(
+                                "⚠️ Position %s concurrent update detected during close, retrying...",
+                                position_id
+                            )
+                            # Retry once with fresh data
+                            existing_position = await client.position.find_first(
+                                where={
+                                    "portfolio_id": portfolio_id,
+                                    "symbol": symbol,
+                                    "status": "open",
+                                }
+                            )
+                            if existing_position and existing_position.quantity >= quantity:
+                                # Recursive retry with fresh position data
+                                return await self._create_or_update_position(
+                                    portfolio_id, symbol, side, quantity, executed_price,
+                                    trade_id, client, agent_id, exchange, segment
+                                )
+                            else:
+                                raise ValueError(
+                                    f"Position {symbol} concurrent modification: insufficient quantity for SELL"
+                                )
                         
                         self.logger.info(
                             "✅ ATOMIC closed position %s: %s qty %d→0 (SELL %d), realized P&L ₹%.2f",
@@ -2053,19 +2110,45 @@ class TradeExecutionService:
                         # Cancel pending TP/SL orders for this symbol
                         await self._cancel_pending_tp_sl_orders(portfolio_id, symbol, client)
                     else:
-                        # ATOMIC reduce quantity with raw SQL
-                        await client.execute_raw(
+                        # ATOMIC reduce quantity with raw SQL using optimistic locking
+                        result = await client.execute_raw(
                             '''UPDATE "Position" SET 
                                 quantity = GREATEST(0, quantity - $1),
                                 realized_pnl = $2,
                                 updated_at = NOW(),
                                 metadata = $3::jsonb
-                                WHERE id = $4 AND quantity >= $1''',
+                                WHERE id = $4 AND status = 'open' AND quantity = $5
+                                RETURNING id''',
                             quantity,
                             float(total_realized_pnl),
                             json.dumps(position_metadata),
-                            position_id
+                            position_id,
+                            old_quantity  # Optimistic lock: only update if quantity hasn't changed
                         )
+                        
+                        if not result:
+                            self.logger.warning(
+                                "⚠️ Position %s concurrent update detected, retrying...",
+                                position_id
+                            )
+                            # Retry once with fresh data
+                            existing_position = await client.position.find_first(
+                                where={
+                                    "portfolio_id": portfolio_id,
+                                    "symbol": symbol,
+                                    "status": "open",
+                                }
+                            )
+                            if existing_position and existing_position.quantity >= quantity:
+                                # Recursive retry with fresh position data
+                                return await self._create_or_update_position(
+                                    portfolio_id, symbol, side, quantity, executed_price,
+                                    trade_id, client, agent_id, exchange, segment
+                                )
+                            else:
+                                raise ValueError(
+                                    f"Position {symbol} concurrent modification: insufficient quantity for partial SELL"
+                                )
                         
                         self.logger.info(
                             "✅ ATOMIC updated position %s: %s qty %d→%d (SELL %d), realized P&L ₹%.2f",
@@ -2346,9 +2429,11 @@ class TradeExecutionService:
                     avg_short_price = float(getattr(existing_short, "average_buy_price", 0))
                     new_quantity = old_quantity - quantity
                     
-                    # Calculate realized P&L for SHORT: profit when price drops
-                    # P&L = (short_price - cover_price) * quantity
-                    realized_pnl = quantity * (avg_short_price - executed_price)
+                    # Calculate realized P&L for SHORT: profit when cover price < short price
+                    # P&L = (short_entry_price - cover_price) * quantity
+                    # Positive when cover_price < short_entry_price (profit)
+                    # Negative when cover_price > short_entry_price (loss)
+                    realized_pnl = (avg_short_price - executed_price) * quantity
                     old_realized_pnl = float(getattr(existing_short, "realized_pnl", 0))
                     total_realized_pnl = old_realized_pnl + realized_pnl
                     
@@ -2373,8 +2458,8 @@ class TradeExecutionService:
                     short_id = str(existing_short.id)
                     
                     if new_quantity <= 0:
-                        # ATOMIC close short position with raw SQL
-                        await client.execute_raw(
+                        # ATOMIC close short position with raw SQL using optimistic locking
+                        result = await client.execute_raw(
                             '''UPDATE "Position" SET 
                                 quantity = 0,
                                 status = 'closed',
@@ -2382,12 +2467,36 @@ class TradeExecutionService:
                                 closed_at = NOW(),
                                 updated_at = NOW(),
                                 metadata = $2::jsonb
-                                WHERE id = $3 AND position_type = 'SHORT' AND quantity >= $4''',
+                                WHERE id = $3 AND position_type = 'SHORT' AND status = 'open' AND quantity = $4
+                                RETURNING id''',
                             float(total_realized_pnl),
                             json.dumps(position_metadata),
                             short_id,
-                            quantity
+                            old_quantity  # Optimistic lock
                         )
+                        
+                        if not result:
+                            self.logger.warning(
+                                "⚠️ SHORT position %s concurrent update detected during close, retrying...",
+                                short_id
+                            )
+                            existing_short = await client.position.find_first(
+                                where={
+                                    "portfolio_id": portfolio_id,
+                                    "symbol": symbol,
+                                    "position_type": "SHORT",
+                                    "status": "open",
+                                }
+                            )
+                            if existing_short and existing_short.quantity >= quantity:
+                                return await self._create_or_update_position(
+                                    portfolio_id, symbol, side, quantity, executed_price,
+                                    trade_id, client, agent_id, exchange, segment
+                                )
+                            else:
+                                raise ValueError(
+                                    f"SHORT position {symbol} concurrent modification during COVER"
+                                )
                         
                         self.logger.info(
                             "✅ ATOMIC closed SHORT position %s: %s qty %d→0 (COVER %d), realized P&L ₹%.2f",
@@ -2401,19 +2510,44 @@ class TradeExecutionService:
                         # Cancel pending TP/SL orders
                         await self._cancel_pending_tp_sl_orders(portfolio_id, symbol, client)
                     else:
-                        # ATOMIC reduce short position quantity with raw SQL
-                        await client.execute_raw(
+                        # ATOMIC reduce short position quantity with raw SQL using optimistic locking
+                        result = await client.execute_raw(
                             '''UPDATE "Position" SET 
                                 quantity = GREATEST(0, quantity - $1),
                                 realized_pnl = $2,
                                 updated_at = NOW(),
                                 metadata = $3::jsonb
-                                WHERE id = $4 AND position_type = 'SHORT' AND quantity >= $1''',
+                                WHERE id = $4 AND position_type = 'SHORT' AND status = 'open' AND quantity = $5
+                                RETURNING id''',
                             quantity,
                             float(total_realized_pnl),
                             json.dumps(position_metadata),
-                            short_id
+                            short_id,
+                            old_quantity  # Optimistic lock
                         )
+                        
+                        if not result:
+                            self.logger.warning(
+                                "⚠️ SHORT position %s concurrent update detected, retrying...",
+                                short_id
+                            )
+                            existing_short = await client.position.find_first(
+                                where={
+                                    "portfolio_id": portfolio_id,
+                                    "symbol": symbol,
+                                    "position_type": "SHORT",
+                                    "status": "open",
+                                }
+                            )
+                            if existing_short and existing_short.quantity >= quantity:
+                                return await self._create_or_update_position(
+                                    portfolio_id, symbol, side, quantity, executed_price,
+                                    trade_id, client, agent_id, exchange, segment
+                                )
+                            else:
+                                raise ValueError(
+                                    f"SHORT position {symbol} concurrent modification during partial COVER"
+                                )
                         
                         self.logger.info(
                             "✅ ATOMIC updated SHORT position %s: %s qty %d→%d (COVER %d), realized P&L ₹%.2f",

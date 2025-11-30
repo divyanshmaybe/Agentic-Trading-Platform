@@ -336,9 +336,9 @@ class PathwayOrderMonitor:
         Args:
             signal: OrderExecutionSignal with execution details
         """
-        # Prevent duplicate execution
+        # Prevent duplicate execution (local cache)
         if signal.order_id in self._executing:
-            logger.debug(f"Order {signal.order_id} already executing, skipping")
+            logger.debug(f"Order {signal.order_id} already executing locally, skipping")
             return
         
         self._executing.add(signal.order_id)
@@ -347,6 +347,25 @@ class PathwayOrderMonitor:
         exec_start = time.time()
         
         try:
+            # CRITICAL: Double-check order status in database before execution
+            # This prevents race conditions when multiple workers monitor same order
+            trade_check = await self.db.trade.find_unique(where={"id": signal.order_id})
+            
+            if not trade_check:
+                logger.warning(f"⚠️ Order {signal.order_id} not found in database, skipping")
+                return
+            
+            if trade_check.status != "pending":
+                logger.info(
+                    f"⚠️ Order {signal.order_id} already {trade_check.status}, skipping execution"
+                )
+                # Remove from local cache since it's no longer pending
+                if signal.order_id in self._pending_orders:
+                    order = self._pending_orders.pop(signal.order_id)
+                    if order.symbol in self._orders_by_symbol:
+                        self._orders_by_symbol[order.symbol].discard(signal.order_id)
+                return
+            
             logger.info(
                 f"🎯 Executing order {signal.order_id} ({signal.symbol}): "
                 f"{signal.condition_met}"

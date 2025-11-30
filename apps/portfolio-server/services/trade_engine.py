@@ -4,7 +4,7 @@ import os
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from typing import Dict, List, Optional
 from zoneinfo import ZoneInfo
@@ -160,9 +160,9 @@ class TradeEngine:
         execution_price: Decimal,
         existing_trade_id: Optional[str] = None,
     ) -> Dict:
-        gross_value = execution_price * Decimal(payload.quantity)
-        fees = (gross_value * FEE_RATE).quantize(FOUR_DP)
-        taxes = (gross_value * TAX_RATE).quantize(FOUR_DP)
+        gross_value = execution_price * Decimal(str(payload.quantity))
+        fees = (gross_value * FEE_RATE).quantize(FOUR_DP, rounding=ROUND_HALF_UP)
+        taxes = (gross_value * TAX_RATE).quantize(FOUR_DP, rounding=ROUND_HALF_UP)
         if payload.side == "BUY":
             net_amount = (gross_value + fees + taxes) * Decimal(-1)
         else:
@@ -311,9 +311,10 @@ class TradeEngine:
 
         if position:
             new_quantity = position.quantity + payload.quantity
-            previous_value = position.average_buy_price * Decimal(position.quantity)
-            new_average = (previous_value + total_cost) / Decimal(new_quantity)
-            new_average = new_average.quantize(FOUR_DP)
+            # Use Decimal consistently for precision
+            previous_value = Decimal(str(position.average_buy_price)) * Decimal(str(position.quantity))
+            new_average = (previous_value + total_cost) / Decimal(str(new_quantity))
+            new_average = new_average.quantize(FOUR_DP, rounding=ROUND_HALF_UP)
             await self.prisma.position.update(
                 where={"id": position.id},
                 data={
@@ -338,10 +339,10 @@ class TradeEngine:
             raise ValueError("Insufficient holdings to execute sell order")
 
         # Calculate realized PnL: (sell_price - average_buy_price) * quantity_sold
-        quantity_sold = Decimal(payload.quantity)
+        quantity_sold = Decimal(str(payload.quantity))
         average_buy_price = Decimal(str(position.average_buy_price))
         realized_pnl = (execution_price - average_buy_price) * quantity_sold
-        realized_pnl = realized_pnl.quantize(FOUR_DP)
+        realized_pnl = realized_pnl.quantize(FOUR_DP, rounding=ROUND_HALF_UP)
 
         # Get current realized_pnl (default to 0 if None)
         current_realized_pnl = Decimal(str(position.realized_pnl)) if position.realized_pnl else Decimal(0)
@@ -465,12 +466,22 @@ class TradeEngine:
         # Check if auto_sell_at would be after market close (15:30 IST)
         try:
             ist = ZoneInfo("Asia/Kolkata")
+            # Ensure auto_sell_at is timezone-aware
+            if auto_sell_at.tzinfo is None:
+                from datetime import timezone
+                auto_sell_at = auto_sell_at.replace(tzinfo=timezone.utc)
             local_auto_sell = auto_sell_at.astimezone(ist)
-        except Exception:
-            # If timezone conversion fails, use naive comparison
-            local_auto_sell = auto_sell_at
+        except Exception as tz_error:
+            # CRITICAL: If timezone conversion fails, reject auto-sell to prevent errors
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(
+                "❌ Timezone conversion failed for auto-sell: %s. Rejecting auto-sell to prevent errors.",
+                tz_error
+            )
+            return None
         
-        # Market closes at 15:30 IST
+        # Market closes at 15:30 IST (3:30 PM)
         if local_auto_sell.hour > 15 or (local_auto_sell.hour == 15 and local_auto_sell.minute > 30):
             import logging
             logger = logging.getLogger(__name__)
