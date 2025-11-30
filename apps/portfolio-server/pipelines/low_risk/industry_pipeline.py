@@ -427,7 +427,7 @@ def industry_selector(
                 }
             }
             # Publish to_send to Kafka
-            publish_to_kafka(to_send, publisher=publisher, user_id=user_id, message_type="industry")
+            publish_to_kafka(to_send, user_id=user_id, message_type="industry")
 
     # Parse and validate response using common utility
     result = {"messages": messages}
@@ -443,7 +443,7 @@ def industry_selector(
 
     msg = f"✅ Industry selection complete: {len(industry_list)} industries, total allocation: {sum(item['percentage'] for item in industry_list):.1f}%"
     logger.info(msg)
-    publish_to_kafka({"message": msg}, user_id=user_id, publisher=publisher)
+    publish_to_kafka({"message": msg}, user_id=user_id)
 
     return industry_list
 
