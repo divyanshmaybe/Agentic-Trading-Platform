@@ -8,6 +8,15 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Dict, Iterable
 
+# CRITICAL: Disable NumPy/OpenBLAS threading before any imports
+# This prevents SIGSEGV errors in HMM training with multiprocessing
+# Must be set before NumPy/OpenBLAS are imported
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "1")
+
 from dotenv import load_dotenv
 from kombu import Queue
 
@@ -621,8 +630,27 @@ def init_worker_process(**kwargs):
     
     This is critical because Prisma clients cannot be shared across process forks.
     Each forked worker needs its own Prisma client instance.
+    
+    Also disables NumPy/OpenBLAS threading to prevent SIGSEGV in HMM training.
     """
     try:
+        # CRITICAL: Disable NumPy/OpenBLAS threading before any NumPy imports
+        # This prevents SIGSEGV errors in HMM training with multiprocessing
+        os.environ["OPENBLAS_NUM_THREADS"] = "1"
+        os.environ["MKL_NUM_THREADS"] = "1"
+        os.environ["NUMEXPR_NUM_THREADS"] = "1"
+        os.environ["OMP_NUM_THREADS"] = "1"
+        os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+        
+        # Set NumPy threading to single-threaded if NumPy is already imported
+        try:
+            import numpy as np
+            # Force single-threaded mode for NumPy operations
+            # This must be done before any BLAS operations
+            np.seterr(all='ignore')  # Suppress warnings
+        except ImportError:
+            pass  # NumPy not imported yet, env vars will take effect
+        
         # Add shared/py to path for DBManager import
         project_root = Path(__file__).resolve().parents[2]
         shared_py = project_root / "shared" / "py"

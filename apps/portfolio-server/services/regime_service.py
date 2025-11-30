@@ -99,9 +99,17 @@ class RegimeService:
         IMPORTANT: Uses yfinance for training to avoid Angel One rate limits.
         This is the ONLY place in the codebase where yfinance should be used.
         
+        NOTE: NumPy/OpenBLAS threading should be disabled via environment variables
+        to prevent SIGSEGV in multiprocessing contexts (Celery workers).
+        
         Returns:
             Trained MarketRegimeClassifier instance
         """
+        # Ensure single-threaded mode for BLAS operations to prevent SIGSEGV
+        os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+        os.environ.setdefault("MKL_NUM_THREADS", "1")
+        os.environ.setdefault("OMP_NUM_THREADS", "1")
+        
         try:
             # Fetch 2+ years of historical data using yfinance (avoids Angel One rate limits)
             self.logger.info("📊 Fetching historical data for training using yfinance...")
