@@ -105,6 +105,7 @@ QUEUE_NAMES: Dict[str, str] = {
     "nse_pipeline": os.getenv("CELERY_QUEUE_NSE_PIPELINE", "nse_pipeline"),  # NSE filings (1 worker)
     "news_pipeline": os.getenv("CELERY_QUEUE_NEWS_PIPELINE", "news_pipeline"),  # News sentiment (1 worker)
     "low_risk_pipeline": os.getenv("CELERY_QUEUE_LOW_RISK", "low_risk_pipeline"),  # Low-risk selection (1 worker)
+    "general": os.getenv("CELERY_QUEUE_GENERAL", "general"),  # General tasks
     "risk": os.getenv("CELERY_QUEUE_RISK", "risk"),
     "orders": os.getenv("CELERY_QUEUE_ORDERS", "orders"),
     "market": os.getenv("CELERY_QUEUE_MARKET", "market"),
