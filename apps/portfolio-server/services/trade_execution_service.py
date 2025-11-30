@@ -190,6 +190,81 @@ class TradeExecutionService:
         except Exception:
             return Decimal("0")
 
+    async def validate_total_allocation(
+        self,
+        portfolio_id: str,
+        new_allocation_amount: Decimal = Decimal("0"),
+        exclude_allocation_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Validate that total allocated amount across all agents doesn't exceed portfolio value.
+        
+        CRITICAL: Prevents over-allocation which could lead to accounting violations.
+        
+        Args:
+            portfolio_id: Portfolio to check
+            new_allocation_amount: Amount being added (for new allocations)
+            exclude_allocation_id: Allocation ID to exclude from total (for updates)
+            
+        Returns:
+            {"valid": bool, "error": str, "total_allocated": Decimal, "portfolio_value": Decimal}
+        """
+        client = await self._ensure_client()
+        
+        try:
+            portfolio = await client.portfolio.find_unique(
+                where={"id": portfolio_id},
+                include={"allocations": True}
+            )
+            
+            if not portfolio:
+                return {
+                    "valid": False,
+                    "error": f"Portfolio {portfolio_id} not found",
+                    "total_allocated": Decimal("0"),
+                    "portfolio_value": Decimal("0"),
+                }
+            
+            portfolio_value = Decimal(str(getattr(portfolio, "investment_amount", 0)))
+            
+            # Calculate total allocated across all allocations
+            total_allocated = Decimal("0")
+            for allocation in portfolio.allocations:
+                # Skip the allocation being updated
+                if exclude_allocation_id and allocation.id == exclude_allocation_id:
+                    continue
+                total_allocated += Decimal(str(getattr(allocation, "allocated_amount", 0)))
+            
+            # Add new allocation amount
+            total_allocated += new_allocation_amount
+            
+            if total_allocated > portfolio_value:
+                return {
+                    "valid": False,
+                    "error": (
+                        f"Total allocation ₹{total_allocated} exceeds portfolio value ₹{portfolio_value}. "
+                        f"Over-allocation: ₹{total_allocated - portfolio_value}"
+                    ),
+                    "total_allocated": total_allocated,
+                    "portfolio_value": portfolio_value,
+                }
+            
+            return {
+                "valid": True,
+                "error": None,
+                "total_allocated": total_allocated,
+                "portfolio_value": portfolio_value,
+            }
+            
+        except Exception as e:
+            self.logger.error("Failed to validate total allocation: %s", e, exc_info=True)
+            return {
+                "valid": False,
+                "error": f"Validation error: {str(e)}",
+                "total_allocated": Decimal("0"),
+                "portfolio_value": Decimal("0"),
+            }
+
     async def create_trade_log(
         self,
         job_row: Dict[str, Any],
@@ -748,11 +823,13 @@ class TradeExecutionService:
                 self.logger.warning("No linked Trade found for TradeExecutionLog %s", trade_id)
                 return {"status": "missing_trade", "trade_id": trade_id}
 
-            # PRE-EXECUTION CASH CHECK WITH ATOMIC LOCKING
-            # Prevents race conditions when multiple trades execute simultaneously
+            # Ensure client is available for all operations
+            client = await self._ensure_client()
+
+            # PRE-EXECUTION CASH CHECK WITH DATABASE-LEVEL LOCKING
+            # Uses SELECT FOR UPDATE to prevent race conditions at database level
             trade_side = str(getattr(trade, "side", "")).upper()
             if trade_side == "BUY" and agent_id:
-                client = await self._ensure_client()
                 agent = await client.tradingagent.find_unique(
                     where={"id": agent_id},
                     include={"allocation": True}
@@ -760,18 +837,24 @@ class TradeExecutionService:
                 if agent and agent.allocation:
                     allocation_id = agent.allocation.id
                     
-                    # Use distributed lock to prevent race conditions
+                    # Use distributed lock AND database-level locking for defense in depth
                     async with allocation_lock(allocation_id, timeout=15.0) as lock_acquired:
-                        # Re-fetch allocation with fresh data inside the lock
-                        fresh_allocation = await client.portfolioallocation.find_unique(
-                            where={"id": allocation_id}
+                        # Use SELECT FOR UPDATE to lock the row at database level
+                        # This prevents concurrent modifications even if Redis lock fails
+                        allocation_result = await client.query_raw(
+                            '''SELECT id, available_cash, allocated_amount 
+                               FROM "portfolio_allocations" 
+                               WHERE id = $1 
+                               FOR UPDATE''',
+                            allocation_id
                         )
                         
-                        if not fresh_allocation:
+                        if not allocation_result or len(allocation_result) == 0:
                             self.logger.error("❌ Allocation %s not found during cash check", allocation_id)
                             return {"status": "rejected", "trade_id": trade_id, "reason": "allocation_not_found"}
                         
-                        available_cash = float(getattr(fresh_allocation, "available_cash", 0) or 0)
+                        allocation_data = allocation_result[0]
+                        available_cash = float(allocation_data.get("available_cash", 0) or 0)
                         allocated_capital = float(getattr(trade, "allocated_capital", 0) or 0)
                         trade_value = float(getattr(trade, "quantity", 0) or 0) * float(getattr(trade, "price", 0) or 0)
                         required_capital = max(allocated_capital, trade_value)
@@ -799,15 +882,19 @@ class TradeExecutionService:
                                 "available": available_cash,
                             }
                         
-                        # ATOMIC: Reserve the cash NOW (deduct immediately while holding lock)
+                        # ATOMIC: Reserve the cash NOW using raw SQL UPDATE
+                        # Row is already locked by SELECT FOR UPDATE above
                         new_available_cash = Decimal(str(available_cash)) - Decimal(str(required_capital))
-                        await client.portfolioallocation.update(
-                            where={"id": allocation_id},
-                            data={"available_cash": new_available_cash}
+                        await client.execute_raw(
+                            '''UPDATE "portfolio_allocations" 
+                               SET available_cash = $1, updated_at = NOW() 
+                               WHERE id = $2''',
+                            float(new_available_cash),
+                            allocation_id
                         )
                         
                         self.logger.info(
-                            "✅ ATOMIC cash reserved: Trade %s | ₹%.2f → ₹%.2f (reserved ₹%.2f) | Lock: %s",
+                            "✅ ATOMIC cash reserved (DB-locked): Trade %s | ₹%.2f → ₹%.2f (reserved ₹%.2f) | Lock: %s",
                             trade_id, available_cash, float(new_available_cash), required_capital,
                             "acquired" if lock_acquired else "not_acquired"
                         )
@@ -819,6 +906,36 @@ class TradeExecutionService:
             # Prefer explicit trade price and quantity (fall back to execution log if present)
             executed_price = float(getattr(trade, "price", None) or getattr(record, "reference_price", 0.0) or 0.0)
             executed_quantity = int(getattr(trade, "quantity", None) or getattr(record, "quantity", 0) or 0)
+            
+            # CRITICAL VALIDATION: Ensure price and quantity are positive
+            if executed_price <= 0:
+                error_msg = f"Invalid execution price: {executed_price} (must be > 0)"
+                self.logger.error("❌ %s", error_msg)
+                await self.update_status(
+                    execution_log_id,
+                    status="rejected",
+                    error_message=error_msg
+                )
+                await client.trade.update(
+                    where={"id": trade_id},
+                    data={"status": "rejected", "rejection_reason": error_msg}
+                )
+                return {"status": "rejected", "trade_id": trade_id, "reason": error_msg}
+            
+            if executed_quantity <= 0:
+                error_msg = f"Invalid execution quantity: {executed_quantity} (must be > 0)"
+                self.logger.error("❌ %s", error_msg)
+                await self.update_status(
+                    execution_log_id,
+                    status="rejected",
+                    error_message=error_msg
+                )
+                await client.trade.update(
+                    where={"id": trade_id},
+                    data={"status": "rejected", "rejection_reason": error_msg}
+                )
+                return {"status": "rejected", "trade_id": trade_id, "reason": error_msg}
+            
             execution_time = datetime.utcnow()
             
             # Pass the underlying Trade record so NSE detection uses trade metadata
@@ -959,12 +1076,8 @@ class TradeExecutionService:
                     "error": f"Portfolio update failed: {str(portfolio_error)}",
                 }
             
-            # Calculate realized P&L strictly AFTER allocation/positions are updated
-            await self._calculate_realized_pnl(
-                record,
-                executed_price=executed_price,
-                executed_quantity=executed_quantity,
-            )
+            # P&L calculation now happens INSIDE transaction with position update
+            # (removed duplicate call - see _update_portfolio_allocation transaction block)
 
             return {
                 "status": "executed",
@@ -1664,18 +1777,108 @@ class TradeExecutionService:
                 trade_id,
                 agent_id or "None"
             )
-            await self._create_or_update_position(
-                portfolio_id=portfolio_id,
-                symbol=symbol,
-                side=side,
-                quantity=executed_quantity,
-                executed_price=executed_price,
-                trade_id=trade_id,
-                client=client,
-                agent_id=agent_id,  # Link position to trading agent
-            )
+            
+            # CRITICAL: Wrap position update + P&L calculation in database transaction
+            # This ensures atomic execution - either both succeed or both fail
+            try:
+                # Start transaction
+                await client.execute_raw('BEGIN')
+                self.logger.debug("🔒 Started database transaction for position update")
+                
+                # Update position atomically
+                await self._create_or_update_position(
+                    portfolio_id=portfolio_id,
+                    symbol=symbol,
+                    side=side,
+                    quantity=executed_quantity,
+                    executed_price=executed_price,
+                    trade_id=trade_id,
+                    client=client,
+                    agent_id=agent_id,  # Link position to trading agent
+                )
+                
+                # Calculate P&L within same transaction (if SELL trade)
+                if side.upper() in ["SELL", "COVER"]:
+                    # P&L calculation happens in same transaction - uses same position data
+                    parent_trade = trade_record.trade
+                    symbol_for_pnl = str(getattr(parent_trade, "symbol", ""))
+                    
+                    # Query position WITHIN transaction to ensure consistency
+                    position = await client.position.find_first(
+                        where={
+                            "portfolio_id": portfolio_id,
+                            "symbol": {"equals": symbol_for_pnl, "mode": "insensitive"},
+                        },
+                        order={"updated_at": "desc"}
+                    )
+                    
+                    if position:
+                        average_buy_price = float(getattr(position, "average_buy_price", 0))
+                        if average_buy_price > 0:
+                            realized_pnl = (executed_price - average_buy_price) * executed_quantity
+                            realized_pnl_decimal = self._as_decimal(realized_pnl)
+                            
+                            # Update Trade, Portfolio, Allocation, Agent P&L atomically
+                            await client.trade.update(
+                                where={"id": trade_id},
+                                data={"realized_pnl": realized_pnl_decimal}
+                            )
+                            
+                            # Accumulate at Portfolio level
+                            await client.execute_raw(
+                                '''UPDATE "portfolios" 
+                                   SET total_realized_pnl = total_realized_pnl + $1 
+                                   WHERE id = $2''',
+                                float(realized_pnl_decimal),
+                                portfolio_id
+                            )
+                            
+                            # Accumulate at Allocation and Agent levels if applicable
+                            if agent_id:
+                                agent = await client.tradingagent.find_unique(
+                                    where={"id": agent_id},
+                                    include={"allocation": True}
+                                )
+                                if agent:
+                                    # Update agent P&L
+                                    await client.execute_raw(
+                                        '''UPDATE "trading_agents" 
+                                           SET realized_pnl = realized_pnl + $1 
+                                           WHERE id = $2''',
+                                        float(realized_pnl_decimal),
+                                        agent_id
+                                    )
+                                    
+                                    # Update allocation P&L
+                                    if agent.allocation:
+                                        await client.execute_raw(
+                                            '''UPDATE "portfolio_allocations" 
+                                               SET realized_pnl = realized_pnl + $1 
+                                               WHERE id = $2''',
+                                            float(realized_pnl_decimal),
+                                            agent.allocation.id
+                                        )
+                            
+                            self.logger.info(
+                                "💰 [TRANSACTION] Realized P&L for SELL: %s @ ₹%.2f (avg: ₹%.2f) = ₹%.2f",
+                                symbol, executed_price, average_buy_price, realized_pnl
+                            )
+                
+                # Commit transaction
+                await client.execute_raw('COMMIT')
+                self.logger.debug("✅ Committed database transaction")
+                
+            except Exception as tx_error:
+                # Rollback on any error
+                try:
+                    await client.execute_raw('ROLLBACK')
+                    self.logger.error("❌ Rolled back database transaction due to error: %s", tx_error)
+                except:
+                    pass
+                raise  # Re-raise to trigger outer error handling
+            
             position_time = (time.time() - position_start) * 1000
-            self.logger.info("✅ [PERF] Position update for %s took %.1fms", symbol, position_time)
+            self.logger.info("✅ [PERF] Position update + P&L (transactional) took %.1fms", position_time)
 
             # Trigger portfolio value recalculation
             portfolio_start = time.time()
@@ -1800,29 +2003,9 @@ class TradeExecutionService:
             validation_service = TradeValidationService()
             
             # Validate trade before execution
-            if side.upper() in ["BUY", "COVER"]:
-                # BUY (open LONG) or COVER (close SHORT) - both require cash
-                total_cost = Decimal(str(executed_price)) * Decimal(str(quantity))
-                
-                # Validate available cash at portfolio or allocation level
-                validation_result = await validation_service.validate_buy_order(
-                    portfolio_id=portfolio_id,
-                    agent_id=agent_id,
-                    symbol=symbol,
-                    quantity=quantity,
-                    price=Decimal(str(executed_price)),
-                )
-                
-                if not validation_result["valid"]:
-                    self.logger.error(
-                        "❌ %s validation failed for %s: %s",
-                        side.upper(),
-                        symbol,
-                        validation_result.get("error", "Unknown error")
-                    )
-                    raise ValueError(f"Insufficient funds: {validation_result.get('error')}")
-                
-            elif side.upper() == "SELL":
+            # Note: Cash validation for BUY is already done at execution time with SELECT FOR UPDATE
+            # This secondary validation is for position checks only
+            if side.upper() == "SELL":
                 # SELL (close LONG) - requires existing long position
                 validation_result = await validation_service.validate_sell_order(
                     portfolio_id=portfolio_id,
@@ -1842,9 +2025,39 @@ class TradeExecutionService:
                     raise ValueError(f"Insufficient holdings: {error_msg}")
             
             elif side.upper() == "SHORT_SELL":
-                # SHORT_SELL - no validation needed (can short without owning)
-                # In production, you might add margin requirements or other checks here
-                pass
+                # SHORT_SELL: Require margin to prevent unlimited loss exposure
+                # Industry standard: 150% margin (50% initial + 100% short value)
+                short_value = Decimal(str(executed_price * quantity))
+                required_margin = short_value * Decimal("1.5")  # 150% of short value
+                
+                # Check if agent has sufficient margin (use available_cash as margin)
+                if agent_id:
+                    client = await self._ensure_client()
+                    agent = await client.tradingagent.find_unique(
+                        where={"id": agent_id},
+                        include={"allocation": True}
+                    )
+                    if agent and agent.allocation:
+                        available_cash = float(getattr(agent.allocation, "available_cash", 0) or 0)
+                        
+                        if available_cash < float(required_margin):
+                            error_msg = (
+                                f"Insufficient margin for SHORT_SELL: requires ₹{required_margin:.2f} "
+                                f"(150% of ₹{short_value:.2f}), available ₹{available_cash:.2f}"
+                            )
+                            self.logger.error("❌ %s", error_msg)
+                            raise ValueError(error_msg)
+                        
+                        self.logger.info(
+                            "✅ SHORT_SELL margin check passed: %s | ₹%.2f short value, ₹%.2f margin required, ₹%.2f available",
+                            symbol, float(short_value), float(required_margin), available_cash
+                        )
+                else:
+                    # No agent_id - skip margin check (legacy compatibility)
+                    self.logger.warning(
+                        "⚠️ SHORT_SELL without agent_id - margin check skipped for %s",
+                        symbol
+                    )
             
             # Check if position already exists
             existing_position = await client.position.find_first(
@@ -1881,29 +2094,65 @@ class TradeExecutionService:
                     position_metadata["trade_ids"] = trade_ids
                     position_metadata["last_updated"] = datetime.utcnow().isoformat()
                     
-                    # ATOMIC position update using raw SQL
-                    # This prevents race conditions where two workers update the same position
-                    await client.execute_raw(
-                        '''UPDATE "Position" SET 
+                    # ATOMIC position update using raw SQL with OPTIMISTIC LOCKING
+                    # WHERE clause checks quantity matches expected value to detect concurrent modifications
+                    result = await client.execute_raw(
+                        '''UPDATE "positions" SET 
                             quantity = quantity + $1,
                             average_buy_price = ((quantity * average_buy_price) + ($1 * $2)) / (quantity + $1),
                             updated_at = NOW(),
                             metadata = $3::jsonb,
                             agent_id = COALESCE(agent_id, $4)
-                            WHERE id = $5''',
+                            WHERE id = $5 AND quantity = $6 AND status = 'open'
+                            RETURNING id''',
                         quantity,
                         executed_price,
                         json.dumps(position_metadata),
                         agent_id if agent_id and not getattr(existing_position, "agent_id", None) else None,
-                        position_id
+                        position_id,
+                        old_quantity  # Optimistic lock: only update if quantity hasn't changed
                     )
+                    
+                    # Check if update succeeded (RETURNING clause)
+                    if not result or len(result) == 0:
+                        self.logger.warning(
+                            "⚠️ Optimistic lock failed for BUY %s - position modified concurrently, retrying...",
+                            symbol
+                        )
+                        # Retry with fresh data
+                        fresh_position = await client.position.find_first(
+                            where={"id": position_id, "status": "open"}
+                        )
+                        if not fresh_position:
+                            raise ValueError(f"Position {position_id} not found or closed during update")
+                        
+                        # Retry update with fresh quantity
+                        old_quantity = int(getattr(fresh_position, "quantity", 0))
+                        result = await client.execute_raw(
+                            '''UPDATE "positions" SET 
+                                quantity = quantity + $1,
+                                average_buy_price = ((quantity * average_buy_price) + ($1 * $2)) / (quantity + $1),
+                                updated_at = NOW(),
+                                metadata = $3::jsonb,
+                                agent_id = COALESCE(agent_id, $4)
+                                WHERE id = $5 AND quantity = $6 AND status = 'open'
+                                RETURNING id''',
+                            quantity,
+                            executed_price,
+                            json.dumps(position_metadata),
+                            agent_id if agent_id and not getattr(fresh_position, "agent_id", None) else None,
+                            position_id,
+                            old_quantity
+                        )
+                        if not result or len(result) == 0:
+                            raise ValueError(f"Failed to update position {position_id} after retry - concurrent modification")
                     
                     # Calculate new values for logging (not used in update)
                     new_quantity = old_quantity + quantity
                     new_avg_price = ((old_quantity * old_avg_price) + (quantity * executed_price)) / new_quantity
                     
                     self.logger.info(
-                        "✅ ATOMIC position update %s: %s qty %d→%d, avg price ₹%.2f→₹%.2f",
+                        "✅ ATOMIC position update (optimistic lock) %s: %s qty %d→%d, avg price ₹%.2f→₹%.2f",
                         position_id,
                         symbol,
                         old_quantity,

@@ -156,6 +156,11 @@ def test_prepare_trade_execution_payloads_skips_without_active_agent(
 class FakeTradeExecutionLog:
     def __init__(self) -> None:
         self.rows: Dict[str, Dict[str, Any]] = {}
+        self._trade_model: Optional[Any] = None
+
+    def set_trade_model(self, trade_model: Any) -> None:
+        """Set the trade model for fetching linked trades."""
+        self._trade_model = trade_model
 
     async def create(self, data: Dict[str, Any]) -> Any:
         row = dict(data)
@@ -186,10 +191,12 @@ class FakeTradeExecutionLog:
         row = self.rows.get(trade_id)
         if row and include:
             # Add trade relation if requested
-            if "trade" in include and row.get("trade_id"):
-                result = SimpleNamespace(**row)
-                result.trade = SimpleNamespace(id=row["trade_id"])
-                return result
+            if "trade" in include and row.get("trade_id") and self._trade_model:
+                trade_row = self._trade_model.rows.get(row["trade_id"])
+                if trade_row:
+                    result = SimpleNamespace(**row)
+                    result.trade = SimpleNamespace(**trade_row)
+                    return result
         return SimpleNamespace(**row) if row else None
 
     async def find_first(self, where: Dict[str, Any], include: Optional[Dict[str, Any]] = None) -> Any:
@@ -199,9 +206,11 @@ class FakeTradeExecutionLog:
             for row_id, row in self.rows.items():
                 if row.get("trade_id") == trade_id:
                     result = SimpleNamespace(**row)
-                    if include and "trade" in include:
-                        # Add trade relation if requested
-                        result.trade = SimpleNamespace(id=row["trade_id"])
+                    if include and "trade" in include and self._trade_model:
+                        # Add full trade object if requested
+                        trade_row = self._trade_model.rows.get(trade_id)
+                        if trade_row:
+                            result.trade = SimpleNamespace(**trade_row)
                     return result
         return None
 
@@ -310,6 +319,41 @@ class FakeClient:
         self.position = FakePositionModel()
         self.tradingagent = FakeTradingAgentModel()
         self.portfolioallocation = FakePortfolioAllocationModel()
+        # Wire up the trade model to execution log for proper includes
+        self.tradeexecutionlog.set_trade_model(self.trade)
+
+    async def query_raw(self, query: str, *params) -> List[Dict[str, Any]]:
+        """Simulate raw SQL queries for SELECT FOR UPDATE and other operations."""
+        # For allocation cash check (SELECT FOR UPDATE)
+        if "portfolio_allocations" in query and "FOR UPDATE" in query:
+            allocation_id = params[0] if params else None
+            if allocation_id:
+                # Return mock allocation data
+                return [{
+                    "id": allocation_id,
+                    "available_cash": 250000.0,
+                    "allocated_amount": 100000.0
+                }]
+        # For transaction control (BEGIN/COMMIT/ROLLBACK)
+        elif query in ("BEGIN", "COMMIT", "ROLLBACK"):
+            return []
+        return []
+
+    async def execute_raw(self, query: str, *params) -> List[Any]:
+        """Simulate raw SQL executions for UPDATE and other operations."""
+        # For allocation cash updates
+        if "portfolio_allocations" in query and "UPDATE" in query:
+            return []  # Success
+        # For position updates with RETURNING clause
+        elif "positions" in query and "RETURNING" in query:
+            return [{"id": "pos-1"}]  # Return fake position ID
+        # For P&L updates
+        elif query in ("portfolios", "trading_agents") and "UPDATE" in query:
+            return []
+        # For transaction control
+        elif query in ("BEGIN", "COMMIT", "ROLLBACK"):
+            return []
+        return []
 
 
 class FakePortfolioModel:
@@ -324,7 +368,16 @@ class FakePortfolioModel:
             customer_id="cust-1",
             allocation_trades=None,
             realized_pnl=Decimal("0"),
+            total_realized_pnl=Decimal("0"),
             metadata=None
+        )
+
+    async def update(self, where=None, data=None):
+        # Mock portfolio update - just return success
+        return SimpleNamespace(
+            id=where.get("id") if where else "pf-1",
+            allocation_trades=data.get("allocation_trades") if data else None,
+            total_realized_pnl=data.get("total_realized_pnl", Decimal("0")) if data else Decimal("0"),
         )
 
     async def find_many(self, where=None, include=None):  # pragma: no cover - include unused
@@ -412,10 +465,23 @@ class FakePortfolioAllocationModel:
     def __init__(self) -> None:
         self.rows: Dict[str, Dict[str, Any]] = {}
 
+    async def find_unique(self, where: Dict[str, Any]) -> Any:
+        allocation_id = where["id"]
+        if allocation_id not in self.rows:
+            # Return default allocation for testing
+            return SimpleNamespace(
+                id=allocation_id,
+                available_cash=Decimal("250000.0"),
+                allocated_amount=Decimal("100000.0"),
+                realized_pnl=Decimal("0"),
+            )
+        row = self.rows[allocation_id]
+        return SimpleNamespace(**row)
+
     async def update(self, where: Dict[str, Any], data: Dict[str, Any]) -> Any:
         allocation_id = where["id"]
         if allocation_id not in self.rows:
-            self.rows[allocation_id] = {"id": allocation_id}
+            self.rows[allocation_id] = {"id": allocation_id, "available_cash": Decimal("250000.0")}
         row = self.rows[allocation_id]
         row.update(data)
         row["updated_at"] = datetime.utcnow()
