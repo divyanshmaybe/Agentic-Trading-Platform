@@ -2,7 +2,9 @@ import { readFileSync } from "node:fs";
 import { Kafka, logLevel, Consumer, EachMessagePayload, SASLOptions } from "kafkajs";
 import { PrismaClient } from "@prisma/client";
 import { notificationConfig } from "../../config";
-import { NotificationPublisher } from "../redis/publisher";
+import { NotificationPublisher, LowRiskPublisher } from "../redis/publisher";
+import { isLowRiskNotification, isLowRiskLog } from "./validators";
+import { LowRiskNormalized } from "./types/lowRisk";
 
 type SupportedMechanism = "plain" | "scram-sha-256" | "scram-sha-512" | "aws" | "oauthbearer";
 
@@ -114,6 +116,78 @@ function parseJsonSafely(value: string | Buffer | null | undefined): any {
   }
 }
 
+/**
+ * Robustly unwrap nested value strings from Kafka messages
+ * Handles cases like: {"value": {"value": "{\"user_id\":\"...\"}"}}
+ * 
+ * @param raw - The raw Kafka message value (string, Buffer, or object)
+ * @returns The unwrapped object or null if unwrapping fails or result is not an object
+ */
+function unwrapNestedValue(raw: string | Buffer | object | null | undefined): any {
+  const MAX_ITERATIONS = 5;
+  
+  // Convert Buffer to string
+  let current: any = raw;
+  if (Buffer.isBuffer(current)) {
+    try {
+      current = current.toString("utf8");
+    } catch {
+      return null;
+    }
+  }
+
+  // If already an object (not string), return it if it's a valid object
+  if (current !== null && typeof current === "object" && !Array.isArray(current)) {
+    return current;
+  }
+
+  // If not a string, return null (we only accept objects)
+  if (typeof current !== "string") {
+    return null;
+  }
+
+  let lastValid: any = null;
+  let iterations = 0;
+
+  while (iterations < MAX_ITERATIONS && typeof current === "string") {
+    iterations++;
+    
+    try {
+      const parsed = JSON.parse(current);
+      
+      // If parsed value is not an object/array, return null (we only accept objects)
+      if (parsed === null || (typeof parsed !== "object")) {
+        return null;
+      }
+      
+      // If it's an array, return null (we only accept objects)
+      if (Array.isArray(parsed)) {
+        return null;
+      }
+      
+      lastValid = parsed;
+      
+      // Check if parsed object has a "value" field that is a string - continue unwrapping
+      if ("value" in parsed && typeof parsed.value === "string") {
+        current = parsed.value;
+      } else {
+        // No more nested value, return the parsed object
+        return parsed;
+      }
+    } catch {
+      // Parse failed - return last valid object or null
+      return lastValid;
+    }
+  }
+
+  // Max iterations reached - return last valid object or null
+  return lastValid;
+}
+
+/**
+ * Normalize payload - kept for backward compatibility with existing normalizers
+ * For low-risk events, use unwrapNestedValue directly instead
+ */
 function normalizePayload(payload: any): any {
   if ("value" in payload) {
     if (typeof payload.value === "string") {
@@ -143,6 +217,55 @@ function normalizePayload(payload: any): any {
   return payload;
 }
 
+/**
+ * Strict datetime parser with validation
+ * Handles multiple timestamp field sources and validates inputs
+ */
+function parseDateTimeStrict(value: string | number | Date | undefined | null): Date | undefined {
+  if (!value) return undefined;
+  
+  // Already a Date
+  if (value instanceof Date) {
+    if (!isNaN(value.getTime())) {
+      return value;
+    }
+    return undefined;
+  }
+  
+  // Number: treat as ms since epoch
+  if (typeof value === "number") {
+    // Validate reasonable range: between year 2000 and year 2100
+    const MIN_TS = 946684800000; // 2000-01-01
+    const MAX_TS = 4102444800000; // 2100-01-01
+    
+    if (value >= MIN_TS && value <= MAX_TS) {
+      const date = new Date(value);
+      if (!isNaN(date.getTime())) {
+        return date;
+      }
+    }
+    return undefined;
+  }
+  
+  // String: validate length and parse
+  if (typeof value === "string") {
+    // Reject strings that are too short (likely not timestamps)
+    if (value.length < 8) {
+      return undefined;
+    }
+    
+    const parsed = new Date(value);
+    if (!isNaN(parsed.getTime())) {
+      return parsed;
+    }
+  }
+  
+  return undefined;
+}
+
+/**
+ * Legacy datetime parser - kept for backward compatibility
+ */
 function parseDateTime(value: any): Date | undefined {
   if (!value) return undefined;
   if (value instanceof Date) return value;
@@ -241,6 +364,77 @@ function normalizeSectorAnalysis(
   };
 }
 
+/**
+ * Parse and normalize a low-risk event from Kafka message
+ * Uses strict validators and unwrapping to ensure type safety
+ * 
+ * @param eventTime - MUST be derived from Kafka message.timestamp (never from payload)
+ */
+function parseLowRiskEvent(
+  topic: string,
+  rawPayload: any,
+  partition: number,
+  offset: string,
+  eventTime: Date
+): LowRiskNormalized | null {
+  // Unwrap nested value strings
+  const unwrapped = unwrapNestedValue(rawPayload);
+  
+  // Early validation: must be an object
+  if (!unwrapped || typeof unwrapped !== "object" || Array.isArray(unwrapped)) {
+    return null;
+  }
+
+  // Determine kind using strict validators
+  let kind: "log" | "notification";
+  let userId: string;
+  let eventType: string | null = null;
+  let status: string | null = null;
+  let content: any | null = null;
+
+  if (isLowRiskNotification(unwrapped)) {
+    kind = "notification";
+    userId = unwrapped.user_id;
+    eventType = unwrapped.type;
+    
+    // Extract status - handle both "status" field and legacy "fetching" number
+    if (unwrapped.status) {
+      status = String(unwrapped.status);
+    } else if ("fetching" in unwrapped && typeof unwrapped.fetching === "number") {
+      status = unwrapped.fetching === 1 ? "fetching" : "fetched";
+    }
+    
+    content = unwrapped.content;
+  } else if (isLowRiskLog(unwrapped)) {
+    kind = "log";
+    userId = unwrapped.user_id;
+  } else {
+    // Unknown shape - validator failed
+    return null;
+  }
+
+  // Validate userId is present and non-empty
+  if (!userId || typeof userId !== "string" || userId.trim() === "") {
+    return null;
+  }
+
+  // eventTime comes from Kafka message timestamp (passed as parameter)
+  // Payload timestamp fields are completely ignored
+
+  return {
+    userId,
+    kind,
+    eventType: eventType ?? null,
+    status: status ?? null,
+    content: content ?? null,
+    rawPayload: unwrapped,
+    eventTime, // Always from Kafka message timestamp
+    topic,
+    partition,
+    offset,
+  };
+}
+
 function normalizeEvent(
   topic: string,
   payload: any,
@@ -248,6 +442,12 @@ function normalizeEvent(
   offset: string
 ): NormalizedNotification | null {
   const topicLower = topic.toLowerCase();
+
+  // Handle low-risk events separately (they return ParsedLowRiskEvent, not NormalizedNotification)
+  if (topicLower.includes("low_risk") || topicLower === "low_risk_agent_logs") {
+    // Low-risk events are handled in processMessage directly, not through normalizeEvent
+    return null;
+  }
 
   if (topicLower.includes("stock") && topicLower.includes("recomendation")) {
     return normalizeStockRecommendation(topic, payload, partition, offset);
@@ -274,9 +474,10 @@ export class NotificationConsumer {
   private consumer: Consumer;
   private prisma: PrismaClient;
   private publisher: NotificationPublisher;
+  private lowRiskPublisher: LowRiskPublisher;
   private isRunning: boolean = false;
 
-  constructor(prisma: PrismaClient, publisher: NotificationPublisher) {
+  constructor(prisma: PrismaClient, publisher: NotificationPublisher, lowRiskPublisher: LowRiskPublisher) {
     this.kafka = buildKafkaClient();
     this.consumer = this.kafka.consumer({
       groupId: notificationConfig.KAFKA_GROUP_ID || "notifications-consumer",
@@ -287,6 +488,7 @@ export class NotificationConsumer {
     });
     this.prisma = prisma;
     this.publisher = publisher;
+    this.lowRiskPublisher = lowRiskPublisher;
   }
 
   private async sleep(ms: number): Promise<void> {
@@ -299,6 +501,7 @@ export class NotificationConsumer {
       "news_pipeline_sentiment_articles",
       "nse_filings_trading_signal",
       "news_pipeline_sector_analysis",
+      "low_risk_agent_logs",
     ];
 
     let delay = initialDelay;
@@ -355,6 +558,100 @@ export class NotificationConsumer {
     const offset = message.offset;
 
     try {
+      // Handle low-risk events separately with strict validation
+      if (topic === "low_risk_agent_logs" || topic.toLowerCase().includes("low_risk")) {
+        // Extract eventTime from Kafka message timestamp ONLY (before unwrapping)
+        // message.timestamp is a string (ISO format) or number (ms since epoch)
+        const kafkaTimestamp = message.timestamp ? Number(message.timestamp) : NaN;
+        let eventTime: Date;
+        
+        if (!isNaN(kafkaTimestamp) && kafkaTimestamp > 0) {
+          eventTime = new Date(kafkaTimestamp);
+        } else {
+          // Invalid or missing Kafka timestamp - fallback to now() with warning
+          eventTime = new Date();
+          console.warn(`[Kafka][LowRisk] Warning: invalid Kafka timestamp; using now() (topic=${topic}, partition=${partition}, offset=${offset})`);
+        }
+
+        // Unwrap nested value strings robustly
+        const unwrapped = unwrapNestedValue(message.value);
+        
+        // Early validation: must be an object after unwrapping
+        if (unwrapped == null || typeof unwrapped !== "object" || Array.isArray(unwrapped)) {
+          console.warn(`[Kafka][LowRisk] Dropped: not an object after unwrap (topic=${topic}, partition=${partition}, offset=${offset})`);
+          console.warn(`[Kafka][LowRisk] lowrisk_unwrap_failed`);
+          return;
+        }
+
+        // Parse and normalize using strict validators
+        // Pass eventTime from Kafka timestamp (payload timestamps are ignored)
+        const normalized = parseLowRiskEvent(
+          topic,
+          unwrapped,
+          partition,
+          offset,
+          eventTime
+        );
+
+        if (!normalized) {
+          // Log unknown shape with sample keys for debugging
+          const sampleKeys = unwrapped ? Object.keys(unwrapped).slice(0, 5).join(", ") : "none";
+          console.warn(`[Kafka][LowRisk] Dropped: unknown low-risk shape (topic=${topic}, partition=${partition}, offset=${offset}, sampleKeys=${sampleKeys})`);
+          console.warn(`[Kafka][LowRisk] lowrisk_parsing_dropped_unknown_shape`);
+          return;
+        }
+
+        // Validate userId is present and non-empty
+        if (!normalized.userId || typeof normalized.userId !== "string" || normalized.userId.trim() === "") {
+          console.warn(`[Kafka][LowRisk] Dropped: user_id missing or empty (topic=${topic}, partition=${partition}, offset=${offset})`);
+          return;
+        }
+
+        // Strict user validation - check if user exists in DB
+        const user = await this.prisma.user.findUnique({
+          where: { id: normalized.userId },
+        });
+
+        if (!user) {
+          console.warn(`[Kafka][LowRisk] Dropped event — user not found (userId=${normalized.userId}, topic=${topic}, partition=${partition}, offset=${offset})`);
+          console.warn(`[Kafka][LowRisk] lowrisk_dropped_user_not_found`);
+          return; // STOP PROCESSING - DO NOT WRITE TO DB, DO NOT PUBLISH
+        }
+
+        // User exists - create DB record with typed fields
+        // eventTime comes ONLY from Kafka message timestamp (normalized.eventTime is always set)
+        const event = await this.prisma.lowRiskEvent.create({
+          data: {
+            userId: normalized.userId,
+            kind: normalized.kind,
+            eventType: normalized.eventType ?? null,
+            status: normalized.status ?? null,
+            content: normalized.content ?? null,
+            rawPayload: normalized.rawPayload,
+            eventTime: normalized.eventTime, // Always from Kafka timestamp
+          },
+        });
+
+        console.log(`[DB][LowRisk] Created event ${event.id} for user ${normalized.userId} kind=${normalized.kind} with eventTime=${normalized.eventTime.toISOString()}`);
+        console.warn(`[Kafka][LowRisk] lowrisk_processed_success`);
+
+        // Publish to Redis per-user channel (sequential, after DB write)
+        // normalized.eventTime is already set from Kafka timestamp
+        try {
+          await this.lowRiskPublisher.publish({
+            ...normalized,
+            id: event.id,
+            createdAt: event.createdAt,
+          });
+        } catch (redisError) {
+          // Redis failures don't block Kafka processing - log and continue
+          console.error(`[Redis][LowRisk] Failed to publish event ${event.id}:`, redisError);
+        }
+
+        return;
+      }
+
+      // Handle regular notification events (unchanged)
       let rawPayload: any = parseJsonSafely(message.value);
       if (!rawPayload) {
         console.warn(`[Kafka] Failed to parse message value as JSON (topic: ${topic}, partition: ${partition}, offset: ${offset})`);

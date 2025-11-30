@@ -1,6 +1,6 @@
 import { getPrismaClient, databaseManager } from "./prisma/client";
 import { RedisManager } from "../../../shared/js/redisManager";
-import { NotificationPublisher } from "./redis/publisher";
+import { NotificationPublisher, LowRiskPublisher } from "./redis/publisher";
 import { NotificationConsumer } from "./kafka/consumer";
 
 let consumer: NotificationConsumer | null = null;
@@ -20,8 +20,9 @@ async function startService() {
     console.log("[Redis] Connected to Redis");
 
     const publisher = new NotificationPublisher(redis);
+    const lowRiskPublisher = new LowRiskPublisher(redis);
 
-    consumer = new NotificationConsumer(prisma, publisher);
+    consumer = new NotificationConsumer(prisma, publisher, lowRiskPublisher);
     await consumer.start();
 
     console.log("[Service] Notification ingestion service started successfully");

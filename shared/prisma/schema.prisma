@@ -56,6 +56,7 @@ model User {
   deleted_at          DateTime?
 
   organization        Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  lowRiskEvents       LowRiskEvent[]
 
   @@unique([organization_id, email])
   @@index([email])
@@ -119,4 +120,23 @@ model IntradayNotificationState {
   @@index([notificationId])
   @@index([dismissedAt])
   @@map("intraday_notification_states")
+}
+
+model LowRiskEvent {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind       String   // "log" | "notification"
+  eventType  String?  // "industry", "pmi", etc. Null for logs
+  status     String?  // "fetching" | "fetched"
+  content    Json?    // structured payload for notifications
+  rawPayload Json     // full Kafka message
+  eventTime  DateTime?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([kind])
+  @@index([eventType])
+  @@index([createdAt])
+  @@map("low_risk_events")
 }

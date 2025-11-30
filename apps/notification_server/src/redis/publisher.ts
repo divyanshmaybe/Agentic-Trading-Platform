@@ -1,5 +1,6 @@
 import { RedisManager } from "../../../../shared/js/redisManager";
 import { Notification } from "@prisma/client";
+import { LowRiskNormalized } from "../kafka/types/lowRisk";
 
 export class NotificationPublisher {
   private redis: RedisManager;
@@ -46,6 +47,53 @@ export class NotificationPublisher {
       }
     } catch (error) {
       console.error("[Redis] Failed to publish notification:", error);
+    }
+  }
+}
+
+export class LowRiskPublisher {
+  private redis: RedisManager;
+
+  constructor(redis: RedisManager) {
+    this.redis = redis;
+  }
+
+  /**
+   * Publish a low-risk event to Redis per-user channel
+   * @param event - Strongly-typed normalized event with DB fields (id, createdAt)
+   */
+  async publish(event: LowRiskNormalized & { id: string; createdAt: Date }): Promise<void> {
+    if (!this.redis.isReady()) {
+      console.warn("[Redis][LowRisk] Not connected, skipping publish");
+      return;
+    }
+
+    try {
+      const channel = `lowrisk:user:${event.userId}`;
+      
+      // Serialize with proper Date handling
+      // eventTime is always a Date (required, non-nullable) - from Kafka message timestamp only
+      const payload = {
+        id: event.id,
+        userId: event.userId,
+        kind: event.kind,
+        eventType: event.eventType ?? null,
+        status: event.status ?? null,
+        content: event.content ?? null,
+        rawPayload: event.rawPayload,
+        eventTime: event.eventTime.toISOString(), // Always present - from Kafka timestamp
+        createdAt: event.createdAt.toISOString(),
+      };
+      const message = JSON.stringify(payload);
+
+      const connection = this.redis.getConnection();
+      if (connection) {
+        await connection.publish(channel, message);
+        console.log(`[Redis][LowRisk] Published ${event.id} to lowrisk:user:${event.userId}`);
+      }
+    } catch (error) {
+      console.error("[Redis][LowRisk] Failed to publish event:", error);
+      throw error; // Re-throw so caller can handle if needed
     }
   }
 }
