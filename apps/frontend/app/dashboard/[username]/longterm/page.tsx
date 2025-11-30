@@ -52,49 +52,80 @@ export default function LongTermPage() {
         </section>
 
         {!agentLoading && !isAllocating && agentData !== null && (
-          <div className="w-full space-y-6">
-            <div className="w-full rounded-2xl border border-white/10 bg-white/5 p-10 flex items-center justify-center gap-4">
-              <button
-                className="px-8 py-4 rounded-xl bg-blue-600 text-white font-semibold hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
-                onClick={handleRunPipeline}
-                disabled={streaming}
-              >
-                {streaming ? "Pipeline Running…" : "Run Pipeline"}
-              </button>
-              
-              {streaming && (
-                <button
-                  className="px-8 py-4 rounded-xl bg-red-600 text-white font-semibold hover:bg-red-700 transition"
-                  onClick={handleStopPipeline}
-                >
-                  Stop Pipeline
-                </button>
+          <div className="w-full">
+            {/* Large centered message box with text and button inside */}
+            <div className="card-glass w-full min-h-screen rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_28px_65px_-38px_rgba(0,0,0,0.9)] backdrop-blur p-10 flex flex-col gap-6">
+              {!streaming ? (
+                /* Centered content when not streaming */
+                <div className="flex flex-1 flex-col items-center justify-center gap-6">
+                  <p className="text-center text-white/70 text-lg max-w-2xl">
+                    Start your long-term investment journey with our automated low-risk pipeline. 
+                    Build wealth steadily through carefully selected positions.
+                  </p>
+
+                  <div className="flex items-center justify-center gap-4">
+                    <button
+                      className="px-8 py-4 rounded-xl bg-blue-600 text-white font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      onClick={handleRunPipeline}
+                      disabled={streaming}
+                    >
+                      Run Pipeline
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                /* Streaming layout with events */
+                <div className="flex flex-1 flex-col gap-6">
+                  {/* Top section with message and buttons */}
+                  <div className="flex flex-col items-center gap-6">
+                    <p className="text-center text-white/70 text-lg max-w-2xl">
+                      Start your long-term investment journey with our automated low-risk pipeline. 
+                      Build wealth steadily through carefully selected positions.
+                    </p>
+
+                    <div className="flex items-center justify-center gap-4">
+                      <button
+                        className="px-8 py-4 rounded-xl bg-blue-600 text-white font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        onClick={handleRunPipeline}
+                        disabled={streaming}
+                      >
+                        Pipeline Running…
+                      </button>
+                      
+                      <button
+                        className="px-8 py-4 rounded-xl bg-red-600 text-white font-semibold hover:bg-red-700 transition-colors"
+                        onClick={handleStopPipeline}
+                      >
+                        Stop Pipeline
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Streaming events section inside the card */}
+                  <div className="flex-1 overflow-hidden">
+                    <h3 className="text-lg font-semibold mb-4 text-[#fafafa]">Live Pipeline Events</h3>
+                    <div className="max-h-[600px] overflow-y-auto">
+                      {events.length === 0 ? (
+                        <div className="text-white/60 text-sm">Waiting for events...</div>
+                      ) : (
+                        <div className="space-y-4">
+                          {events.map((event) => (
+                            <div
+                              key={event.id}
+                              className="rounded-lg border border-white/10 bg-black/25 p-4 backdrop-blur-sm"
+                            >
+                              <pre className="text-xs text-white/90 whitespace-pre-wrap wrap-break-word font-mono">
+                                {JSON.stringify(event, null, 2)}
+                              </pre>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
               )}
             </div>
-
-            {streaming && (
-              <div className="w-full rounded-2xl border border-white/10 bg-white/5 p-6">
-                <h3 className="text-lg font-semibold mb-4 text-white">Live Pipeline Events</h3>
-                <div className="max-h-[600px] overflow-y-auto">
-                  {events.length === 0 ? (
-                    <div className="text-white/60 text-sm">Waiting for events...</div>
-                  ) : (
-                    <div className="space-y-4">
-                      {events.map((event) => (
-                        <div
-                          key={event.id}
-                          className="rounded-lg border border-white/10 bg-black/20 p-4"
-                        >
-                          <pre className="text-xs text-white/90 whitespace-pre-wrap wrap-break-word font-mono">
-                            {JSON.stringify(event, null, 2)}
-                          </pre>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
           </div>
         )}
       </Container>
