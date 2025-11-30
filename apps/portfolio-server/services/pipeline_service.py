@@ -1315,10 +1315,9 @@ class PipelineService:
         # Use DBManager for proper connection handling
         from dbManager import DBManager
         db_manager = DBManager.get_instance()
-        await db_manager.connect()
-        client = db_manager.get_client()
         
-        trade_service = TradeExecutionService(logger=self.logger)
+        async with db_manager.session() as client:
+            trade_service = TradeExecutionService(logger=self.logger)
 
         # DIRECTLY query for active high_risk agents with auto_trade enabled
         # No need for user filtering bullshit
@@ -1910,30 +1909,28 @@ class PipelineService:
             self.logger.info("✅ Market close lock acquired, proceeding with position closure")
             
             db_manager = get_db_manager()
-            await db_manager.connect()
             
-            client = db_manager.get_client()
-            
-            # Find all high_risk agents
-            agents = await client.tradingagent.find_many(
-                where={
-                    "agent_type": "high_risk",
-                    "status": "active",
-                },
-                include={
-                    "portfolio": True,
-                }
-            )
-            
-            if not agents:
-                self.logger.info("No active high_risk agents found - nothing to close")
-                return {
-                    "status": "completed",
-                    "agents_checked": 0,
-                    "long_positions_sold": 0,
-                    "short_positions_covered": 0,
-                    "errors": 0,
-                }
+            async with db_manager.session() as client:
+                # Find all high_risk agents
+                agents = await client.tradingagent.find_many(
+                    where={
+                        "agent_type": "high_risk",
+                        "status": "active",
+                    },
+                    include={
+                        "portfolio": True,
+                    }
+                )
+                
+                if not agents:
+                    self.logger.info("No active high_risk agents found - nothing to close")
+                    return {
+                        "status": "completed",
+                        "agents_checked": 0,
+                        "long_positions_sold": 0,
+                        "short_positions_covered": 0,
+                        "errors": 0,
+                    }
             
             self.logger.info("Found %d active high_risk agent(s)", len(agents))
             
@@ -2147,30 +2144,28 @@ class PipelineService:
             
             # Get database connection
             db_manager = get_db_manager()
-            await db_manager.connect()
             
-            client = db_manager.get_client()
-            
-            # Fetch all active high_risk trading agents
-            agents = await client.tradingagent.find_many(
-                where={
-                    "agent_type": "high_risk",
-                    "status": "active",
-                },
-                include={"allocation": {"include": {"portfolio": True}}},
-            )
-            
-            if not agents:
-                self.logger.warning("⚠️ No active high_risk agents found to process signal %s", symbol)
-                return
-            
-            self.logger.info("Found %d active high_risk agents to process signal", len(agents))
-            
-            # Initialize trade execution service
-            trade_service = TradeExecutionService(logger=self.logger)
-            
-            trades_created = 0
-            errors = 0
+            async with db_manager.session() as client:
+                # Fetch all active high_risk trading agents
+                agents = await client.tradingagent.find_many(
+                    where={
+                        "agent_type": "high_risk",
+                        "status": "active",
+                    },
+                    include={"allocation": {"include": {"portfolio": True}}},
+                )
+                
+                if not agents:
+                    self.logger.warning("⚠️ No active high_risk agents found to process signal %s", symbol)
+                    return
+                
+                self.logger.info("Found %d active high_risk agents to process signal", len(agents))
+                
+                # Initialize trade execution service
+                trade_service = TradeExecutionService(logger=self.logger)
+                
+                trades_created = 0
+                errors = 0
             
             for agent in agents:
                 try:

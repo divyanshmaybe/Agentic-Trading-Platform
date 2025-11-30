@@ -389,7 +389,7 @@ class RunService:
             # Build workflow configuration
             # Use absolute paths relative to quant-stream directory
             quant_stream_data_dir = QUANT_STREAM_PATH / ".data"
-            default_data_path = str(quant_stream_data_dir / "indian_market_data.csv")
+            default_data_path = str(quant_stream_data_dir / "indian_stock_market_nifty500.csv")
             default_symbols_file = str(quant_stream_data_dir / "nifty500.txt")
             
             # Resolve data_path - convert relative paths to absolute under quant-stream
@@ -603,7 +603,7 @@ class RunService:
         
         return {
             "data": {
-                "path": config.get("data_path") or ".data/indian_market_data.csv",
+                "path": config.get("data_path") or ".data/indian_stock_market_nifty500.csv",
                 "symbols_file": config.get("symbols_file"),
                 "symbol_col": config.get("symbol_col", "symbol"),
                 "timestamp_col": config.get("timestamp_col", "timestamp"),

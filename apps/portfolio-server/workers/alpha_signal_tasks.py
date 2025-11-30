@@ -1,4 +1,12 @@
-"""Celery tasks for alpha signal generation."""
+"""Celery tasks for alpha signal generation.
+
+This module provides scheduled and on-demand tasks for generating trading signals
+from live alphas using their workflow configurations. The main task runs daily
+before market open to:
+1. Load all active LiveAlphas (status='running')
+2. For each alpha, generate signals using AlphaSignalService
+3. Dispatch signals to trade execution pipeline
+"""
 
 from __future__ import annotations
 
@@ -6,7 +14,7 @@ import os
 import sys
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 
 from celery.utils.log import get_task_logger
 
@@ -83,15 +91,13 @@ def generate_daily_alpha_signals(self) -> Dict[str, Any]:
 
 async def _generate_signals_async() -> Dict[str, Any]:
     """Async implementation of signal generation."""
-    from dbManager import DBManager
+    from dbManager import DBManager  # type: ignore
     from services.alpha_signal_service import AlphaSignalService
     
-    # Initialize database
+    # Use session context manager for proper connection lifecycle
     db_manager = DBManager.get_instance()
-    await db_manager.connect()
     
-    try:
-        client = db_manager.get_client()
+    async with db_manager.session() as client:
         
         # Get all running live alphas
         live_alphas = await client.livealpha.find_many(
@@ -154,9 +160,6 @@ async def _generate_signals_async() -> Dict[str, Any]:
             "signals_generated": total_signals,
             "errors": errors if errors else None,
         }
-        
-    finally:
-        await db_manager.disconnect()
 
 
 @celery_app.task(
@@ -184,15 +187,12 @@ def generate_signals_for_single_alpha(self, alpha_id: str) -> Dict[str, Any]:
 
 async def _generate_signals_for_alpha_async(alpha_id: str) -> Dict[str, Any]:
     """Async implementation for single alpha signal generation."""
-    from dbManager import DBManager
+    from dbManager import DBManager  # type: ignore
     from services.alpha_signal_service import AlphaSignalService
     
     db_manager = DBManager.get_instance()
-    await db_manager.connect()
     
-    try:
-        client = db_manager.get_client()
-        
+    async with db_manager.session() as client:
         alpha = await client.livealpha.find_unique(where={"id": alpha_id})
         if not alpha:
             return {"status": "error", "error": "Alpha not found"}
@@ -219,9 +219,6 @@ async def _generate_signals_for_alpha_async(alpha_id: str) -> Dict[str, Any]:
             "alpha_id": alpha_id,
             "signals_generated": signal_count,
         }
-        
-    finally:
-        await db_manager.disconnect()
 
 
 @celery_app.task(
@@ -254,16 +251,26 @@ def process_alpha_signal_batch(self, signals: List[Dict[str, Any]]) -> Dict[str,
 
 
 async def _process_signal_batch_async(signals: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Async implementation for signal batch processing."""
-    from dbManager import DBManager
+    """Async implementation for signal batch processing.
+    
+    Converts alpha signals into trade execution jobs using TradeExecutionService.
+    Each signal includes:
+    - alpha_id: ID of the live alpha
+    - portfolio_id: ID of the portfolio
+    - symbol: Stock symbol
+    - signal_type: 'buy' or 'sell'
+    - quantity: Number of shares
+    - confidence: Signal confidence (0-1)
+    - reference_price: Current stock price
+    - allocated_amount: Capital allocated for this signal
+    """
+    from dbManager import DBManager  # type: ignore
     from services.trade_execution_service import TradeExecutionService
     
     db_manager = DBManager.get_instance()
-    await db_manager.connect()
     
-    try:
-        client = db_manager.get_client()
-        trade_service = TradeExecutionService(client, task_logger)
+    async with db_manager.session() as client:
+        trade_service = TradeExecutionService(logger=task_logger)
         
         processed = 0
         errors = []
@@ -271,22 +278,47 @@ async def _process_signal_batch_async(signals: List[Dict[str, Any]]) -> Dict[str
         for signal in signals:
             try:
                 # Get alpha and its portfolio
+                alpha_id = signal.get("alpha_id")
+                if not alpha_id:
+                    errors.append({"signal": signal, "error": "Missing alpha_id"})
+                    continue
+                
                 alpha = await client.livealpha.find_unique(
-                    where={"id": signal["alpha_id"]}
+                    where={"id": alpha_id},
+                    include={"portfolio": True}
                 )
                 if not alpha:
                     errors.append({"signal": signal, "error": "Alpha not found"})
                     continue
                 
-                # Create trade execution job
-                await trade_service.create_alpha_trade(
+                # Create trade using TradeExecutionService
+                result = await trade_service.create_alpha_trade(
                     alpha=alpha,
                     symbol=signal["symbol"],
                     signal_type=signal["signal_type"],
                     quantity=signal.get("quantity"),
                     confidence=signal.get("confidence", 1.0),
+                    reference_price=signal.get("reference_price"),
                 )
-                processed += 1
+                
+                if result.get("status") in ["executed", "pending"]:
+                    processed += 1
+                    task_logger.info(
+                        "✅ Processed signal: %s %s x %d for alpha %s",
+                        signal["signal_type"],
+                        signal["symbol"],
+                        signal.get("quantity", 0),
+                        alpha.name,
+                    )
+                elif result.get("status") == "skipped":
+                    task_logger.warning(
+                        "⚠️ Signal skipped: %s %s - %s",
+                        signal["signal_type"],
+                        signal["symbol"],
+                        result.get("reason", "unknown"),
+                    )
+                else:
+                    errors.append({"signal": signal, "error": result.get("error", "Unknown error")})
                 
             except Exception as exc:
                 task_logger.error(
@@ -300,9 +332,6 @@ async def _process_signal_batch_async(signals: List[Dict[str, Any]]) -> Dict[str
             "processed": processed,
             "errors": errors if errors else None,
         }
-        
-    finally:
-        await db_manager.disconnect()
 
 
 

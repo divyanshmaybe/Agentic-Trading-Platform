@@ -2920,6 +2920,260 @@ class TradeExecutionService:
             return float(value)
         except (TypeError, ValueError):
             return default
+    
+    async def create_alpha_trade(
+        self,
+        alpha,
+        symbol: str,
+        signal_type: str,
+        quantity: Optional[int] = None,
+        confidence: float = 1.0,
+        reference_price: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """
+        Create a trade from an alpha signal.
+        
+        This method:
+        1. Gets or creates an alpha agent for the alpha's portfolio
+        2. Validates the trade against available allocation
+        3. Creates trade execution log and persists to database
+        4. Optionally executes the trade in simulation mode
+        
+        Args:
+            alpha: LiveAlpha Prisma model
+            symbol: Stock symbol
+            signal_type: 'buy' or 'sell'
+            quantity: Number of shares (calculated from allocation if not provided)
+            confidence: Signal confidence (0-1)
+            reference_price: Current price (fetched if not provided)
+            
+        Returns:
+            Dict with trade execution result
+        """
+        client = await self._ensure_client()
+        
+        portfolio_id = alpha.portfolio_id
+        allocated_amount = float(alpha.allocated_amount)
+        
+        # Fetch portfolio with agents
+        portfolio = await client.portfolio.find_unique(
+            where={"id": portfolio_id},
+            include={
+                "agents": {
+                    "where": {"agent_type": "alpha", "status": "active"},
+                    "include": {"allocation": True}
+                }
+            }
+        )
+        
+        if not portfolio:
+            raise ValueError(f"Portfolio {portfolio_id} not found")
+        
+        # Get or create alpha agent
+        alpha_agent = await self._get_or_create_alpha_agent(
+            client=client,
+            portfolio=portfolio,
+            alpha=alpha,
+        )
+        
+        if not alpha_agent or not alpha_agent.allocation:
+            raise ValueError(f"Alpha agent or allocation not found for alpha {alpha.id}")
+        
+        allocation_id = alpha_agent.allocation.id
+        agent_id = alpha_agent.id
+        
+        # Get reference price if not provided
+        if reference_price is None:
+            try:
+                from market_data import await_live_price
+                reference_price = await await_live_price(symbol, timeout=10.0)
+            except Exception as e:
+                self.logger.warning("Failed to get live price for %s: %s", symbol, e)
+                # Try to get from cached data
+                from market_data import get_market_data_service
+                market_data = get_market_data_service()
+                reference_price = market_data.get_latest_price(symbol)
+                if reference_price is None:
+                    raise ValueError(f"Unable to get price for {symbol}")
+        
+        # Calculate quantity if not provided
+        if quantity is None or quantity <= 0:
+            # Allocate based on strategy (equal weight for top-k)
+            strategy_params = (alpha.workflow_config or {}).get("strategy", {}).get("params", {})
+            topk = strategy_params.get("topk", 10)
+            allocation_per_stock = allocated_amount / topk if topk > 0 else allocated_amount
+            quantity = int(allocation_per_stock / reference_price) if reference_price > 0 else 0
+        
+        if quantity <= 0:
+            self.logger.warning(
+                "Calculated quantity is 0 for %s (allocation: ₹%.2f, price: ₹%.2f)",
+                symbol, allocated_amount, reference_price
+            )
+            return {"status": "skipped", "reason": "quantity_zero", "symbol": symbol}
+        
+        # Validate available cash in allocation
+        available_cash = float(alpha_agent.allocation.available_cash or 0)
+        required_amount = reference_price * quantity
+        
+        if signal_type.lower() == "buy" and available_cash < required_amount:
+            self.logger.warning(
+                "Insufficient allocation cash for alpha %s: need ₹%.2f, have ₹%.2f",
+                alpha.id, required_amount, available_cash
+            )
+            return {
+                "status": "skipped",
+                "reason": "insufficient_cash",
+                "required": required_amount,
+                "available": available_cash,
+                "symbol": symbol,
+            }
+        
+        # Determine trade side
+        side = "BUY" if signal_type.lower() == "buy" else "SELL"
+        
+        # Build job row for trade creation
+        import uuid
+        job_row = {
+            "request_id": str(uuid.uuid4()),
+            "user_id": portfolio.customer_id,
+            "organization_id": portfolio.organization_id,
+            "portfolio_id": portfolio_id,
+            "customer_id": portfolio.customer_id,
+            "symbol": symbol,
+            "side": side,
+            "quantity": quantity,
+            "reference_price": float(reference_price),
+            "exchange": "NSE",
+            "segment": "EQUITY",
+            "agent_id": agent_id,
+            "agent_type": "alpha",
+            "allocation_id": allocation_id,
+            "triggered_by": f"alpha_signal_{alpha.id}",
+            "confidence": confidence,
+            "allocated_capital": required_amount,
+            "take_profit_pct": 0.03,  # 3% TP for alpha trades
+            "stop_loss_pct": 0.02,  # 2% SL for alpha trades
+            "explanation": f"Alpha signal: {signal_type} {symbol} from {alpha.name}",
+            "filing_time": "",
+            "generated_at": datetime.utcnow().isoformat(),
+            "metadata_json": json.dumps({
+                "alpha_id": alpha.id,
+                "alpha_name": alpha.name,
+                "signal_type": signal_type,
+                "confidence": confidence,
+            }),
+        }
+        
+        # Persist trade
+        events = await self.persist_and_publish([job_row], publish_kafka=False)
+        
+        if not events:
+            raise RuntimeError("Failed to create trade execution log")
+        
+        event = events[0]
+        trade_id = event.trade_id
+        
+        # Execute trade in simulation mode
+        result = await self.execute_trade(trade_id, simulate=True)
+        
+        self.logger.info(
+            "✅ Alpha trade created: %s %s x %d @ ₹%.2f | Alpha: %s | Status: %s",
+            side,
+            symbol,
+            quantity,
+            reference_price,
+            alpha.name,
+            result.get("status", "unknown"),
+        )
+        
+        return result
+    
+    async def _get_or_create_alpha_agent(
+        self,
+        client,
+        portfolio,
+        alpha,
+    ):
+        """
+        Get or create an alpha agent for the given alpha and portfolio.
+        
+        Each LiveAlpha gets its own TradingAgent of type 'alpha' with
+        dedicated allocation from the portfolio.
+        """
+        # Check if alpha already has an agent
+        if alpha.agent_id:
+            agent = await client.tradingagent.find_unique(
+                where={"id": alpha.agent_id},
+                include={"allocation": True}
+            )
+            if agent and agent.allocation:
+                return agent
+        
+        # Look for existing alpha agents with this alpha's allocation
+        existing_agents = [a for a in (portfolio.agents or []) if a.agent_type == "alpha"]
+        
+        for agent in existing_agents:
+            # Check if this agent is for this alpha
+            if hasattr(agent, "metadata") and agent.metadata:
+                meta = agent.metadata
+                if isinstance(meta, str):
+                    try:
+                        meta = json.loads(meta)
+                    except:
+                        meta = {}
+                if meta.get("alpha_id") == alpha.id:
+                    # Found existing agent for this alpha
+                    if agent.allocation:
+                        return agent
+        
+        # Create new allocation for alpha
+        allocation = await client.portfolioallocation.create(
+            data={
+                "portfolio_id": portfolio.id,
+                "allocation_type": "alpha",
+                "target_weight": Decimal("0"),  # Alpha allocations don't use weights
+                "current_weight": Decimal("0"),
+                "allocated_amount": alpha.allocated_amount,
+                "available_cash": alpha.allocated_amount,
+                "metadata": json.dumps({
+                    "alpha_id": alpha.id,
+                    "alpha_name": alpha.name,
+                }),
+            }
+        )
+        
+        # Create alpha agent
+        agent = await client.tradingagent.create(
+            data={
+                "portfolio_id": portfolio.id,
+                "portfolio_allocation_id": allocation.id,
+                "agent_type": "alpha",
+                "agent_name": f"Alpha: {alpha.name}",
+                "status": "active",
+                "strategy_config": alpha.workflow_config,
+                "metadata": json.dumps({
+                    "alpha_id": alpha.id,
+                    "alpha_name": alpha.name,
+                    "hypothesis": alpha.hypothesis,
+                }),
+            },
+            include={"allocation": True}
+        )
+        
+        # Update alpha with agent_id
+        await client.livealpha.update(
+            where={"id": alpha.id},
+            data={"agent_id": agent.id}
+        )
+        
+        self.logger.info(
+            "✅ Created alpha agent %s with allocation %s for alpha %s",
+            agent.id,
+            allocation.id,
+            alpha.name,
+        )
+        
+        return agent
 
 
 __all__ = ["TradeExecutionService", "TradeExecutionRecord"]

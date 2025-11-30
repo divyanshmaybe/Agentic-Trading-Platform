@@ -137,6 +137,7 @@ celery_app = Celery(
         "workers.streaming_risk_tasks",
         "workers.economic_indicators_tasks",
         "workers.low_risk_tasks",  # Low-risk pipeline worker
+        "workers.alpha_signal_tasks",
     ],
 )
 
@@ -246,6 +247,10 @@ celery_app.conf.task_routes = {
     # Auto-sell worker
     "trades.auto_sell_expired_trades": {"queue": QUEUE_NAMES["trading"], "routing_key": "trading"},
     "pipeline.sell_high_risk_before_close": {"queue": QUEUE_NAMES["trading"], "routing_key": "trading"},
+    # Alpha signal tasks - trading queue for signal execution
+    "alpha.generate_daily_signals": {"queue": QUEUE_NAMES["pipelines"], "routing_key": "pipelines"},
+    "alpha.generate_signals_for_alpha": {"queue": QUEUE_NAMES["trading"], "routing_key": "trading"},
+    "alpha.process_signal_batch": {"queue": QUEUE_NAMES["trading"], "routing_key": "trading"},
 }
 
 # Task categories with different resource requirements
@@ -261,12 +266,15 @@ PIPELINE_TASKS = [
     "pipeline.start",
     "pipeline.low_risk.run",  # Low-risk stock selection (25-30 min limit)
     "pipeline.low_risk.get_status",  # Status check for low-risk pipeline
+    "alpha.generate_daily_signals",  # Daily alpha signal generation
 ]
 
 # Signal processing tasks - HIGHEST PRIORITY, NO RATE LIMITS for minimal latency
 # These are the core real-time trading tasks that must execute immediately
 SIGNAL_PROCESSING_TASKS = [
     "pipeline.trade_execution.process_signal",
+    "alpha.generate_signals_for_alpha",  # On-demand alpha signal generation
+    "alpha.process_signal_batch",  # Process alpha signals
 ]
 
 # Trade execution - high priority, fast execution
@@ -586,6 +594,19 @@ if INDUSTRY_INDICATORS_ENABLED:
         f"(UTC: {utc_hour:02d}:{utc_minute:02d})"
     )
 
+# Alpha signal generation - runs daily before market open (8:30 AM IST = 3:00 AM UTC)
+# IST is UTC+5:30, so 8:30 AM IST = 3:00 AM UTC
+ALPHA_SIGNALS_ENABLED = os.getenv("ALPHA_SIGNALS_ENABLED", "true").lower() in {"1", "true", "yes"}
+ALPHA_SIGNALS_HOUR = int(os.getenv("ALPHA_SIGNALS_HOUR", "3"))  # 3:00 AM UTC = 8:30 AM IST
+ALPHA_SIGNALS_MINUTE = int(os.getenv("ALPHA_SIGNALS_MINUTE", "0"))
+ALPHA_SIGNALS_QUEUE = os.getenv("ALPHA_SIGNALS_QUEUE", QUEUE_NAMES["pipelines"])
+
+if ALPHA_SIGNALS_ENABLED:
+    celery_app.conf.beat_schedule["alpha-daily-signals"] = {
+        "task": "alpha.generate_daily_signals",
+        "schedule": crontab(hour=ALPHA_SIGNALS_HOUR, minute=ALPHA_SIGNALS_MINUTE, day_of_week="mon-fri"),
+        "options": {"queue": ALPHA_SIGNALS_QUEUE},
+    }
 
 # Lazy import worker modules to avoid circular imports
 # These imports happen when celery worker starts, not when this module is imported
@@ -604,6 +625,7 @@ def _import_tasks():
         snapshot_tasks,
         angelone_token_task,
         economic_indicators_tasks,
+        alpha_signal_tasks,
     )
 
 
@@ -789,6 +811,50 @@ def setup_prometheus(**kwargs):
         
     except Exception as e:
         logging.error("❌ Failed to initialize Prometheus exporter: %s", e, exc_info=True)
+
+
+# Clean up database connections when worker process shuts down
+@signals.worker_process_shutdown.connect
+def cleanup_worker_process(**kwargs):
+    """
+    Clean up Prisma client when worker process is shutting down.
+    
+    This ensures database connections are properly released before the worker exits,
+    preventing connection leaks.
+    """
+    import asyncio
+    
+    logger = logging.getLogger(__name__)
+    logger.info("🔌 Worker process shutting down - cleaning up database connections (PID %s)", os.getpid())
+    
+    try:
+        # Add shared/py to path for DBManager import
+        project_root = Path(__file__).resolve().parents[2]
+        shared_py = project_root / "shared" / "py"
+        if str(shared_py) not in sys.path:
+            sys.path.insert(0, str(shared_py))
+        
+        from dbManager import DBManager
+        
+        # Force disconnect and reset
+        if DBManager._instance is not None:
+            try:
+                # Try to run disconnect in a new event loop
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(DBManager._instance.disconnect(force=True))
+                finally:
+                    loop.close()
+            except Exception as disc_exc:
+                logger.debug("Async disconnect failed: %s", disc_exc)
+            
+            # Always reset the instance
+            DBManager.reset_instance()
+        
+        logger.info("✅ Database connections cleaned up for PID %s", os.getpid())
+    except Exception as e:
+        logger.warning("⚠️ Error during database cleanup: %s", e)
 
 
 __all__ = ["celery_app"]

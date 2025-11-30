@@ -85,6 +85,7 @@ model Portfolio {
   rebalance_runs           RebalanceRun[]
   trades                   Trade[]
   agents                   TradingAgent[]
+  live_alphas              LiveAlpha[]
 
   @@index([organization_id])
   @@index([customer_id])
@@ -147,6 +148,7 @@ model TradingAgent {
   positions               Position[]
   trades                  Trade[]
   snapshots               TradingAgentSnapshot[]
+  live_alphas             LiveAlpha[]
   allocation              PortfolioAllocation    @relation("AllocationAgent", fields: [portfolio_allocation_id], references: [id], onDelete: Cascade)
   portfolio               Portfolio?             @relation(fields: [portfolio_id], references: [id], onDelete: Cascade)
 
@@ -378,4 +380,127 @@ model CompanyReport {
   @@index([ticker])
   @@index([company_name])
   @@map("company_reports")
+}
+
+/// --------------------
+/// AlphaCopilot Run (Research/Hypothesis Testing)
+/// --------------------
+model AlphaCopilotRun {
+  id                String                 @id @default(uuid())
+  hypothesis        String
+  status            String                 @default("pending") // pending, running, completed, failed
+  symbols_file      String?
+  data_path         String?
+  max_iterations    Int                    @default(5)
+  current_iteration Int                    @default(0)
+  created_at        DateTime               @default(now())
+  updated_at        DateTime               @updatedAt
+  completed_at      DateTime?
+  metadata          Json?                  @default("{}")
+  
+  iterations        AlphaCopilotIteration[]
+  results           AlphaCopilotResult[]
+  logs              AlphaCopilotLog[]
+  live_alphas       LiveAlpha[]
+
+  @@index([status])
+  @@index([created_at])
+  @@map("alphacopilot_runs")
+}
+
+/// --------------------
+/// AlphaCopilot Iteration
+/// --------------------
+model AlphaCopilotIteration {
+  id                String            @id @default(uuid())
+  run_id            String
+  iteration_number  Int
+  factors           Json?             @default("[]") // Array of factor expressions
+  metrics           Json?             @default("{}") // Evaluation metrics
+  status            String            @default("pending") // pending, completed, failed
+  created_at        DateTime          @default(now())
+  updated_at        DateTime          @updatedAt
+  
+  run               AlphaCopilotRun   @relation(fields: [run_id], references: [id], onDelete: Cascade)
+
+  @@unique([run_id, iteration_number])
+  @@index([run_id])
+  @@map("alphacopilot_iterations")
+}
+
+/// --------------------
+/// AlphaCopilot Result (Final Results)
+/// --------------------
+model AlphaCopilotResult {
+  id                String            @id @default(uuid())
+  run_id            String            @unique
+  factors           Json?             @default("[]") // Final selected factors
+  metrics           Json?             @default("{}") // Final evaluation metrics
+  workflow_config   Json?             @default("{}") // Complete workflow configuration
+  created_at        DateTime          @default(now())
+  updated_at        DateTime          @updatedAt
+  
+  run               AlphaCopilotRun   @relation(fields: [run_id], references: [id], onDelete: Cascade)
+
+  @@index([run_id])
+  @@map("alphacopilot_results")
+}
+
+/// --------------------
+/// AlphaCopilot Log
+/// --------------------
+model AlphaCopilotLog {
+  id                String            @id @default(uuid())
+  run_id            String
+  level             String            // INFO, WARNING, ERROR
+  message           String
+  node_name         String?
+  iteration_number  Int?
+  created_at        DateTime          @default(now())
+  
+  run               AlphaCopilotRun   @relation(fields: [run_id], references: [id], onDelete: Cascade)
+
+  @@index([run_id])
+  @@index([created_at])
+  @@map("alphacopilot_logs")
+}
+
+/// --------------------
+/// Live Alpha (Deployed Alpha for Trading)
+/// --------------------
+model LiveAlpha {
+  id                String            @id @default(uuid())
+  name              String
+  hypothesis        String?
+  run_id            String?
+  
+  // Complete workflow config (matches quant-stream WorkflowConfig schema)
+  workflow_config   Json              // Full config: data, features, model, strategy, backtest
+  
+  // Extracted key fields for querying
+  symbols           String[]          // Symbols to trade (from data.symbols)
+  model_type        String?           // e.g., "LightGBM", "XGBoost" (from model.type)
+  strategy_type     String            // e.g., "TopkDropout" (from strategy.type)
+  
+  status            String            @default("stopped") // running, stopped, error
+  allocated_amount  Decimal           @db.Decimal(18, 4)
+  portfolio_id      String
+  agent_id          String?           // Link to TradingAgent
+  
+  // Performance tracking
+  last_signal_at    DateTime?
+  total_signals     Int               @default(0)
+  metadata          Json?             @default("{}")
+  
+  created_at        DateTime          @default(now())
+  updated_at        DateTime          @updatedAt
+  
+  run               AlphaCopilotRun?  @relation(fields: [run_id], references: [id], onDelete: SetNull)
+  portfolio         Portfolio         @relation(fields: [portfolio_id], references: [id], onDelete: Cascade)
+  agent             TradingAgent?     @relation(fields: [agent_id], references: [id], onDelete: SetNull)
+
+  @@index([portfolio_id])
+  @@index([status])
+  @@index([run_id])
+  @@map("live_alphas")
 }

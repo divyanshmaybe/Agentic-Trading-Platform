@@ -94,7 +94,7 @@ async def start_monitor():
         await market_service._ensure_init()
         logger.info("✅ Connected to MarketDataService")
         
-        # Get database client (Prisma)
+        # Get database client (Prisma) - keep connection alive for long-running monitor
         db_manager = DBManager.get_instance()
         await db_manager.connect()
         db = db_manager.get_client()  # Get Prisma client
@@ -138,10 +138,10 @@ async def stop_monitor():
         _monitor.stop()
         logger.info("Streaming order monitor stopped")
     
-    # Disconnect database
+    # Force disconnect database on shutdown
     try:
         db_manager = DBManager.get_instance()
-        await db_manager.disconnect()
+        await db_manager.disconnect(force=True)
     except Exception as exc:
         logger.debug(f"Database disconnect error: {exc}")
 

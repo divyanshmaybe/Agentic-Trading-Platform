@@ -851,138 +851,137 @@ def allocate_for_objective_task(
             
             # Update portfolio status to processing
             logger.info(f"Connecting to database for portfolio {portfolio_id}...")
-            # Use DBManager singleton pattern
+            # Use DBManager singleton pattern with session context manager
             from dbManager import DBManager
             
             db_manager = DBManager.get_instance()
-            await db_manager.connect()
-            db = db_manager.get_client()
             
-            logger.info(f"Database connected for portfolio {portfolio_id}")
-            
-            logger.info(f"Fetching user subscriptions for user {user_id}...")
-            user_subscriptions = await _get_user_subscriptions(db, user_id)
-            logger.info(f"User subscriptions retrieved: {user_subscriptions}")
-            
-            logger.info(f"Updating portfolio {portfolio_id} status to 'processing'...")
-            await db.portfolio.update(
-                where={"id": portfolio_id},
-                data={"allocation_status": "processing"}
-            )
-            logger.info(f"Portfolio {portfolio_id} status updated to 'processing'")
-        
-            # Execute Pathway allocation pipeline in a thread pool to avoid event loop conflicts
-            # Use asyncio.to_thread to run the synchronous pipeline without blocking the event loop
-            from concurrent.futures import ThreadPoolExecutor
-            import functools
-            
-            loop = asyncio.get_event_loop()
-            
-            # Log request details for debugging
-            logger.info(f"🔍 Allocation request details: user_id={request.get('user_id')}, "
-                       f"initial_value={request.get('initial_value')}, "
-                       f"user_inputs_keys={list(request.get('user_inputs', {}).keys())}, "
-                       f"current_regime={request.get('current_regime')}")
-            
-            # Run the synchronous pipeline in a thread pool executor with timeout
-            logger.info(f"Executing allocation pipeline for portfolio {portfolio_id}...")
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                try:
-                    results = await asyncio.wait_for(
-                        loop.run_in_executor(
-                            executor,
-                            functools.partial(
-                                allocate_portfolios,
-                                [request],
-                                logger=logger,
-                                audit_path=f"/tmp/portfolio_allocations_{portfolio_id}_{objective_id}.jsonl"
-                            )
-                        ),
-                        timeout=300.0  # 5 minute timeout
-                    )
-                    logger.info(f"✅ Allocation pipeline completed for portfolio {portfolio_id}. "
-                              f"Results type: {type(results)}, Length: {len(results) if results else 'NONE/EMPTY'}, "
-                              f"Results: {results[:500] if results else 'EMPTY'}")
-                except asyncio.TimeoutError:
-                    logger.error(f"Allocation pipeline timed out after 5 minutes for portfolio {portfolio_id}")
-                    raise TimeoutError(f"Allocation pipeline timed out for portfolio {portfolio_id}")
-            
-            logger.info(f"🔍 Checking results validity...")
-            
-            if not results:
-                logger.error("Allocation pipeline returned no results")
-                raise ValueError("Allocation pipeline returned no results")
-            
-            logger.info(f"📦 Extracting allocation_result from results[0]...")
-            allocation_result = results[0]
-            logger.info(f"✅ Got allocation_result, type={type(allocation_result)}")
-        
-            # Log allocation result for debugging
-            logger.info(
-                f"Allocation result for portfolio {portfolio_id}: "
-                f"has_weights={bool(allocation_result.get('weights'))}, "
-                f"has_weights_json={bool(allocation_result.get('weights_json'))}, "
-                f"success={allocation_result.get('success', 'N/A')}, "
-                f"keys={list(allocation_result.keys())}"
-            )
-            
-            # Check for weights directly instead of relying on "success" field
-            # Try multiple ways to extract weights
-            weights = None
-            
-            # First try direct weights field
-            weights_raw = allocation_result.get("weights")
-            if weights_raw:
-                weights = _coerce_to_plain_dict(weights_raw)
-                logger.debug(f"Extracted weights from 'weights' field: {weights}")
+            async with db_manager.session() as db:
+                logger.info(f"Database connected for portfolio {portfolio_id}")
                 
-                # If not found, try weights_json (might be a string)
-                if not weights:
-                    weights_json_raw = allocation_result.get("weights_json")
-                    if weights_json_raw:
-                        # If it's a string, parse it
-                        if isinstance(weights_json_raw, str):
-                            try:
-                                weights = json.loads(weights_json_raw)
-                                logger.debug(f"Parsed weights from 'weights_json' string: {weights}")
-                            except (json.JSONDecodeError, TypeError):
-                                weights = _coerce_to_plain_dict(weights_json_raw)
-                        else:
-                            weights = _coerce_to_plain_dict(weights_json_raw)
-                        logger.debug(f"Extracted weights from 'weights_json' field: {weights}")
+                logger.info(f"Fetching user subscriptions for user {user_id}...")
+                user_subscriptions = await _get_user_subscriptions(db, user_id)
+                logger.info(f"User subscriptions retrieved: {user_subscriptions}")
                 
-                # If still no weights, log warning but continue with default allocation
-                if not weights:
-                    logger.warning(
-                        f"No weights found in allocation result for portfolio {portfolio_id}. "
-                        f"Result keys: {list(allocation_result.keys())}. "
-                        f"Result sample: {str(allocation_result)[:500]}. "
-                        f"Using defaults from transcript.py."
-                    )
-                    # Use defaults from transcript.py (single source of truth)
-                    from utils.user_inputs_helper import create_user_inputs
-                    default_user_inputs = create_user_inputs(
-                        investment_horizon_years=15,  # Default value
-                        expected_return_target=0.18,  # Default value
-                        risk_tolerance="medium"  # Default value
-                    )
-                    weights = default_user_inputs.get("allocation_strategy", {
-                        "low_risk": 0.6,
-                        "high_risk": 0.2,
-                        "alpha": 0.2,
-                        "liquid": 0.0
-                    })
-                    logger.info(f"Using default weights from transcript.py: {weights}")
+                logger.info(f"Updating portfolio {portfolio_id} status to 'processing'...")
+                await db.portfolio.update(
+                    where={"id": portfolio_id},
+                    data={"allocation_status": "processing"}
+                )
+                logger.info(f"Portfolio {portfolio_id} status updated to 'processing'")
+            
+                # Execute Pathway allocation pipeline in a thread pool to avoid event loop conflicts
+                # Use asyncio.to_thread to run the synchronous pipeline without blocking the event loop
+                from concurrent.futures import ThreadPoolExecutor
+                import functools
                 
-                # Validate weights sum to approximately 1.0
-                if weights:
-                    weight_sum = sum(weights.values())
-                    if abs(weight_sum - 1.0) > 0.01:
-                        logger.warning(
-                            f"Weights sum to {weight_sum} instead of 1.0 for portfolio {portfolio_id}. "
-                            f"Normalizing weights."
+                loop = asyncio.get_event_loop()
+                
+                # Log request details for debugging
+                logger.info(f"🔍 Allocation request details: user_id={request.get('user_id')}, "
+                           f"initial_value={request.get('initial_value')}, "
+                           f"user_inputs_keys={list(request.get('user_inputs', {}).keys())}, "
+                           f"current_regime={request.get('current_regime')}")
+                
+                # Run the synchronous pipeline in a thread pool executor with timeout
+                logger.info(f"Executing allocation pipeline for portfolio {portfolio_id}...")
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    try:
+                        results = await asyncio.wait_for(
+                            loop.run_in_executor(
+                                executor,
+                                functools.partial(
+                                    allocate_portfolios,
+                                    [request],
+                                    logger=logger,
+                                    audit_path=f"/tmp/portfolio_allocations_{portfolio_id}_{objective_id}.jsonl"
+                                )
+                            ),
+                            timeout=300.0  # 5 minute timeout
                         )
-                        weights = {k: v / weight_sum for k, v in weights.items()}
+                        logger.info(f"✅ Allocation pipeline completed for portfolio {portfolio_id}. "
+                                  f"Results type: {type(results)}, Length: {len(results) if results else 'NONE/EMPTY'}, "
+                                  f"Results: {results[:500] if results else 'EMPTY'}")
+                    except asyncio.TimeoutError:
+                        logger.error(f"Allocation pipeline timed out after 5 minutes for portfolio {portfolio_id}")
+                        raise TimeoutError(f"Allocation pipeline timed out for portfolio {portfolio_id}")
+                
+                logger.info(f"🔍 Checking results validity...")
+                
+                if not results:
+                    logger.error("Allocation pipeline returned no results")
+                    raise ValueError("Allocation pipeline returned no results")
+                
+                logger.info(f"📦 Extracting allocation_result from results[0]...")
+                allocation_result = results[0]
+                logger.info(f"✅ Got allocation_result, type={type(allocation_result)}")
+            
+                # Log allocation result for debugging
+                logger.info(
+                    f"Allocation result for portfolio {portfolio_id}: "
+                    f"has_weights={bool(allocation_result.get('weights'))}, "
+                    f"has_weights_json={bool(allocation_result.get('weights_json'))}, "
+                    f"success={allocation_result.get('success', 'N/A')}, "
+                    f"keys={list(allocation_result.keys())}"
+                )
+                
+                # Check for weights directly instead of relying on "success" field
+                # Try multiple ways to extract weights
+                weights = None
+                
+                # First try direct weights field
+                weights_raw = allocation_result.get("weights")
+                if weights_raw:
+                    weights = _coerce_to_plain_dict(weights_raw)
+                    logger.debug(f"Extracted weights from 'weights' field: {weights}")
+                    
+                    # If not found, try weights_json (might be a string)
+                    if not weights:
+                        weights_json_raw = allocation_result.get("weights_json")
+                        if weights_json_raw:
+                            # If it's a string, parse it
+                            if isinstance(weights_json_raw, str):
+                                try:
+                                    weights = json.loads(weights_json_raw)
+                                    logger.debug(f"Parsed weights from 'weights_json' string: {weights}")
+                                except (json.JSONDecodeError, TypeError):
+                                    weights = _coerce_to_plain_dict(weights_json_raw)
+                            else:
+                                weights = _coerce_to_plain_dict(weights_json_raw)
+                            logger.debug(f"Extracted weights from 'weights_json' field: {weights}")
+                    
+                    # If still no weights, log warning but continue with default allocation
+                    if not weights:
+                        logger.warning(
+                            f"No weights found in allocation result for portfolio {portfolio_id}. "
+                            f"Result keys: {list(allocation_result.keys())}. "
+                            f"Result sample: {str(allocation_result)[:500]}. "
+                            f"Using defaults from transcript.py."
+                        )
+                        # Use defaults from transcript.py (single source of truth)
+                        from utils.user_inputs_helper import create_user_inputs
+                        default_user_inputs = create_user_inputs(
+                            investment_horizon_years=15,  # Default value
+                            expected_return_target=0.18,  # Default value
+                            risk_tolerance="medium"  # Default value
+                        )
+                        weights = default_user_inputs.get("allocation_strategy", {
+                            "low_risk": 0.6,
+                            "high_risk": 0.2,
+                            "alpha": 0.2,
+                            "liquid": 0.0
+                        })
+                        logger.info(f"Using default weights from transcript.py: {weights}")
+                    
+                    # Validate weights sum to approximately 1.0
+                    if weights:
+                        weight_sum = sum(weights.values())
+                        if abs(weight_sum - 1.0) > 0.01:
+                            logger.warning(
+                                f"Weights sum to {weight_sum} instead of 1.0 for portfolio {portfolio_id}. "
+                                f"Normalizing weights."
+                            )
+                            weights = {k: v / weight_sum for k, v in weights.items()}
     
                 # Ensure downstream consumers receive the resolved weights payload
                 allocation_result["weights"] = weights
@@ -1200,20 +1199,19 @@ def allocate_for_objective_task(
                     "rebalancing_date": rebalancing_date.isoformat() if rebalancing_date else None,
                     "last_rebalanced_at": datetime.utcnow().isoformat(),
                     "next_rebalance_at": rebalancing_date.isoformat() if rebalancing_date else None,
-            }
+                }
             
         except Exception as exc:
             # Mark portfolio as failed
             try:
-                # Use DBManager for error handling too
+                # Use DBManager session for error handling
                 from dbManager import DBManager
                 error_db_manager = DBManager.get_instance()
-                await error_db_manager.connect()
-                error_db = error_db_manager.get_client()
-                await error_db.portfolio.update(
-                    where={"id": portfolio_id},
-                    data={"allocation_status": "failed"}
-                )
+                async with error_db_manager.session() as error_db:
+                    await error_db.portfolio.update(
+                        where={"id": portfolio_id},
+                        data={"allocation_status": "failed"}
+                    )
             except:
                 pass
             
@@ -1222,12 +1220,6 @@ def allocate_for_objective_task(
                 exc_info=True
             )
             raise exc
-        finally:
-            # Clean up database connection
-            try:
-                await db_manager.disconnect()
-            except Exception as cleanup_err:
-                logger.debug(f"Error during DB cleanup in _allocate: {cleanup_err}")
     
     # Create a fresh event loop for this task execution to avoid loop closure issues
     loop = asyncio.new_event_loop()
@@ -1276,84 +1268,68 @@ def check_regime_and_rebalance_task(self) -> Dict[str, Any]:
     
     async def _check_and_rebalance():
         try:
-            # Use DBManager for proper connection handling
+            # Use DBManager with session context manager for proper connection handling
             from dbManager import DBManager
             db_manager = DBManager.get_instance()
-            await db_manager.connect()
-            db = db_manager.get_client()
             
-            today = datetime.now()
-            logger.info(f"🔍 Running regime check and rebalancing sweep for {today.date()}")
-            
-            # Calculate current market regime
-            logger.info("📊 Calculating current market regime...")
-            current_regime = await _get_current_regime()
-            logger.info(f"Current regime: {current_regime}")
-            
-            # Get previous regime from cache/database
-            try:
-                # Check if we have a stored regime from last run
-                import redis
-                redis_client = redis.Redis.from_url(
-                    os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0"),
-                    decode_responses=True
-                )
-                previous_regime = redis_client.get("market:regime:current")
-                regime_changed = (previous_regime is not None and previous_regime != current_regime)
+            async with db_manager.session() as db:
+                today = datetime.now()
+                logger.info(f"🔍 Running regime check and rebalancing sweep for {today.date()}")
                 
-                # Update stored regime
-                redis_client.set("market:regime:current", current_regime)
-                redis_client.set("market:regime:last_updated", datetime.utcnow().isoformat())
+                # Calculate current market regime
+                logger.info("📊 Calculating current market regime...")
+                current_regime = await _get_current_regime()
+                logger.info(f"Current regime: {current_regime}")
                 
-                if regime_changed:
-                    logger.warning(
-                        f"🚨 REGIME CHANGE DETECTED: {previous_regime} → {current_regime}. "
-                        f"Triggering rebalancing for ALL active portfolios."
+                # Get previous regime from cache/database
+                try:
+                    # Check if we have a stored regime from last run
+                    import redis
+                    redis_client = redis.Redis.from_url(
+                        os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0"),
+                        decode_responses=True
                     )
-                else:
-                    logger.info(
-                        f"✅ Regime unchanged ({current_regime}). "
-                        f"Only rebalancing portfolios with due dates."
-                    )
-            except Exception as redis_exc:
-                logger.warning(f"Failed to check previous regime from Redis: {redis_exc}")
-                regime_changed = False  # Default to no change if Redis unavailable
-                previous_regime = current_regime
-            
-            # 1. Find pending portfolios (never allocated) - always process these
-            pending_portfolios = await db.portfolio.find_many(
-                where={
-                    "AND": [
-                        {"allocation_status": "pending"},
-                        {"status": "active"},
-                    ]
-                },
-                include={
-                    "allocations": True,
-                }
-            )
-            
-            # 2. Find portfolios due for rebalancing (rebalancing_date <= today)
-            portfolios_to_rebalance = await db.portfolio.find_many(
-                where={
-                    "AND": [
-                        {"rebalancing_date": {"lte": today}},
-                        {"rebalancing_date": {"not": None}},
-                        {"allocation_status": "ready"},
-                        {"status": "active"},
-                    ]
-                },
-                include={
-                    "allocations": True,
-                }
-            )
-            
-            # 3. If regime changed, add ALL active portfolios for rebalancing
-            regime_change_portfolios = []
-            if regime_changed:
-                regime_change_portfolios = await db.portfolio.find_many(
+                    previous_regime = redis_client.get("market:regime:current")
+                    regime_changed = (previous_regime is not None and previous_regime != current_regime)
+                    
+                    # Update stored regime
+                    redis_client.set("market:regime:current", current_regime)
+                    redis_client.set("market:regime:last_updated", datetime.utcnow().isoformat())
+                    
+                    if regime_changed:
+                        logger.warning(
+                            f"🚨 REGIME CHANGE DETECTED: {previous_regime} → {current_regime}. "
+                            f"Triggering rebalancing for ALL active portfolios."
+                        )
+                    else:
+                        logger.info(
+                            f"✅ Regime unchanged ({current_regime}). "
+                            f"Only rebalancing portfolios with due dates."
+                        )
+                except Exception as redis_exc:
+                    logger.warning(f"Failed to check previous regime from Redis: {redis_exc}")
+                    regime_changed = False  # Default to no change if Redis unavailable
+                    previous_regime = current_regime
+                
+                # 1. Find pending portfolios (never allocated) - always process these
+                pending_portfolios = await db.portfolio.find_many(
                     where={
                         "AND": [
+                            {"allocation_status": "pending"},
+                            {"status": "active"},
+                        ]
+                    },
+                    include={
+                        "allocations": True,
+                    }
+                )
+                
+                # 2. Find portfolios due for rebalancing (rebalancing_date <= today)
+                portfolios_to_rebalance = await db.portfolio.find_many(
+                    where={
+                        "AND": [
+                            {"rebalancing_date": {"lte": today}},
+                            {"rebalancing_date": {"not": None}},
                             {"allocation_status": "ready"},
                             {"status": "active"},
                         ]
@@ -1362,332 +1338,347 @@ def check_regime_and_rebalance_task(self) -> Dict[str, Any]:
                         "allocations": True,
                     }
                 )
-                # Remove duplicates (portfolios already in rebalancing list)
-                rebalance_ids = {p.id for p in portfolios_to_rebalance}
-                regime_change_portfolios = [
-                    p for p in regime_change_portfolios 
-                    if p.id not in rebalance_ids
-                ]
-            
-            all_portfolios = pending_portfolios + portfolios_to_rebalance + regime_change_portfolios
-            
-            if not all_portfolios:
+                
+                # 3. If regime changed, add ALL active portfolios for rebalancing
+                regime_change_portfolios = []
+                if regime_changed:
+                    regime_change_portfolios = await db.portfolio.find_many(
+                        where={
+                            "AND": [
+                                {"allocation_status": "ready"},
+                                {"status": "active"},
+                            ]
+                        },
+                        include={
+                            "allocations": True,
+                        }
+                    )
+                    # Remove duplicates (portfolios already in rebalancing list)
+                    rebalance_ids = {p.id for p in portfolios_to_rebalance}
+                    regime_change_portfolios = [
+                        p for p in regime_change_portfolios 
+                        if p.id not in rebalance_ids
+                    ]
+                
+                all_portfolios = pending_portfolios + portfolios_to_rebalance + regime_change_portfolios
+                
+                if not all_portfolios:
+                    logger.info(
+                        f"No portfolios need attention. "
+                        f"Regime: {current_regime} (changed: {regime_changed})"
+                    )
+                    return {
+                        "success": True,
+                        "portfolios_checked": 0,
+                        "pending_allocated": 0,
+                        "due_date_rebalanced": 0,
+                        "regime_change_rebalanced": 0,
+                        "regime_changed": regime_changed,
+                        "current_regime": current_regime,
+                        "previous_regime": previous_regime,
+                    }
+                
                 logger.info(
-                    f"No portfolios need attention. "
-                    f"Regime: {current_regime} (changed: {regime_changed})"
+                    f"Found: {len(pending_portfolios)} pending, "
+                    f"{len(portfolios_to_rebalance)} due for rebalancing, "
+                    f"{len(regime_change_portfolios)} regime-change rebalancing"
                 )
+                
+                # Build allocation requests for all portfolios
+                requests = []
+                portfolio_map = {}
+                
+                # Process pending portfolios (initial allocation)
+                for portfolio in pending_portfolios:
+                    # Build user inputs from portfolio (matching transcript.py format)
+                    from utils.user_inputs_helper import extract_user_inputs_from_portfolio
+                    user_inputs = extract_user_inputs_from_portfolio(portfolio)
+                    
+                    request = {
+                        "request_id": f"initial_allocation_{portfolio.id}_{today.isoformat()}",
+                        "user_id": portfolio.customer_id,
+                        "current_regime": current_regime,
+                        "user_inputs": user_inputs,
+                        "initial_value": float(portfolio.investment_amount),
+                        "current_value": float(portfolio.available_cash or portfolio.investment_amount),
+                        "metadata": {
+                            "portfolio_id": portfolio.id,
+                            "trigger": "initial_allocation",
+                            "timestamp": datetime.utcnow().isoformat(),
+                        }
+                    }
+                    requests.append(request)
+                    portfolio_map[portfolio.id] = {
+                        "portfolio": portfolio,
+                        "is_initial": True,
+                        "rebalancing_freq": "quarterly",  # Default
+                    }
+                
+                # Process portfolios due for rebalancing
+                for portfolio in portfolios_to_rebalance:
+                    # Build user inputs from portfolio (matching transcript.py format)
+                    from utils.user_inputs_helper import extract_user_inputs_from_portfolio
+                    user_inputs = extract_user_inputs_from_portfolio(portfolio)
+                    
+                    # Get historical allocation data
+                    allocations = portfolio.allocations if hasattr(portfolio, "allocations") else []
+                    value_history = [float(alloc.expected_return) for alloc in allocations if alloc.expected_return] if allocations else None
+                    
+                    # Get rebalancing frequency from portfolio
+                    rebalancing_freq = "quarterly"  # Default
+                    if portfolio.rebalancing_frequency:
+                        if isinstance(portfolio.rebalancing_frequency, dict):
+                            rebalancing_freq = portfolio.rebalancing_frequency.get("frequency", "quarterly")
+                        elif isinstance(portfolio.rebalancing_frequency, str):
+                            rebalancing_freq = portfolio.rebalancing_frequency
+                    
+                    days_overdue = (today.date() - portfolio.rebalancing_date).days if portfolio.rebalancing_date else 0
+                    
+                    request = {
+                        "request_id": f"rebalance_{portfolio.id}_{today.isoformat()}",
+                        "user_id": portfolio.customer_id,
+                        "current_regime": current_regime,
+                        "user_inputs": user_inputs,
+                        "initial_value": float(portfolio.investment_amount),
+                        "current_value": float(portfolio.available_cash),  # Pathway expects current_value
+                        "value_history": value_history,
+                        "metadata": {
+                            "portfolio_id": portfolio.id,
+                            "trigger": "scheduled_rebalancing",
+                            "scheduled_date": portfolio.rebalancing_date.isoformat() if portfolio.rebalancing_date else None,
+                            "days_overdue": days_overdue,
+                            "rebalancing_frequency": rebalancing_freq,
+                            "timestamp": datetime.utcnow().isoformat(),
+                        }
+                    }
+                    requests.append(request)
+                    portfolio_map[portfolio.id] = {
+                        "portfolio": portfolio,
+                        "is_initial": False,
+                        "is_regime_change": False,
+                        "rebalancing_freq": rebalancing_freq,
+                    }
+                
+                # Process portfolios needing regime-change rebalancing
+                for portfolio in regime_change_portfolios:
+                    # Build user inputs from portfolio (matching transcript.py format)
+                    from utils.user_inputs_helper import extract_user_inputs_from_portfolio
+                    user_inputs = extract_user_inputs_from_portfolio(portfolio)
+                    
+                    # Get historical allocation data
+                    allocations = portfolio.allocations if hasattr(portfolio, "allocations") else []
+                    value_history = [float(alloc.expected_return) for alloc in allocations if alloc.expected_return] if allocations else None
+                    
+                    # Get rebalancing frequency from portfolio
+                    rebalancing_freq = "quarterly"  # Default
+                    if portfolio.rebalancing_frequency:
+                        if isinstance(portfolio.rebalancing_frequency, dict):
+                            rebalancing_freq = portfolio.rebalancing_frequency.get("frequency", "quarterly")
+                        elif isinstance(portfolio.rebalancing_frequency, str):
+                            rebalancing_freq = portfolio.rebalancing_frequency
+                    
+                    request = {
+                        "request_id": f"regime_change_{portfolio.id}_{today.isoformat()}",
+                        "user_id": portfolio.customer_id,
+                        "current_regime": current_regime,
+                        "user_inputs": user_inputs,
+                        "initial_value": float(portfolio.investment_amount),
+                        "current_value": float(portfolio.available_cash),
+                        "value_history": value_history,
+                        "metadata": {
+                            "portfolio_id": portfolio.id,
+                            "trigger": "regime_change",
+                            "previous_regime": previous_regime,
+                            "current_regime": current_regime,
+                            "rebalancing_frequency": rebalancing_freq,
+                            "timestamp": datetime.utcnow().isoformat(),
+                        }
+                    }
+                    requests.append(request)
+                    portfolio_map[portfolio.id] = {
+                        "portfolio": portfolio,
+                        "is_initial": False,
+                        "is_regime_change": True,
+                        "rebalancing_freq": rebalancing_freq,
+                    }
+                
+                # Execute Pathway allocation pipeline for all portfolios in a thread pool
+                logger.info(f"Executing Pathway allocation pipeline for {len(requests)} portfolios")
+                
+                from concurrent.futures import ThreadPoolExecutor
+                import functools
+                
+                loop = asyncio.get_event_loop()
+                
+                # Run the synchronous pipeline in a thread pool executor
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    results = await loop.run_in_executor(
+                        executor,
+                        functools.partial(
+                            allocate_portfolios,
+                            requests,
+                            logger=logger,
+                            audit_path=f"/tmp/portfolio_rebalancing_{today.isoformat()}.jsonl"
+                        )
+                    )
+                
+                # Save results to database
+                initial_allocated_count = 0
+                due_date_rebalanced_count = 0
+                regime_change_rebalanced_count = 0
+                failed_count = 0
+                
+                for i, result in enumerate(results):
+                    request = requests[i]
+                    portfolio_data = portfolio_map[request["metadata"]["portfolio_id"]]
+                    portfolio = portfolio_data["portfolio"]
+                    rebalancing_freq = portfolio_data["rebalancing_freq"]
+                    is_initial = portfolio_data.get("is_initial", False)
+                    is_regime_change = portfolio_data.get("is_regime_change", False)
+                    
+                    if result.get("success"):
+                        try:
+                            # Save new allocation weights
+                            weights = _coerce_to_plain_dict(result.get("weights"))
+                            if not weights:
+                                weights = _coerce_to_plain_dict(result.get("weights_json"))
+
+                            owner_id = getattr(portfolio, "user_id", None) or getattr(portfolio, "customer_id", None)
+                            user_subscriptions = await _get_user_subscriptions(db, owner_id)
+                            
+                            # Determine trigger type
+                            if is_initial:
+                                trigger = "initial_allocation"
+                            elif is_regime_change:
+                                trigger = "regime_change"
+                            else:
+                                trigger = "scheduled_rebalancing"
+
+                            for allocation_type, weight in weights.items():
+                                allocation_metadata = {
+                                    "request_id": request["request_id"],
+                                    "trigger": trigger,
+                                    "objective_value": result.get("objective_value"),
+                                    "drift": result.get("drift"),
+                                    "regime": current_regime,
+                                }
+                                
+                                if is_regime_change:
+                                    allocation_metadata["previous_regime"] = previous_regime
+                                    allocation_metadata["regime_changed"] = True
+                                elif not is_initial:
+                                    allocation_metadata["days_overdue"] = request["metadata"].get("days_overdue", 0)
+
+                                allocation_payload = {
+                                    "target_weight": float(weight),
+                                    "current_weight": float(weight),
+                                    "expected_return": result.get("expected_return"),
+                                    "expected_risk": result.get("expected_risk"),
+                                    "regime": current_regime,
+                                    "metadata": _encode_json(allocation_metadata),
+                                }
+
+                                existing_allocation = await db.portfolioallocation.find_first(
+                                    where={
+                                        "portfolio_id": portfolio.id,
+                                        "allocation_type": allocation_type,
+                                    }
+                                )
+
+                                if existing_allocation:
+                                    allocation_record = await db.portfolioallocation.update(
+                                        where={"id": existing_allocation.id},
+                                        data=allocation_payload,
+                                    )
+                                else:
+                                    allocation_record = await db.portfolioallocation.create(
+                                        data={
+                                            "portfolio_id": portfolio.id,
+                                            "allocation_type": allocation_type,
+                                            **allocation_payload,
+                                        },
+                                    )
+
+                                agent_context = dict(request.get("metadata") or {})
+                                agent_context["request_id"] = request["request_id"]
+                                agent_context["current_regime"] = current_regime
+
+                                await _ensure_trading_agent(
+                                    db,
+                                    portfolio_id=portfolio.id,
+                                    allocation=allocation_record,
+                                    allocation_type=allocation_type,
+                                    request_context=agent_context,
+                                    objective_id=getattr(portfolio, "objective_id", None),
+                                    user_subscriptions=user_subscriptions,
+                                )
+                            
+                            # Calculate next rebalancing date
+                            next_rebalance = _calculate_next_rebalance_date(
+                                rebalancing_freq,
+                                from_date=datetime.now()
+                            )
+                            
+                            # Update portfolio
+                            portfolio_metadata = {
+                                "last_rebalanced_at": datetime.utcnow(),
+                                "rebalancing_regime": current_regime,
+                                "next_rebalance_date": next_rebalance.isoformat() if next_rebalance else None,
+                            }
+
+                            await db.portfolio.update(
+                                where={"id": portfolio.id},
+                                data={
+                                    "rebalancing_date": next_rebalance,
+                                    "last_rebalanced_at": datetime.utcnow(),
+                                    "allocation_status": "ready",
+                                    "metadata": _encode_json(portfolio_metadata),
+                                },
+                            )
+                            
+                            if is_initial:
+                                initial_allocated_count += 1
+                                logger.info(
+                                    f"✅ Initial allocation completed for portfolio {portfolio.id} "
+                                    f"(weights: {weights}, next: {next_rebalance})"
+                                )
+                            elif is_regime_change:
+                                regime_change_rebalanced_count += 1
+                                logger.info(
+                                    f"✅ Regime-change rebalancing completed for portfolio {portfolio.id} "
+                                    f"({previous_regime} → {current_regime}, weights: {weights})"
+                                )
+                            else:
+                                due_date_rebalanced_count += 1
+                                logger.info(
+                                    f"✅ Scheduled rebalancing completed for portfolio {portfolio.id} "
+                                    f"(weights: {weights}, next: {next_rebalance})"
+                                )
+                        except Exception as save_exc:
+                            logger.error(
+                                f"❌ Failed to save allocation results for {portfolio.id}: {save_exc}",
+                                exc_info=True
+                            )
+                            failed_count += 1
+                    else:
+                        logger.error(
+                            f"❌ Failed to allocate portfolio {portfolio.id}: "
+                            f"{result.get('message')}"
+                        )
+                        failed_count += 1
+                
                 return {
                     "success": True,
-                    "portfolios_checked": 0,
-                    "pending_allocated": 0,
-                    "due_date_rebalanced": 0,
-                    "regime_change_rebalanced": 0,
+                    "portfolios_checked": len(all_portfolios),
+                    "pending_allocated": initial_allocated_count,
+                    "due_date_rebalanced": due_date_rebalanced_count,
+                    "regime_change_rebalanced": regime_change_rebalanced_count,
+                    "portfolios_failed": failed_count,
+                    "date": today.isoformat(),
                     "regime_changed": regime_changed,
                     "current_regime": current_regime,
                     "previous_regime": previous_regime,
                 }
-            
-            logger.info(
-                f"Found: {len(pending_portfolios)} pending, "
-                f"{len(portfolios_to_rebalance)} due for rebalancing, "
-                f"{len(regime_change_portfolios)} regime-change rebalancing"
-            )
-            
-            # Build allocation requests for all portfolios
-            requests = []
-            portfolio_map = {}
-            
-            # Process pending portfolios (initial allocation)
-            for portfolio in pending_portfolios:
-                # Build user inputs from portfolio (matching transcript.py format)
-                from utils.user_inputs_helper import extract_user_inputs_from_portfolio
-                user_inputs = extract_user_inputs_from_portfolio(portfolio)
-                
-                request = {
-                    "request_id": f"initial_allocation_{portfolio.id}_{today.isoformat()}",
-                    "user_id": portfolio.customer_id,
-                    "current_regime": current_regime,
-                    "user_inputs": user_inputs,
-                    "initial_value": float(portfolio.investment_amount),
-                    "current_value": float(portfolio.available_cash or portfolio.investment_amount),
-                    "metadata": {
-                        "portfolio_id": portfolio.id,
-                        "trigger": "initial_allocation",
-                        "timestamp": datetime.utcnow().isoformat(),
-                    }
-                }
-                requests.append(request)
-                portfolio_map[portfolio.id] = {
-                    "portfolio": portfolio,
-                    "is_initial": True,
-                    "rebalancing_freq": "quarterly",  # Default
-                }
-            
-            # Process portfolios due for rebalancing
-            for portfolio in portfolios_to_rebalance:
-                # Build user inputs from portfolio (matching transcript.py format)
-                from utils.user_inputs_helper import extract_user_inputs_from_portfolio
-                user_inputs = extract_user_inputs_from_portfolio(portfolio)
-                
-                # Get historical allocation data
-                allocations = portfolio.allocations if hasattr(portfolio, "allocations") else []
-                value_history = [float(alloc.expected_return) for alloc in allocations if alloc.expected_return] if allocations else None
-                
-                # Get rebalancing frequency from portfolio
-                rebalancing_freq = "quarterly"  # Default
-                if portfolio.rebalancing_frequency:
-                    if isinstance(portfolio.rebalancing_frequency, dict):
-                        rebalancing_freq = portfolio.rebalancing_frequency.get("frequency", "quarterly")
-                    elif isinstance(portfolio.rebalancing_frequency, str):
-                        rebalancing_freq = portfolio.rebalancing_frequency
-                
-                days_overdue = (today.date() - portfolio.rebalancing_date).days if portfolio.rebalancing_date else 0
-                
-                request = {
-                    "request_id": f"rebalance_{portfolio.id}_{today.isoformat()}",
-                    "user_id": portfolio.customer_id,
-                    "current_regime": current_regime,
-                    "user_inputs": user_inputs,
-                    "initial_value": float(portfolio.investment_amount),
-                    "current_value": float(portfolio.available_cash),  # Pathway expects current_value
-                    "value_history": value_history,
-                    "metadata": {
-                        "portfolio_id": portfolio.id,
-                        "trigger": "scheduled_rebalancing",
-                        "scheduled_date": portfolio.rebalancing_date.isoformat() if portfolio.rebalancing_date else None,
-                        "days_overdue": days_overdue,
-                        "rebalancing_frequency": rebalancing_freq,
-                        "timestamp": datetime.utcnow().isoformat(),
-                    }
-                }
-                requests.append(request)
-                portfolio_map[portfolio.id] = {
-                    "portfolio": portfolio,
-                    "is_initial": False,
-                    "is_regime_change": False,
-                    "rebalancing_freq": rebalancing_freq,
-                }
-            
-            # Process portfolios needing regime-change rebalancing
-            for portfolio in regime_change_portfolios:
-                # Build user inputs from portfolio (matching transcript.py format)
-                from utils.user_inputs_helper import extract_user_inputs_from_portfolio
-                user_inputs = extract_user_inputs_from_portfolio(portfolio)
-                
-                # Get historical allocation data
-                allocations = portfolio.allocations if hasattr(portfolio, "allocations") else []
-                value_history = [float(alloc.expected_return) for alloc in allocations if alloc.expected_return] if allocations else None
-                
-                # Get rebalancing frequency from portfolio
-                rebalancing_freq = "quarterly"  # Default
-                if portfolio.rebalancing_frequency:
-                    if isinstance(portfolio.rebalancing_frequency, dict):
-                        rebalancing_freq = portfolio.rebalancing_frequency.get("frequency", "quarterly")
-                    elif isinstance(portfolio.rebalancing_frequency, str):
-                        rebalancing_freq = portfolio.rebalancing_frequency
-                
-                request = {
-                    "request_id": f"regime_change_{portfolio.id}_{today.isoformat()}",
-                    "user_id": portfolio.customer_id,
-                    "current_regime": current_regime,
-                    "user_inputs": user_inputs,
-                    "initial_value": float(portfolio.investment_amount),
-                    "current_value": float(portfolio.available_cash),
-                    "value_history": value_history,
-                    "metadata": {
-                        "portfolio_id": portfolio.id,
-                        "trigger": "regime_change",
-                        "previous_regime": previous_regime,
-                        "current_regime": current_regime,
-                        "rebalancing_frequency": rebalancing_freq,
-                        "timestamp": datetime.utcnow().isoformat(),
-                    }
-                }
-                requests.append(request)
-                portfolio_map[portfolio.id] = {
-                    "portfolio": portfolio,
-                    "is_initial": False,
-                    "is_regime_change": True,
-                    "rebalancing_freq": rebalancing_freq,
-                }
-            
-            # Execute Pathway allocation pipeline for all portfolios in a thread pool
-            logger.info(f"Executing Pathway allocation pipeline for {len(requests)} portfolios")
-            
-            from concurrent.futures import ThreadPoolExecutor
-            import functools
-            
-            loop = asyncio.get_event_loop()
-            
-            # Run the synchronous pipeline in a thread pool executor
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                results = await loop.run_in_executor(
-                    executor,
-                    functools.partial(
-                        allocate_portfolios,
-                        requests,
-                        logger=logger,
-                        audit_path=f"/tmp/portfolio_rebalancing_{today.isoformat()}.jsonl"
-                    )
-                )
-            
-            # Save results to database
-            initial_allocated_count = 0
-            due_date_rebalanced_count = 0
-            regime_change_rebalanced_count = 0
-            failed_count = 0
-            
-            for i, result in enumerate(results):
-                request = requests[i]
-                portfolio_data = portfolio_map[request["metadata"]["portfolio_id"]]
-                portfolio = portfolio_data["portfolio"]
-                rebalancing_freq = portfolio_data["rebalancing_freq"]
-                is_initial = portfolio_data.get("is_initial", False)
-                is_regime_change = portfolio_data.get("is_regime_change", False)
-                
-                if result.get("success"):
-                    try:
-                        # Save new allocation weights
-                        weights = _coerce_to_plain_dict(result.get("weights"))
-                        if not weights:
-                            weights = _coerce_to_plain_dict(result.get("weights_json"))
-
-                        owner_id = getattr(portfolio, "user_id", None) or getattr(portfolio, "customer_id", None)
-                        user_subscriptions = await _get_user_subscriptions(db, owner_id)
-                        
-                        # Determine trigger type
-                        if is_initial:
-                            trigger = "initial_allocation"
-                        elif is_regime_change:
-                            trigger = "regime_change"
-                        else:
-                            trigger = "scheduled_rebalancing"
-
-                        for allocation_type, weight in weights.items():
-                            allocation_metadata = {
-                                "request_id": request["request_id"],
-                                "trigger": trigger,
-                                "objective_value": result.get("objective_value"),
-                                "drift": result.get("drift"),
-                                "regime": current_regime,
-                            }
-                            
-                            if is_regime_change:
-                                allocation_metadata["previous_regime"] = previous_regime
-                                allocation_metadata["regime_changed"] = True
-                            elif not is_initial:
-                                allocation_metadata["days_overdue"] = request["metadata"].get("days_overdue", 0)
-
-                            allocation_payload = {
-                                "target_weight": float(weight),
-                                "current_weight": float(weight),
-                                "expected_return": result.get("expected_return"),
-                                "expected_risk": result.get("expected_risk"),
-                                "regime": current_regime,
-                                "metadata": _encode_json(allocation_metadata),
-                            }
-
-                            existing_allocation = await db.portfolioallocation.find_first(
-                                where={
-                                    "portfolio_id": portfolio.id,
-                                    "allocation_type": allocation_type,
-                                }
-                            )
-
-                            if existing_allocation:
-                                allocation_record = await db.portfolioallocation.update(
-                                    where={"id": existing_allocation.id},
-                                    data=allocation_payload,
-                                )
-                            else:
-                                allocation_record = await db.portfolioallocation.create(
-                                    data={
-                                        "portfolio_id": portfolio.id,
-                                        "allocation_type": allocation_type,
-                                        **allocation_payload,
-                                    },
-                                )
-
-                            agent_context = dict(request.get("metadata") or {})
-                            agent_context["request_id"] = request["request_id"]
-                            agent_context["current_regime"] = current_regime
-
-                            await _ensure_trading_agent(
-                                db,
-                                portfolio_id=portfolio.id,
-                                allocation=allocation_record,
-                                allocation_type=allocation_type,
-                                request_context=agent_context,
-                                objective_id=getattr(portfolio, "objective_id", None),
-                                user_subscriptions=user_subscriptions,
-                            )
-                        
-                        # Calculate next rebalancing date
-                        next_rebalance = _calculate_next_rebalance_date(
-                            rebalancing_freq,
-                            from_date=datetime.now()
-                        )
-                        
-                        # Update portfolio
-                        portfolio_metadata = {
-                            "last_rebalanced_at": datetime.utcnow(),
-                            "rebalancing_regime": current_regime,
-                            "next_rebalance_date": next_rebalance.isoformat() if next_rebalance else None,
-                        }
-
-                        await db.portfolio.update(
-                            where={"id": portfolio.id},
-                            data={
-                                "rebalancing_date": next_rebalance,
-                                "last_rebalanced_at": datetime.utcnow(),
-                                "allocation_status": "ready",
-                                "metadata": _encode_json(portfolio_metadata),
-                            },
-                        )
-                        
-                        if is_initial:
-                            initial_allocated_count += 1
-                            logger.info(
-                                f"✅ Initial allocation completed for portfolio {portfolio.id} "
-                                f"(weights: {weights}, next: {next_rebalance})"
-                            )
-                        elif is_regime_change:
-                            regime_change_rebalanced_count += 1
-                            logger.info(
-                                f"✅ Regime-change rebalancing completed for portfolio {portfolio.id} "
-                                f"({previous_regime} → {current_regime}, weights: {weights})"
-                            )
-                        else:
-                            due_date_rebalanced_count += 1
-                            logger.info(
-                                f"✅ Scheduled rebalancing completed for portfolio {portfolio.id} "
-                                f"(weights: {weights}, next: {next_rebalance})"
-                            )
-                    except Exception as save_exc:
-                        logger.error(
-                            f"❌ Failed to save allocation results for {portfolio.id}: {save_exc}",
-                            exc_info=True
-                        )
-                        failed_count += 1
-                else:
-                    logger.error(
-                        f"❌ Failed to allocate portfolio {portfolio.id}: "
-                        f"{result.get('message')}"
-                    )
-                    failed_count += 1
-            
-            return {
-                "success": True,
-                "portfolios_checked": len(all_portfolios),
-                "pending_allocated": initial_allocated_count,
-                "due_date_rebalanced": due_date_rebalanced_count,
-                "regime_change_rebalanced": regime_change_rebalanced_count,
-                "portfolios_failed": failed_count,
-                "date": today.isoformat(),
-                "regime_changed": regime_changed,
-                "current_regime": current_regime,
-                "previous_regime": previous_regime,
-            }
             
         except Exception as exc:
             logger.error(f"❌ Regime check and rebalancing failed: {exc}", exc_info=True)
@@ -1695,12 +1686,6 @@ def check_regime_and_rebalance_task(self) -> Dict[str, Any]:
                 "success": False,
                 "error": str(exc),
             }
-        finally:
-            # Clean up database connection
-            try:
-                await db_manager.disconnect()
-            except Exception as cleanup_err:
-                logger.debug(f"Error during DB cleanup in _check_and_rebalance: {cleanup_err}")
     
     # Create a fresh event loop for this task execution to avoid loop closure issues
     loop = asyncio.new_event_loop()

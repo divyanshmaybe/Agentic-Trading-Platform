@@ -37,6 +37,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import atexit
+from contextlib import asynccontextmanager
 from typing import Optional, Any
 
 from prisma import Prisma
@@ -49,11 +51,17 @@ class DBManager:
     
     Provides robust connection management with event loop awareness.
     Automatically handles event loop changes and reconnection.
+    
+    For Celery workers and long-running processes:
+    - Use get_instance() to get the shared singleton
+    - Use async with db_manager.session() as client: for task-scoped usage
+    - Connection is kept alive and reused across tasks in the same worker
     """
 
     _instance: Optional["DBManager"] = None
     _lock: asyncio.Lock = None  # Will be created when needed
     _pid: Optional[int] = None  # Track process ID to detect forks
+    _active_sessions: int = 0  # Track number of active sessions using the connection
 
     def __init__(self, database_url: Optional[str] = None, log_queries: bool = False):
         """
@@ -297,12 +305,24 @@ class DBManager:
         finally:
             self._connecting = False
 
-    async def disconnect(self) -> None:
+    async def disconnect(self, force: bool = False) -> None:
         """
         Close the Prisma connection if it is active.
         
+        Args:
+            force: If True, disconnect even if there are active sessions.
+                   If False (default), only disconnect if no active sessions.
+        
         Safe to call multiple times. Cleans up connection state.
         """
+        # Don't disconnect if there are active sessions (unless forced)
+        if not force and DBManager._active_sessions > 0:
+            self.logger.debug(
+                "Skipping disconnect, %d active sessions remaining",
+                DBManager._active_sessions
+            )
+            return
+            
         if not self._connected and self.client is None:
             self.logger.debug("Already disconnected")
             return
@@ -335,6 +355,36 @@ class DBManager:
             self._connected = False
             self._loop = None
             self.client = None
+
+    @asynccontextmanager
+    async def session(self):
+        """
+        Context manager for database sessions.
+        
+        Use this for Celery tasks to properly manage connection lifecycle.
+        The connection is kept alive and reused across tasks in the same worker.
+        
+        Usage:
+            async with db_manager.session() as client:
+                users = await client.user.find_many()
+        
+        Yields:
+            Connected Prisma client instance.
+        """
+        # Ensure we're connected
+        await self.connect()
+        
+        # Track active sessions
+        DBManager._active_sessions += 1
+        self.logger.debug("Session started, active sessions: %d", DBManager._active_sessions)
+        
+        try:
+            yield self.client
+        finally:
+            DBManager._active_sessions -= 1
+            self.logger.debug("Session ended, active sessions: %d", DBManager._active_sessions)
+            # Don't disconnect here - keep connection alive for reuse
+            # Connection will be cleaned up when worker is recycled
 
     def get_client(self) -> Prisma:
         """
