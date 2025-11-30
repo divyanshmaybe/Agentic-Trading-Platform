@@ -119,25 +119,35 @@ class StockSelectionPipeline:
     def _generate_report_sync(self, ticker: str) -> Dict[str, Any]:
         """
         Generate company report synchronously (for thread pool context).
-        Checks MongoDB first, generates if not found, stores to DB in background.
+        Checks MongoDB first, generates if not found, stores to DB.
+        
+        Properly manages async operations in thread pool by creating a dedicated event loop.
+        All async resources (MongoDB, Redis) are properly initialized and cleaned up.
         """
+        # Create a new event loop for this thread
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
         try:
-            # Check MongoDB first (using a new event loop for this sync context)
-            try:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
+            # Define async function to check MongoDB
+            async def check_and_fetch_from_db():
                 try:
-                    existing_report = loop.run_until_complete(
-                        self.report_service.get_report_by_ticker(ticker)
-                    )
-                    if existing_report:
-                        logger.info(f"📋 Found existing report in DB for {ticker}")
-                        return existing_report
-                finally:
-                    loop.close()
-            except Exception as db_err:
-                logger.warning(f"Could not check MongoDB for {ticker}: {db_err}")
-                # Continue to generate
+                    # Initialize service with fresh connections for this event loop
+                    await self.report_service.initialize()
+                    existing_report = await self.report_service.get_report_by_ticker(ticker)
+                    return existing_report
+                except Exception as e:
+                    logger.warning(f"Could not fetch from MongoDB for {ticker}: {e}")
+                    return None
+            
+            # Try to fetch from MongoDB first
+            existing_report = loop.run_until_complete(check_and_fetch_from_db())
+            if existing_report:
+                logger.info(f"📋 Found existing report in DB for {ticker}")
+                return existing_report
+            
+            # Not in DB - generate new report
+            logger.info(f"🔍 Generating fresh company report for {ticker}")
             
             # Load company report generation prompt
             company_report_prompt = load_prompt_from_template("company_report_generation_prompt")
@@ -173,22 +183,22 @@ class StockSelectionPipeline:
             if "ticker" not in report:
                 report["ticker"] = ticker
             
-            # Store to MongoDB in background (new event loop)
-            try:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
+            # Store to MongoDB using the same event loop
+            async def store_to_db():
                 try:
+                    # Ensure service is initialized in this event loop
+                    await self.report_service.initialize()
                     logger.info(f"💾 Storing report to MongoDB for {ticker}...")
-                    loop.run_until_complete(self.report_service.upsert_report(report))
+                    await self.report_service.upsert_report(report)
                     logger.info(f"✅ Report stored to MongoDB for {ticker}")
-                finally:
-                    loop.close()
-            except Exception as db_err:
-                logger.error(f"Failed to store report to MongoDB for {ticker}: {db_err}")
-                # Continue anyway - report is still valid
+                except Exception as e:
+                    logger.error(f"Failed to store report to MongoDB for {ticker}: {e}")
+                    # Don't raise - report generation succeeded, storage is secondary
+            
+            # Store report to database
+            loop.run_until_complete(store_to_db())
             
             msg = f"✅ Company report generated for {ticker}"
-            logger.info(msg)
             publish_to_kafka({"content": msg}, user_id=self.user_id)
             
             return report
@@ -199,6 +209,31 @@ class StockSelectionPipeline:
                 logger.warning(f"Rate limit error for {ticker}, will retry later")
                 raise ValueError(f"Rate limit error: {e}")
             raise ValueError(f"Failed to generate company report: {e}")
+        
+        finally:
+            # Properly clean up the event loop and all async resources
+            try:
+                # Shutdown all pending tasks and async generators
+                pending = asyncio.all_tasks(loop)
+                for task in pending:
+                    task.cancel()
+                
+                # Give tasks a chance to finish cancellation
+                if pending:
+                    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                
+                # Shutdown async generators
+                loop.run_until_complete(loop.shutdown_asyncgens())
+                
+                # Shutdown default executor
+                loop.run_until_complete(loop.shutdown_default_executor())
+            except Exception as e:
+                logger.warning(f"Error during event loop cleanup: {e}")
+            finally:
+                # Close the loop
+                loop.close()
+                # Reset event loop for this thread
+                asyncio.set_event_loop(None)
     
     async def generate_company_report(self, ticker: str) -> Dict[str, Any]:
         """

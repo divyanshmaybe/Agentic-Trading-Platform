@@ -90,6 +90,7 @@ class CompanyReportService:
         self.redis_manager = redis_manager or RedisManager()
         self.cache_ttl = cache_ttl
         self._initialized = False
+        self._loop = None  # Track which event loop we're initialized in
 
     @classmethod
     def get_instance(
@@ -121,16 +122,31 @@ class CompanyReportService:
         """
         Initialize service (connect to MongoDB and Redis).
         
+        Handles event loop changes by re-initializing when loop changes.
         Should be called before using the service.
         """
-        if self._initialized:
-            self.logger.debug("Service already initialized")
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            raise RuntimeError(
+                "initialize() must be called from within an async context. "
+                "Use asyncio.run() or ensure you're in an async function."
+            )
+        
+        # If event loop changed, reset initialization
+        if self._loop is not None and self._loop is not current_loop:
+            self.logger.debug("Event loop changed, re-initializing CompanyReportService")
+            self._initialized = False
+            self._loop = None
+        
+        # If already initialized for this loop, skip
+        if self._initialized and self._loop is current_loop:
+            self.logger.debug("Service already initialized for this event loop")
             return
 
         try:
-            # Connect to MongoDB
-            if not self.mongodb_provider.is_connected():
-                await self.mongodb_provider.connect()
+            # Connect to MongoDB (handles event loop changes internally)
+            await self.mongodb_provider.connect()
             
             # Connect to Redis
             if not self.redis_manager.client:
@@ -140,6 +156,7 @@ class CompanyReportService:
             await self._create_indexes()
             
             self._initialized = True
+            self._loop = current_loop
             self.logger.info("✅ CompanyReportService initialized")
         except Exception as e:
             self.logger.error("❌ Failed to initialize CompanyReportService: %s", e, exc_info=True)

@@ -101,7 +101,10 @@ DEFAULT_QUEUE = os.getenv("CELERY_DEFAULT_QUEUE", "general")
 QUEUE_NAMES: Dict[str, str] = {
     "allocations": os.getenv("CELERY_QUEUE_ALLOCATIONS", "allocations"),
     "trading": os.getenv("CELERY_QUEUE_TRADING", "trading"),
-    "pipelines": os.getenv("CELERY_QUEUE_PIPELINES", "pipelines"),
+    "pipelines": os.getenv("CELERY_QUEUE_PIPELINES", "pipelines"),  # Deprecated - use specific queues below
+    "nse_pipeline": os.getenv("CELERY_QUEUE_NSE_PIPELINE", "nse_pipeline"),  # NSE filings (1 worker)
+    "news_pipeline": os.getenv("CELERY_QUEUE_NEWS_PIPELINE", "news_pipeline"),  # News sentiment (1 worker)
+    "low_risk_pipeline": os.getenv("CELERY_QUEUE_LOW_RISK", "low_risk_pipeline"),  # Low-risk selection (1 worker)
     "risk": os.getenv("CELERY_QUEUE_RISK", "risk"),
     "orders": os.getenv("CELERY_QUEUE_ORDERS", "orders"),
     "market": os.getenv("CELERY_QUEUE_MARKET", "market"),
@@ -211,7 +214,7 @@ celery_app.conf.update(
 
 # Ensure all queues are registered explicitly with proper routing keys and priority support
 _all_queues = [Queue(DEFAULT_QUEUE, routing_key=DEFAULT_QUEUE)]
-for queue_name in ["allocations", "trading", "pipelines", "risk", "orders", "market", "tokens", "streaming"]:
+for queue_name in ["allocations", "trading", "nse_pipeline", "news_pipeline", "low_risk_pipeline", "risk", "orders", "market", "tokens", "streaming"]:
     if not any(q.name == queue_name for q in _all_queues):
         # Trading queue gets priority support for real-time signal execution
         if queue_name == "trading":
@@ -231,11 +234,15 @@ celery_app.conf.task_routes = {
     "trading.execute_trade_job": {"queue": QUEUE_NAMES["trading"], "routing_key": "trading"},
     # Signal processing goes to trading queue (not pipelines - that's blocked by streaming pipeline)
     "pipeline.trade_execution.process_signal": {"queue": QUEUE_NAMES["trading"], "routing_key": "trading"},
-    "pipeline.start": {"queue": QUEUE_NAMES["pipelines"], "routing_key": "pipelines"},
-    "pipeline.news_sentiment.run": {"queue": QUEUE_NAMES["pipelines"], "routing_key": "pipelines"},
-    "pipeline.risk_monitor.run": {"queue": QUEUE_NAMES["pipelines"], "routing_key": "pipelines"},
-    "pipeline.low_risk.run": {"queue": QUEUE_NAMES["pipelines"], "routing_key": "pipelines"},
-    "pipeline.low_risk.get_status": {"queue": QUEUE_NAMES["pipelines"], "routing_key": "pipelines"},
+    # NSE pipeline gets dedicated queue (1 worker max)
+    "pipeline.start": {"queue": QUEUE_NAMES["nse_pipeline"], "routing_key": "nse_pipeline"},
+    # News pipeline gets dedicated queue (1 worker max)
+    "pipeline.news_sentiment.run": {"queue": QUEUE_NAMES["news_pipeline"], "routing_key": "news_pipeline"},
+    # Generic risk monitor can use general queue
+    "pipeline.risk_monitor.run": {"queue": QUEUE_NAMES["general"], "routing_key": "general"},
+    # Low-risk pipeline gets dedicated queue (1 worker, 25-30 min time limits)
+    "pipeline.low_risk.run": {"queue": QUEUE_NAMES["low_risk_pipeline"], "routing_key": "low_risk_pipeline"},
+    "pipeline.low_risk.get_status": {"queue": QUEUE_NAMES["low_risk_pipeline"], "routing_key": "low_risk_pipeline"},
     "market_data.fetch_via_api": {"queue": QUEUE_NAMES["market"], "routing_key": "market"},
     "market_data.batch_fetch_via_api": {"queue": QUEUE_NAMES["market"], "routing_key": "market"},
     "market_data.health_check_api": {"queue": QUEUE_NAMES["market"], "routing_key": "market"},

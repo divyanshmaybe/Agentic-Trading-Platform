@@ -3,6 +3,7 @@ Redis Manager for FastAPI applications
 Provides Redis connection and operations
 """
 
+import asyncio
 import redis.asyncio as redis
 import os
 import logging
@@ -16,6 +17,7 @@ class RedisManager:
     def __init__(self):
         self.client: Optional[redis.Redis] = None
         self.logger = logging.getLogger(__name__)
+        self._loop: Optional[Any] = None  # Track event loop for reconnection
 
         # Redis configuration
         self.host = os.getenv("REDIS_HOST", "localhost")
@@ -24,19 +26,34 @@ class RedisManager:
         self.db = int(os.getenv("REDIS_DB", "0"))
 
     async def connect(self) -> None:
-        """Connect to Redis"""
+        """Connect to Redis (handles event loop changes)"""
         try:
-            self.client = redis.Redis(
-                host=self.host,
-                port=self.port,
-                password=self.password,
-                db=self.db,
-                decode_responses=True,
-            )
+            current_loop = asyncio.get_running_loop()
+            
+            # If event loop changed, close old client and create new one
+            if self._loop is not None and self._loop is not current_loop:
+                self.logger.debug("Event loop changed, creating new Redis client")
+                if self.client:
+                    try:
+                        await self.client.close()
+                    except Exception:
+                        pass
+                    self.client = None
+            
+            # Create new client if needed
+            if self.client is None:
+                self.client = redis.Redis(
+                    host=self.host,
+                    port=self.port,
+                    password=self.password,
+                    db=self.db,
+                    decode_responses=True,
+                )
 
-            # Test connection
-            await self.client.ping()
-            self.logger.info(f"Connected to Redis at {self.host}:{self.port}")
+                # Test connection
+                await self.client.ping()
+                self._loop = current_loop
+                self.logger.info(f"Connected to Redis at {self.host}:{self.port}")
 
         except Exception as e:
             self.logger.error(f"Failed to connect to Redis: {e}")

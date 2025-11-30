@@ -9,7 +9,7 @@
     "check-types": "turbo run check-types",
     "test": "turbo run test",
     "test:cov": "turbo run test:cov",
-    "celery": "turbo run celery:trading celery:pipeline celery:allocation celery:market celery:general celery:streaming celery:beat",
+    "celery": "turbo run celery:trading celery:nse celery:news celery:lowrisk celery:allocation celery:market celery:general celery:streaming celery:beat",
     "celery:beat": "turbo run celery:beat",
     "studio": "turbo run studio studio:kafka",
     "studio:all": "concurrently \"turbo run studio\" \"streamlit run kafkaStudio.py\""
