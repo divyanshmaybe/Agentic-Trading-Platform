@@ -3,8 +3,18 @@ import { Kafka, logLevel, Consumer, EachMessagePayload, SASLOptions } from "kafk
 import { PrismaClient } from "@prisma/client";
 import { notificationConfig } from "../../config";
 import { NotificationPublisher, LowRiskPublisher } from "../redis/publisher";
-import { isLowRiskNotification, isLowRiskLog } from "./validators";
-import { LowRiskNormalized } from "./types/lowRisk";
+import {
+  isLowRiskEvent,
+  isLowRiskInfoEvent,
+  isLowRiskIndustryEventFetching,
+  isLowRiskIndustryEventFetched,
+  isLowRiskStockEventFetching,
+  isLowRiskReportEventGenerating,
+  isLowRiskReportEventGenerated,
+  isLowRiskSummaryEvent,
+  isLowRiskValueEnvelope,
+} from "./validators";
+import { LowRiskNormalized, LowRiskEvent, LowRiskValueEnvelope } from "./types/lowRisk";
 
 type SupportedMechanism = "plain" | "scram-sha-256" | "scram-sha-512" | "aws" | "oauthbearer";
 
@@ -366,68 +376,138 @@ function normalizeSectorAnalysis(
 
 /**
  * Parse and normalize a low-risk event from Kafka message
- * Uses strict validators and unwrapping to ensure type safety
+ * Handles new envelope structure with strict union types
  * 
- * @param eventTime - MUST be derived from Kafka message.timestamp (never from payload)
+ * @param payload - EachMessagePayload from kafkajs
+ * @returns LowRiskNormalized | null (null if parsing fails or userId missing)
  */
-function parseLowRiskEvent(
-  topic: string,
-  rawPayload: any,
-  partition: number,
-  offset: string,
-  eventTime: Date
-): LowRiskNormalized | null {
-  // Unwrap nested value strings
-  const unwrapped = unwrapNestedValue(rawPayload);
+function parseLowRiskKafkaMessage(payload: EachMessagePayload): LowRiskNormalized | null {
+  const { topic, partition, message } = payload;
+  const offset = message.offset;
+
+  // Extract Kafka timestamp - ALWAYS use this, never payload timestamps
+  const kafkaTimestamp = message.timestamp ? Number(message.timestamp) : NaN;
+  let eventTime: Date;
   
-  // Early validation: must be an object
-  if (!unwrapped || typeof unwrapped !== "object" || Array.isArray(unwrapped)) {
+  if (!isNaN(kafkaTimestamp) && kafkaTimestamp > 0) {
+    eventTime = new Date(kafkaTimestamp);
+  } else {
+    // Invalid or missing Kafka timestamp - fallback to now() with warning
+    eventTime = new Date();
+    console.warn(`[Kafka][LowRisk] Warning: invalid Kafka timestamp; using now() (topic=${topic}, partition=${partition}, offset=${offset})`);
+  }
+
+  // Parse message.value as LowRiskValueEnvelope
+  let valueEnvelope: LowRiskValueEnvelope;
+  try {
+    const rawValue = parseJsonSafely(message.value);
+    if (!rawValue || typeof rawValue !== "object") {
+      console.warn(`[Kafka][LowRisk] Dropped: message.value is not an object (topic=${topic}, partition=${partition}, offset=${offset})`);
+      return null;
+    }
+
+    // Check if it's already a LowRiskValueEnvelope or needs unwrapping
+    if (isLowRiskValueEnvelope(rawValue)) {
+      valueEnvelope = rawValue;
+    } else {
+      // Try to unwrap nested structure
+      const unwrapped = unwrapNestedValue(message.value);
+      if (unwrapped && isLowRiskValueEnvelope(unwrapped)) {
+        valueEnvelope = unwrapped;
+      } else {
+        console.warn(`[Kafka][LowRisk] Dropped: message.value is not a LowRiskValueEnvelope (topic=${topic}, partition=${partition}, offset=${offset})`);
+        return null;
+      }
+    }
+  } catch (error) {
+    console.warn(`[Kafka][LowRisk] Dropped: failed to parse message.value (topic=${topic}, partition=${partition}, offset=${offset}):`, error);
     return null;
   }
 
-  // Determine kind using strict validators
-  let kind: "log" | "notification";
-  let userId: string;
+  // Parse inner payload JSON from value.value string
+  let innerPayload: any;
+  try {
+    innerPayload = JSON.parse(valueEnvelope.value);
+    if (!innerPayload || typeof innerPayload !== "object" || Array.isArray(innerPayload)) {
+      console.warn(`[Kafka][LowRisk] Dropped: inner payload is not an object (topic=${topic}, partition=${partition}, offset=${offset})`);
+      return null;
+    }
+  } catch (error) {
+    console.warn(`[Kafka][LowRisk] Dropped: failed to parse inner payload JSON (topic=${topic}, partition=${partition}, offset=${offset}):`, error);
+    return null;
+  }
+
+  // Extract userId: message.key || valueEnvelope.key || innerPayload.user_id
+  // Fail ONLY if all three are missing
+  const userId = (message.key?.toString() || valueEnvelope.key || innerPayload.user_id) as string | undefined;
+  if (!userId || typeof userId !== "string" || userId.trim() === "") {
+    console.warn(`[Kafka][LowRisk] Dropped: userId missing (topic=${topic}, partition=${partition}, offset=${offset})`);
+    return null;
+  }
+
+  // Normalize inner payload: convert user_id -> userId, type -> kind
+  const normalizedPayload: any = {
+    ...innerPayload,
+    userId,
+    kind: innerPayload.type || innerPayload.kind,
+  };
+  
+  // Remove old field names and timestamp fields (we use Kafka timestamp only)
+  delete normalizedPayload.user_id;
+  delete normalizedPayload.type;
+  delete normalizedPayload.timestamp;
+  delete normalizedPayload.time;
+
+  // Validate against strict union types
+  if (!isLowRiskEvent(normalizedPayload)) {
+    console.warn(`[Kafka][LowRisk] Dropped: unknown event type (topic=${topic}, partition=${partition}, offset=${offset}, kind=${normalizedPayload.kind})`);
+    return null;
+  }
+
+  const event: LowRiskEvent = normalizedPayload;
+
+  // Map event to LowRiskNormalized format
   let eventType: string | null = null;
   let status: string | null = null;
   let content: any | null = null;
 
-  if (isLowRiskNotification(unwrapped)) {
-    kind = "notification";
-    userId = unwrapped.user_id;
-    eventType = unwrapped.type;
-    
-    // Extract status - handle both "status" field and legacy "fetching" number
-    if (unwrapped.status) {
-      status = String(unwrapped.status);
-    } else if ("fetching" in unwrapped && typeof unwrapped.fetching === "number") {
-      status = unwrapped.fetching === 1 ? "fetching" : "fetched";
-    }
-    
-    content = unwrapped.content;
-  } else if (isLowRiskLog(unwrapped)) {
-    kind = "log";
-    userId = unwrapped.user_id;
-  } else {
-    // Unknown shape - validator failed
-    return null;
+  if (isLowRiskInfoEvent(event)) {
+    eventType = null;
+    status = null;
+    content = { message: event.content };
+  } else if (isLowRiskIndustryEventFetching(event)) {
+    eventType = "industry";
+    status = "fetching";
+    content = event.content;
+  } else if (isLowRiskIndustryEventFetched(event)) {
+    eventType = "industry";
+    status = "fetched";
+    content = event.content;
+  } else if (isLowRiskStockEventFetching(event)) {
+    eventType = "stock";
+    status = "fetching";
+    content = event.content;
+  } else if (isLowRiskReportEventGenerating(event)) {
+    eventType = "report";
+    status = "generating";
+    content = event.content;
+  } else if (isLowRiskReportEventGenerated(event)) {
+    eventType = "report";
+    status = "generated";
+    content = event.content;
+  } else if (isLowRiskSummaryEvent(event)) {
+    eventType = null;
+    status = null;
+    content = event.content;
   }
-
-  // Validate userId is present and non-empty
-  if (!userId || typeof userId !== "string" || userId.trim() === "") {
-    return null;
-  }
-
-  // eventTime comes from Kafka message timestamp (passed as parameter)
-  // Payload timestamp fields are completely ignored
 
   return {
     userId,
-    kind,
-    eventType: eventType ?? null,
-    status: status ?? null,
-    content: content ?? null,
-    rawPayload: unwrapped,
+    kind: event.kind,
+    eventType,
+    status,
+    content,
+    rawPayload: innerPayload, // Store inner payload, not envelope
     eventTime, // Always from Kafka message timestamp
     topic,
     partition,
@@ -560,50 +640,11 @@ export class NotificationConsumer {
     try {
       // Handle low-risk events separately with strict validation
       if (topic === "low_risk_agent_logs" || topic.toLowerCase().includes("low_risk")) {
-        // Extract eventTime from Kafka message timestamp ONLY (before unwrapping)
-        // message.timestamp is a string (ISO format) or number (ms since epoch)
-        const kafkaTimestamp = message.timestamp ? Number(message.timestamp) : NaN;
-        let eventTime: Date;
-        
-        if (!isNaN(kafkaTimestamp) && kafkaTimestamp > 0) {
-          eventTime = new Date(kafkaTimestamp);
-        } else {
-          // Invalid or missing Kafka timestamp - fallback to now() with warning
-          eventTime = new Date();
-          console.warn(`[Kafka][LowRisk] Warning: invalid Kafka timestamp; using now() (topic=${topic}, partition=${partition}, offset=${offset})`);
-        }
-
-        // Unwrap nested value strings robustly
-        const unwrapped = unwrapNestedValue(message.value);
-        
-        // Early validation: must be an object after unwrapping
-        if (unwrapped == null || typeof unwrapped !== "object" || Array.isArray(unwrapped)) {
-          console.warn(`[Kafka][LowRisk] Dropped: not an object after unwrap (topic=${topic}, partition=${partition}, offset=${offset})`);
-          console.warn(`[Kafka][LowRisk] lowrisk_unwrap_failed`);
-          return;
-        }
-
-        // Parse and normalize using strict validators
-        // Pass eventTime from Kafka timestamp (payload timestamps are ignored)
-        const normalized = parseLowRiskEvent(
-          topic,
-          unwrapped,
-          partition,
-          offset,
-          eventTime
-        );
+        // Parse using new envelope structure and strict union types
+        const normalized = parseLowRiskKafkaMessage(payload);
 
         if (!normalized) {
-          // Log unknown shape with sample keys for debugging
-          const sampleKeys = unwrapped ? Object.keys(unwrapped).slice(0, 5).join(", ") : "none";
-          console.warn(`[Kafka][LowRisk] Dropped: unknown low-risk shape (topic=${topic}, partition=${partition}, offset=${offset}, sampleKeys=${sampleKeys})`);
-          console.warn(`[Kafka][LowRisk] lowrisk_parsing_dropped_unknown_shape`);
-          return;
-        }
-
-        // Validate userId is present and non-empty
-        if (!normalized.userId || typeof normalized.userId !== "string" || normalized.userId.trim() === "") {
-          console.warn(`[Kafka][LowRisk] Dropped: user_id missing or empty (topic=${topic}, partition=${partition}, offset=${offset})`);
+          // Parser already logged the reason for dropping
           return;
         }
 

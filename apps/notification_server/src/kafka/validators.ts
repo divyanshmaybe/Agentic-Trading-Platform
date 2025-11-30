@@ -1,10 +1,20 @@
 /**
  * Runtime validators for low-risk event payloads
  * 
- * TODO: If we later want stronger schemas, replace these guards with Zod or io-ts validators.
+ * Type guards for strict union type checking
  */
 
-import { LowRiskLogPayload, LowRiskNotificationPayload } from "./types/lowRisk";
+import {
+  LowRiskEvent,
+  LowRiskInfoEvent,
+  LowRiskIndustryEventFetching,
+  LowRiskIndustryEventFetched,
+  LowRiskStockEventFetching,
+  LowRiskReportEventGenerating,
+  LowRiskReportEventGenerated,
+  LowRiskSummaryEvent,
+  LowRiskValueEnvelope,
+} from "./types/lowRisk";
 
 /**
  * Check if value is a non-null object
@@ -21,26 +31,25 @@ export function hasStringField(obj: any, field: string): boolean {
 }
 
 /**
- * Strict validator for low-risk notification payloads
- * Returns true only if all required fields are present and correctly typed
+ * Check if value is a LowRiskValueEnvelope
  */
-export function isLowRiskNotification(obj: any): obj is LowRiskNotificationPayload {
+export function isLowRiskValueEnvelope(obj: any): obj is LowRiskValueEnvelope {
   if (!isObject(obj)) {
     return false;
   }
 
-  // Must have user_id as string
-  if (!hasStringField(obj, "user_id")) {
+  // Must have key as string
+  if (!hasStringField(obj, "key")) {
     return false;
   }
 
-  // Must have type as string
-  if (!hasStringField(obj, "type")) {
+  // Must have value as string (JSON string)
+  if (!hasStringField(obj, "value")) {
     return false;
   }
 
-  // Must have content as object
-  if (!("content" in obj) || typeof obj.content !== "object" || obj.content === null || Array.isArray(obj.content)) {
+  // Must have headers as object
+  if (!("headers" in obj) || typeof obj.headers !== "object" || obj.headers === null || Array.isArray(obj.headers)) {
     return false;
   }
 
@@ -48,30 +57,222 @@ export function isLowRiskNotification(obj: any): obj is LowRiskNotificationPaylo
 }
 
 /**
- * Strict validator for low-risk log payloads
- * Returns true only if user_id is present and at least one log-related field exists
+ * Type guard for LowRiskInfoEvent
  */
-export function isLowRiskLog(obj: any): obj is LowRiskLogPayload {
+export function isLowRiskInfoEvent(obj: any): obj is LowRiskInfoEvent {
   if (!isObject(obj)) {
     return false;
   }
 
-  // Must have user_id as string
-  if (!hasStringField(obj, "user_id")) {
+  if (!hasStringField(obj, "userId")) {
     return false;
   }
 
-  // Must have at least one log-related field (message, level, or stage)
-  // This distinguishes logs from notifications
-  const hasLogField = "message" in obj || "level" in obj || "stage" in obj;
-  if (!hasLogField) {
+  if (obj.kind !== "info") {
     return false;
   }
 
-  // Should NOT have both type and content (that would be a notification)
-  if ("type" in obj && "content" in obj) {
+  if (typeof obj.content !== "string") {
     return false;
   }
 
   return true;
+}
+
+/**
+ * Type guard for LowRiskIndustryEventFetching
+ */
+export function isLowRiskIndustryEventFetching(obj: any): obj is LowRiskIndustryEventFetching {
+  if (!isObject(obj)) {
+    return false;
+  }
+
+  if (!hasStringField(obj, "userId")) {
+    return false;
+  }
+
+  if (obj.kind !== "industry") {
+    return false;
+  }
+
+  if (obj.status !== "fetching") {
+    return false;
+  }
+
+  if (!isObject(obj.content) || !Array.isArray(obj.content.industries)) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Type guard for LowRiskIndustryEventFetched
+ */
+export function isLowRiskIndustryEventFetched(obj: any): obj is LowRiskIndustryEventFetched {
+  if (!isObject(obj)) {
+    return false;
+  }
+
+  if (!hasStringField(obj, "userId")) {
+    return false;
+  }
+
+  if (obj.kind !== "industry") {
+    return false;
+  }
+
+  if (obj.status !== "fetched") {
+    return false;
+  }
+
+  if (!isObject(obj.content)) {
+    return false;
+  }
+
+  if (!Array.isArray(obj.content.industries)) {
+    return false;
+  }
+
+  if (!isObject(obj.content.metrics)) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Type guard for LowRiskStockEventFetching
+ */
+export function isLowRiskStockEventFetching(obj: any): obj is LowRiskStockEventFetching {
+  if (!isObject(obj)) {
+    return false;
+  }
+
+  if (!hasStringField(obj, "userId")) {
+    return false;
+  }
+
+  if (obj.kind !== "stock") {
+    return false;
+  }
+
+  if (obj.status !== "fetching") {
+    return false;
+  }
+
+  if (!isObject(obj.content) || typeof obj.content.content !== "string") {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Type guard for LowRiskReportEventGenerating
+ */
+export function isLowRiskReportEventGenerating(obj: any): obj is LowRiskReportEventGenerating {
+  if (!isObject(obj)) {
+    return false;
+  }
+
+  if (!hasStringField(obj, "userId")) {
+    return false;
+  }
+
+  if (obj.kind !== "report") {
+    return false;
+  }
+
+  if (obj.status !== "generating") {
+    return false;
+  }
+
+  if (!isObject(obj.content) || typeof obj.content.ticker !== "string") {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Type guard for LowRiskReportEventGenerated
+ */
+export function isLowRiskReportEventGenerated(obj: any): obj is LowRiskReportEventGenerated {
+  if (!isObject(obj)) {
+    return false;
+  }
+
+  if (!hasStringField(obj, "userId")) {
+    return false;
+  }
+
+  if (obj.kind !== "report") {
+    return false;
+  }
+
+  if (obj.status !== "generated") {
+    return false;
+  }
+
+  if (!isObject(obj.content) || typeof obj.content.ticker !== "string") {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Type guard for LowRiskSummaryEvent
+ */
+export function isLowRiskSummaryEvent(obj: any): obj is LowRiskSummaryEvent {
+  if (!isObject(obj)) {
+    return false;
+  }
+
+  if (!hasStringField(obj, "userId")) {
+    return false;
+  }
+
+  if (obj.kind !== "summary") {
+    return false;
+  }
+
+  if (!isObject(obj.content)) {
+    return false;
+  }
+
+  // Check for required summary fields
+  if (!Array.isArray(obj.content.industry_list)) {
+    return false;
+  }
+
+  if (!Array.isArray(obj.content.final_portfolio)) {
+    return false;
+  }
+
+  if (!Array.isArray(obj.content.trade_list)) {
+    return false;
+  }
+
+  if (!isObject(obj.content.summary)) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Type guard for any LowRiskEvent (union type)
+ */
+export function isLowRiskEvent(obj: any): obj is LowRiskEvent {
+  return (
+    isLowRiskInfoEvent(obj) ||
+    isLowRiskIndustryEventFetching(obj) ||
+    isLowRiskIndustryEventFetched(obj) ||
+    isLowRiskStockEventFetching(obj) ||
+    isLowRiskReportEventGenerating(obj) ||
+    isLowRiskReportEventGenerated(obj) ||
+    isLowRiskSummaryEvent(obj)
+  );
 }

@@ -29,7 +29,7 @@ export async function GET(request: NextRequest) {
     const eventDTOs: LowRiskEventDTO[] = events.map((event) => ({
       id: event.id,
       userId: event.userId,
-      kind: event.kind as "log" | "notification",
+      kind: event.kind as "info" | "industry" | "stock" | "report" | "summary",
       eventType: event.eventType,
       status: event.status,
       content: event.content,

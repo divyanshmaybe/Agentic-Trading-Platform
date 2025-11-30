@@ -2,7 +2,6 @@ import { useEffect, useState } from "react"
 import type { PortfolioSummary, StockItem } from "@/lib/dashboardTypes"
 import { getPortfolio, getPortfolioDashboard, getPositions, fetchMarketCandles } from "@/lib/portfolio"
 import type { Portfolio } from "@/lib/portfolio"
-import { portfolioSummary as mockPortfolioSummary, stocks as mockStocks } from "../app/dashboard/data"
 
 function isPortfolioNotFoundError(error: unknown): boolean {
   if (!(error instanceof Error)) return false
@@ -31,8 +30,8 @@ const emptyPortfolioSummary: PortfolioSummary = {
 
 export function useDashboardData(allocations: { label: string; value: number }[]) {
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null)
-  const [portfolioSummary, setPortfolioSummary] = useState<PortfolioSummary>(mockPortfolioSummary)
-  const [stocks, setStocks] = useState<StockItem[]>(mockStocks)
+  const [portfolioSummary, setPortfolioSummary] = useState<PortfolioSummary>(emptyPortfolioSummary)
+  const [stocks, setStocks] = useState<StockItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [portfolioNotFound, setPortfolioNotFound] = useState(false)

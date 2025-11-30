@@ -5,9 +5,9 @@
 export interface LowRiskEventDTO {
   id: string;
   userId: string;
-  kind: "log" | "notification";
-  eventType: string | null;
-  status: string | null;
+  kind: "info" | "industry" | "stock" | "report" | "summary";
+  eventType: string | null;   // "industry" | "stock" | "report" | null (null for info/summary)
+  status: string | null;      // "fetching" | "fetched" | "generating" | "generated" | null
   content: any | null;
   rawPayload: any;
   createdAt: string; // ISO string

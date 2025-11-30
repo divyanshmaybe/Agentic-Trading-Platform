@@ -126,9 +126,9 @@ model LowRiskEvent {
   id         String   @id @default(uuid())
   userId     String
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  kind       String   // "log" | "notification"
-  eventType  String?  // "industry", "pmi", etc. Null for logs
-  status     String?  // "fetching" | "fetched"
+  kind       String   // "info" | "industry" | "stock" | "report" | "summary"
+  eventType  String?  // "industry" | "stock" | "report" | null (null for info/summary)
+  status     String?  // "fetching" | "fetched" | "generating" | "generated" | null
   content    Json?    // structured payload for notifications
   rawPayload Json     // full Kafka message
   eventTime  DateTime?
