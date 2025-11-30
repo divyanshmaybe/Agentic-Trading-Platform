@@ -367,13 +367,15 @@ function normalizeSectorAnalysis(
 /**
  * Parse and normalize a low-risk event from Kafka message
  * Uses strict validators and unwrapping to ensure type safety
- * Note: eventTime is NOT extracted here - it must come from Kafka message timestamp
+ * 
+ * @param eventTime - MUST be derived from Kafka message.timestamp (never from payload)
  */
 function parseLowRiskEvent(
   topic: string,
   rawPayload: any,
   partition: number,
-  offset: string
+  offset: string,
+  eventTime: Date
 ): LowRiskNormalized | null {
   // Unwrap nested value strings
   const unwrapped = unwrapNestedValue(rawPayload);
@@ -416,7 +418,8 @@ function parseLowRiskEvent(
     return null;
   }
 
-  // eventTime is NOT set here - it will be derived from Kafka message timestamp in processMessage
+  // eventTime comes from Kafka message timestamp (passed as parameter)
+  // Payload timestamp fields are completely ignored
 
   return {
     userId,
@@ -425,7 +428,7 @@ function parseLowRiskEvent(
     status: status ?? null,
     content: content ?? null,
     rawPayload: unwrapped,
-    eventTime: null, // Will be set from Kafka message timestamp in processMessage
+    eventTime, // Always from Kafka message timestamp
     topic,
     partition,
     offset,
@@ -557,17 +560,7 @@ export class NotificationConsumer {
     try {
       // Handle low-risk events separately with strict validation
       if (topic === "low_risk_agent_logs" || topic.toLowerCase().includes("low_risk")) {
-        // Unwrap nested value strings robustly
-        const unwrapped = unwrapNestedValue(message.value);
-        
-        // Early validation: must be an object after unwrapping
-        if (unwrapped == null || typeof unwrapped !== "object" || Array.isArray(unwrapped)) {
-          console.warn(`[Kafka][LowRisk] Dropped: not an object after unwrap (topic=${topic}, partition=${partition}, offset=${offset})`);
-          console.warn(`[Kafka][LowRisk] lowrisk_unwrap_failed`);
-          return;
-        }
-
-        // Extract eventTime from Kafka message timestamp ONLY
+        // Extract eventTime from Kafka message timestamp ONLY (before unwrapping)
         // message.timestamp is a string (ISO format) or number (ms since epoch)
         const kafkaTimestamp = message.timestamp ? Number(message.timestamp) : NaN;
         let eventTime: Date;
@@ -580,12 +573,24 @@ export class NotificationConsumer {
           console.warn(`[Kafka][LowRisk] Warning: invalid Kafka timestamp; using now() (topic=${topic}, partition=${partition}, offset=${offset})`);
         }
 
+        // Unwrap nested value strings robustly
+        const unwrapped = unwrapNestedValue(message.value);
+        
+        // Early validation: must be an object after unwrapping
+        if (unwrapped == null || typeof unwrapped !== "object" || Array.isArray(unwrapped)) {
+          console.warn(`[Kafka][LowRisk] Dropped: not an object after unwrap (topic=${topic}, partition=${partition}, offset=${offset})`);
+          console.warn(`[Kafka][LowRisk] lowrisk_unwrap_failed`);
+          return;
+        }
+
         // Parse and normalize using strict validators
+        // Pass eventTime from Kafka timestamp (payload timestamps are ignored)
         const normalized = parseLowRiskEvent(
           topic,
           unwrapped,
           partition,
-          offset
+          offset,
+          eventTime
         );
 
         if (!normalized) {
@@ -614,7 +619,7 @@ export class NotificationConsumer {
         }
 
         // User exists - create DB record with typed fields
-        // eventTime comes ONLY from Kafka message timestamp
+        // eventTime comes ONLY from Kafka message timestamp (normalized.eventTime is always set)
         const event = await this.prisma.lowRiskEvent.create({
           data: {
             userId: normalized.userId,
@@ -623,23 +628,18 @@ export class NotificationConsumer {
             status: normalized.status ?? null,
             content: normalized.content ?? null,
             rawPayload: normalized.rawPayload,
-            eventTime: eventTime,
+            eventTime: normalized.eventTime, // Always from Kafka timestamp
           },
         });
 
-        console.log(`[DB][LowRisk] Created event ${event.id} for user ${normalized.userId} kind=${normalized.kind} with eventTime=${eventTime.toISOString()}`);
+        console.log(`[DB][LowRisk] Created event ${event.id} for user ${normalized.userId} kind=${normalized.kind} with eventTime=${normalized.eventTime.toISOString()}`);
         console.warn(`[Kafka][LowRisk] lowrisk_processed_success`);
 
         // Publish to Redis per-user channel (sequential, after DB write)
-        // Update normalized eventTime for Redis publish
-        const normalizedWithEventTime = {
-          ...normalized,
-          eventTime: eventTime,
-        };
-
+        // normalized.eventTime is already set from Kafka timestamp
         try {
           await this.lowRiskPublisher.publish({
-            ...normalizedWithEventTime,
+            ...normalized,
             id: event.id,
             createdAt: event.createdAt,
           });

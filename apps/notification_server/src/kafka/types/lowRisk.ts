@@ -4,10 +4,10 @@
 
 /**
  * Low-risk log event payload from Kafka
+ * Note: Timestamp fields in payload are ignored - eventTime comes from Kafka message timestamp only
  */
 export interface LowRiskLogPayload {
   user_id: string;
-  timestamp?: string | number;
   level?: string;
   message?: string;
   stage?: string;
@@ -16,13 +16,13 @@ export interface LowRiskLogPayload {
 
 /**
  * Low-risk notification event payload from Kafka
+ * Note: Timestamp fields in payload are ignored - eventTime comes from Kafka message timestamp only
  */
 export interface LowRiskNotificationPayload {
   user_id: string;
   type: string;
   status: "fetching" | "fetched" | string;
   content: Record<string, any>;
-  timestamp?: string | number;
   [key: string]: any;
 }
 
@@ -33,6 +33,7 @@ export type LowRiskPayload = LowRiskLogPayload | LowRiskNotificationPayload;
 
 /**
  * Normalized low-risk event (server-side representation)
+ * eventTime is ALWAYS derived from Kafka message timestamp, never from payload
  */
 export type LowRiskNormalized = {
   userId: string; // normalized camelCase
@@ -41,7 +42,7 @@ export type LowRiskNormalized = {
   status?: string | null;
   content?: any | null;
   rawPayload: any;
-  eventTime?: Date | null;
+  eventTime: Date; // Required - strictly from Kafka message timestamp
   topic: string;
   partition: number;
   offset: string;

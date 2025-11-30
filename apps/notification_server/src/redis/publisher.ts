@@ -72,6 +72,7 @@ export class LowRiskPublisher {
       const channel = `lowrisk:user:${event.userId}`;
       
       // Serialize with proper Date handling
+      // eventTime is always a Date (required, non-nullable) - from Kafka message timestamp only
       const payload = {
         id: event.id,
         userId: event.userId,
@@ -80,7 +81,7 @@ export class LowRiskPublisher {
         status: event.status ?? null,
         content: event.content ?? null,
         rawPayload: event.rawPayload,
-        eventTime: event.eventTime ? event.eventTime.toISOString() : null,
+        eventTime: event.eventTime.toISOString(), // Always present - from Kafka timestamp
         createdAt: event.createdAt.toISOString(),
       };
       const message = JSON.stringify(payload);
