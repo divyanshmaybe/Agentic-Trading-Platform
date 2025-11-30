@@ -92,5 +92,4 @@ variable "argocd_github_repo_password" {
 variable "argocd_github_username" {
   description = "GitHub username for ArgoCD repository access"
   type        = string
-  default     = "aayush0325"
 }

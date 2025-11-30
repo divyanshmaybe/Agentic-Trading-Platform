@@ -113,7 +113,7 @@ resource "helm_release" "external_dns" {
 
   set {
     name  = "domainFilters[0]"
-    value = "aayush0325.fun"
+    value = "team65.space"
   }
 
   set {
