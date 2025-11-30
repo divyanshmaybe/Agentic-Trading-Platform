@@ -126,6 +126,7 @@ celery_app = Celery(
         "workers.auto_sell_worker",
         "workers.streaming_risk_tasks",
         "workers.economic_indicators_tasks",
+        "workers.low_risk_tasks",  # Low-risk pipeline worker
     ],
 )
 
@@ -137,7 +138,9 @@ SOFT_TIME_LIMIT = int(os.getenv("CELERY_TASK_SOFT_TIME_LIMIT", "120"))  # 2 minu
 HARD_TIME_LIMIT = int(os.getenv("CELERY_TASK_TIME_LIMIT", str(SOFT_TIME_LIMIT + 60)))  # +1 min for cleanup
 
 # Worker concurrency settings
-WORKER_CONCURRENCY = int(os.getenv("CELERY_WORKER_CONCURRENCY", "8"))
+# IMPORTANT: Reduced from 8 to 4 to prevent connection pool exhaustion
+# Calculation: 3 connections × 4 workers = 12 per process (safe for PostgreSQL max 100)
+WORKER_CONCURRENCY = int(os.getenv("CELERY_WORKER_CONCURRENCY", "4"))
 
 celery_app.conf.update(
     task_serializer="json",
@@ -220,6 +223,8 @@ celery_app.conf.task_routes = {
     "pipeline.start": {"queue": QUEUE_NAMES["pipelines"], "routing_key": "pipelines"},
     "pipeline.news_sentiment.run": {"queue": QUEUE_NAMES["pipelines"], "routing_key": "pipelines"},
     "pipeline.risk_monitor.run": {"queue": QUEUE_NAMES["pipelines"], "routing_key": "pipelines"},
+    "pipeline.low_risk.run": {"queue": QUEUE_NAMES["pipelines"], "routing_key": "pipelines"},
+    "pipeline.low_risk.get_status": {"queue": QUEUE_NAMES["pipelines"], "routing_key": "pipelines"},
     "market_data.fetch_via_api": {"queue": QUEUE_NAMES["market"], "routing_key": "market"},
     "market_data.batch_fetch_via_api": {"queue": QUEUE_NAMES["market"], "routing_key": "market"},
     "market_data.health_check_api": {"queue": QUEUE_NAMES["market"], "routing_key": "market"},
@@ -244,6 +249,8 @@ PIPELINE_TASKS = [
     "pipeline.risk_monitor.run",
     "pipeline.news_sentiment.run",
     "pipeline.start",
+    "pipeline.low_risk.run",  # Low-risk stock selection (25-30 min limit)
+    "pipeline.low_risk.get_status",  # Status check for low-risk pipeline
 ]
 
 # Signal processing tasks - HIGHEST PRIORITY, NO RATE LIMITS for minimal latency
