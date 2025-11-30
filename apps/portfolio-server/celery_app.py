@@ -131,8 +131,10 @@ celery_app = Celery(
 
 VISIBILITY_TIMEOUT = int(os.getenv("CELERY_VISIBILITY_TIMEOUT", "900"))
 RESULT_TTL = int(os.getenv("CELERY_RESULT_TTL", "86400"))
-SOFT_TIME_LIMIT = int(os.getenv("CELERY_TASK_SOFT_TIME_LIMIT", "600"))
-HARD_TIME_LIMIT = int(os.getenv("CELERY_TASK_TIME_LIMIT", str(SOFT_TIME_LIMIT + 120)))
+# Reduce default timeouts - most tasks should complete in <60s
+# Tasks holding connections for 10 minutes (600s) cause connection exhaustion!
+SOFT_TIME_LIMIT = int(os.getenv("CELERY_TASK_SOFT_TIME_LIMIT", "120"))  # 2 minutes default
+HARD_TIME_LIMIT = int(os.getenv("CELERY_TASK_TIME_LIMIT", str(SOFT_TIME_LIMIT + 60)))  # +1 min for cleanup
 
 # Worker concurrency settings
 WORKER_CONCURRENCY = int(os.getenv("CELERY_WORKER_CONCURRENCY", "8"))
@@ -151,9 +153,9 @@ celery_app.conf.update(
     task_default_routing_key=DEFAULT_QUEUE,
     task_default_delivery_mode="persistent",
     task_queue_max_priority=10,
-    # Worker settings - prevent task starvation
+    # Worker settings - prevent task starvation and connection leaks
     worker_concurrency=WORKER_CONCURRENCY,
-    worker_max_tasks_per_child=int(os.getenv("CELERY_MAX_TASKS_PER_CHILD", "100")),  # Recycle workers more often
+    worker_max_tasks_per_child=int(os.getenv("CELERY_MAX_TASKS_PER_CHILD", "50")),  # Recycle workers aggressively to prevent leaks
     worker_prefetch_multiplier=1,  # Only prefetch 1 task per worker (prevents blocking)
     worker_redirect_stdouts=False,
     worker_send_task_events=True,
@@ -279,11 +281,11 @@ AUTO_SELL_TASKS = [
 ]
 
 celery_app.conf.task_annotations = {
-    # Standard tasks - normal limits
+    # Standard tasks - reasonable limits for DB operations
     **{
         task_name: {
-            "soft_time_limit": SOFT_TIME_LIMIT,
-            "time_limit": HARD_TIME_LIMIT,
+            "soft_time_limit": 180,  # 3 min soft (allocation can take time for LLM calls)
+            "time_limit": 240,  # 4 min hard
             "rate_limit": "30/m",  # Max 30 per minute (increased from 10)
         }
         for task_name in STANDARD_TASKS
@@ -628,6 +630,105 @@ def init_worker_process(**kwargs):
         logger.info("🔄 Worker process initialized - Prisma client reset for PID %s", os.getpid())
     except Exception as e:
         logging.error("❌ Failed to reset Prisma client in worker init: %s", e, exc_info=True)
+
+
+# Worker process shutdown - force disconnect to release connections
+@signals.worker_process_shutdown.connect
+def shutdown_worker_process(**kwargs):
+    """
+    Force disconnect Prisma client when worker process shuts down.
+    
+    This ensures database connections are properly released to the pool.
+    Critical for preventing connection leaks on worker restart/timeout.
+    """
+    try:
+        project_root = Path(__file__).resolve().parents[2]
+        shared_py = project_root / "shared" / "py"
+        if str(shared_py) not in sys.path:
+            sys.path.insert(0, str(shared_py))
+        
+        from dbManager import DBManager
+        
+        # Force disconnect - use asyncio.run to ensure it completes
+        db_manager = DBManager._instance
+        if db_manager and db_manager.is_connected():
+            try:
+                asyncio.run(db_manager.disconnect())
+                logging.info("🔌 Worker process shutdown - Prisma disconnected for PID %s", os.getpid())
+            except Exception as disc_exc:
+                logging.warning("⚠️ Failed to disconnect on shutdown: %s", disc_exc)
+            finally:
+                # Force reset even if disconnect fails
+                DBManager.reset_instance()
+    except Exception as e:
+        logging.error("❌ Failed to cleanup Prisma on worker shutdown: %s", e)
+
+
+# Task-level connection management
+@signals.task_prerun.connect
+def task_prerun_handler(sender=None, task_id=None, task=None, **kwargs):
+    """Log task start and ensure clean DB state."""
+    logging.debug("🚀 Task starting: %s [%s]", task.name if task else sender, task_id)
+
+
+@signals.task_postrun.connect
+def task_postrun_handler(sender=None, task_id=None, task=None, retval=None, state=None, **kwargs):
+    """
+    Force disconnect after each task to prevent connection leaks.
+    
+    This is critical for long-running workers that execute many tasks.
+    Each task gets a fresh connection from the pool.
+    """
+    try:
+        project_root = Path(__file__).resolve().parents[2]
+        shared_py = project_root / "shared" / "py"
+        if str(shared_py) not in sys.path:
+            sys.path.insert(0, str(shared_py))
+        
+        from dbManager import DBManager
+        
+        # Get instance without creating new one
+        db_manager = DBManager._instance
+        if db_manager and db_manager.is_connected():
+            try:
+                # Force disconnect to release connection back to pool
+                asyncio.run(db_manager.disconnect())
+                logging.debug("🔌 Task complete - DB disconnected: %s [%s]", task.name if task else sender, task_id)
+            except Exception as disc_exc:
+                logging.warning("⚠️ Failed to disconnect after task %s: %s", task_id, disc_exc)
+    except Exception as e:
+        logging.debug("Task postrun cleanup error: %s", e)
+
+
+# Handle soft time limit exceeded - force disconnect
+@signals.task_failure.connect
+def task_failure_handler(sender=None, task_id=None, exception=None, **kwargs):
+    """Handle task failures and force cleanup on timeout."""
+    from celery.exceptions import SoftTimeLimitExceeded
+    
+    if isinstance(exception, SoftTimeLimitExceeded):
+        logging.warning("⏱️ Task %s exceeded soft time limit - forcing DB cleanup", task_id)
+        try:
+            project_root = Path(__file__).resolve().parents[2]
+            shared_py = project_root / "shared" / "py"
+            if str(shared_py) not in sys.path:
+                sys.path.insert(0, str(shared_py))
+            
+            from dbManager import DBManager
+            
+            # Force disconnect on timeout
+            db_manager = DBManager._instance
+            if db_manager:
+                try:
+                    asyncio.run(db_manager.disconnect())
+                    logging.info("🔌 Forced DB disconnect on soft timeout: %s", task_id)
+                except Exception:
+                    pass
+                finally:
+                    # Always reset to ensure next task gets fresh connection
+                    DBManager.reset_instance()
+        except Exception as e:
+            logging.error("Failed to cleanup DB on timeout: %s", e)
 
 
 # Initialize Prometheus exporter when worker is ready

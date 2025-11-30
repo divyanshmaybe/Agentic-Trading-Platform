@@ -74,9 +74,11 @@ class DBManager:
         self.database_url = database_url or os.getenv("DATABASE_URL") or os.getenv("DB_URL")
         
         # Set connection pool limit to prevent exhaustion
-        # Higher limit for Celery workers with multiple concurrent tasks
-        self.connection_limit = int(os.getenv("PRISMA_CONNECTION_LIMIT", "10"))
-        self.pool_timeout = int(os.getenv("PRISMA_POOL_TIMEOUT", "15"))
+        # Lower limit per worker - each task gets one connection and releases it immediately
+        # With 4 workers * 5 connections = 20 connections max per worker process
+        # Total system: ~80-100 connections (well under PostgreSQL default of 100)
+        self.connection_limit = int(os.getenv("PRISMA_CONNECTION_LIMIT", "5"))
+        self.pool_timeout = int(os.getenv("PRISMA_POOL_TIMEOUT", "10"))
 
         # Default to localhost PostgreSQL if not set (for development)
         if not self.database_url:

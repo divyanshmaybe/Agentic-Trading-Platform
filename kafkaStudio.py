@@ -130,7 +130,7 @@ def main():
 
                 col1, col2 = st.columns(2)
                 with col1:
-                    limit = st.slider("Number of messages to show", 10, 500, 100)
+                    limit = st.slider("Number of messages to show", 10, 500, 1000)
                 with col2:
                     if st.button("Refresh Messages"):
                         st.rerun()
