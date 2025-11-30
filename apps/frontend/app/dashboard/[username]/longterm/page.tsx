@@ -1,6 +1,8 @@
 "use client"
 
+import { useState } from "react"
 import { useParams } from "next/navigation"
+import { ChevronDown, ChevronUp } from "lucide-react"
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader"
 import { Container } from "@/components/shared/Container"
 import { PageHeading } from "@/components/shared/PageHeading"
@@ -17,15 +19,19 @@ export default function LongTermPage() {
   const { user: authUser, loading: authLoading } = useAuth()
   
   const { data: agentData, loading: agentLoading, isAllocating } = useAgentDashboard("low_risk")
-  const { events, startStreaming, stopStreaming, streaming } = useLowRiskEvents()
+  const { events, loading: eventsLoading, startStreaming, stopStreaming, streaming } = useLowRiskEvents()
+  const [showAllEvents, setShowAllEvents] = useState(false)
 
   const handleRunPipeline = () => {
     startStreaming()
+    setShowAllEvents(false) // Close events view when starting new stream
   }
 
   const handleStopPipeline = () => {
     stopStreaming()
   }
+
+  const hasEvents = events.length > 0
 
   // Show loading state while auth is being verified
   if (authLoading || !authUser) {
@@ -56,23 +62,84 @@ export default function LongTermPage() {
             {/* Large centered message box with text and button inside */}
             <div className="card-glass w-full min-h-screen rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_28px_65px_-38px_rgba(0,0,0,0.9)] backdrop-blur p-10 flex flex-col gap-6">
               {!streaming ? (
-                /* Centered content when not streaming */
-                <div className="flex flex-1 flex-col items-center justify-center gap-6">
-                  <p className="text-center text-white/70 text-lg max-w-2xl">
-                    Start your long-term investment journey with our automated low-risk pipeline. 
-                    Build wealth steadily through carefully selected positions.
-                  </p>
-
-                  <div className="flex items-center justify-center gap-4">
-                    <button
-                      className="px-8 py-4 rounded-xl bg-blue-600 text-white font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      onClick={handleRunPipeline}
-                      disabled={streaming}
-                    >
-                      Run Pipeline
-                    </button>
+                /* Content when not streaming */
+                eventsLoading ? (
+                  /* Loading state */
+                  <div className="flex flex-1 flex-col items-center justify-center gap-6">
+                    <div className="text-white/60 text-sm">Loading events...</div>
                   </div>
-                </div>
+                ) : hasEvents ? (
+                  /* Show toggleable events when events exist */
+                  <div className="flex flex-1 flex-col gap-6">
+                    <div className="flex flex-col items-center gap-6">
+                      <p className="text-center text-white/70 text-lg max-w-2xl">
+                        Start your long-term investment journey with our automated low-risk pipeline. 
+                        Build wealth steadily through carefully selected positions.
+                      </p>
+
+                      <div className="flex items-center justify-center gap-4">
+                        <button
+                          className="px-8 py-4 rounded-xl bg-blue-600 text-white font-semibold hover:bg-blue-700 transition-colors"
+                          onClick={handleRunPipeline}
+                        >
+                          Run Pipeline
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Toggleable events section */}
+                    <div className="flex-1 overflow-hidden">
+                      <button
+                        onClick={() => setShowAllEvents(!showAllEvents)}
+                        className="flex w-full items-center justify-between rounded-lg border border-white/10 bg-black/25 px-4 py-3 text-left transition hover:bg-black/35 backdrop-blur-sm"
+                      >
+                        <h3 className="text-lg font-semibold text-[#fafafa]">
+                          Pipeline Events ({events.length})
+                        </h3>
+                        {showAllEvents ? (
+                          <ChevronUp className="h-5 w-5 text-white/70" />
+                        ) : (
+                          <ChevronDown className="h-5 w-5 text-white/70" />
+                        )}
+                      </button>
+
+                      {showAllEvents && (
+                        <div className="mt-4 max-h-[600px] overflow-y-auto">
+                          <div className="space-y-4">
+                            {events.map((event) => (
+                              <div
+                                key={event.id}
+                                className="rounded-lg border border-white/10 bg-black/25 p-4 backdrop-blur-sm"
+                              >
+                                <pre className="text-xs text-white/90 whitespace-pre-wrap wrap-break-word font-mono">
+                                  {JSON.stringify(event, null, 2)}
+                                </pre>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  /* Show run pipeline button when no events */
+                  <div className="flex flex-1 flex-col items-center justify-center gap-6">
+                    <p className="text-center text-white/70 text-lg max-w-2xl">
+                      Start your long-term investment journey with our automated low-risk pipeline. 
+                      Build wealth steadily through carefully selected positions.
+                    </p>
+
+                    <div className="flex items-center justify-center gap-4">
+                      <button
+                        className="px-8 py-4 rounded-xl bg-blue-600 text-white font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        onClick={handleRunPipeline}
+                        disabled={streaming}
+                      >
+                        Run Pipeline
+                      </button>
+                    </div>
+                  </div>
+                )
               ) : (
                 /* Streaming layout with events */
                 <div className="flex flex-1 flex-col gap-6">

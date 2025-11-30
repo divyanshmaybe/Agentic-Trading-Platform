@@ -138,6 +138,17 @@ export function useLowRiskEvents(): UseLowRiskEventsReturn {
 
         // Merge with existing events (handles deduplication by ID)
         setEvents((prev) => mergeEvents(prev, [lowRiskEvent]));
+
+        // Close stream after summary event
+        if (lowRiskEvent.kind === "summary") {
+          console.log("[LowRisk Events] Summary event received, closing stream");
+          if (eventSourceRef.current) {
+            eventSourceRef.current.close();
+            eventSourceRef.current = null;
+            setStreaming(false);
+            setStatus("closed");
+          }
+        }
       } catch (err) {
         console.warn("[LowRisk Events] Failed to parse low-risk event:", err);
       }
