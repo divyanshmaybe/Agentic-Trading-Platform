@@ -37,6 +37,7 @@ interface UseLowRiskEventsReturn {
   startStreaming: () => void;
   stopStreaming: () => void;
   streaming: boolean;
+  hasSummary: boolean;
 }
 
 export function useLowRiskEvents(): UseLowRiskEventsReturn {
@@ -46,6 +47,7 @@ export function useLowRiskEvents(): UseLowRiskEventsReturn {
   const [streaming, setStreaming] = useState(false);
 
   const eventSourceRef = useRef<EventSource | null>(null);
+  const autoStartAttemptedRef = useRef<boolean>(false);
 
   // Helper function to merge events and deduplicate by ID
   const mergeEvents = useCallback((existing: LowRiskEvent[], incoming: LowRiskEvent[]): LowRiskEvent[] => {
@@ -120,7 +122,24 @@ export function useLowRiskEvents(): UseLowRiskEventsReturn {
     setStatus("connecting");
     setStreaming(true);
 
-    const eventSource = new EventSource("/api/notifications/lowrisk/stream", {
+    // Find the most recent event to resume from where we left off
+    const lastEvent = events.length > 0 
+      ? events.reduce((latest, current) => 
+          current.createdAt > latest.createdAt ? current : latest
+        )
+      : null;
+
+    // Build URL with lastEventId and lastEventCreatedAt if we have events
+    let streamUrl = "/api/notifications/lowrisk/stream";
+    if (lastEvent) {
+      const params = new URLSearchParams({
+        lastEventId: lastEvent.id,
+        lastEventCreatedAt: lastEvent.createdAt.toISOString(),
+      });
+      streamUrl = `${streamUrl}?${params.toString()}`;
+    }
+
+    const eventSource = new EventSource(streamUrl, {
       withCredentials: true,
     });
     eventSourceRef.current = eventSource;
@@ -138,6 +157,17 @@ export function useLowRiskEvents(): UseLowRiskEventsReturn {
 
         // Merge with existing events (handles deduplication by ID)
         setEvents((prev) => mergeEvents(prev, [lowRiskEvent]));
+
+        // Close stream after summary event
+        if (lowRiskEvent.kind === "summary") {
+          console.log("[LowRisk Events] Summary event received, closing stream");
+          if (eventSourceRef.current) {
+            eventSourceRef.current.close();
+            eventSourceRef.current = null;
+            setStreaming(false);
+            setStatus("closed");
+          }
+        }
       } catch (err) {
         console.warn("[LowRisk Events] Failed to parse low-risk event:", err);
       }
@@ -180,6 +210,27 @@ export function useLowRiskEvents(): UseLowRiskEventsReturn {
     }
   }, []);
 
+  // Calculate if events contain a summary event
+  const hasSummary = events.some((event) => event.kind === "summary");
+
+  // Auto-start streaming if events exist but no summary
+  useEffect(() => {
+    // Only attempt auto-start once and when conditions are met
+    if (
+      !loading &&
+      events.length > 0 &&
+      !hasSummary &&
+      !streaming &&
+      !eventSourceRef.current &&
+      !autoStartAttemptedRef.current
+    ) {
+      console.log("[LowRisk Events] Auto-starting stream (events exist but no summary)");
+      autoStartAttemptedRef.current = true;
+      startStreaming();
+    }
+  }, [loading, events.length, hasSummary, streaming, startStreaming]);
+
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -199,6 +250,7 @@ export function useLowRiskEvents(): UseLowRiskEventsReturn {
     startStreaming,
     stopStreaming,
     streaming,
+    hasSummary,
   };
 }
 

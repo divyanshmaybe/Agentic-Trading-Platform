@@ -20,8 +20,28 @@ export async function GET(request: NextRequest) {
 
   const userId = auth.user._id;
   const prisma = getPrismaClient();
+  
+  // Get lastEventId from query params to resume from where we left off
+  const { searchParams } = new URL(request.url);
+  const lastEventId = searchParams.get("lastEventId");
+  const lastEventCreatedAt = searchParams.get("lastEventCreatedAt");
+  
   let closed = false;
   let unsubscribe: (() => void) | null = null;
+  let keepAliveTimer: NodeJS.Timeout | null = null;
+
+  const closeStream = () => {
+    if (closed) return;
+    closed = true;
+    if (keepAliveTimer) {
+      clearInterval(keepAliveTimer);
+      keepAliveTimer = null;
+    }
+    if (unsubscribe) {
+      unsubscribe();
+      unsubscribe = null;
+    }
+  };
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -31,9 +51,31 @@ export async function GET(request: NextRequest) {
         // Send initial retry interval
         controller.enqueue(textEncoder.encode("retry: 5000\n\n"));
 
-        // Query DB for initial low-risk events
+        // Build query to fetch only events after the last known event
+        const whereClause: any = { userId };
+        
+        if (lastEventId || lastEventCreatedAt) {
+          // If we have a lastEventId, find that event first to get its createdAt
+          if (lastEventId) {
+            const lastEvent = await prisma.lowRiskEvent.findUnique({
+              where: { id: lastEventId },
+              select: { createdAt: true },
+            });
+            
+            if (lastEvent) {
+              // Fetch events created after the last event's createdAt
+              whereClause.createdAt = { gt: lastEvent.createdAt };
+            }
+          } else if (lastEventCreatedAt) {
+            // If we have a timestamp directly, use it
+            const lastCreatedAt = new Date(lastEventCreatedAt);
+            whereClause.createdAt = { gt: lastCreatedAt };
+          }
+        }
+
+        // Query DB for events after the last known event (or all if no lastEventId)
         const initialEvents = await prisma.lowRiskEvent.findMany({
-          where: { userId },
+          where: whereClause,
           orderBy: { createdAt: "asc" },
         });
 
@@ -51,12 +93,20 @@ export async function GET(request: NextRequest) {
         }));
 
         console.log(
-          `[LowRisk SSE] Fetched ${eventDTOs.length} historical events for user ${userId}`
+          `[LowRisk SSE] Fetched ${eventDTOs.length} historical events for user ${userId}${lastEventId ? ` (resuming after event ${lastEventId})` : ""}`
         );
 
         // Send initial events
         for (const event of eventDTOs) {
           enqueueSseEvent(controller, "lowrisk", event, isCancelled);
+          
+          // Close stream after summary event
+          if (event.kind === "summary") {
+            console.log(`[LowRisk SSE] Summary event sent, closing stream for user ${userId}`);
+            closeStream();
+            controller.close();
+            return;
+          }
         }
 
         enqueueSseEvent(
@@ -74,12 +124,19 @@ export async function GET(request: NextRequest) {
               return;
             }
             enqueueSseEvent(controller, "lowrisk", event, isCancelled);
+            
+            // Close stream after summary event
+            if (event.kind === "summary") {
+              console.log(`[LowRisk SSE] Summary event received, closing stream for user ${userId}`);
+              closeStream();
+              controller.close();
+            }
           }
         );
         unsubscribe = subscription.unsubscribe;
 
         // Keep-alive ping
-        const keepAliveTimer = setInterval(() => {
+        keepAliveTimer = setInterval(() => {
           if (!closed) {
             enqueueSseEvent(controller, "ping", { ts: Date.now() }, isCancelled);
           }
@@ -87,11 +144,7 @@ export async function GET(request: NextRequest) {
 
         // Cleanup on close
         request.signal.addEventListener("abort", () => {
-          clearInterval(keepAliveTimer);
-          if (unsubscribe) {
-            unsubscribe();
-          }
-          closed = true;
+          closeStream();
         });
       } catch (error) {
         console.error("[LowRisk SSE] Error:", error);
@@ -101,16 +154,13 @@ export async function GET(request: NextRequest) {
           { message: error instanceof Error ? error.message : "Unknown error" },
           isCancelled
         );
-        closed = true;
+        closeStream();
       } finally {
         await prisma.$disconnect();
       }
     },
     async cancel() {
-      closed = true;
-      if (unsubscribe) {
-        unsubscribe();
-      }
+      closeStream();
     },
   });
 
