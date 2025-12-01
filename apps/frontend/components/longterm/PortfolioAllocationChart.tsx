@@ -17,7 +17,7 @@ export function PortfolioAllocationChart({ finalPortfolio, chartData }: Portfoli
 	if (finalPortfolio.length === 0) return null
 
 	return (
-		<div className="flex h-screen flex-col rounded-2xl border border-white/10 bg-[#111] p-6 shadow-lg shadow-black/20">
+		<div className="flex h-screen flex-col rounded-2xl border border-white/10 bg-white/6 p-6 shadow-[0_28px_65px_-38px_rgba(0,0,0,0.9)] backdrop-blur">
 			<DonutChartCard
 				title="Portfolio Allocation"
 				centerTitle="Portfolio Mix"
@@ -34,7 +34,7 @@ export function PortfolioAllocationChart({ finalPortfolio, chartData }: Portfoli
 					return (
 						<div
 							key={`${item.ticker || "stock"}-${index}`}
-							className="group flex items-center justify-between rounded-xl border border-white/5 bg-[#141414] px-3 py-2 text-sm hover:bg-[#1c1c1c] transition-colors"
+							className="group flex items-center justify-between rounded-xl border border-white/10 bg-white/8 px-3 py-2 text-sm hover:bg-white/10 transition-colors backdrop-blur-sm"
 						>
 							<div className="flex items-center gap-3">
 								<span
@@ -42,11 +42,11 @@ export function PortfolioAllocationChart({ finalPortfolio, chartData }: Portfoli
 									style={{ backgroundColor: color }}
 								/>
 								<div className="flex flex-col">
-									<span className="text-[13px] font-medium text-white">
+									<span className="text-[13px] font-medium text-[#fafafa]">
 										{item.ticker || ""}
 									</span>
 									{item.reasoning && (
-										<span className="text-[11px] text-gray-400 line-clamp-1 opacity-0 max-h-0 group-hover:opacity-100 group-hover:max-h-20 transition-all duration-300 ease-in-out overflow-hidden">
+										<span className="text-[11px] text-white/60 line-clamp-1 opacity-0 max-h-0 group-hover:opacity-100 group-hover:max-h-20 transition-all duration-300 ease-in-out overflow-hidden">
 											{item.reasoning}
 										</span>
 									)}

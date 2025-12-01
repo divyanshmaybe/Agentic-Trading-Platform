@@ -19,10 +19,10 @@ const debug = false
 
 export function PipelineEventsCard({ events, isExpanded, onToggle }: PipelineEventsCardProps) {
 	return (
-		<div className="w-full rounded-lg border border-white/10 bg-black/20 overflow-hidden">
+		<div className="w-full rounded-lg border border-white/10 bg-white/8 overflow-hidden backdrop-blur-sm">
 			<button
 				onClick={onToggle}
-				className="flex w-full items-center justify-between px-4 py-3 text-left transition hover:bg-black/35 backdrop-blur-sm border-b border-white/10"
+				className="flex w-full items-center justify-between px-4 py-3 text-left transition hover:bg-white/10 backdrop-blur-sm border-b border-white/10"
 			>
 				<h3 className="text-lg font-semibold text-[#fafafa]">
 					Agent Actions ({events.length})
@@ -48,7 +48,7 @@ export function PipelineEventsCard({ events, isExpanded, onToggle }: PipelineEve
 									events.map((event) => (
 										<div
 											key={event.id}
-											className="rounded-lg border border-white/10 bg-black/25 p-4 backdrop-blur-sm"
+											className="rounded-lg border border-white/10 bg-white/8 p-4 backdrop-blur-sm"
 										>
 											<div className="mb-2 text-xs font-semibold text-white/70 uppercase tracking-wide">
 												{event.kind || 'Unknown'} {event.kind === 'summary' && '✓'}

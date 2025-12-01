@@ -191,7 +191,7 @@ export default function LongTermPage() {
 									<div className={`flex flex-col gap-6 ${industryDoneEvent && industryList.length > 0 && !hasSummary ? 'flex-1' : 'flex-1'}`}>
 										{/* Show error message if pipeline trigger failed */}
 										{pipelineError && (
-											<div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-4 text-yellow-400">
+											<div className="rounded-lg border border-white/10 bg-white/8 p-4 text-white/70">
 												<p className="text-sm">{pipelineError}</p>
 											</div>
 										)}
@@ -218,46 +218,46 @@ export default function LongTermPage() {
 											{hasSummary && summary && (
 												<div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4 animate-[fadeIn_0.4s_ease-out]">
 													<div
-														className="rounded-2xl border border-white/10 bg-linear-to-br from-[#1a1a1a] to-[#121212] p-5 shadow-lg shadow-black/30 flex flex-col gap-1"
+														className="rounded-xl border border-white/10 bg-white/8 p-4 text-white/70 backdrop-blur-sm flex flex-col gap-1"
 														style={{ animationDelay: "40ms" }}
 													>
-														<div className="text-[11px] font-medium uppercase tracking-[0.18em] text-gray-400">
+														<div className="text-xs uppercase tracking-wide text-white/45">
 															Total Stocks
 														</div>
-														<div className="text-2xl font-semibold text-white">
+														<div className="mt-2 text-2xl font-semibold text-[#fafafa]">
 															{summary.total_stocks}
 														</div>
 													</div>
 													<div
-														className="rounded-2xl border border-white/10 bg-linear-to-br from-[#1a1a1a] to-[#121212] p-5 shadow-lg shadow-black/30 flex flex-col gap-1"
+														className="rounded-xl border border-white/10 bg-white/8 p-4 text-white/70 backdrop-blur-sm flex flex-col gap-1"
 														style={{ animationDelay: "80ms" }}
 													>
-														<div className="text-[11px] font-medium uppercase tracking-[0.18em] text-gray-400">
+														<div className="text-xs uppercase tracking-wide text-white/45">
 															Total Trades
 														</div>
-														<div className="text-2xl font-semibold text-white">
+														<div className="mt-2 text-2xl font-semibold text-[#fafafa]">
 															{summary.total_trades}
 														</div>
 													</div>
 													<div
-														className="rounded-2xl border border-white/10 bg-linear-to-br from-[#1a1a1a] to-[#121212] p-5 shadow-lg shadow-black/30 flex flex-col gap-1"
+														className="rounded-xl border border-white/10 bg-white/8 p-4 text-white/70 backdrop-blur-sm flex flex-col gap-1"
 														style={{ animationDelay: "120ms" }}
 													>
-														<div className="text-[11px] font-medium uppercase tracking-[0.18em] text-gray-400">
+														<div className="text-xs uppercase tracking-wide text-white/45">
 															Total Invested
 														</div>
-														<div className="text-2xl font-semibold text-white">
+														<div className="mt-2 text-2xl font-semibold text-[#fafafa]">
 															₹{summary.total_invested?.toLocaleString()}
 														</div>
 													</div>
 													<div
-														className="rounded-2xl border border-white/10 bg-linear-to-br from-[#1a1a1a] to-[#121212] p-5 shadow-lg shadow-black/30 flex flex-col gap-1"
+														className="rounded-xl border border-white/10 bg-white/8 p-4 text-white/70 backdrop-blur-sm flex flex-col gap-1"
 														style={{ animationDelay: "160ms" }}
 													>
-														<div className="text-[11px] font-medium uppercase tracking-[0.18em] text-gray-400">
+														<div className="text-xs uppercase tracking-wide text-white/45">
 															Utilization Rate
 														</div>
-														<div className="text-2xl font-semibold text-white">
+														<div className="mt-2 text-2xl font-semibold text-[#fafafa]">
 															{summary.utilization_rate?.toFixed(1)}%
 														</div>
 													</div>
@@ -284,13 +284,13 @@ export default function LongTermPage() {
 
 										</div>
 									</div>
-								) : (
+									) : (
 									/* Show run pipeline button when no events */
 									!hasSummary && (
 										<>
 											{/* Show error message if pipeline trigger failed */}
 											{pipelineError && (
-												<div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-4 text-yellow-400 mb-4">
+												<div className="rounded-lg border border-white/10 bg-white/8 p-4 text-white/70 mb-4">
 													<p className="text-sm">{pipelineError}</p>
 												</div>
 											)}
@@ -312,7 +312,7 @@ export default function LongTermPage() {
 										<div className="flex flex-col items-center justify-center gap-6 py-4">
 											<div className="flex items-center gap-3">
 												{/* Pulsing dot */}
-												<div className="w-3 h-3 rounded-full bg-[#06B6D4] animate-pulse-dot"></div>
+												<div className="w-3 h-3 rounded-full bg-cyan-400 animate-pulse-dot"></div>
 												{/* Blinking text */}
 												<span className="text-white/70 text-lg font-medium animate-blink-text">
 													Thinking…

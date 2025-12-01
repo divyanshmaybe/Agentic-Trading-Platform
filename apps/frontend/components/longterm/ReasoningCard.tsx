@@ -14,7 +14,7 @@ export function ReasoningCard({ label, percentage, reasoning }: ReasoningCardPro
 
 	return (
 		<div
-			className="relative flex items-center justify-between gap-4 rounded-xl border border-white/5 bg-[#1b1b1b] p-4 transition-all hover:bg-[#242424] hover:border-white/20 hover:translate-y-px hover:shadow-[0_18px_40px_rgba(0,0,0,0.55)]"
+			className="relative flex items-center justify-between gap-4 rounded-xl border border-white/10 bg-white/8 p-4 transition-all hover:bg-white/10 hover:border-white/10 hover:translate-y-px hover:shadow-[0_18px_40px_rgba(0,0,0,0.55)] backdrop-blur-sm"
 			onMouseEnter={() => setIsHovered(true)}
 			onMouseLeave={() => setIsHovered(false)}
 		>
@@ -23,7 +23,7 @@ export function ReasoningCard({ label, percentage, reasoning }: ReasoningCardPro
 					💼
 				</span>
 				<div className="min-w-0">
-					<div className="text-sm font-semibold text-white">{label}</div>
+					<div className="text-sm font-semibold text-[#fafafa]">{label}</div>
 					<AnimatePresence>
 						{isHovered && reasoning && (
 							<motion.div
@@ -33,7 +33,7 @@ export function ReasoningCard({ label, percentage, reasoning }: ReasoningCardPro
 								transition={{ duration: 0.2, ease: "easeInOut" }}
 								className="overflow-hidden"
 							>
-								<p className="text-xs text-gray-400 leading-relaxed truncate">
+								<p className="text-xs text-white/60 leading-relaxed truncate">
 									{reasoning}
 								</p>
 							</motion.div>
