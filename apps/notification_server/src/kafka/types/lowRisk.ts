@@ -78,6 +78,23 @@ export interface LowRiskIndustryEventFetched {
 }
 
 /**
+ * INDUSTRY - DONE event
+ */
+export interface LowRiskIndustryEventDone {
+	userId: string;
+	kind: "industry";
+	status: "done";
+	content: {
+		industries: Array<{
+			name: string;
+			percentage: number;
+			reasoning: string;
+		}>;
+		message: string;
+	};
+}
+
+/**
  * STOCK - FETCHING event
  */
 export interface LowRiskStockEventFetching {
@@ -180,6 +197,7 @@ export type LowRiskEvent =
 	| LowRiskInfoEvent
 	| LowRiskIndustryEventFetching
 	| LowRiskIndustryEventFetched
+	| LowRiskIndustryEventDone
 	| LowRiskStockEventFetching
 	| LowRiskStockEventFetched
 	| LowRiskReportEventGenerating
@@ -196,7 +214,7 @@ export type LowRiskNormalized = {
 	userId: string;
 	kind: "info" | "industry" | "stock" | "report" | "reasoning" | "summary";
 	eventType: string | null;   // null for info/reasoning/summary, "industry"/"stock"/"report" for others
-	status: string | null;      // "fetching" | "fetched" | "generating" | "generated" | "thinking" | null
+	status: string | null;      // "fetching" | "fetched" | "done" | "generating" | "generated" | "thinking" | null
 	content: any | null;
 	rawPayload: any;            // full inner payload JSON
 	eventTime: Date;            // Required - strictly from Kafka message timestamp

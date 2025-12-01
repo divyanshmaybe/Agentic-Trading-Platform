@@ -17,7 +17,7 @@ const debug = false // set to true to see the raw events
 export function PipelineEventsList({ events }: PipelineEventsListProps) {
 	return (
 		<div className="w-full mt-6">
-			<div className="rounded-lg border border-white/10 bg-black/20 p-4">
+			<div className="rounded-lg border border-white/10 bg-white/8 p-4 backdrop-blur-sm">
 				<div className="mb-3 text-sm text-white/60">
 					Showing {events.length} event{events.length !== 1 ? 's' : ''} (including summary)
 				</div>
@@ -30,7 +30,7 @@ export function PipelineEventsList({ events }: PipelineEventsListProps) {
 								events.map((event) => (
 									<div
 										key={event.id}
-										className="rounded-lg border border-white/10 bg-black/25 p-4 backdrop-blur-sm"
+										className="rounded-lg border border-white/10 bg-white/8 p-4 backdrop-blur-sm"
 									>
 										<div className="mb-2 text-xs font-semibold text-white/70 uppercase tracking-wide">
 											{event.kind || 'Unknown'} {event.kind === 'summary' && '✓'}

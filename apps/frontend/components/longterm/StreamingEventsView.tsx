@@ -56,7 +56,7 @@ export function StreamingEventsView({ events }: StreamingEventsViewProps) {
 						events.map((event) => (
 							<div
 								key={event.id}
-								className="rounded-lg border border-white/10 bg-black/25 p-4 backdrop-blur-sm"
+								className="rounded-lg border border-white/10 bg-white/8 p-4 backdrop-blur-sm"
 							>
 								<pre className="text-xs text-white/90 whitespace-pre-wrap wrap-break-word font-mono">
 									{JSON.stringify(event, null, 2)}
@@ -66,7 +66,7 @@ export function StreamingEventsView({ events }: StreamingEventsViewProps) {
 					) : events.map((event) => (
 						<div
 							key={event.id}
-							className={newEventIds.has(event.id) ? "animate-event-enter" : ""}
+							className={newEventIds.has(event.id) ? "animate-event-enter no-scrollbar" : "no-scrollbar"}
 						>
 							<EventMessage event={event} />
 						</div>

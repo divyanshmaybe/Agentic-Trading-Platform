@@ -11,8 +11,7 @@ import { useAgentDashboard } from "@/hooks/useAgentDashboard"
 import { useLowRiskEvents } from "@/components/hooks/useLowRiskEvents"
 import { createDynamicPieChartData } from "@/components/dashboard/chartConfig"
 import {
-	PipelineEventsToggle,
-	PipelineEventsList,
+	PipelineEventsCard,
 	IndustryDistributionChart,
 	PortfolioAllocationChart,
 	EmptyStateMessage,
@@ -38,9 +37,18 @@ export default function LongTermPage() {
 		return events.find((event) => event.kind === "summary") || null
 	}, [events])
 
+	// Extract industry done event
+	const industryDoneEvent = useMemo(() => {
+		return events.find((event) => event.kind === "industry" && event.status === "done") || null
+	}, [events])
+
 	const industryList = useMemo(() => {
+		// Prioritize industry done event's industries, fallback to summary event's industries
+		if (industryDoneEvent?.content?.industries) {
+			return industryDoneEvent.content.industries
+		}
 		return summaryEvent?.content?.industry_list || []
-	}, [summaryEvent])
+	}, [industryDoneEvent, summaryEvent])
 
 	const finalPortfolio = useMemo(() => {
 		return summaryEvent?.content?.final_portfolio || []
@@ -170,7 +178,7 @@ export default function LongTermPage() {
 				{!agentLoading && !isAllocating && agentData !== null && (
 					<div className="w-full">
 						{/* Large centered message box with text and button inside */}
-						<div className="card-glass w-full min-h-screen rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_28px_65px_-38px_rgba(0,0,0,0.9)] backdrop-blur p-10 flex flex-col gap-6">
+						<div className={`card-glass w-full min-h-screen rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_28px_65px_-38px_rgba(0,0,0,0.9)] backdrop-blur p-10 ${industryDoneEvent && industryList.length > 0 && !hasSummary ? 'flex flex-row gap-6' : 'flex flex-col gap-6'}`}>
 							{!streaming ? (
 								/* Content when not streaming */
 								eventsLoading ? (
@@ -180,10 +188,10 @@ export default function LongTermPage() {
 									</div>
 								) : hasEvents ? (
 									/* Show toggleable events when events exist */
-									<div className="flex flex-1 flex-col gap-6">
+									<div className={`flex flex-col gap-6 ${industryDoneEvent && industryList.length > 0 && !hasSummary ? 'flex-1' : 'flex-1'}`}>
 										{/* Show error message if pipeline trigger failed */}
 										{pipelineError && (
-											<div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-4 text-yellow-400">
+											<div className="rounded-lg border border-white/10 bg-white/8 p-4 text-white/70">
 												<p className="text-sm">{pipelineError}</p>
 											</div>
 										)}
@@ -200,86 +208,89 @@ export default function LongTermPage() {
 
 										{/* Toggleable events section */}
 										<div className="flex-1 w-full space-y-8">
-											<PipelineEventsToggle
-												eventCount={events.length}
+											<PipelineEventsCard
+												events={allEvents}
 												isExpanded={showAllEvents}
 												onToggle={() => setShowAllEvents(!showAllEvents)}
 											/>
-
-											{showAllEvents && <PipelineEventsList events={allEvents} />}
 
 											{/* Summary metric cards */}
 											{hasSummary && summary && (
 												<div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4 animate-[fadeIn_0.4s_ease-out]">
 													<div
-														className="rounded-2xl border border-white/10 bg-linear-to-br from-[#1a1a1a] to-[#121212] p-5 shadow-lg shadow-black/30 flex flex-col gap-1"
+														className="rounded-xl border border-white/10 bg-white/8 p-4 text-white/70 backdrop-blur-sm flex flex-col gap-1"
 														style={{ animationDelay: "40ms" }}
 													>
-														<div className="text-[11px] font-medium uppercase tracking-[0.18em] text-gray-400">
+														<div className="text-xs uppercase tracking-wide text-white/45">
 															Total Stocks
 														</div>
-														<div className="text-2xl font-semibold text-white">
+														<div className="mt-2 text-2xl font-semibold text-[#fafafa]">
 															{summary.total_stocks}
 														</div>
 													</div>
 													<div
-														className="rounded-2xl border border-white/10 bg-linear-to-br from-[#1a1a1a] to-[#121212] p-5 shadow-lg shadow-black/30 flex flex-col gap-1"
+														className="rounded-xl border border-white/10 bg-white/8 p-4 text-white/70 backdrop-blur-sm flex flex-col gap-1"
 														style={{ animationDelay: "80ms" }}
 													>
-														<div className="text-[11px] font-medium uppercase tracking-[0.18em] text-gray-400">
+														<div className="text-xs uppercase tracking-wide text-white/45">
 															Total Trades
 														</div>
-														<div className="text-2xl font-semibold text-white">
+														<div className="mt-2 text-2xl font-semibold text-[#fafafa]">
 															{summary.total_trades}
 														</div>
 													</div>
 													<div
-														className="rounded-2xl border border-white/10 bg-linear-to-br from-[#1a1a1a] to-[#121212] p-5 shadow-lg shadow-black/30 flex flex-col gap-1"
+														className="rounded-xl border border-white/10 bg-white/8 p-4 text-white/70 backdrop-blur-sm flex flex-col gap-1"
 														style={{ animationDelay: "120ms" }}
 													>
-														<div className="text-[11px] font-medium uppercase tracking-[0.18em] text-gray-400">
+														<div className="text-xs uppercase tracking-wide text-white/45">
 															Total Invested
 														</div>
-														<div className="text-2xl font-semibold text-white">
+														<div className="mt-2 text-2xl font-semibold text-[#fafafa]">
 															₹{summary.total_invested?.toLocaleString()}
 														</div>
 													</div>
 													<div
-														className="rounded-2xl border border-white/10 bg-linear-to-br from-[#1a1a1a] to-[#121212] p-5 shadow-lg shadow-black/30 flex flex-col gap-1"
+														className="rounded-xl border border-white/10 bg-white/8 p-4 text-white/70 backdrop-blur-sm flex flex-col gap-1"
 														style={{ animationDelay: "160ms" }}
 													>
-														<div className="text-[11px] font-medium uppercase tracking-[0.18em] text-gray-400">
+														<div className="text-xs uppercase tracking-wide text-white/45">
 															Utilization Rate
 														</div>
-														<div className="text-2xl font-semibold text-white">
+														<div className="mt-2 text-2xl font-semibold text-[#fafafa]">
 															{summary.utilization_rate?.toFixed(1)}%
 														</div>
 													</div>
 												</div>
 											)}
 
-											{/* Pie Charts - shown when summary event exists */}
+											{/* Both charts inside card when summary event exists */}
 											{hasSummary && (industryList.length > 0 || finalPortfolio.length > 0) && (
 												<div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-													<IndustryDistributionChart
-														industryList={industryList}
-														chartData={industryChartData}
-													/>
-													<PortfolioAllocationChart
-														finalPortfolio={finalPortfolio}
-														chartData={portfolioChartData}
-													/>
+													{industryList.length > 0 && (
+														<IndustryDistributionChart
+															industryList={industryList}
+															chartData={industryChartData}
+														/>
+													)}
+													{finalPortfolio.length > 0 && (
+														<PortfolioAllocationChart
+															finalPortfolio={finalPortfolio}
+															chartData={portfolioChartData}
+														/>
+													)}
 												</div>
 											)}
+
 										</div>
 									</div>
-								) : (
+									) : (
 									/* Show run pipeline button when no events */
 									!hasSummary && (
 										<>
 											{/* Show error message if pipeline trigger failed */}
 											{pipelineError && (
-												<div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-4 text-yellow-400 mb-4">
+												<div className="rounded-lg border border-white/10 bg-white/8 p-4 text-white/70 mb-4">
 													<p className="text-sm">{pipelineError}</p>
 												</div>
 											)}
@@ -295,13 +306,13 @@ export default function LongTermPage() {
 								)
 							) : (
 								/* Streaming layout with events */
-								<div className="flex flex-1 flex-col gap-6">
+								<div className={`flex flex-col gap-6 ${industryDoneEvent && industryList.length > 0 && !hasSummary ? 'flex-1' : 'flex-1'}`}>
 									{/* Top section with AI thinking indicator */}
 									{!hasSummary && (
 										<div className="flex flex-col items-center justify-center gap-6 py-4">
 											<div className="flex items-center gap-3">
 												{/* Pulsing dot */}
-												<div className="w-3 h-3 rounded-full bg-[#06B6D4] animate-pulse-dot"></div>
+												<div className="w-3 h-3 rounded-full bg-cyan-400 animate-pulse-dot"></div>
 												{/* Blinking text */}
 												<span className="text-white/70 text-lg font-medium animate-blink-text">
 													Thinking…
@@ -310,22 +321,36 @@ export default function LongTermPage() {
 										</div>
 									)}
 
-									{/* Pie Charts - shown when summary event exists */}
-									{hasSummary && (industryList.length > 0 || finalPortfolio.length > 0) && (
-										<div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-											<IndustryDistributionChart
-												industryList={industryList}
-												chartData={industryChartData}
-											/>
-											<PortfolioAllocationChart
-												finalPortfolio={finalPortfolio}
-												chartData={portfolioChartData}
-											/>
-										</div>
-									)}
-
 									{/* Streaming events section inside the card */}
 									<StreamingEventsView events={events} />
+
+									{/* Both charts inside card when summary event exists (streaming) */}
+									{hasSummary && (industryList.length > 0 || finalPortfolio.length > 0) && (
+										<div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+											{industryList.length > 0 && (
+												<IndustryDistributionChart
+													industryList={industryList}
+													chartData={industryChartData}
+												/>
+											)}
+											{finalPortfolio.length > 0 && (
+												<PortfolioAllocationChart
+													finalPortfolio={finalPortfolio}
+													chartData={portfolioChartData}
+												/>
+											)}
+										</div>
+									)}
+								</div>
+							)}
+
+							{/* Industry chart on the right when industry done event exists (only if no summary) */}
+							{industryDoneEvent && industryList.length > 0 && !hasSummary && (
+								<div className="flex-1">
+									<IndustryDistributionChart
+										industryList={industryList}
+										chartData={industryChartData}
+									/>
 								</div>
 							)}
 						</div>

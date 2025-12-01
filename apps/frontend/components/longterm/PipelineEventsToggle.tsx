@@ -12,7 +12,7 @@ export function PipelineEventsToggle({ eventCount, isExpanded, onToggle }: Pipel
 	return (
 		<button
 			onClick={onToggle}
-			className="flex w-full items-center justify-between rounded-lg border border-white/10 bg-black/25 px-4 py-3 text-left transition hover:bg-black/35 backdrop-blur-sm mb-4"
+			className="flex w-full items-center justify-between rounded-lg bg-white/8 px-4 py-3 text-left transition hover:bg-white/10 backdrop-blur-sm mb-4"
 		>
 			<h3 className="text-lg font-semibold text-[#fafafa]">
 				Agent Actions ({eventCount})

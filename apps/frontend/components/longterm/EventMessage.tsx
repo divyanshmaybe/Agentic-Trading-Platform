@@ -20,7 +20,7 @@ export function EventMessage({ event }: EventMessageProps) {
 	// INFO event
 	if (kind === "info") {
 		return (
-			<div className="flex items-start gap-3 text-sm">
+			<div className="flex items-start gap-3 text-lg mr-4">
 				<Info className="w-4 h-4 text-cyan-400 mt-0.5 shrink-0" />
 				<div className="flex-1 text-white/90">
 					{typeof content === "string" ? content : content.message}
@@ -33,7 +33,7 @@ export function EventMessage({ event }: EventMessageProps) {
 	if (kind === "reasoning" && status === "thinking") {
 		const message = content?.message || "Thinking..."
 		return (
-			<div className="flex items-start gap-3 text-sm">
+			<div className="flex items-start gap-3 text-lg mr-4">
 				<Brain className="w-4 h-4 text-purple-400 mt-0.5 shrink-0" />
 				<div className="flex-1 text-white/90">
 					{message}
@@ -46,7 +46,7 @@ export function EventMessage({ event }: EventMessageProps) {
 	if (kind === "industry" && status === "fetching") {
 		const industries = content?.industries || []
 		return (
-			<div className="flex items-start gap-3 text-sm">
+			<div className="flex items-start gap-3 text-lg mr-4">
 				<Loader2 className="w-4 h-4 text-cyan-400 mt-0.5 shrink-0 animate-spin" />
 				<div className="flex-1 text-white/90">
 					<span className="text-white/70">Analyzing industries:</span>{" "}
@@ -63,7 +63,7 @@ export function EventMessage({ event }: EventMessageProps) {
 		const industryCount = industries.length
 
 		return (
-			<div className="flex items-start gap-3 text-sm">
+			<div className="flex items-start gap-3 text-lg mr-4">
 				<Building2 className="w-4 h-4 text-amber-300 mt-0.5 shrink-0" />
 				<div className="flex-1 text-white/90">
 					<div className="mb-1">
@@ -71,8 +71,38 @@ export function EventMessage({ event }: EventMessageProps) {
 						<span className="text-amber-200 font-medium">{industryCount} industries</span>
 					</div>
 					{Object.keys(metrics).length > 0 && (
-						<div className="mt-2 pl-4 border-l border-white/10 text-xs text-white/60">
+						<div className="mt-2 pl-4 border-l border-white/10 text-sm text-white/60">
 							Metrics calculated for {Object.keys(metrics).length} industry groups
+						</div>
+					)}
+				</div>
+			</div>
+		)
+	}
+
+	// INDUSTRY - DONE
+	if (kind === "industry" && status === "done") {
+		const industries = content?.industries || []
+		const message = content?.message || "Industry analysis complete."
+
+		return (
+			<div className="flex items-start gap-3 text-lg mr-4">	
+				<CheckCircle2 className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
+				<div className="flex-1 text-white/90">
+					<div className="mb-2">
+						<span className="text-emerald-300 font-semibold">{message}</span>
+					</div>
+					{industries.length > 0 && (
+						<div className="mt-2 pl-4 border-l border-white/10 space-y-1.5 text-sm text-white/70">
+							{industries.map((industry: any, idx: number) => (
+								<div key={idx}>
+									<span className="text-white/50">• {industry.name}:</span>{" "}
+									<span className="text-emerald-200 font-medium">{industry.percentage}%</span>
+									{industry.reasoning && (
+										<span className="text-white/60"> — {industry.reasoning}</span>
+									)}
+								</div>
+							))}
 						</div>
 					)}
 				</div>
@@ -84,7 +114,7 @@ export function EventMessage({ event }: EventMessageProps) {
 	if (kind === "stock" && status === "fetching") {
 		const ticker = content?.content || "Unknown"
 		return (
-			<div className="flex items-start gap-3 text-sm">
+			<div className="flex items-start gap-3 text-lg mr-4">
 				<Loader2 className="w-4 h-4 text-cyan-400 mt-0.5 shrink-0 animate-spin" />
 				<div className="flex-1 text-white/90">
 					<span className="text-white/70">Fetching data for</span>{" "}
@@ -98,7 +128,7 @@ export function EventMessage({ event }: EventMessageProps) {
 	if (kind === "stock" && status === "fetched") {
 		const ticker = content?.content || "Unknown"
 		return (
-			<div className="flex items-start gap-3 text-sm">
+			<div className="flex items-start gap-3 text-lg mr-4">
 				<TrendingUp className="w-4 h-4 text-emerald-300 mt-0.5 shrink-0" />
 				<div className="flex-1 text-white/90">
 					<span className="text-white/70">Data retrieved for</span>{" "}
@@ -112,7 +142,7 @@ export function EventMessage({ event }: EventMessageProps) {
 	if (kind === "report" && status === "generating") {
 		const ticker = content?.ticker || "Unknown"
 		return (
-			<div className="flex items-start gap-3 text-sm">
+			<div className="flex items-start gap-3 text-lg mr-4">
 				<Loader2 className="w-4 h-4 text-cyan-400 mt-0.5 shrink-0 animate-spin" />
 				<div className="flex-1 text-white/90">
 					<span className="text-white/70">Generating analysis report for</span>{" "}
@@ -126,7 +156,7 @@ export function EventMessage({ event }: EventMessageProps) {
 	if (kind === "report" && status === "generated") {
 		const ticker = content?.ticker || "Unknown"
 		return (
-			<div className="flex items-start gap-3 text-sm">
+			<div className="flex items-start gap-3 text-lg mr-4">
 				<FileText className="w-4 h-4 text-indigo-300 mt-0.5 shrink-0" />
 				<div className="flex-1 text-white/90">
 					<span className="text-white/70">Report generated for</span>{" "}
@@ -144,13 +174,13 @@ export function EventMessage({ event }: EventMessageProps) {
 		const tradeList = content?.trade_list || []
 
 		return (
-			<div className="flex items-start gap-3 text-sm">
+			<div className="flex items-start gap-3 text-lg mr-4">
 				<Sparkles className="w-4 h-4 text-purple-400 mt-0.5 shrink-0" />
 				<div className="flex-1 text-white/90">
 					<div className="mb-2">
 						<span className="text-purple-300 font-semibold">Portfolio Analysis Complete</span>
 					</div>
-					<div className="mt-2 space-y-1.5 pl-4 border-l border-white/10 text-xs text-white/70">
+					<div className="mt-2 space-y-1.5 pl-4 border-l border-white/10 text-sm text-white/70">
 						{summary.total_stocks && (
 							<div>
 								<span className="text-white/50">• Stocks analyzed:</span>{" "}
@@ -183,9 +213,9 @@ export function EventMessage({ event }: EventMessageProps) {
 
 	// Fallback for unknown event types
 	return (
-		<div className="flex items-start gap-3 text-sm">
+		<div className="flex items-start gap-3 text-lg mr-4">
 			<Info className="w-4 h-4 text-white/40 mt-0.5 shrink-0" />
-			<div className="flex-1 text-white/70 font-mono text-xs">
+			<div className="flex-1 text-white/70 font-mono text-sm">
 				{JSON.stringify({ kind, status, content }, null, 2)}
 			</div>
 		</div>
