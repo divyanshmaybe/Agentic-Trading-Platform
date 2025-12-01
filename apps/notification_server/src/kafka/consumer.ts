@@ -12,6 +12,7 @@ import {
 	isLowRiskStockEventFetched,
 	isLowRiskReportEventGenerating,
 	isLowRiskReportEventGenerated,
+	isLowRiskReasoningEvent,
 	isLowRiskSummaryEvent,
 	isLowRiskValueEnvelope,
 } from "./validators";
@@ -499,6 +500,10 @@ function parseLowRiskKafkaMessage(payload: EachMessagePayload): LowRiskNormalize
 	} else if (isLowRiskReportEventGenerated(event)) {
 		eventType = "report";
 		status = "generated";
+		content = event.content;
+	} else if (isLowRiskReasoningEvent(event)) {
+		eventType = null;
+		status = "thinking";
 		content = event.content;
 	} else if (isLowRiskSummaryEvent(event)) {
 		eventType = null;

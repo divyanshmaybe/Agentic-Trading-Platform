@@ -116,6 +116,11 @@ class LowRiskReportGeneratedEvent(LowRiskBase):
     status: Literal["generated"]
     content: dict
 
+class LowRiskReasoningEvent(LowRiskBase):
+    type: Literal["reasoning"]
+    status: Literal["thinking"]
+    content: dict
+
 class LowRiskSummaryEvent(LowRiskBase):
     type: Literal["summary"]
     content: dict
@@ -152,6 +157,12 @@ for i in range(7):
         user_id=user_id, type="info", content=random.choice(msgs)
     ).model_dump())
 
+# Reasoning event after initial info
+publish("reasoning_1", LowRiskReasoningEvent(
+    user_id=user_id, type="reasoning", status="thinking",
+    content={"message": "Analyzing macro indicators suggests we're in an overheating regime. Commodity sectors may outperform."}
+).model_dump())
+
 sleep_phase(3)
 
 # -------------------------------------------------------
@@ -171,6 +182,12 @@ publish("industry_fetching", LowRiskIndustryFetchingEvent(
     content={"industries": industries},
 ).model_dump())
 
+# Reasoning event before industry analysis
+publish("reasoning_2", LowRiskReasoningEvent(
+    user_id=user_id, type="reasoning", status="thinking",
+    content={"message": "Focusing on industries with strong momentum and inflation protection characteristics."}
+).model_dump())
+
 sleep_phase(3)
 
 metrics = {
@@ -184,6 +201,12 @@ metrics = {
 publish("industry_fetched", LowRiskIndustryFetchedEvent(
     user_id=user_id, type="industry", status="fetched",
     content={"industries": industries, "metrics": metrics},
+).model_dump())
+
+# Reasoning event after industry analysis
+publish("reasoning_3", LowRiskReasoningEvent(
+    user_id=user_id, type="reasoning", status="thinking",
+    content={"message": "Metals & Mining shows strong technical setup. Evaluating individual stocks with best risk-reward ratios."}
 ).model_dump())
 
 # -------------------------------------------------------
@@ -202,6 +225,13 @@ for t in tickers:
         }
     ).model_dump())
 
+# Reasoning event during stock selection
+if t == "HINDALCO":
+    publish("reasoning_4", LowRiskReasoningEvent(
+        user_id=user_id, type="reasoning", status="thinking",
+        content={"message": "HINDALCO shows strong fundamentals with low debt. Considering for portfolio allocation."}
+    ).model_dump())
+
 # -------------------------------------------------------
 # REPORT PHASE
 # -------------------------------------------------------
@@ -213,6 +243,12 @@ for t in ["IGL", "HINDALCO", "NATIONALUM"]:
     publish(f"report_generated_{t}", LowRiskReportGeneratedEvent(
         user_id=user_id, type="report", status="generated", content={"ticker": t}
     ).model_dump())
+
+# Reasoning event before final summary
+publish("reasoning_5", LowRiskReasoningEvent(
+    user_id=user_id, type="reasoning", status="thinking",
+    content={"message": "Portfolio construction complete. Optimizing allocation weights based on risk-adjusted returns and diversification principles."}
+).model_dump())
 
 # -------------------------------------------------------
 # FINAL SUMMARY — FULL STRUCTURE, SHORTENED TEXT
