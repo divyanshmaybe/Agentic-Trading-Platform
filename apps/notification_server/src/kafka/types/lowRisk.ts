@@ -126,6 +126,18 @@ export interface LowRiskReportEventGenerated {
 }
 
 /**
+ * REASONING event - AI reasoning/thinking messages
+ */
+export interface LowRiskReasoningEvent {
+	userId: string;
+	kind: "reasoning";
+	status: "thinking";
+	content: {
+		message: string;
+	};
+}
+
+/**
  * SUMMARY event
  */
 export interface LowRiskSummaryEvent {
@@ -172,6 +184,7 @@ export type LowRiskEvent =
 	| LowRiskStockEventFetched
 	| LowRiskReportEventGenerating
 	| LowRiskReportEventGenerated
+	| LowRiskReasoningEvent
 	| LowRiskSummaryEvent;
 
 /**
@@ -181,9 +194,9 @@ export type LowRiskEvent =
  */
 export type LowRiskNormalized = {
 	userId: string;
-	kind: "info" | "industry" | "stock" | "report" | "summary";
-	eventType: string | null;   // null for info/summary, "industry"/"stock"/"report" for others
-	status: string | null;      // "fetching" | "fetched" | "generating" | "generated" | null
+	kind: "info" | "industry" | "stock" | "report" | "reasoning" | "summary";
+	eventType: string | null;   // null for info/reasoning/summary, "industry"/"stock"/"report" for others
+	status: string | null;      // "fetching" | "fetched" | "generating" | "generated" | "thinking" | null
 	content: any | null;
 	rawPayload: any;            // full inner payload JSON
 	eventTime: Date;            // Required - strictly from Kafka message timestamp

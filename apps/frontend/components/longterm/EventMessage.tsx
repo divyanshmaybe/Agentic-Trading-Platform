@@ -1,6 +1,6 @@
 "use client"
 
-import { Loader2, CheckCircle2, Info, Building2, TrendingUp, FileText, Sparkles } from "lucide-react"
+import { Loader2, CheckCircle2, Info, Building2, TrendingUp, FileText, Sparkles, Brain } from "lucide-react"
 
 interface Event {
 	id: string
@@ -24,6 +24,19 @@ export function EventMessage({ event }: EventMessageProps) {
 				<Info className="w-4 h-4 text-cyan-400 mt-0.5 shrink-0" />
 				<div className="flex-1 text-white/90">
 					{typeof content === "string" ? content : content.message}
+				</div>
+			</div>
+		)
+	}
+
+	// REASONING event
+	if (kind === "reasoning" && status === "thinking") {
+		const message = content?.message || "Thinking..."
+		return (
+			<div className="flex items-start gap-3 text-sm">
+				<Brain className="w-4 h-4 text-purple-400 mt-0.5 shrink-0" />
+				<div className="flex-1 text-white/90">
+					{message}
 				</div>
 			</div>
 		)

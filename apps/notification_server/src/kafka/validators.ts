@@ -13,6 +13,7 @@ import {
 	LowRiskStockEventFetched,
 	LowRiskReportEventGenerating,
 	LowRiskReportEventGenerated,
+	LowRiskReasoningEvent,
 	LowRiskSummaryEvent,
 	LowRiskValueEnvelope,
 } from "./types/lowRisk";
@@ -251,6 +252,33 @@ export function isLowRiskReportEventGenerated(obj: any): obj is LowRiskReportEve
 }
 
 /**
+ * Type guard for LowRiskReasoningEvent
+ */
+export function isLowRiskReasoningEvent(obj: any): obj is LowRiskReasoningEvent {
+	if (!isObject(obj)) {
+		return false;
+	}
+
+	if (!hasStringField(obj, "userId")) {
+		return false;
+	}
+
+	if (obj.kind !== "reasoning") {
+		return false;
+	}
+
+	if (obj.status !== "thinking") {
+		return false;
+	}
+
+	if (!isObject(obj.content) || typeof obj.content.message !== "string") {
+		return false;
+	}
+
+	return true;
+}
+
+/**
  * Type guard for LowRiskSummaryEvent
  */
 export function isLowRiskSummaryEvent(obj: any): obj is LowRiskSummaryEvent {
@@ -302,6 +330,7 @@ export function isLowRiskEvent(obj: any): obj is LowRiskEvent {
 		isLowRiskStockEventFetched(obj) ||
 		isLowRiskReportEventGenerating(obj) ||
 		isLowRiskReportEventGenerated(obj) ||
+		isLowRiskReasoningEvent(obj) ||
 		isLowRiskSummaryEvent(obj)
 	);
 }
