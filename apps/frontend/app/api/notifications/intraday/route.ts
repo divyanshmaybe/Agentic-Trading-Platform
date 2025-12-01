@@ -45,8 +45,6 @@ export async function GET(request: NextRequest) {
         headers: { "content-type": "application/json" },
       }
     );
-  } finally {
-    await prisma.$disconnect();
   }
 }
 

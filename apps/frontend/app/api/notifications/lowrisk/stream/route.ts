@@ -155,8 +155,6 @@ export async function GET(request: NextRequest) {
           isCancelled
         );
         closeStream();
-      } finally {
-        await prisma.$disconnect();
       }
     },
     async cancel() {

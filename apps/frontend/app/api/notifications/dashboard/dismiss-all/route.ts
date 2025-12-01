@@ -75,7 +75,5 @@ export async function POST(request: NextRequest) {
         headers: { "content-type": "application/json" },
       }
     );
-  } finally {
-    await prisma.$disconnect();
   }
 }
