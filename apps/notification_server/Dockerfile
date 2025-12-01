@@ -36,6 +36,9 @@ COPY types ./types
 COPY middleware ./middleware
 COPY apps/notification_server ./apps/notification_server
 
+# Remove .env from shared/prisma to avoid conflicts during Docker build
+RUN rm -f shared/prisma/.env
+
 RUN pnpm install --offline --filter notification_server... \
 	&& pnpm --filter notification_server run build \
 	&& pnpm prune --prod

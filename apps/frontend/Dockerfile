@@ -33,6 +33,9 @@ COPY shared ./shared
 COPY types ./types
 COPY apps/frontend ./apps/frontend
 
+# Remove .env from shared/prisma to avoid conflicts during Docker build
+RUN rm -f shared/prisma/.env
+
 RUN pnpm install --offline --filter frontend... \
     && npx prisma generate --schema=./shared/prisma/schema.prisma \
     && pnpm --filter frontend run build \

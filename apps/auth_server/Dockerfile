@@ -36,6 +36,9 @@ COPY types ./types
 COPY middleware ./middleware
 COPY apps/auth_server ./apps/auth_server
 
+# Remove .env from shared/prisma to avoid conflicts during Docker build
+RUN rm -f shared/prisma/.env
+
 RUN pnpm install --offline --filter auth_server... \
 	&& pnpm --filter auth_server run prisma:generate \
 	&& pnpm --filter auth_server run build \
