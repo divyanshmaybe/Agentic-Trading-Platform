@@ -22,11 +22,11 @@ export function PipelineEventsCard({ events, isExpanded, onToggle }: PipelineEve
 		<div className="w-full rounded-lg border border-white/10 bg-white/8 overflow-hidden backdrop-blur-sm">
 			<button
 				onClick={onToggle}
-				className="flex w-full items-center justify-between px-4 py-3 text-left transition hover:bg-white/10 backdrop-blur-sm border-b border-white/10"
+				className="flex w-full items-center justify-between px-4 py-3 text-left transition backdrop-blur-sm"
 			>
-				<h3 className="text-lg font-semibold text-[#fafafa]">
+				<p className="text-lg font-semibold text-white/70 font-sans">
 					Agent Actions ({events.length})
-				</h3>
+				</p>
 				{isExpanded ? (
 					<ChevronUp className="h-5 w-5 text-white/70" />
 				) : (
@@ -39,7 +39,7 @@ export function PipelineEventsCard({ events, isExpanded, onToggle }: PipelineEve
 					<div className="mb-3 text-sm text-white/60">
 						Showing {events.length} event{events.length !== 1 ? 's' : ''} (including summary)
 					</div>
-					<div className="max-h-[600px] overflow-y-auto">
+					<div className="max-h-[600px] overflow-y-auto no-scrollbar">
 						<div className="space-y-4">
 							{events.length === 0 ? (
 								<div className="text-white/60 text-sm text-center py-4">No events to display</div>

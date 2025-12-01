@@ -66,7 +66,7 @@ export function StreamingEventsView({ events }: StreamingEventsViewProps) {
 					) : events.map((event) => (
 						<div
 							key={event.id}
-							className={newEventIds.has(event.id) ? "animate-event-enter" : ""}
+							className={newEventIds.has(event.id) ? "animate-event-enter no-scrollbar" : "no-scrollbar"}
 						>
 							<EventMessage event={event} />
 						</div>
