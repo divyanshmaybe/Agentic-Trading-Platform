@@ -122,7 +122,24 @@ export function useLowRiskEvents(): UseLowRiskEventsReturn {
     setStatus("connecting");
     setStreaming(true);
 
-    const eventSource = new EventSource("/api/notifications/lowrisk/stream", {
+    // Find the most recent event to resume from where we left off
+    const lastEvent = events.length > 0 
+      ? events.reduce((latest, current) => 
+          current.createdAt > latest.createdAt ? current : latest
+        )
+      : null;
+
+    // Build URL with lastEventId and lastEventCreatedAt if we have events
+    let streamUrl = "/api/notifications/lowrisk/stream";
+    if (lastEvent) {
+      const params = new URLSearchParams({
+        lastEventId: lastEvent.id,
+        lastEventCreatedAt: lastEvent.createdAt.toISOString(),
+      });
+      streamUrl = `${streamUrl}?${params.toString()}`;
+    }
+
+    const eventSource = new EventSource(streamUrl, {
       withCredentials: true,
     });
     eventSourceRef.current = eventSource;

@@ -87,22 +87,41 @@ export class LowRiskSubscriber {
     // Note: This is async but can be called without await in cleanup handlers
     return {
       unsubscribe: () => {
-        if (subscriber && isSubscribed) {
-          // Fire and forget - don't block cleanup
-          (async () => {
-            try {
-              await subscriber!.unsubscribe(channel);
-              await subscriber!.quit();
-              console.log(
-                `[LowRisk SSE] Unsubscribed from lowrisk:user:${userId}`
-              );
-            } catch (error) {
+        if (!subscriber || !isSubscribed) {
+          return;
+        }
+        
+        const subToClose = subscriber;
+        subscriber = null;
+        isSubscribed = false;
+        
+        // Fire and forget - don't block cleanup
+        (async () => {
+          try {
+            // Check if connection is still valid before unsubscribing
+            if (subToClose.status === "ready" || subToClose.status === "connect") {
+              await subToClose.unsubscribe(channel);
+            }
+            // Always try to quit, even if unsubscribe failed
+            if (subToClose.status !== "end" && subToClose.status !== "close") {
+              await subToClose.quit();
+            }
+            console.log(
+              `[LowRisk SSE] Unsubscribed from lowrisk:user:${userId}`
+            );
+          } catch (error) {
+            // Silently handle errors - connection might already be closed
+            if (error instanceof Error && !error.message.includes("Connection is closed")) {
               console.error("[LowRisk SSE] Error unsubscribing:", error);
             }
-          })();
-          subscriber = null;
-          isSubscribed = false;
-        }
+            // Try to disconnect anyway
+            try {
+              subToClose.disconnect();
+            } catch (disconnectError) {
+              // Ignore disconnect errors
+            }
+          }
+        })();
       },
     };
   }

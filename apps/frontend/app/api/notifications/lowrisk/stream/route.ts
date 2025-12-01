@@ -20,6 +20,12 @@ export async function GET(request: NextRequest) {
 
   const userId = auth.user._id;
   const prisma = getPrismaClient();
+  
+  // Get lastEventId from query params to resume from where we left off
+  const { searchParams } = new URL(request.url);
+  const lastEventId = searchParams.get("lastEventId");
+  const lastEventCreatedAt = searchParams.get("lastEventCreatedAt");
+  
   let closed = false;
   let unsubscribe: (() => void) | null = null;
   let keepAliveTimer: NodeJS.Timeout | null = null;
@@ -45,9 +51,31 @@ export async function GET(request: NextRequest) {
         // Send initial retry interval
         controller.enqueue(textEncoder.encode("retry: 5000\n\n"));
 
-        // Query DB for initial low-risk events
+        // Build query to fetch only events after the last known event
+        const whereClause: any = { userId };
+        
+        if (lastEventId || lastEventCreatedAt) {
+          // If we have a lastEventId, find that event first to get its createdAt
+          if (lastEventId) {
+            const lastEvent = await prisma.lowRiskEvent.findUnique({
+              where: { id: lastEventId },
+              select: { createdAt: true },
+            });
+            
+            if (lastEvent) {
+              // Fetch events created after the last event's createdAt
+              whereClause.createdAt = { gt: lastEvent.createdAt };
+            }
+          } else if (lastEventCreatedAt) {
+            // If we have a timestamp directly, use it
+            const lastCreatedAt = new Date(lastEventCreatedAt);
+            whereClause.createdAt = { gt: lastCreatedAt };
+          }
+        }
+
+        // Query DB for events after the last known event (or all if no lastEventId)
         const initialEvents = await prisma.lowRiskEvent.findMany({
-          where: { userId },
+          where: whereClause,
           orderBy: { createdAt: "asc" },
         });
 
@@ -65,7 +93,7 @@ export async function GET(request: NextRequest) {
         }));
 
         console.log(
-          `[LowRisk SSE] Fetched ${eventDTOs.length} historical events for user ${userId}`
+          `[LowRisk SSE] Fetched ${eventDTOs.length} historical events for user ${userId}${lastEventId ? ` (resuming after event ${lastEventId})` : ""}`
         );
 
         // Send initial events
