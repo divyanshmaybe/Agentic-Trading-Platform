@@ -6,7 +6,6 @@
  * - Value envelope: { key (userId), value (JSON string), headers, diff, time (IGNORED) }
  * - Inner payload: JSON parsed from value.value string
  */
-
 import { EachMessagePayload } from "kafkajs";
 
 /**
@@ -91,6 +90,18 @@ export interface LowRiskStockEventFetching {
 }
 
 /**
+ * STOCK - FETCHED event
+ */
+export interface LowRiskStockEventFetched {
+	userId: string;
+	kind: "stock";
+	status: "fetched";
+	content: {
+		content: string;          // ticker symbol
+	};
+}
+
+/**
  * REPORT - GENERATING event
  */
 export interface LowRiskReportEventGenerating {
@@ -158,6 +169,7 @@ export type LowRiskEvent =
 	| LowRiskIndustryEventFetching
 	| LowRiskIndustryEventFetched
 	| LowRiskStockEventFetching
+	| LowRiskStockEventFetched
 	| LowRiskReportEventGenerating
 	| LowRiskReportEventGenerated
 	| LowRiskSummaryEvent;
