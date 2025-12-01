@@ -11,8 +11,7 @@ import { useAgentDashboard } from "@/hooks/useAgentDashboard"
 import { useLowRiskEvents } from "@/components/hooks/useLowRiskEvents"
 import { createDynamicPieChartData } from "@/components/dashboard/chartConfig"
 import {
-	PipelineEventsToggle,
-	PipelineEventsList,
+	PipelineEventsCard,
 	IndustryDistributionChart,
 	PortfolioAllocationChart,
 	EmptyStateMessage,
@@ -209,13 +208,11 @@ export default function LongTermPage() {
 
 										{/* Toggleable events section */}
 										<div className="flex-1 w-full space-y-8">
-											<PipelineEventsToggle
-												eventCount={events.length}
+											<PipelineEventsCard
+												events={allEvents}
 												isExpanded={showAllEvents}
 												onToggle={() => setShowAllEvents(!showAllEvents)}
 											/>
-
-											{showAllEvents && <PipelineEventsList events={allEvents} />}
 
 											{/* Summary metric cards */}
 											{hasSummary && summary && (

@@ -1,6 +1,7 @@
 export { ReasoningCard } from "./ReasoningCard"
 export { PipelineEventsToggle } from "./PipelineEventsToggle"
 export { PipelineEventsList } from "./PipelineEventsList"
+export { PipelineEventsCard } from "./PipelineEventsCard"
 export { IndustryDistributionChart } from "./IndustryDistributionChart"
 export { PortfolioAllocationChart } from "./PortfolioAllocationChart"
 export { PipelineControlButton } from "./PipelineControlButton"
