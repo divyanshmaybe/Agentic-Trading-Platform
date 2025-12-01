@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 from pipelines.low_risk.stock_selection_pipeline import StockSelectionPipeline
 from pipelines.low_risk.industry_pipeline import IndustrySelectionPipeline
 from pipelines.low_risk.industry_indicators_pipeline import IndustryIndicatorsPipeline
+from pipelines.low_risk.fundamental_analyzer_pipeline import FundamentalAnalyzerPipeline
 from utils.economic_indicators_storage import get_storage
 
 
@@ -169,6 +170,12 @@ def main():
             Demo=True
         )
         industry_indicators.compute()
+        
+        # Run fundamental analyzer pipeline
+        logger.info("\n📊 Running fundamental analyzer pipeline...")
+        fundamental_pipeline = FundamentalAnalyzerPipeline()
+        fundamental_result = fundamental_pipeline.run()
+        logger.info(f"✓ Computed fundamental metrics for {len(fundamental_result.dataframe)} tickers")
         
         # Create industry selection pipeline
         logger.info("\n🏭 Creating industry selection pipeline...")
