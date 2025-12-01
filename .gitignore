@@ -11,6 +11,7 @@ node_modules
 .env.production.local
 
 .venv
+agent_venv
 
 # Testing
 coverage
@@ -53,7 +54,7 @@ apps/portfolio-server/docs/angelone_tokens.json
 kubeconfig
 os
 os.lock
-.python-version 
+.python-version
 torch
 
 celerybeat-schedule*

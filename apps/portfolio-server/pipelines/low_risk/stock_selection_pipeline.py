@@ -11,7 +11,8 @@ import os
 import sys
 import threading
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Coroutine
+from typing import Dict, List, Optional, Any, Coroutine, Annotated
+from operator import add
 
 # Add shared/py to sys.path
 shared_dir = Path(__file__).resolve().parent.parent.parent.parent.parent / "shared" / "py"
@@ -20,10 +21,11 @@ if str(shared_dir) not in sys.path:
 
 import pandas as pd
 from company_report_service import CompanyReportService
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.tools import tool
+from langchain_core.messages import AnyMessage, HumanMessage, SystemMessage, ToolMessage, AIMessage
+from langchain.tools import tool, InjectedToolCallId, ToolRuntime
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.agents import create_agent
+from langchain.agents import create_agent, AgentState
+from langgraph.types import Command
 
 from utils.low_risk_utils import (
     trade_converter,
@@ -63,7 +65,7 @@ class StockSelectionPipeline:
 
         self.company_df = company_df
         self.industry_list = industry_list
-        
+
         # Kafka publisher
         self.kafka = LowRiskKafkaPublisher()
         self.publisher = self.kafka.get_publisher()
@@ -75,10 +77,10 @@ class StockSelectionPipeline:
             if not gemini_api_key:
                 raise ValueError("GEMINI_API_KEY not found")
         self.gemini_api_key = gemini_api_key
-        
+
         # Initialize CompanyReportService
         self.report_service = CompanyReportService.get_instance()
-        
+
         # Background event loop for async tasks (company reports)
         self._background_loop: Optional[asyncio.AbstractEventLoop] = None
         self._loop_thread: Optional[threading.Thread] = None
@@ -90,22 +92,22 @@ class StockSelectionPipeline:
     async def generate_company_report(self, ticker: str) -> Dict[str, Any]:
         """
         Generate company report - checks DB/cache first, generates if not found.
-        
+
         This method is called WITHIN a thread's event loop.
         """
         try:
             # Initialize report service (safe to call multiple times)
             await self.report_service.initialize()
-            
+
             # Check MongoDB/Redis cache first
             existing_report = await self.report_service.get_report_by_ticker(ticker)
             if existing_report:
                 logger.info(f"📋 Found existing report in DB for {ticker}")
                 return existing_report
-            
+
             # Generate new report
             logger.info(f"🔍 Generating fresh company report for {ticker}")
-            
+
             # Load prompt
             company_report_prompt = load_prompt_from_template("company_report_generation_prompt")
 
@@ -121,11 +123,11 @@ class StockSelectionPipeline:
                 SystemMessage(content=company_report_prompt),
                 HumanMessage(content=f"Generate a report on the company {ticker}")
             ]
-            
+
             msg = f"🔍 Generating company report for {ticker}..."
             logger.info(msg)
             publish_to_kafka({"content": msg}, user_id=self.user_id)
-            
+
             response = model_with_search.invoke(messages)
             report_text = response.content
 
@@ -136,22 +138,22 @@ class StockSelectionPipeline:
                 clean_markdown=True,
                 extract_json=True
             )
-            
+
             # Add ticker
             if "ticker" not in report:
                 report["ticker"] = ticker
-            
+
             # Store to MongoDB
             logger.info(f"💾 Storing report to MongoDB for {ticker}...")
             await self.report_service.upsert_report(report)
             logger.info(f"✅ Report stored to MongoDB for {ticker}")
-            
+
             msg = f"✅ Company report generated for {ticker}"
             logger.info(msg)
             publish_to_kafka({"content": msg}, user_id=self.user_id)
-            
+
             return report
-            
+
         except Exception as e:
             logger.error(f"Error generating company report for {ticker}: {e}", exc_info=True)
             if "rate limit" in str(e).lower() or "quota" in str(e).lower():
@@ -182,17 +184,17 @@ class StockSelectionPipeline:
     def create_company_report_tool(self, gemini_api_key: str) -> Any:
         """
         Create the company_report_tool function that can be used by the LLM agent.
-        
+
         This uses ThreadPoolExecutor to run async code in a dedicated thread.
         """
 
         @tool
         def company_report_tool(ticker: str) -> Dict[str, Any]:
             """
-            Generate a company report for the given ticker. 
+            Generate a company report for the given ticker.
 
             Input:
-            - ticker: NIFTY ticker symbol of the company. 
+            - ticker: NIFTY ticker symbol of the company.
 
             Output:
             - A dictionary containing the company report.
@@ -214,24 +216,24 @@ class StockSelectionPipeline:
                     "content": {"ticker": ticker}
                 }
                 publish_to_kafka(to_send, user_id=self.user_id, message_type="report")
-                
+
                 # Run async workflow on dedicated loop
                 report = self._run_in_background_loop(
                     self.generate_company_report(ticker),
                     timeout=180.0,
                 )
-                
+
                 # Cache the result
                 company_report_db[ticker] = report
-                
+
                 to_send = {
                     "status": "generated",
                     "content": {"ticker": ticker}
                 }
                 publish_to_kafka(to_send, user_id=self.user_id, message_type="report")
-                
+
                 return report
-                
+
             except concurrent.futures.TimeoutError:
                 logger.error(f"Timeout generating report for {ticker}")
                 return {
@@ -272,6 +274,63 @@ class StockSelectionPipeline:
                 }
 
         return company_report_tool
+
+    def create_reasoning_tool(self, gemini_api_key: str, industry: str, company_df: pd.DataFrame) -> Any:
+        """
+        Create the reasoning_tool function that can be used by the LLM agent.
+        """
+        strategy_prompt = load_prompt_from_template("strategy_handbook")
+        reasoning_prompt = load_prompt_from_template("reasoning_prompt")
+        # Get company prompt for this industry
+        company_prompt = self.get_company_prompt(industry, company_df)
+        @tool
+        def reasoning_tool(runtime: ToolRuntime, tool_call_id: Annotated[str, InjectedToolCallId]) -> Command:
+            """
+            Generate a reasoning for extracted information
+            Input:
+            No input required
+            Output:
+            - A string of reasoning tokens with proper analysis, interpretation, and possible next steps.
+            """
+            reasoning_llm = ChatGoogleGenerativeAI(model="gemini-3-pro-review")
+            messages = runtime.state["messages"]
+            reasoning_messages = runtime.state["reasoning_messages"]
+            if len(reasoning_messages) == 0:
+                reasoning_messages.append(render_prompt_template(
+                    reasoning_prompt,
+                    company_prompt=company_prompt,
+                    strategy_prompt=strategy_prompt
+                ))
+
+            if len(messages) >= 2 and isinstance(messages[-2], ToolMessage):
+                # last tool name
+                last_tn = messages[-2].name
+                # last tool message
+                last_tm = messages[-2].content
+                new_reasoning_message = reasoning_llm.invoke(reasoning_messages + [HumanMessage(
+                    f"New Tool Call for {last_tn} with output {last_tm}"
+                )])
+
+                reasoning = new_reasoning_message.content
+            else:
+                reasoning = ""
+                new_reasoning_message = AIMessage("")
+            msg = reasoning
+            to_send = {
+                "status": "thinking",
+                "content": {
+                    "message": msg
+                }
+            }
+            publish_to_kafka(to_send, user_id=self.user_id, message_type="reasoning")
+
+            return Command(
+                update={
+                    "messages": [ToolMessage(content=reasoning, tool_call_id=tool_call_id)],
+                    "reasoning_messages": [new_reasoning_message]
+                }
+            )
+        return reasoning_tool
 
     def get_company_prompt(self, industry: str, company_df: pd.DataFrame) -> str:
         """Generate a prompt containing company descriptions for an industry."""
@@ -331,11 +390,17 @@ class StockSelectionPipeline:
 
             # Create company report tool
             company_tool = self.create_company_report_tool(self.gemini_api_key)
-    
+            reasoning_tool = self.create_reasoning_tool(self.gemini_api_key, industry, company_df)
+
+            class StockWithReasonState(AgentState):
+                reasoning_messages: Annotated[list[AnyMessage], add]
+
             # Create agent
             stock_selection_agent = create_agent(
                 model=llm,
-                tools=[company_tool]
+                tools=[company_tool, reasoning_tool],
+                system_prompt=rendered_prompt,
+                state_schema=StockWithReasonState
             )
 
             # Invoke agent
@@ -348,7 +413,6 @@ class StockSelectionPipeline:
             for chunk in stock_selection_agent.stream(
                 {
                     "messages": [
-                        SystemMessage(content=rendered_prompt),
                         HumanMessage(
                             content="Select 3-5 stocks that best fit the investment strategy."
                         )
@@ -361,15 +425,16 @@ class StockSelectionPipeline:
                 if len(new_message) > 0 and hasattr(new_message[0], 'additional_kwargs'):
                     fnc_call = new_message[0].additional_kwargs.get("function_call", None)
                     if fnc_call is not None:
-                        ticker = json.loads(fnc_call["arguments"])["ticker"]
-                        to_send = {
-                            "status": "fetching",
-                            "content": {"content": ticker}
-                        }
-                        publish_to_kafka(to_send, user_id=self.user_id, message_type="stock")
-            
+                        if fnc_call["name"] == "company_report_tool":
+                            ticker = json.loads(fnc_call["arguments"])["ticker"]
+                            to_send = {
+                                "status": "fetching",
+                                "content": {"content": ticker}
+                            }
+                            publish_to_kafka(to_send, user_id=self.user_id, message_type="stock")
+
             result = {"messages": messages}
-            
+
             # Parse response
             ind_portfolio = clean_and_parse_agent_json_response(result, expected_type=list)
 
@@ -387,7 +452,7 @@ class StockSelectionPipeline:
                 relative_percentage = float(item["percentage"])
                 absolute_percentage = (relative_percentage / 100.0) * industry_allocation
                 item["percentage"] = absolute_percentage
-                
+
             msg = f"✅ Stock selection complete for {industry}: {len(ind_portfolio)} stocks selected"
             logger.info(msg)
             publish_to_kafka({"content": msg}, user_id=self.user_id)
@@ -443,7 +508,7 @@ class StockSelectionPipeline:
         msg = f"✅ Stock portfolio complete: {len(final_portfolio)} stocks, total allocation: {total_allocation:.1f}%"
         logger.info(msg)
         publish_to_kafka({"content": msg}, user_id=self.user_id)
-        
+
         # Normalize if needed
         if abs(total_allocation - 100.0) > 1.0:
             logger.warning(f"Normalizing portfolio allocation from {total_allocation}% to 100%")
@@ -491,9 +556,9 @@ class StockSelectionPipeline:
             msg = f"💰 Converting portfolio to trades (fund: ₹{fund_allocated:,.2f})..."
             logger.info(msg)
             publish_to_kafka({"content": msg}, user_id=self.user_id)
-            
+
             trade_list = trade_converter(final_portfolio, fund_allocated)
-            
+
             msg = f"✅ Trade list generated: {len(trade_list)} trades"
             logger.info(msg)
             publish_to_kafka({"content": msg}, user_id=self.user_id)
@@ -509,7 +574,7 @@ class StockSelectionPipeline:
             f"📈 Portfolio summary: {len(trade_list)} trades, "
             f"₹{total_invested:,.2f} invested, {total_shares:,.0f} shares"
         )
-        
+
         res = {
             "industry_list": industry_list,
             "final_portfolio": final_portfolio,
@@ -523,7 +588,7 @@ class StockSelectionPipeline:
                 "utilization_rate": (total_invested / fund_allocated) * 100.0
             }
         }
-        
+
         publish_to_kafka({"content": res}, user_id=self.user_id, message_type="summary")
         return res
 
