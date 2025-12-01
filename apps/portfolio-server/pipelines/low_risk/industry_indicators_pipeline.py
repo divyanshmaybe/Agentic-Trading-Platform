@@ -264,6 +264,32 @@ class IndustryIndicatorsPipeline:
         return ticker_industry_map
 
     @staticmethod
+    def _round_numeric_columns(df: pl.DataFrame, decimals: int = 3) -> pl.DataFrame:
+        """
+        Round all numeric (float) columns in a Polars DataFrame to specified decimal places.
+        
+        Args:
+            df: Polars DataFrame
+            decimals: Number of decimal places to round to
+            
+        Returns:
+            DataFrame with rounded numeric columns
+        """
+        if df.is_empty():
+            return df
+        
+        # Get all float columns
+        float_cols = [col for col in df.columns if df[col].dtype in (pl.Float32, pl.Float64)]
+        
+        if not float_cols:
+            return df
+        
+        # Round each float column
+        return df.with_columns([
+            pl.col(col).round(decimals).alias(col) for col in float_cols
+        ])
+
+    @staticmethod
     def _rsi_wilder_polars(close_series: pl.Series, length: int = 14) -> pl.Series:
         delta = close_series.diff()
 
@@ -815,6 +841,9 @@ class IndustryIndicatorsPipeline:
             self.per_ticker_df, tidy
         )
 
+        # Round all numeric columns to 3 decimal places
+        self.per_ticker_df = self._round_numeric_columns(self.per_ticker_df, decimals=3)
+        self.industry_summary_df = self._round_numeric_columns(self.industry_summary_df, decimals=3)
 
         self._is_computed = True
         logger.info("✅ Computation complete!")
