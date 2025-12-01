@@ -44,6 +44,10 @@ export default function LongTermPage() {
 		return summaryEvent?.content?.final_portfolio || []
 	}, [summaryEvent])
 
+	const summary = useMemo(() => {
+		return summaryEvent?.content?.summary || null
+	}, [summaryEvent])
+
 	// Create pie chart data
 	const industryChartData = useMemo(() => createDynamicPieChartData(industryList), [industryList])
 	const portfolioChartData = useMemo(() => createDynamicPieChartData(finalPortfolio), [finalPortfolio])
@@ -123,7 +127,7 @@ export default function LongTermPage() {
 										)}
 
 										{/* Toggleable events section */}
-										<div className="flex-1 w-full">
+										<div className="flex-1 w-full space-y-8">
 											<PipelineEventsToggle
 												eventCount={events.length}
 												isExpanded={showAllEvents}
@@ -132,9 +136,59 @@ export default function LongTermPage() {
 
 											{showAllEvents && <PipelineEventsList events={allEvents} />}
 
+											{/* Summary metric cards */}
+											{hasSummary && summary && (
+												<div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4 animate-[fadeIn_0.4s_ease-out]">
+													<div
+														className="rounded-2xl border border-white/10 bg-linear-to-br from-[#1a1a1a] to-[#121212] p-5 shadow-lg shadow-black/30 flex flex-col gap-1"
+														style={{ animationDelay: "40ms" }}
+													>
+														<div className="text-[11px] font-medium uppercase tracking-[0.18em] text-gray-400">
+															Total Stocks
+														</div>
+														<div className="text-2xl font-semibold text-white">
+															{summary.total_stocks}
+														</div>
+													</div>
+													<div
+														className="rounded-2xl border border-white/10 bg-linear-to-br from-[#1a1a1a] to-[#121212] p-5 shadow-lg shadow-black/30 flex flex-col gap-1"
+														style={{ animationDelay: "80ms" }}
+													>
+														<div className="text-[11px] font-medium uppercase tracking-[0.18em] text-gray-400">
+															Total Trades
+														</div>
+														<div className="text-2xl font-semibold text-white">
+															{summary.total_trades}
+														</div>
+													</div>
+													<div
+														className="rounded-2xl border border-white/10 bg-linear-to-br from-[#1a1a1a] to-[#121212] p-5 shadow-lg shadow-black/30 flex flex-col gap-1"
+														style={{ animationDelay: "120ms" }}
+													>
+														<div className="text-[11px] font-medium uppercase tracking-[0.18em] text-gray-400">
+															Total Invested
+														</div>
+														<div className="text-2xl font-semibold text-white">
+															₹{summary.total_invested?.toLocaleString()}
+														</div>
+													</div>
+													<div
+														className="rounded-2xl border border-white/10 bg-linear-to-br from-[#1a1a1a] to-[#121212] p-5 shadow-lg shadow-black/30 flex flex-col gap-1"
+														style={{ animationDelay: "160ms" }}
+													>
+														<div className="text-[11px] font-medium uppercase tracking-[0.18em] text-gray-400">
+															Utilization Rate
+														</div>
+														<div className="text-2xl font-semibold text-white">
+															{summary.utilization_rate?.toFixed(1)}%
+														</div>
+													</div>
+												</div>
+											)}
+
 											{/* Pie Charts - shown when summary event exists */}
 											{hasSummary && (industryList.length > 0 || finalPortfolio.length > 0) && (
-												<div className="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-2 mt-6">
+												<div className="grid grid-cols-1 gap-6 md:grid-cols-2">
 													<IndustryDistributionChart
 														industryList={industryList}
 														chartData={industryChartData}
@@ -178,7 +232,7 @@ export default function LongTermPage() {
 
 									{/* Pie Charts - shown when summary event exists */}
 									{hasSummary && (industryList.length > 0 || finalPortfolio.length > 0) && (
-										<div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+										<div className="grid grid-cols-1 gap-6 md:grid-cols-2">
 											<IndustryDistributionChart
 												industryList={industryList}
 												chartData={industryChartData}
