@@ -17,6 +17,97 @@ from .angelone_batch_fetcher import AngelOneBatchFetcher
 logger = logging.getLogger(__name__)
 
 
+class CandleStorageManager:
+    """Manage cached candle data for the industry indicators pipeline."""
+
+    def __init__(
+        self,
+        cache_dir: Path,
+        interval: str,
+        period_days: int,
+        filename_prefix: str = "industry_candles",
+        incremental_window_days: int = 7,
+    ) -> None:
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.interval = interval
+        self.period_days = period_days
+        self.filename_prefix = filename_prefix
+        self.incremental_window_days = incremental_window_days
+
+    @property
+    def cache_path(self) -> Path:
+        return self.cache_dir / f"{self.filename_prefix}_{self.interval}_{self.period_days}.csv"
+
+    def load(self) -> Optional[pl.DataFrame]:
+        """Load cached candles if available."""
+        if not self.cache_path.exists():
+            return None
+        try:
+            logger.info(f"📦 Loading cached candles from {self.cache_path}")
+            return pl.read_csv(self.cache_path, try_parse_dates=True)
+        except Exception as exc:
+            logger.error(f"Failed to load cached candles: {exc}")
+            return None
+
+    def save(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Persist candles to CSV after trimming to the desired window."""
+        if df.is_empty():
+            logger.warning("Attempted to save empty candle DataFrame; skipping cache write")
+            return df
+        trimmed = self.trim_window(df)
+        trimmed = trimmed.sort(["symbol", "timestamp"])
+        trimmed.write_csv(self.cache_path)
+        logger.info(f"💾 Cached {trimmed.height} candles to {self.cache_path}")
+        return trimmed
+
+    def trim_window(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Keep only the candles within the target rolling window."""
+        if df.is_empty() or "timestamp" not in df.columns:
+            return df
+        cutoff_date = datetime.now() - timedelta(days=self.period_days + 2)
+        return df.filter(pl.col("timestamp") >= cutoff_date)
+
+    def has_full_window(self, df: pl.DataFrame) -> bool:
+        if df.is_empty() or "timestamp" not in df.columns:
+            return False
+        earliest = df["timestamp"].min()
+        if earliest is None:
+            return False
+        min_required = datetime.now() - timedelta(days=self.period_days)
+        return earliest <= min_required
+
+    def days_missing(self, df: pl.DataFrame) -> int:
+        if df.is_empty() or "timestamp" not in df.columns:
+            return self.period_days
+        latest = df["timestamp"].max()
+        if latest is None:
+            return self.period_days
+        today = datetime.now().date()
+        latest_date = latest.date() if hasattr(latest, "date") else latest
+        missing = (today - latest_date).days
+        return missing if missing > 0 else 0
+
+    def has_all_tickers(self, df: pl.DataFrame, tickers: List[str]) -> bool:
+        if df.is_empty() or "symbol" not in df.columns:
+            return False
+        cached = set(df["symbol"].unique().to_list())
+        missing = [ticker for ticker in tickers if ticker not in cached]
+        if missing:
+            logger.debug(f"Cache missing {len(missing)} tickers; will refetch")
+        return not missing
+
+    def merge(self, existing: pl.DataFrame, incoming: pl.DataFrame) -> pl.DataFrame:
+        if existing.is_empty():
+            return incoming
+        if incoming.is_empty():
+            return existing
+        merged = pl.concat([existing, incoming], how="vertical")
+        # Drop duplicates by timestamp + symbol
+        merged = merged.unique(subset=["timestamp", "symbol"], keep="last")
+        return merged
+
+
 class IndustryIndicatorsPipeline:
     """
     A comprehensive pipeline for computing and retrieving industry-wise technical indicators.
@@ -62,12 +153,12 @@ class IndustryIndicatorsPipeline:
         # Load stock data - try multiple delimiters (semicolon, comma)
         logger.info(f"Loading stocks from {stocks_csv_path}")
         try:
-            # First try semicolon delimiter
-            stocks_df_pd = pd.read_csv(stocks_csv_path, sep=';')
-
-            # If all columns are in one, try comma delimiter
+            # Try comma delimiter first (most common, handles quoted fields)
+            stocks_df_pd = pd.read_csv(stocks_csv_path)
+            
+            # If all columns are in one, try semicolon delimiter
             if len(stocks_df_pd.columns) == 1:
-                stocks_df_pd = pd.read_csv(stocks_csv_path, sep=',')
+                stocks_df_pd = pd.read_csv(stocks_csv_path, sep=';')
 
         #     logger.info(f"Loaded {len(stocks_df_pd)} stocks with columns: {stocks_df_pd.columns.tolist()}")
         except Exception as e:
@@ -505,6 +596,63 @@ class IndustryIndicatorsPipeline:
             "RS": float(RS) if RS is not None else None
         }
 
+    async def _load_or_fetch_candles(
+        self,
+        cache_manager: CandleStorageManager,
+        download_tickers: List[str],
+        angel_interval: str,
+        period_days: int,
+    ) -> pl.DataFrame:
+        """Load candles from cache if fresh, otherwise fetch and update the cache."""
+
+        cached_df = cache_manager.load()
+
+        if cached_df is not None:
+            has_window = cache_manager.has_full_window(cached_df)
+            has_tickers = cache_manager.has_all_tickers(cached_df, download_tickers)
+
+            if has_window and has_tickers:
+                missing_days = cache_manager.days_missing(cached_df)
+                if missing_days == 0:
+                    logger.info("✅ Using cached candle dataset (fully up to date)")
+                    return cache_manager.trim_window(cached_df)
+
+            else:
+                logger.info("Cached candles missing coverage or tickers; triggering refresh")
+                cached_df = None
+
+            if cached_df is not None:
+                missing_days = cache_manager.days_missing(cached_df)
+                if 0 < missing_days <= cache_manager.incremental_window_days:
+                    logger.info(
+                        "🆕 Cache missing %s day(s); fetching incremental update",
+                        missing_days,
+                    )
+                    incremental_days = max(missing_days + 2, 3)
+                    incremental_df = await self.angel_one_fetcher.fetch_all_batched(
+                        all_symbols=download_tickers,
+                        interval=angel_interval,
+                        period_days=incremental_days,
+                    )
+                    merged = cache_manager.merge(cached_df, incremental_df)
+                    return cache_manager.save(merged)
+
+                if missing_days == 0:
+                    return cache_manager.trim_window(cached_df)
+
+                logger.info(
+                    "📉 Cache is stale by %s day(s); performing full refresh",
+                    missing_days,
+                )
+
+        logger.info("🌐 Fetching candles from Angel One API (full window)")
+        fresh_df = await self.angel_one_fetcher.fetch_all_batched(
+            all_symbols=download_tickers,
+            interval=angel_interval,
+            period_days=period_days,
+        )
+        return cache_manager.save(fresh_df)
+
     async def compute_async(self, force_recompute: bool = False, ) -> Tuple[pl.DataFrame, pl.DataFrame]:
         """
         Download data and compute all indicators (async version).
@@ -564,6 +712,13 @@ class IndustryIndicatorsPipeline:
 
         data_dir = Path(__file__).resolve().parents[2] / "data" / "market_data"
         data_dir.mkdir(parents=True, exist_ok=True)
+        cache_dir = data_dir / "industry_cache"
+        cache_manager = CandleStorageManager(
+            cache_dir=cache_dir,
+            interval=angel_interval,
+            period_days=period_days,
+        )
+
         if self.Demo:
             csv_path = data_dir / "raw_data_20251201_031506.csv"
             if csv_path.exists():
@@ -578,11 +733,11 @@ class IndustryIndicatorsPipeline:
                     period_days=period_days
                 )
         else:
-            # Fetch data using Angel One batch fetcher
-            self.raw_data = await self.angel_one_fetcher.fetch_all_batched(
-                all_symbols=download_tickers,
-                interval=angel_interval,
-                period_days=period_days
+            self.raw_data = await self._load_or_fetch_candles(
+                cache_manager=cache_manager,
+                download_tickers=download_tickers,
+                angel_interval=angel_interval,
+                period_days=period_days,
             )
         logger.info(f"✅ Fetched raw data with {self.raw_data.height} rows")
         # self.raw_data.write_csv(data_dir / f"raw_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")

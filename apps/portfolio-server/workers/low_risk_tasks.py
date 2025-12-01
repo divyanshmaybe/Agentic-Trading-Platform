@@ -222,7 +222,7 @@ def run_low_risk_pipeline(
         from pipelines.low_risk.industry_pipeline import IndustrySelectionPipeline
         from pipelines.low_risk.industry_indicators_pipeline import IndustryIndicatorsPipeline
         from utils.economic_indicators_storage import get_storage
-        from market_data import MarketDataService
+        from market_data import get_market_data_service
         from pipelines.low_risk.angelone_batch_fetcher import create_fetcher_from_market_service
         
         nifty_500_path = PROJECT_ROOT / "scripts" / "ind_nifty500listbrief.csv"
@@ -252,7 +252,7 @@ def run_low_risk_pipeline(
         
         # Initialize market data service
         task_logger.info("🔧 Initializing Angel One market data service...")
-        market_service = MarketDataService()
+        market_service = get_market_data_service()
         angel_fetcher = create_fetcher_from_market_service(market_service)
         
         # Create industry indicators pipeline
@@ -260,7 +260,7 @@ def run_low_risk_pipeline(
         industry_indicators = IndustryIndicatorsPipeline(
             stocks_csv_path=str(nifty_500_path),
             angel_one_fetcher=angel_fetcher,
-            Demo=True
+            Demo=False
         )
         industry_indicators.compute()
         task_logger.info("✅ Industry indicators computed")

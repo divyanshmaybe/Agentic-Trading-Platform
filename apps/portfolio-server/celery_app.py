@@ -345,10 +345,11 @@ celery_app.conf.task_annotations = {
         for task_name in TRADE_EXECUTION_TASKS
     },
     # Pipeline tasks - longer limits, lower rate
+    # Note: pipeline.low_risk.run has its own 25-30 min limit in task decorator
     **{
         task_name: {
-            "soft_time_limit": SOFT_TIME_LIMIT + 300,  # 15 min soft
-            "time_limit": HARD_TIME_LIMIT + 300,  # 17 min hard
+            "soft_time_limit": 1800 if task_name == "pipeline.low_risk.run" else SOFT_TIME_LIMIT + 300,  # 30 min for low-risk, 7 min for others
+            "time_limit": 2100 if task_name == "pipeline.low_risk.run" else HARD_TIME_LIMIT + 300,  # 35 min for low-risk, 8 min for others
             "rate_limit": "2/m",  # Max 2 per minute (pipelines are heavy)
         }
         for task_name in PIPELINE_TASKS
@@ -565,42 +566,12 @@ if ECONOMIC_INDICATORS_ENABLED:
         f"(UTC: {utc_day}th at {utc_hour:02d}:{utc_minute:02d})"
     )
 
-# Industry Indicators - runs daily (configurable, in IST)
-INDUSTRY_INDICATORS_ENABLED = os.getenv("INDUSTRY_INDICATORS_ENABLED", "true").lower() in {"1", "true", "yes"}
+# Industry Indicators - DISABLED by default (manually trigger if needed)
+INDUSTRY_INDICATORS_ENABLED = os.getenv("INDUSTRY_INDICATORS_ENABLED", "false").lower() in {"1", "true", "yes"}
 INDUSTRY_INDICATORS_UPDATE_HOUR = int(os.getenv("INDUSTRY_INDICATORS_UPDATE_HOUR", "3"))  # IST time
 INDUSTRY_INDICATORS_UPDATE_MINUTE = int(os.getenv("INDUSTRY_INDICATORS_UPDATE_MINUTE", "0"))  # IST time
 INDUSTRY_INDICATORS_QUEUE = os.getenv("INDUSTRY_INDICATORS_QUEUE", QUEUE_NAMES["market"])
 
-if INDUSTRY_INDICATORS_ENABLED:
-    # Convert IST to UTC for Celery's crontab
-    ist = pytz.timezone('Asia/Kolkata')
-    ist_time = ist.localize(datetime(
-        datetime.now().year, datetime.now().month, datetime.now().day,
-        INDUSTRY_INDICATORS_UPDATE_HOUR, INDUSTRY_INDICATORS_UPDATE_MINUTE
-    ))
-    utc_time = ist_time.astimezone(pytz.utc)
-
-    utc_hour = utc_time.hour
-    utc_minute = utc_time.minute
-
-    # Schedule daily (every day at specified hour)
-    celery_app.conf.beat_schedule["industry-indicators-update"] = {
-        "task": "economic_indicators.update_industry_indicators",
-        "schedule": crontab(
-            hour=utc_hour,
-            minute=utc_minute,
-        ),
-        "options": {
-            "queue": INDUSTRY_INDICATORS_QUEUE,
-            "routing_key": INDUSTRY_INDICATORS_QUEUE,
-        },
-    }
-
-    logging.info(
-        f"📅 Industry indicators scheduled: Daily at "
-        f"{INDUSTRY_INDICATORS_UPDATE_HOUR:02d}:{INDUSTRY_INDICATORS_UPDATE_MINUTE:02d} IST "
-        f"(UTC: {utc_hour:02d}:{utc_minute:02d})"
-    )
 
 # Alpha signal generation - runs daily before market open (8:30 AM IST = 3:00 AM UTC)
 # IST is UTC+5:30, so 8:30 AM IST = 3:00 AM UTC
@@ -640,14 +611,6 @@ def _import_tasks():
 # Only import tasks when running as Celery worker (not when imported by other modules)
 if os.environ.get("CELERY_WORKER_RUNNING") or "celery" in sys.argv[0]:
     _import_tasks()
-    
-    # Check and update economic indicators on startup if needed
-    if ECONOMIC_INDICATORS_ENABLED:
-        try:
-            from workers.economic_indicators_tasks import check_and_update_on_startup
-            check_and_update_on_startup()
-        except Exception as e:
-            logging.warning("Failed to run economic indicators startup check: %s", e)
     
     # Note: Prometheus exporter is initialized via worker_ready signal below
 
@@ -819,6 +782,14 @@ def setup_prometheus(**kwargs):
         
     except Exception as e:
         logging.error("❌ Failed to initialize Prometheus exporter: %s", e, exc_info=True)
+    
+    # Check and update economic indicators on startup (runs only once, not per worker fork)
+    if ECONOMIC_INDICATORS_ENABLED:
+        try:
+            from workers.economic_indicators_tasks import check_and_update_on_startup
+            check_and_update_on_startup()
+        except Exception as e:
+            logging.warning("Failed to run economic indicators startup check: %s", e)
 
 
 # Clean up database connections when worker process shuts down

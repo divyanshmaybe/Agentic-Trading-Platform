@@ -40,6 +40,19 @@ def update_trading_economics_indicators(self) -> Dict[str, Any]:
     Returns:
         Dict with update results
     """
+    from redis import Redis
+    from celery_app import BROKER_URL
+    
+    # Acquire lock to prevent concurrent execution
+    redis_client = Redis.from_url(BROKER_URL)
+    lock_key = "task:trading_economics:lock"
+    
+    lock_acquired = redis_client.set(lock_key, "locked", nx=True, ex=600)  # 10 min TTL
+    
+    if not lock_acquired:
+        task_logger.warning("⚠️ Trading Economics update already running, skipping")
+        return {"success": False, "skipped": True, "reason": "Task already running"}
+    
     try:
         task_logger.info("📊 Starting Trading Economics indicators update...")
 
@@ -79,6 +92,10 @@ def update_trading_economics_indicators(self) -> Dict[str, Any]:
             "❌ Failed to update Trading Economics indicators: %s", exc, exc_info=True
         )
         raise
+    
+    finally:
+        redis_client.delete(lock_key)
+        task_logger.info("🔓 Trading Economics lock released")
 
 
 @celery_app.task(
@@ -98,6 +115,19 @@ def update_cpi_indicators(self) -> Dict[str, Any]:
     Returns:
         Dict with update results
     """
+    from redis import Redis
+    from celery_app import BROKER_URL
+    
+    # Acquire lock to prevent concurrent execution
+    redis_client = Redis.from_url(BROKER_URL)
+    lock_key = "task:cpi:lock"
+    
+    lock_acquired = redis_client.set(lock_key, "locked", nx=True, ex=600)  # 10 min TTL
+    
+    if not lock_acquired:
+        task_logger.warning("⚠️ CPI update already running, skipping")
+        return {"success": False, "skipped": True, "reason": "Task already running"}
+    
     try:
         task_logger.info("📊 Starting CPI indicators update...")
 
@@ -135,6 +165,10 @@ def update_cpi_indicators(self) -> Dict[str, Any]:
             "❌ Failed to update CPI indicators: %s", exc, exc_info=True
         )
         raise
+    
+    finally:
+        redis_client.delete(lock_key)
+        task_logger.info("🔓 CPI lock released")
 
 
 @celery_app.task(
@@ -156,7 +190,25 @@ def update_industry_indicators(self) -> Dict[str, Any]:
         Dict with update results
     """
     import time
+    from redis import Redis
+    from celery_app import BROKER_URL
+    
     start_time = time.time()
+    
+    # Acquire lock to prevent concurrent execution
+    redis_client = Redis.from_url(BROKER_URL)
+    lock_key = "task:industry_indicators:lock"
+    
+    # Try to acquire lock (10 minute TTL)
+    lock_acquired = redis_client.set(lock_key, "locked", nx=True, ex=600)
+    
+    if not lock_acquired:
+        task_logger.warning("⚠️ Industry indicators update already running, skipping this execution")
+        return {
+            "success": False,
+            "skipped": True,
+            "reason": "Task already running"
+        }
     
     try:
         task_logger.info("📊 Starting industry indicators update...")
@@ -190,11 +242,11 @@ def update_industry_indicators(self) -> Dict[str, Any]:
         # Import required modules
         from pipelines.low_risk.industry_indicators_pipeline import IndustryIndicatorsPipeline
         from pipelines.low_risk.angelone_batch_fetcher import create_fetcher_from_market_service
-        from shared.py.market_data import MarketDataService
+        from shared.py.market_data import get_market_data_service
 
         # Initialize MarketDataService and create batch fetcher
         task_logger.info("🔧 Initializing Angel One API connection...")
-        market_service = MarketDataService()
+        market_service = get_market_data_service()
         fetcher = create_fetcher_from_market_service(market_service)
 
         # Initialize pipeline
@@ -260,6 +312,11 @@ def update_industry_indicators(self) -> Dict[str, Any]:
             exc_info=True
         )
         raise
+    
+    finally:
+        # Release lock
+        redis_client.delete(lock_key)
+        task_logger.info("🔓 Industry indicators lock released")
 
 
 def check_and_update_on_startup():
@@ -291,9 +348,9 @@ def check_and_update_on_startup():
                         f"  ✓ {scraper_name} is up to date (last updated: {last_update})"
                     )
 
-        # Check industry indicators
+        # Check industry indicators (DISABLED by default)
         industry_indicators_enabled = os.getenv(
-            "INDUSTRY_INDICATORS_ENABLED", "true"
+            "INDUSTRY_INDICATORS_ENABLED", "false"
         ).lower() in {"1", "true", "yes"}
 
         if industry_indicators_enabled:

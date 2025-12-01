@@ -150,14 +150,14 @@ def main():
         
         # Create market data service and AngelOne fetcher
         logger.info("\n🔧 Initializing market data service and AngelOne fetcher...")
-        from market_data import MarketDataService
+        from market_data import get_market_data_service
         from pipelines.low_risk.angelone_batch_fetcher import create_fetcher_from_market_service
         
         logger.info("✅ Modules imported successfully")
         
         # Initialize Angel One API
         logger.info("🔧 Initializing Angel One API connection...")
-        market_service = MarketDataService()
+        market_service = get_market_data_service()
         angel_fetcher = create_fetcher_from_market_service(market_service)
         logger.info("✅ Angel One fetcher created (rate limited: 1 req/sec)")
         
