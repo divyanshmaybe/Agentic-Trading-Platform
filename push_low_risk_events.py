@@ -127,7 +127,7 @@ TOPICS = {
     "low_risk_logs": os.getenv("LOW_RISK_AGENT_LOGS_TOPIC", "low_risk_agent_logs"),
 }
 
-user_id = "c2163d21-40de-4c58-9758-4e11fcaf11d3"
+user_id = "2cab1118-64ce-4bee-81e6-e9d9fa72fe0f"
 
 # -------------------------------------------------------------------
 # Pipeline Simulation
@@ -192,16 +192,13 @@ publish("industry_fetched", LowRiskIndustryFetchedEvent(
 tickers = ["IGL", "GAIL", "HINDALCO", "NATIONALUM", "PETRONET"]
 for t in tickers:
     publish(f"stock_fetching_{t}", LowRiskStockFetchingEvent(
-        user_id=user_id, type="stock", status="fetching", content={"ticker": t}
+        user_id=user_id, type="stock", status="fetching", content={"content": t}
     ).model_dump())
     sleep_phase(1)
     publish(f"stock_fetched_{t}", LowRiskStockFetchedEvent(
         user_id=user_id, type="stock", status="fetched",
         content={
-            "ticker": t,
-            "price": round(random.uniform(100, 1500), 2),
-            "signal": random.choice(["buy", "hold"]),
-            "reasoning": f"Quick eval on {t}.",
+            "content": t,
         }
     ).model_dump())
 
@@ -340,7 +337,7 @@ summary_content = {
 }
 
 summary_event = LowRiskSummaryEvent(
-    user_id="c2163d21-40de-4c58-9758-4e11fcaf11d3",
+    user_id=user_id,
     type="summary",
     content=summary_content
 )
