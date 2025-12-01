@@ -145,18 +145,17 @@ class RunService:
         # Build config dict from request
         config = request.model_dump()
         run_id = str(uuid.uuid4())
-        now = datetime.utcnow()
         
         run = await client.alphacopilotrun.create(
             data={
                 "id": run_id,
                 "hypothesis": request.hypothesis,
                 "status": RunStatus.PENDING.value,
-                "config": json.dumps(config),
-                "num_iterations": request.max_iterations,
+                "metadata": json.dumps(config),
+                "max_iterations": request.max_iterations,
                 "current_iteration": 0,
-                "created_at": now,
-                "updated_at": now,
+                "symbols_file": request.symbols_file,
+                "data_path": request.data_path,
             }
         )
         
@@ -203,12 +202,23 @@ class RunService:
         """Update run status."""
         client = await self._get_client()
         
-        update_data = {
+        update_data: Dict[str, Any] = {
             "status": status.value,
-            "updated_at": datetime.utcnow(),
         }
+        
+        # Store error message in metadata if provided
         if error_message:
-            update_data["error_message"] = error_message
+            # Get current run to preserve existing metadata
+            current_run = await client.alphacopilotrun.find_unique(where={"id": run_id})
+            if current_run:
+                existing_metadata = current_run.metadata or {}
+                if isinstance(existing_metadata, str):
+                    existing_metadata = json.loads(existing_metadata)
+                existing_metadata["error_message"] = error_message
+                update_data["metadata"] = json.dumps(existing_metadata)
+        
+        if status == RunStatus.COMPLETED or status == RunStatus.FAILED:
+            update_data["completed_at"] = datetime.utcnow()
         
         run = await client.alphacopilotrun.update(
             where={"id": run_id},
@@ -224,7 +234,6 @@ class RunService:
             where={"id": run_id},
             data={
                 "current_iteration": iteration_num,
-                "updated_at": datetime.utcnow(),
             },
         )
         return self._run_to_dict(run)
@@ -243,10 +252,10 @@ class RunService:
             data={
                 "id": str(uuid.uuid4()),
                 "run_id": run_id,
-                "iteration_num": iteration_num,
+                "iteration_number": iteration_num,
                 "factors": _safe_json_serialize(factors),
                 "metrics": _safe_json_serialize(metrics),
-                "completed_at": datetime.utcnow(),
+                "status": "completed",
             }
         )
         
@@ -267,15 +276,19 @@ class RunService:
         # Delete existing result if any
         await client.alphacopilotresult.delete_many(where={"run_id": run_id})
         
+        # Combine metrics and factors info into schema-compatible format
+        combined_metrics = {
+            "final": final_metrics,
+            "best_factors": best_factors,
+        }
+        
         result = await client.alphacopilotresult.create(
             data={
                 "id": str(uuid.uuid4()),
                 "run_id": run_id,
-                "final_metrics": _safe_json_serialize(final_metrics),
-                "all_factors": _safe_json_serialize(all_factors),
-                "best_factors": _safe_json_serialize(best_factors),
+                "metrics": _safe_json_serialize(combined_metrics),
+                "factors": _safe_json_serialize(all_factors),
                 "workflow_config": _safe_json_serialize(workflow_config),
-                "created_at": datetime.utcnow(),
             }
         )
         
@@ -297,35 +310,38 @@ class RunService:
         
         iterations = await client.alphacopilotiteration.find_many(
             where={"run_id": run_id},
-            order={"iteration_num": "asc"},
+            order={"iteration_number": "asc"},
         )
         return [self._iteration_to_dict(it) for it in iterations]
 
-    async def add_log(self, run_id: str, level: str, message: str) -> None:
+    async def add_log(self, run_id: str, level: str, message: str, node_name: Optional[str] = None, iteration_number: Optional[int] = None) -> None:
         """Add a log entry for a run."""
         client = await self._get_client()
         
-        await client.alphacopilotlog.create(
-            data={
-                "id": str(uuid.uuid4()),
-                "run_id": run_id,
-                "level": level,
-                "message": message,
-                "timestamp": datetime.utcnow(),
-            }
-        )
+        data: Dict[str, Any] = {
+            "id": str(uuid.uuid4()),
+            "run_id": run_id,
+            "level": level,
+            "message": message,
+        }
+        if node_name:
+            data["node_name"] = node_name
+        if iteration_number is not None:
+            data["iteration_number"] = iteration_number
+        
+        await client.alphacopilotlog.create(data=data)
 
     async def get_logs(self, run_id: str, after_timestamp: Optional[datetime] = None) -> List[Dict[str, Any]]:
         """Get logs for a run."""
         client = await self._get_client()
         
-        where_clause = {"run_id": run_id}
+        where_clause: Dict[str, Any] = {"run_id": run_id}
         if after_timestamp:
-            where_clause["timestamp"] = {"gt": after_timestamp}
+            where_clause["created_at"] = {"gt": after_timestamp}
         
         logs = await client.alphacopilotlog.find_many(
             where=where_clause,
-            order={"timestamp": "asc"},
+            order={"created_at": "asc"},
         )
         return [self._log_to_dict(log) for log in logs]
 
@@ -645,20 +661,26 @@ class RunService:
 
     def _run_to_dict(self, run) -> Dict[str, Any]:
         """Convert run record to dictionary."""
-        config = run.config
-        if isinstance(config, str):
-            config = json.loads(config)
+        metadata = run.metadata
+        if isinstance(metadata, str):
+            metadata = json.loads(metadata)
+        elif metadata is None:
+            metadata = {}
+        
+        # Extract error_message from metadata if present
+        error_message = metadata.get("error_message") if isinstance(metadata, dict) else None
         
         return {
             "id": run.id,
             "hypothesis": run.hypothesis,
             "status": run.status,
-            "config": config,
-            "num_iterations": run.num_iterations,
+            "config": metadata,  # Keep as 'config' for API compatibility
+            "num_iterations": run.max_iterations,  # Keep as 'num_iterations' for API compatibility
             "current_iteration": run.current_iteration,
             "created_at": run.created_at,
             "updated_at": run.updated_at,
-            "error_message": run.error_message,
+            "completed_at": run.completed_at,
+            "error_message": error_message,
         }
 
     def _iteration_to_dict(self, iteration) -> Dict[str, Any]:
@@ -674,10 +696,12 @@ class RunService:
         return {
             "id": iteration.id,
             "run_id": iteration.run_id,
-            "iteration_num": iteration.iteration_num,
+            "iteration_num": iteration.iteration_number,  # Map to API-compatible name
             "factors": factors,
             "metrics": metrics,
-            "completed_at": iteration.completed_at,
+            "status": iteration.status,
+            "created_at": iteration.created_at,
+            "updated_at": iteration.updated_at,
         }
 
     def _result_to_dict(self, result) -> Dict[str, Any]:
@@ -687,14 +711,27 @@ class RunService:
                 return json.loads(val)
             return val
         
+        factors = parse_json(result.factors)
+        metrics = parse_json(result.metrics)
+        
+        # Extract structured metrics if stored in combined format
+        final_metrics = None
+        best_factors = None
+        if isinstance(metrics, dict):
+            final_metrics = metrics.get("final")
+            best_factors = metrics.get("best_factors")
+        else:
+            final_metrics = metrics
+        
         return {
             "id": result.id,
             "run_id": result.run_id,
-            "final_metrics": parse_json(result.final_metrics),
-            "all_factors": parse_json(result.all_factors),
-            "best_factors": parse_json(result.best_factors),
-            "workflow_config": parse_json(result.workflow_config) if hasattr(result, 'workflow_config') else None,
+            "final_metrics": final_metrics,
+            "all_factors": factors,
+            "best_factors": best_factors,
+            "workflow_config": parse_json(result.workflow_config) if result.workflow_config else None,
             "created_at": result.created_at,
+            "updated_at": result.updated_at,
         }
 
     def _log_to_dict(self, log) -> Dict[str, Any]:
@@ -704,7 +741,9 @@ class RunService:
             "run_id": log.run_id,
             "level": log.level,
             "message": log.message,
-            "timestamp": log.timestamp,
+            "node_name": log.node_name,
+            "iteration_number": log.iteration_number,
+            "timestamp": log.created_at,  # Map to API-compatible name
         }
 
 

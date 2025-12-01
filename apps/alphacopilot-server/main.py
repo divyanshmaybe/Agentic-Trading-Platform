@@ -1,9 +1,5 @@
 """FastAPI server for AlphaCopilot workflow execution."""
 
-# Apply nest_asyncio to allow nested event loops (required for quant-stream's asyncio.run() calls)
-import nest_asyncio
-nest_asyncio.apply()
-
 import asyncio
 import json
 import logging

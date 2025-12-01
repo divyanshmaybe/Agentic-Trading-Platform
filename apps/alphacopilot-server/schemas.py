@@ -70,7 +70,9 @@ class IterationResponse(BaseModel):
     iteration_num: int
     factors: Optional[List[Dict[str, Any]]] = None
     metrics: Optional[Dict[str, Any]] = None
-    completed_at: Optional[datetime] = None
+    status: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
