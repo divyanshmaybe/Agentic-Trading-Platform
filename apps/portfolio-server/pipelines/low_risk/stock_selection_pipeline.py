@@ -26,6 +26,22 @@ from langchain.tools import tool, InjectedToolCallId, ToolRuntime
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.agents import create_agent, AgentState
 from langgraph.types import Command
+from dotenv import load_dotenv
+from pathlib import Path
+
+import concurrent.futures
+
+# Resolve path to .env file
+env_path = Path(__file__).parent.parent / ".env"
+load_dotenv(dotenv_path=env_path)
+
+# Extract LANGSMITH_API_KEY
+langsmith_api_key = os.getenv("LANGSMITH_API_KEY", "")
+if not langsmith_api_key:
+    raise ValueError("LANGSMITH_API_KEY not found in .env file")
+os.environ["LANGSMITH_API_KEY"] = langsmith_api_key
+os.environ["LANGSMITH_TRACING_V2"] = "true"
+os.environ["LANGSMITH_PROJECT"] = "low_risk_prod"
 
 from utils.low_risk_utils import (
     trade_converter,
@@ -292,7 +308,7 @@ class StockSelectionPipeline:
             Output:
             - A string of reasoning tokens with proper analysis, interpretation, and possible next steps.
             """
-            reasoning_llm = ChatGoogleGenerativeAI(model="gemini-3-pro-review")
+            reasoning_llm = ChatGoogleGenerativeAI(model="gemini-3-pro-preview")
             messages = runtime.state["messages"]
             reasoning_messages = runtime.state["reasoning_messages"]
             if len(reasoning_messages) == 0:

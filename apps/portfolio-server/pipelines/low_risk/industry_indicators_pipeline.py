@@ -27,6 +27,7 @@ class CandleStorageManager:
         period_days: int,
         filename_prefix: str = "industry_candles",
         incremental_window_days: int = 7,
+        max_missing_tickers: int = 10,
     ) -> None:
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -34,6 +35,7 @@ class CandleStorageManager:
         self.period_days = period_days
         self.filename_prefix = filename_prefix
         self.incremental_window_days = incremental_window_days
+        self.max_missing_tickers = max_missing_tickers
 
     @property
     def cache_path(self) -> Path:
@@ -42,10 +44,13 @@ class CandleStorageManager:
     def load(self) -> Optional[pl.DataFrame]:
         """Load cached candles if available."""
         if not self.cache_path.exists():
+            logger.info(f"📦 Cache file not found at {self.cache_path}")
             return None
         try:
             logger.info(f"📦 Loading cached candles from {self.cache_path}")
-            return pl.read_csv(self.cache_path, try_parse_dates=True)
+            df = pl.read_csv(self.cache_path, try_parse_dates=True)
+            logger.info(f"📦 Loaded {df.height} rows from cache")
+            return df
         except Exception as exc:
             logger.error(f"Failed to load cached candles: {exc}")
             return None
@@ -65,8 +70,9 @@ class CandleStorageManager:
         """Keep only the candles within the target rolling window."""
         if df.is_empty() or "timestamp" not in df.columns:
             return df
-        cutoff_date = datetime.now() - timedelta(days=self.period_days + 2)
-        return df.filter(pl.col("timestamp") >= cutoff_date)
+        cutoff_date = (datetime.now() - timedelta(days=self.period_days + 2)).date()
+        # Filter using date comparison to avoid timezone issues
+        return df.filter(pl.col("timestamp").dt.date() >= cutoff_date)
 
     def has_full_window(self, df: pl.DataFrame) -> bool:
         if df.is_empty() or "timestamp" not in df.columns:
@@ -74,8 +80,11 @@ class CandleStorageManager:
         earliest = df["timestamp"].min()
         if earliest is None:
             return False
-        min_required = datetime.now() - timedelta(days=self.period_days)
-        return earliest <= min_required
+        # Compare dates only (avoids timezone issues)
+        earliest_date = earliest.date() if hasattr(earliest, "date") else earliest
+        min_required_date = (datetime.now() - timedelta(days=self.period_days)).date()
+        logger.debug(f"Cache window check: earliest={earliest_date}, min_required={min_required_date}")
+        return earliest_date <= min_required_date
 
     def days_missing(self, df: pl.DataFrame) -> int:
         if df.is_empty() or "timestamp" not in df.columns:
@@ -88,14 +97,17 @@ class CandleStorageManager:
         missing = (today - latest_date).days
         return missing if missing > 0 else 0
 
-    def has_all_tickers(self, df: pl.DataFrame, tickers: List[str]) -> bool:
+    def missing_tickers(self, df: pl.DataFrame, tickers: List[str]) -> List[str]:
         if df.is_empty() or "symbol" not in df.columns:
-            return False
+            return list(tickers)
         cached = set(df["symbol"].unique().to_list())
-        missing = [ticker for ticker in tickers if ticker not in cached]
+        return [ticker for ticker in tickers if ticker not in cached]
+
+    def has_all_tickers(self, df: pl.DataFrame, tickers: List[str]) -> bool:
+        missing = self.missing_tickers(df, tickers)
         if missing:
-            logger.debug(f"Cache missing {len(missing)} tickers; will refetch")
-        return not missing
+            logger.debug(f"Cache missing {len(missing)} tickers; tolerance={self.max_missing_tickers}")
+        return len(missing) <= self.max_missing_tickers
 
     def merge(self, existing: pl.DataFrame, incoming: pl.DataFrame) -> pl.DataFrame:
         if existing.is_empty():
@@ -609,41 +621,66 @@ class IndustryIndicatorsPipeline:
 
         if cached_df is not None:
             has_window = cache_manager.has_full_window(cached_df)
-            has_tickers = cache_manager.has_all_tickers(cached_df, download_tickers)
+            missing_tickers = cache_manager.missing_tickers(cached_df, download_tickers)
+            within_ticker_tolerance = len(missing_tickers) <= cache_manager.max_missing_tickers
+            logger.info(f"📦 Cache validation: has_window={has_window}, missing_tickers={len(missing_tickers)}, tolerance={cache_manager.max_missing_tickers}")
 
-            if has_window and has_tickers:
+            if has_window and within_ticker_tolerance:
+                if missing_tickers:
+                    logger.info(
+                        "📉 Cache missing %s ticker(s); fetching targeted update",
+                        len(missing_tickers),
+                    )
+                    missing_df = await self.angel_one_fetcher.fetch_all_batched(
+                        all_symbols=missing_tickers,
+                        interval=angel_interval,
+                        period_days=period_days,
+                    )
+                    cached_df = cache_manager.merge(cached_df, missing_df)
+                    cached_df = cache_manager.save(cached_df)
+
                 missing_days = cache_manager.days_missing(cached_df)
                 if missing_days == 0:
                     logger.info("✅ Using cached candle dataset (fully up to date)")
                     return cache_manager.trim_window(cached_df)
 
-            else:
-                logger.info("Cached candles missing coverage or tickers; triggering refresh")
-                cached_df = None
-
-            if cached_df is not None:
-                missing_days = cache_manager.days_missing(cached_df)
-                if 0 < missing_days <= cache_manager.incremental_window_days:
+                # For 1-2 missing days (weekends/holidays), just use cached data as-is
+                if missing_days <= 2:
                     logger.info(
-                        "🆕 Cache missing %s day(s); fetching incremental update",
+                        "✅ Using cached candle dataset (%s day(s) behind, likely weekend/holiday)",
                         missing_days,
+                    )
+                    return cache_manager.trim_window(cached_df)
+
+                if 0 < missing_days <= cache_manager.incremental_window_days:
+                    # Only fetch incremental data for symbols already in cache (skip failed/missing ones)
+                    cached_symbols = cached_df["symbol"].unique().to_list() if "symbol" in cached_df.columns else []
+                    logger.info(
+                        "🆕 Cache missing %s day(s); fetching incremental update for %s cached symbols",
+                        missing_days,
+                        len(cached_symbols),
                     )
                     incremental_days = max(missing_days + 2, 3)
                     incremental_df = await self.angel_one_fetcher.fetch_all_batched(
-                        all_symbols=download_tickers,
+                        all_symbols=cached_symbols,
                         interval=angel_interval,
                         period_days=incremental_days,
                     )
                     merged = cache_manager.merge(cached_df, incremental_df)
                     return cache_manager.save(merged)
 
-                if missing_days == 0:
-                    return cache_manager.trim_window(cached_df)
-
                 logger.info(
                     "📉 Cache is stale by %s day(s); performing full refresh",
                     missing_days,
                 )
+            else:
+                if not has_window:
+                    logger.info("Cached candles missing coverage; triggering full refresh")
+                if not within_ticker_tolerance:
+                    logger.info(
+                        "Cached candles missing %s tickers (> tolerance); triggering full refresh",
+                        len(missing_tickers),
+                    )
 
         logger.info("🌐 Fetching candles from Angel One API (full window)")
         fresh_df = await self.angel_one_fetcher.fetch_all_batched(

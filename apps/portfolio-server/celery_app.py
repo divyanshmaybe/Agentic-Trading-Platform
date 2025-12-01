@@ -783,13 +783,24 @@ def setup_prometheus(**kwargs):
     except Exception as e:
         logging.error("❌ Failed to initialize Prometheus exporter: %s", e, exc_info=True)
     
-    # Check and update economic indicators on startup (runs only once, not per worker fork)
+    # Check and update economic indicators on startup (only market worker)
     if ECONOMIC_INDICATORS_ENABLED:
-        try:
-            from workers.economic_indicators_tasks import check_and_update_on_startup
-            check_and_update_on_startup()
-        except Exception as e:
-            logging.warning("Failed to run economic indicators startup check: %s", e)
+        worker_name = os.getenv("WORKER_NAME", "")
+        if not worker_name and "sender" in kwargs:
+            sender = kwargs.get("sender")
+            worker_name = getattr(sender, "hostname", "")
+
+        if worker_name.startswith("market@"):
+            try:
+                from workers.economic_indicators_tasks import check_and_update_on_startup
+                check_and_update_on_startup()
+            except Exception as e:
+                logging.warning("Failed to run economic indicators startup check: %s", e)
+        else:
+            logging.info(
+                "Skipping economic indicator startup check for worker %s (market worker only)",
+                worker_name or "unknown",
+            )
 
 
 # Clean up database connections when worker process shuts down
