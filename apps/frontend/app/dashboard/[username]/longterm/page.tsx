@@ -292,32 +292,12 @@ export default function LongTermPage() {
 							) : (
 								/* Streaming layout with events */
 								<div className="flex flex-1 flex-col gap-6">
-									{/* Top section with message and buttons */}
+									{/* Top section with message */}
 									<div className="flex flex-col items-center gap-6">
 										{!hasSummary && (
 											<p className="text-center text-white/70 text-lg max-w-2xl">
-												Start your long-term investment journey with our automated low-risk pipeline.
-												Build wealth steadily through carefully selected positions.
+												Pipeline is running... Building your long-term investment portfolio.
 											</p>
-										)}
-
-										{!hasSummary && (
-											<div className="flex items-center justify-center gap-4">
-												<button
-													className="px-8 py-4 rounded-xl bg-blue-600 text-white font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-													onClick={handleRunPipeline}
-													disabled={streaming}
-												>
-													Pipeline Running…
-												</button>
-
-												<button
-													className="px-8 py-4 rounded-xl bg-red-600 text-white font-semibold hover:bg-red-700 transition-colors"
-													onClick={handleStopPipeline}
-												>
-													Stop Pipeline
-												</button>
-											</div>
 										)}
 									</div>
 
