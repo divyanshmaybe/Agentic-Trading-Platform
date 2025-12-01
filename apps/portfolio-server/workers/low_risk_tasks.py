@@ -155,8 +155,6 @@ class PipelineStatus:
     retry_kwargs={"max_retries": 2},
     acks_late=True,
     reject_on_worker_lost=True,
-    soft_time_limit=1500,  # 25 minutes soft limit
-    time_limit=1800,  # 30 minutes hard limit
 )
 def run_low_risk_pipeline(
     self,
