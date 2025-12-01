@@ -425,6 +425,9 @@ class FundamentalAnalyzer:
             return float(rsi)
         except:
             return pd.NA
+    
+    
+
 
     def _compute_ema(self, length: int):
         """Helper to compute Exponential Moving Average"""
@@ -450,6 +453,38 @@ class FundamentalAnalyzer:
     def compute_ema200(self):
         """Compute 200-day Exponential Moving Average"""
         return self._compute_ema(200)
+    
+    def compute_price_to_ema50(self):
+        """Compute Price-to-50-day EMA Ratio"""
+        current_price = self._info.get('currentPrice', self._info.get('regularMarketPrice', pd.NA))
+        ema50 = self._compute_ema(50)
+
+        if pd.isna(current_price) or pd.isna(ema50) or ema50 == 0:
+            return pd.NA
+
+        return float(current_price / ema50)
+    def compute_price_to_ema200(self):
+        """Compute Price-to-50-day EMA Ratio"""
+        current_price = self._info.get('currentPrice', self._info.get('regularMarketPrice', pd.NA))
+        ema200 = self._compute_ema(200)
+
+        if pd.isna(current_price) or pd.isna(ema200) or ema200 == 0:
+            return pd.NA
+
+        return float(current_price / ema200)
+    
+    
+    def compute_gross_profit_growth(self):
+        """Compute Gross Profit Growth from income statement"""
+        gp = self._get(self._income_stmt, "Gross Profit")
+        gp_prev = self._prev(self._income_stmt, "Gross Profit")
+
+        if pd.isna(gp) or pd.isna(gp_prev) or gp_prev == 0:
+            return pd.NA
+
+        return float((gp - gp_prev) / gp_prev)
+
+    
 
     def get_valuation_metrics(self):
         """Extract valuation metrics from ticker.info"""
@@ -460,6 +495,7 @@ class FundamentalAnalyzer:
             "forward_pe": self._info.get("forwardPE", pd.NA),
             "price_to_book": self._info.get("priceToBook", pd.NA),
             "ev_to_ebitda": self._info.get("enterpriseToEbitda", pd.NA),
+            'pe_ratio': self._info.get('trailingPE', pd.NA),
         }
 
     def get_growth_metrics(self):
@@ -481,6 +517,16 @@ class FundamentalAnalyzer:
         return {
             "debt_to_equity": self._info.get("debtToEquity", pd.NA),
         }
+    
+    def get_profitability_metrics(self):
+        """Extract profitability metrics from ticker.info"""
+        if not self._fetch_financials():
+            return {}
+        
+        return {
+            'roe': self._info.get('returnOnEquity', pd.NA),
+        }
+    
 
     def get_price_metrics(self):
         """Extract price-related metrics from ticker.info"""
@@ -518,6 +564,7 @@ class FundamentalAnalyzer:
             "rsi_14": self.compute_rsi_14(),
             "ema50": self.compute_ema50(),
             "ema200": self.compute_ema200(),
+            'gross_profit_growth': self.compute_gross_profit_growth(),
         }
 
         # Add all info-based metrics
@@ -526,6 +573,7 @@ class FundamentalAnalyzer:
         result.update(self.get_financial_health_metrics())
         result.update(self.get_price_metrics())
         result.update(self.get_volume_metrics())
+        result.update(self.get_profitability_metrics())
 
         return result
 
