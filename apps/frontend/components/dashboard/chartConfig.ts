@@ -86,9 +86,9 @@ export const pieDepthPlugin: Plugin<"pie"> = {
       const colorConfig = getPieColors(typeof label === "string" ? label : "")
       ctx.save()
       ctx.shadowColor = colorConfig.glow
-      ctx.shadowBlur = 14
+      ctx.shadowBlur = 18
       ctx.shadowOffsetX = 0
-      ctx.shadowOffsetY = 4
+      ctx.shadowOffsetY = 2
       ctx.globalCompositeOperation = "source-over"
       if (Array.isArray(colors) && typeof colors[index] === "string") {
         ctx.fillStyle = colors[index] as string
@@ -121,6 +121,13 @@ export const allocationChartOptions: ChartOptions<"pie"> = {
 
 // Chart options for summary pie charts - no legend, tooltips enabled
 export const summaryPieChartOptions: ChartOptions<"pie"> = {
+  responsive: true,                // ensure the canvas follows container size
+  maintainAspectRatio: false,      // allow container height to control aspect ratio
+  cutout: "62%",                   // thicker ring (adjusted)
+  radius: "88%",
+  layout: {
+    padding: 0                     // remove any internal padding that offsets center
+  },
   plugins: {
     legend: {
       display: false,

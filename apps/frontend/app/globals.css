@@ -204,6 +204,17 @@ h1, h2, h3 { font-family: 'Playfair Display', serif; }
   animation: blink-text 1.5s ease-in-out infinite;
 }
 
+@keyframes fadeIn {
+  0% {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 /* Event message enter animation - slide in horizontally from left */
 @keyframes event-enter {
   0% {
