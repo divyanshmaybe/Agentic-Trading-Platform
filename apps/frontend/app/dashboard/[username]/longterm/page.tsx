@@ -1,8 +1,10 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import { useParams } from "next/navigation"
 import { ChevronDown, ChevronUp } from "lucide-react"
+import { Pie } from "react-chartjs-2"
+import { motion, AnimatePresence } from "framer-motion"
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader"
 import { Container } from "@/components/shared/Container"
 import { PageHeading } from "@/components/shared/PageHeading"
@@ -10,6 +12,39 @@ import { useAuth } from "@/hooks/useAuth"
 import { AgentOverview, AgentTradesTable } from "@/components/agent"
 import { useAgentDashboard } from "@/hooks/useAgentDashboard"
 import { useLowRiskEvents } from "@/components/hooks/useLowRiskEvents"
+import { createDynamicPieChartData, summaryPieChartOptions, pieDepthPlugin } from "@/components/dashboard/chartConfig"
+import "@/lib/chart"
+
+// Reasoning Card Component with animated reasoning on hover
+function ReasoningCard({ label, percentage, reasoning }: { label: string; percentage: number; reasoning?: string }) {
+  const [isHovered, setIsHovered] = useState(false)
+
+  return (
+    <div
+      className="relative rounded-lg border border-white/10 bg-black/20 p-3 transition-all hover:bg-black/30 hover:border-white/20"
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
+      <div className="flex items-center justify-between">
+        <span className="font-medium text-[#fafafa]">{label}</span>
+        <span className="text-sm text-white/70">{percentage.toFixed(2)}%</span>
+      </div>
+      <AnimatePresence>
+        {isHovered && reasoning && (
+          <motion.div
+            initial={{ opacity: 0, height: 0, marginTop: 0 }}
+            animate={{ opacity: 1, height: "auto", marginTop: 8 }}
+            exit={{ opacity: 0, height: 0, marginTop: 0 }}
+            transition={{ duration: 0.2, ease: "easeInOut" }}
+            className="overflow-hidden"
+          >
+            <p className="text-sm text-white/60 leading-relaxed">{reasoning}</p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
 
 export default function LongTermPage() {
   const params = useParams()
@@ -19,8 +54,25 @@ export default function LongTermPage() {
   const { user: authUser, loading: authLoading } = useAuth()
   
   const { data: agentData, loading: agentLoading, isAllocating } = useAgentDashboard("low_risk")
-  const { events, loading: eventsLoading, startStreaming, stopStreaming, streaming } = useLowRiskEvents()
+  const { events, loading: eventsLoading, startStreaming, stopStreaming, streaming, hasSummary } = useLowRiskEvents()
   const [showAllEvents, setShowAllEvents] = useState(false)
+
+  // Extract summary event data
+  const summaryEvent = useMemo(() => {
+    return events.find((event) => event.kind === "summary") || null
+  }, [events])
+
+  const industryList = useMemo(() => {
+    return summaryEvent?.content?.industry_list || []
+  }, [summaryEvent])
+
+  const finalPortfolio = useMemo(() => {
+    return summaryEvent?.content?.final_portfolio || []
+  }, [summaryEvent])
+
+  // Create pie chart data
+  const industryChartData = useMemo(() => createDynamicPieChartData(industryList), [industryList])
+  const portfolioChartData = useMemo(() => createDynamicPieChartData(finalPortfolio), [finalPortfolio])
 
   const handleRunPipeline = () => {
     startStreaming()
@@ -103,6 +155,65 @@ export default function LongTermPage() {
                         )}
                       </button>
 
+                      {/* Pie Charts - shown when summary event exists */}
+                      {hasSummary && (industryList.length > 0 || finalPortfolio.length > 0) && (
+                        <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+                          {/* Industry Distribution Chart */}
+                          {industryList.length > 0 && (
+                            <div className="rounded-xl border border-white/10 bg-black/25 p-6 backdrop-blur-sm">
+                              <h4 className="mb-4 text-lg font-semibold text-[#fafafa]">Industry Distribution</h4>
+                              <div className="flex justify-center h-96">
+                                <div className="w-full max-w-md">
+                                  <Pie
+                                    data={industryChartData}
+                                    options={summaryPieChartOptions}
+                                    plugins={[pieDepthPlugin]}
+                                  />
+                                </div>
+                              </div>
+                              {/* Reasoning Cards */}
+                              <div className="mt-6 grid grid-cols-1 gap-3">
+                                {industryList.map((item: { name?: string; percentage: number; reasoning?: string }, index: number) => (
+                                  <ReasoningCard
+                                    key={index}
+                                    label={item.name || ""}
+                                    percentage={item.percentage}
+                                    reasoning={item.reasoning}
+                                  />
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Portfolio Allocation Chart */}
+                          {finalPortfolio.length > 0 && (
+                            <div className="rounded-xl border border-white/10 bg-black/25 p-6 backdrop-blur-sm">
+                              <h4 className="mb-4 text-lg font-semibold text-[#fafafa]">Portfolio Allocation</h4>
+                              <div className="flex justify-center h-96">
+                                <div className="w-full max-w-md">
+                                  <Pie
+                                    data={portfolioChartData}
+                                    options={summaryPieChartOptions}
+                                    plugins={[pieDepthPlugin]}
+                                  />
+                                </div>
+                              </div>
+                              {/* Reasoning Cards */}
+                              <div className="mt-6 grid grid-cols-1 gap-3">
+                                {finalPortfolio.map((item: { ticker?: string; percentage: number; reasoning?: string }, index: number) => (
+                                  <ReasoningCard
+                                    key={index}
+                                    label={item.ticker || ""}
+                                    percentage={item.percentage}
+                                    reasoning={item.reasoning}
+                                  />
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
                       {showAllEvents && (
                         <div className="mt-4 max-h-[600px] overflow-y-auto">
                           <div className="space-y-4">
@@ -167,6 +278,65 @@ export default function LongTermPage() {
                       </button>
                     </div>
                   </div>
+
+                  {/* Pie Charts - shown when summary event exists */}
+                  {hasSummary && (industryList.length > 0 || finalPortfolio.length > 0) && (
+                    <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                      {/* Industry Distribution Chart */}
+                      {industryList.length > 0 && (
+                        <div className="rounded-xl border border-white/10 bg-black/25 p-6 backdrop-blur-sm">
+                          <h4 className="mb-4 text-lg font-semibold text-[#fafafa]">Industry Distribution</h4>
+                          <div className="flex justify-center h-96">
+                            <div className="w-full max-w-md">
+                              <Pie
+                                data={industryChartData}
+                                options={summaryPieChartOptions}
+                                plugins={[pieDepthPlugin]}
+                              />
+                            </div>
+                          </div>
+                          {/* Reasoning Cards */}
+                          <div className="mt-6 grid grid-cols-1 gap-3">
+                            {industryList.map((item: { name?: string; percentage: number; reasoning?: string }, index: number) => (
+                              <ReasoningCard
+                                key={index}
+                                label={item.name || ""}
+                                percentage={item.percentage}
+                                reasoning={item.reasoning}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Portfolio Allocation Chart */}
+                      {finalPortfolio.length > 0 && (
+                        <div className="rounded-xl border border-white/10 bg-black/25 p-6 backdrop-blur-sm">
+                          <h4 className="mb-4 text-lg font-semibold text-[#fafafa]">Portfolio Allocation</h4>
+                          <div className="flex justify-center h-96">
+                            <div className="w-full max-w-md">
+                              <Pie
+                                data={portfolioChartData}
+                                options={summaryPieChartOptions}
+                                plugins={[pieDepthPlugin]}
+                              />
+                            </div>
+                          </div>
+                          {/* Reasoning Cards */}
+                          <div className="mt-6 grid grid-cols-1 gap-3">
+                            {finalPortfolio.map((item: { ticker?: string; percentage: number; reasoning?: string }, index: number) => (
+                              <ReasoningCard
+                                key={index}
+                                label={item.ticker || ""}
+                                percentage={item.percentage}
+                                reasoning={item.reasoning}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* Streaming events section inside the card */}
                   <div className="flex-1 overflow-hidden">

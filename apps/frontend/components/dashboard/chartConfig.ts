@@ -119,6 +119,30 @@ export const allocationChartOptions: ChartOptions<"pie"> = {
   },
 }
 
+// Chart options for summary pie charts - no legend, tooltips enabled
+export const summaryPieChartOptions: ChartOptions<"pie"> = {
+  plugins: {
+    legend: {
+      display: false,
+    },
+    tooltip: {
+      enabled: true,
+      backgroundColor: "rgba(18,18,18,0.95)",
+      borderColor: "rgba(255,255,255,0.08)",
+      borderWidth: 1,
+      titleColor: "#fafafa",
+      bodyColor: "rgba(224,224,224,0.85)",
+      callbacks: {
+        label: function (context) {
+          const label = context.label || ""
+          const value = context.parsed || 0
+          return `${label}: ${value.toFixed(2)}%`
+        },
+      },
+    },
+  },
+}
+
 export function createAllocationChartData(allocation: PortfolioSummary["allocation"]): ChartData<"pie"> {
   const pieFillColors = allocation.map((segment) => getPieColors(segment.label).fill)
   const pieBorderColors = allocation.map((segment) => getPieColors(segment.label).border)
@@ -243,5 +267,88 @@ export function createSparklineChart(stock: StockItem): {
   }
 
   return { data, options, plugins: [lineDepthPlugin] }
+}
+
+// Color palette for dynamic pie charts - generates distinct colors
+const DYNAMIC_COLORS = [
+  { fill: "#3b82f6", border: "#1e3a8a", hover: "#2563eb", glow: "rgba(59,130,246,0.18)" }, // Blue
+  { fill: "#22c55e", border: "#14532d", hover: "#16a34a", glow: "rgba(34,197,94,0.22)" }, // Green
+  { fill: "#f59e0b", border: "#92400e", hover: "#d97706", glow: "rgba(245,158,11,0.2)" }, // Amber
+  { fill: "#a855f7", border: "#6b21a8", hover: "#9333ea", glow: "rgba(168,85,247,0.22)" }, // Purple
+  { fill: "#ef4444", border: "#991b1b", hover: "#dc2626", glow: "rgba(239,68,68,0.2)" }, // Red
+  { fill: "#06b6d4", border: "#164e63", hover: "#0891b2", glow: "rgba(6,182,212,0.18)" }, // Cyan
+  { fill: "#f97316", border: "#9a3412", hover: "#ea580c", glow: "rgba(249,115,22,0.2)" }, // Orange
+  { fill: "#8b5cf6", border: "#5b21b6", hover: "#7c3aed", glow: "rgba(139,92,246,0.22)" }, // Violet
+  { fill: "#10b981", border: "#065f46", hover: "#059669", glow: "rgba(16,185,129,0.18)" }, // Emerald
+  { fill: "#ec4899", border: "#9f1239", hover: "#db2777", glow: "rgba(236,72,153,0.2)" }, // Pink
+  { fill: "#14b8a6", border: "#134e4a", hover: "#0d9488", glow: "rgba(20,184,166,0.18)" }, // Teal
+  { fill: "#6366f1", border: "#312e81", hover: "#4f46e5", glow: "rgba(99,102,241,0.18)" }, // Indigo
+  { fill: "#84cc16", border: "#365314", hover: "#65a30d", glow: "rgba(132,204,22,0.18)" }, // Lime
+  { fill: "#f43f5e", border: "#9f1239", hover: "#e11d48", glow: "rgba(244,63,94,0.2)" }, // Rose
+  { fill: "#0ea5e9", border: "#0c4a6e", hover: "#0284c7", glow: "rgba(14,165,233,0.18)" }, // Sky
+  { fill: "#64748b", border: "#1e293b", hover: "#475569", glow: "rgba(100,116,139,0.18)" }, // Slate
+]
+
+/**
+ * Generate a color palette for dynamic pie charts
+ * Cycles through predefined colors if more segments than available colors
+ */
+function generateColorPalette(count: number): Array<{ fill: string; border: string; hover: string; glow: string }> {
+  const colors: Array<{ fill: string; border: string; hover: string; glow: string }> = []
+  for (let i = 0; i < count; i++) {
+    colors.push(DYNAMIC_COLORS[i % DYNAMIC_COLORS.length])
+  }
+  return colors
+}
+
+/**
+ * Type for dynamic pie chart data items
+ * Supports both industry_list (name) and final_portfolio (ticker) formats
+ */
+type DynamicPieItem = {
+  name?: string
+  ticker?: string
+  percentage: number
+  [key: string]: any // Allow additional fields
+}
+
+/**
+ * Create pie chart data from dynamic arrays (industry_list or final_portfolio)
+ */
+export function createDynamicPieChartData(
+  items: DynamicPieItem[]
+): ChartData<"pie"> {
+  if (!items || items.length === 0) {
+    return {
+      labels: [],
+      datasets: [
+        {
+          data: [],
+          backgroundColor: [],
+          borderColor: [],
+          hoverBorderColor: [],
+        },
+      ],
+    }
+  }
+
+  const colors = generateColorPalette(items.length)
+  const labels = items.map((item) => item.name || item.ticker || "Unknown")
+  const percentages = items.map((item) => item.percentage || 0)
+
+  return {
+    labels,
+    datasets: [
+      {
+        data: percentages,
+        backgroundColor: colors.map((c) => c.fill),
+        hoverBackgroundColor: colors.map((c) => c.fill),
+        borderColor: colors.map((c) => c.border),
+        borderWidth: 2,
+        hoverBorderColor: colors.map((c) => c.hover),
+        borderJoinStyle: "round",
+      },
+    ],
+  }
 }
 
