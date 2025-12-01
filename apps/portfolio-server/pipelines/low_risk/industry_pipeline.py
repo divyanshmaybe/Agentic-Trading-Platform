@@ -178,20 +178,20 @@ def get_cpi_list(storage: EconomicIndicatorsStorage) -> List[float]:
             "May": 5, "June": 6, "July": 7, "August": 8,
             "September": 9, "October": 10, "November": 11, "December": 12
         }
-        
+
         df["date"] = pd.to_datetime(
             df["Year"].astype(str) + "-" + df["Month"].map(month_map).astype(str) + "-01",
             format="%Y-%m-%d"
         )
         df = df.sort_values("date")
-        
+
         # Extract Combined CPI values
         cpi_values = df["Combined"].astype(float).tolist()
-        
+
         msg = f"✓ Extracted {len(cpi_values)} CPI values (range: {min(cpi_values):.2f} to {max(cpi_values):.2f})"
         logger.info(msg)
         return cpi_values
-    
+
     # Fallback: Try to identify date and value columns
     date_col = None
     value_col = None
@@ -441,9 +441,16 @@ def industry_selector(
         tolerance=1.0
     )
 
-    msg = f"✅ Industry selection complete: {len(industry_list)} industries, total allocation: {sum(item['percentage'] for item in industry_list):.1f}%"
-    logger.info(msg)
-    publish_to_kafka({"message": msg}, user_id=user_id)
+    msg = f"✅ Industry selection complete: {len(industry_list)} industries"
+    to_send = {
+        "status": "done",
+        "content": {
+            "industries": industry_list,
+            "message": msg,
+        }
+    }
+    logger.info(msg + f", total allocation: {sum(item['percentage'] for item in industry_list):.1f}%")
+    publish_to_kafka(to_send, user_id=user_id, message_type="industry")
 
     return industry_list
 
