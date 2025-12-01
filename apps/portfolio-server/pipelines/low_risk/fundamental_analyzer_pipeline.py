@@ -20,6 +20,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -36,6 +38,16 @@ logger = logging.getLogger(__name__)
 # Cache file for final computed metrics
 METRICS_CACHE_FILE = "fundamental_metrics.pkl"
 METRICS_METADATA_FILE = "fundamental_metrics_metadata.json"
+
+# Default number of parallel workers - adapts to machine capabilities
+# Use min of (cpu_count * 2, 8) to balance performance and API rate limits
+# For I/O bound tasks like network requests, 2x CPU count is generally optimal
+def _get_default_workers() -> int:
+    cpu_count = os.cpu_count() or 2
+    # Cap at 8 to avoid hitting Yahoo Finance rate limits
+    return min(cpu_count * 2, 8)
+
+DEFAULT_MAX_WORKERS = _get_default_workers()
 
 
 class FundamentalAnalyzer:
@@ -551,10 +563,12 @@ class FundamentalAnalyzerPipeline:
         raw_data: Optional[pd.DataFrame] = None,
         ohlcv_path: Optional[Path] = None,
         max_tickers: int = 500,
+        max_workers: int = DEFAULT_MAX_WORKERS,
         force_refresh: bool = False,
     ) -> None:
         self.storage = storage or FinancialStatementsStorage()
         self.max_tickers = max_tickers
+        self.max_workers = max_workers
         self.force_refresh = force_refresh
         self._metrics_df: Optional[pd.DataFrame] = None
         
@@ -613,6 +627,7 @@ class FundamentalAnalyzerPipeline:
         tickers: Optional[Iterable[str]] = None,
         *,
         max_tickers: Optional[int] = None,
+        max_workers: Optional[int] = None,
         force_refresh: Optional[bool] = None,
     ) -> PipelineResult:
         symbols = list(tickers) if tickers else self.storage.load_nifty500_symbols()
@@ -622,6 +637,10 @@ class FundamentalAnalyzerPipeline:
         limit = max_tickers or self.max_tickers
         symbols = symbols[:limit]
         refresh = self.force_refresh if force_refresh is None else force_refresh
+        workers = max_workers or self.max_workers
+        
+        # Ensure workers is at least 1 and doesn't exceed symbol count
+        workers = max(1, min(workers, len(symbols)))
 
         # Check if we can use cached metrics
         if not refresh:
@@ -635,21 +654,75 @@ class FundamentalAnalyzerPipeline:
                     from_cache=True
                 )
 
-        # Need to compute fresh metrics
-        logger.info("[COMPUTING] Computing metrics for %d tickers...", len(symbols))
-        records: List[Dict[str, Any]] = []
+        # Step 1: Fetch financials sequentially (to respect Yahoo Finance rate limits)
+        logger.info("[FETCHING] Fetching financials for %d tickers...", len(symbols))
+        analyzers: List[tuple] = []  # (symbol, analyzer) pairs
         failures: List[str] = []
 
         for symbol in symbols:
             analyzer = FundamentalAnalyzer(symbol, raw=self.raw_data)
             try:
                 self._load_financials(analyzer, force_refresh=refresh)
-                record = analyzer.compute_all_indicators()
-                records.append(record)
-                logger.info("Computed indicators for %s", symbol)
+                analyzers.append((symbol, analyzer))
+                logger.info("[FETCHED] %s", symbol)
             except Exception as exc:
-                logger.warning("Failed to compute indicators for %s: %s", symbol, exc)
+                logger.warning("Failed to fetch financials for %s: %s", symbol, exc)
                 failures.append(symbol)
+
+        if not analyzers:
+            raise RuntimeError("Fundamental analyzer pipeline could not fetch any tickers")
+
+        # Step 2: Compute indicators in parallel (CPU-bound, no API calls)
+        logger.info("[COMPUTING] Computing indicators for %d tickers using %d workers...", len(analyzers), workers)
+        records: List[Dict[str, Any]] = []
+
+        def compute_indicators(item: tuple) -> tuple:
+            """Compute indicators for a single ticker and return (symbol, record, error)."""
+            symbol, analyzer = item
+            try:
+                record = analyzer.compute_all_indicators()
+                return (symbol, record, None)
+            except Exception as exc:
+                return (symbol, None, str(exc))
+
+        # Process indicator computation in parallel using ThreadPoolExecutor
+        try:
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                # Submit all computation tasks
+                future_to_symbol = {
+                    executor.submit(compute_indicators, item): item[0] 
+                    for item in analyzers
+                }
+                
+                # Collect results as they complete
+                completed = 0
+                for future in as_completed(future_to_symbol):
+                    try:
+                        symbol, record, error = future.result(timeout=30)  # 30s timeout per computation
+                        completed += 1
+                        
+                        if error:
+                            logger.warning("Failed to compute indicators for %s: %s", symbol, error)
+                            failures.append(symbol)
+                        else:
+                            records.append(record)
+                            logger.info("[%d/%d] Computed indicators for %s", completed, len(analyzers), symbol)
+                    except Exception as exc:
+                        symbol = future_to_symbol.get(future, "unknown")
+                        logger.warning("Thread error for %s: %s", symbol, exc)
+                        failures.append(symbol)
+        except Exception as exc:
+            logger.error("ThreadPoolExecutor error: %s", exc)
+            # If threading fails, fall back to sequential computation
+            if not records:
+                logger.info("Falling back to sequential computation...")
+                for symbol, analyzer in analyzers:
+                    try:
+                        record = analyzer.compute_all_indicators()
+                        records.append(record)
+                    except Exception as e:
+                        logger.warning("Failed for %s: %s", symbol, e)
+                        failures.append(symbol)
 
         if not records:
             raise RuntimeError("Fundamental analyzer pipeline could not compute any tickers")
@@ -661,6 +734,9 @@ class FundamentalAnalyzerPipeline:
         # Cache the computed metrics
         self._save_cached_metrics(df, symbols)
         self._metrics_df = df
+        
+        logger.info("[COMPLETED] Processed %d tickers (%d successful, %d failed)", 
+                    len(symbols), len(records), len(failures))
         
         return PipelineResult(
             tickers_analyzed=symbols, 
