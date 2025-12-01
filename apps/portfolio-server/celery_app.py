@@ -345,14 +345,14 @@ celery_app.conf.task_annotations = {
         for task_name in TRADE_EXECUTION_TASKS
     },
     # Pipeline tasks - longer limits, lower rate
-    # Note: pipeline.low_risk.run has NO time limit (can take hours with LLM calls)
     **{
         task_name: {
-            "soft_time_limit": 86400 if task_name == "pipeline.low_risk.run" else SOFT_TIME_LIMIT + 300,  # 24h for low-risk (unlimited), 7 min for others
-            "time_limit": 86400 if task_name == "pipeline.low_risk.run" else HARD_TIME_LIMIT + 300,  # 24h for low-risk (unlimited), 8 min for others
+            "soft_time_limit": SOFT_TIME_LIMIT + 300,  # 7 min for pipelines
+            "time_limit": HARD_TIME_LIMIT + 300,  # 8 min for pipelines
             "rate_limit": "2/m",  # Max 2 per minute (pipelines are heavy)
         }
         for task_name in PIPELINE_TASKS
+        if task_name != "pipeline.low_risk.run"  # low_risk has no time limit
     },
     # Long-running tasks - no limits, single instance
     # NOTE: Must explicitly set very high limits (not None) to override global config
