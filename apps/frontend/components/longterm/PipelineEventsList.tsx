@@ -1,5 +1,7 @@
 "use client"
 
+import { EventMessage } from "./EventMessage"
+
 interface Event {
 	id: string
 	kind?: string
@@ -9,6 +11,8 @@ interface Event {
 interface PipelineEventsListProps {
 	events: Event[]
 }
+
+const debug = false // set to true to see the raw events
 
 export function PipelineEventsList({ events }: PipelineEventsListProps) {
 	return (
@@ -22,19 +26,27 @@ export function PipelineEventsList({ events }: PipelineEventsListProps) {
 						{events.length === 0 ? (
 							<div className="text-white/60 text-sm text-center py-4">No events to display</div>
 						) : (
-							events.map((event) => (
-								<div
-									key={event.id}
-									className="rounded-lg border border-white/10 bg-black/25 p-4 backdrop-blur-sm"
-								>
-									<div className="mb-2 text-xs font-semibold text-white/70 uppercase tracking-wide">
-										{event.kind || 'Unknown'} {event.kind === 'summary' && '✓'}
+							debug ? (
+								events.map((event) => (
+									<div
+										key={event.id}
+										className="rounded-lg border border-white/10 bg-black/25 p-4 backdrop-blur-sm"
+									>
+										<div className="mb-2 text-xs font-semibold text-white/70 uppercase tracking-wide">
+											{event.kind || 'Unknown'} {event.kind === 'summary' && '✓'}
+										</div>
+										<pre className="text-xs text-white/90 whitespace-pre-wrap wrap-break-word font-mono">
+											{JSON.stringify(event, null, 2)}
+										</pre>
 									</div>
-									<pre className="text-xs text-white/90 whitespace-pre-wrap wrap-break-word font-mono">
-										{JSON.stringify(event, null, 2)}
-									</pre>
+								))
+							) : (
+								<div className="space-y-3">
+									{events.map((event) => (
+										<EventMessage key={event.id} event={event} />
+									))}
 								</div>
-							))
+							)
 						)}
 					</div>
 				</div>
