@@ -331,6 +331,14 @@ publish("industry_fetched", LowRiskIndustryFetchedEvent(
     content={"industries": industries, "metrics": metrics},
 ).model_dump())
 
+publish("industry_done", LowRiskIndustryDoneEvent(
+    user_id=user_id, type="industry", status="done",
+    content={
+        "industries": summary_content["industry_list"],
+        "message": "Industry analysis complete. Final allocations determined based on macro regime and technical indicators."
+    }
+).model_dump())
+
 # Reasoning event after industry analysis
 publish("reasoning_3", LowRiskReasoningEvent(
     user_id=user_id, type="reasoning", status="thinking",
@@ -359,14 +367,6 @@ if t == "HINDALCO":
         user_id=user_id, type="reasoning", status="thinking",
         content={"message": "HINDALCO shows strong fundamentals with low debt. Considering for portfolio allocation."}
     ).model_dump())
-
-publish("industry_done", LowRiskIndustryDoneEvent(
-    user_id=user_id, type="industry", status="done",
-    content={
-        "industries": summary_content["industry_list"],
-        "message": "Industry analysis complete. Final allocations determined based on macro regime and technical indicators."
-    }
-).model_dump())
 
 # -------------------------------------------------------
 # REPORT PHASE

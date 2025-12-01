@@ -38,9 +38,18 @@ export default function LongTermPage() {
 		return events.find((event) => event.kind === "summary") || null
 	}, [events])
 
+	// Extract industry done event
+	const industryDoneEvent = useMemo(() => {
+		return events.find((event) => event.kind === "industry" && event.status === "done") || null
+	}, [events])
+
 	const industryList = useMemo(() => {
+		// Prioritize industry done event's industries, fallback to summary event's industries
+		if (industryDoneEvent?.content?.industries) {
+			return industryDoneEvent.content.industries
+		}
 		return summaryEvent?.content?.industry_list || []
-	}, [summaryEvent])
+	}, [industryDoneEvent, summaryEvent])
 
 	const finalPortfolio = useMemo(() => {
 		return summaryEvent?.content?.final_portfolio || []
@@ -170,7 +179,7 @@ export default function LongTermPage() {
 				{!agentLoading && !isAllocating && agentData !== null && (
 					<div className="w-full">
 						{/* Large centered message box with text and button inside */}
-						<div className="card-glass w-full min-h-screen rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_28px_65px_-38px_rgba(0,0,0,0.9)] backdrop-blur p-10 flex flex-col gap-6">
+						<div className={`card-glass w-full min-h-screen rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_28px_65px_-38px_rgba(0,0,0,0.9)] backdrop-blur p-10 ${industryDoneEvent && industryList.length > 0 && !hasSummary ? 'flex flex-row gap-6' : 'flex flex-col gap-6'}`}>
 							{!streaming ? (
 								/* Content when not streaming */
 								eventsLoading ? (
@@ -180,7 +189,7 @@ export default function LongTermPage() {
 									</div>
 								) : hasEvents ? (
 									/* Show toggleable events when events exist */
-									<div className="flex flex-1 flex-col gap-6">
+									<div className={`flex flex-col gap-6 ${industryDoneEvent && industryList.length > 0 && !hasSummary ? 'flex-1' : 'flex-1'}`}>
 										{/* Show error message if pipeline trigger failed */}
 										{pipelineError && (
 											<div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-4 text-yellow-400">
@@ -258,19 +267,24 @@ export default function LongTermPage() {
 												</div>
 											)}
 
-											{/* Pie Charts - shown when summary event exists */}
+											{/* Both charts inside card when summary event exists */}
 											{hasSummary && (industryList.length > 0 || finalPortfolio.length > 0) && (
 												<div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-													<IndustryDistributionChart
-														industryList={industryList}
-														chartData={industryChartData}
-													/>
-													<PortfolioAllocationChart
-														finalPortfolio={finalPortfolio}
-														chartData={portfolioChartData}
-													/>
+													{industryList.length > 0 && (
+														<IndustryDistributionChart
+															industryList={industryList}
+															chartData={industryChartData}
+														/>
+													)}
+													{finalPortfolio.length > 0 && (
+														<PortfolioAllocationChart
+															finalPortfolio={finalPortfolio}
+															chartData={portfolioChartData}
+														/>
+													)}
 												</div>
 											)}
+
 										</div>
 									</div>
 								) : (
@@ -295,7 +309,7 @@ export default function LongTermPage() {
 								)
 							) : (
 								/* Streaming layout with events */
-								<div className="flex flex-1 flex-col gap-6">
+								<div className={`flex flex-col gap-6 ${industryDoneEvent && industryList.length > 0 && !hasSummary ? 'flex-1' : 'flex-1'}`}>
 									{/* Top section with AI thinking indicator */}
 									{!hasSummary && (
 										<div className="flex flex-col items-center justify-center gap-6 py-4">
@@ -310,22 +324,36 @@ export default function LongTermPage() {
 										</div>
 									)}
 
-									{/* Pie Charts - shown when summary event exists */}
-									{hasSummary && (industryList.length > 0 || finalPortfolio.length > 0) && (
-										<div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-											<IndustryDistributionChart
-												industryList={industryList}
-												chartData={industryChartData}
-											/>
-											<PortfolioAllocationChart
-												finalPortfolio={finalPortfolio}
-												chartData={portfolioChartData}
-											/>
-										</div>
-									)}
-
 									{/* Streaming events section inside the card */}
 									<StreamingEventsView events={events} />
+
+									{/* Both charts inside card when summary event exists (streaming) */}
+									{hasSummary && (industryList.length > 0 || finalPortfolio.length > 0) && (
+										<div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+											{industryList.length > 0 && (
+												<IndustryDistributionChart
+													industryList={industryList}
+													chartData={industryChartData}
+												/>
+											)}
+											{finalPortfolio.length > 0 && (
+												<PortfolioAllocationChart
+													finalPortfolio={finalPortfolio}
+													chartData={portfolioChartData}
+												/>
+											)}
+										</div>
+									)}
+								</div>
+							)}
+
+							{/* Industry chart on the right when industry done event exists (only if no summary) */}
+							{industryDoneEvent && industryList.length > 0 && !hasSummary && (
+								<div className="flex-1">
+									<IndustryDistributionChart
+										industryList={industryList}
+										chartData={industryChartData}
+									/>
 								</div>
 							)}
 						</div>
