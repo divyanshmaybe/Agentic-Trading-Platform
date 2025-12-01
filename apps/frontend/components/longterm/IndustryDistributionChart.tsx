@@ -34,8 +34,7 @@ export function IndustryDistributionChart({ industryList, chartData }: IndustryD
 					return (
 						<div
 							key={`${item.name || "industry"}-${index}`}
-							className="flex items-center justify-between rounded-xl border border-white/5 bg-[#141414] px-3 py-2 text-sm hover:bg-[#1c1c1c] transition-colors"
-							title={item.reasoning}
+							className="group flex items-center justify-between rounded-xl border border-white/5 bg-[#141414] px-3 py-2 text-sm hover:bg-[#1c1c1c] transition-colors"
 						>
 							<div className="flex items-center gap-3">
 								<span
@@ -47,7 +46,7 @@ export function IndustryDistributionChart({ industryList, chartData }: IndustryD
 										{item.name || ""}
 									</span>
 									{item.reasoning && (
-										<span className="text-[11px] text-gray-400 line-clamp-1">
+										<span className="text-[11px] text-gray-400 line-clamp-1 opacity-0 max-h-0 group-hover:opacity-100 group-hover:max-h-20 transition-all duration-300 ease-in-out overflow-hidden">
 											{item.reasoning}
 										</span>
 									)}
