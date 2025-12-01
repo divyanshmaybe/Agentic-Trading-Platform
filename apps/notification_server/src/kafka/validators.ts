@@ -9,6 +9,7 @@ import {
 	LowRiskInfoEvent,
 	LowRiskIndustryEventFetching,
 	LowRiskIndustryEventFetched,
+	LowRiskIndustryEventDone,
 	LowRiskStockEventFetching,
 	LowRiskStockEventFetched,
 	LowRiskReportEventGenerating,
@@ -137,6 +138,41 @@ export function isLowRiskIndustryEventFetched(obj: any): obj is LowRiskIndustryE
 	}
 
 	if (!isObject(obj.content.metrics)) {
+		return false;
+	}
+
+	return true;
+}
+
+/**
+ * Type guard for LowRiskIndustryEventDone
+ */
+export function isLowRiskIndustryEventDone(obj: any): obj is LowRiskIndustryEventDone {
+	if (!isObject(obj)) {
+		return false;
+	}
+
+	if (!hasStringField(obj, "userId")) {
+		return false;
+	}
+
+	if (obj.kind !== "industry") {
+		return false;
+	}
+
+	if (obj.status !== "done") {
+		return false;
+	}
+
+	if (!isObject(obj.content)) {
+		return false;
+	}
+
+	if (!Array.isArray(obj.content.industries)) {
+		return false;
+	}
+
+	if (!hasStringField(obj.content, "message")) {
 		return false;
 	}
 
@@ -326,6 +362,7 @@ export function isLowRiskEvent(obj: any): obj is LowRiskEvent {
 		isLowRiskInfoEvent(obj) ||
 		isLowRiskIndustryEventFetching(obj) ||
 		isLowRiskIndustryEventFetched(obj) ||
+		isLowRiskIndustryEventDone(obj) ||
 		isLowRiskStockEventFetching(obj) ||
 		isLowRiskStockEventFetched(obj) ||
 		isLowRiskReportEventGenerating(obj) ||

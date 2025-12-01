@@ -8,6 +8,7 @@ import {
 	isLowRiskInfoEvent,
 	isLowRiskIndustryEventFetching,
 	isLowRiskIndustryEventFetched,
+	isLowRiskIndustryEventDone,
 	isLowRiskStockEventFetching,
 	isLowRiskStockEventFetched,
 	isLowRiskReportEventGenerating,
@@ -484,6 +485,10 @@ function parseLowRiskKafkaMessage(payload: EachMessagePayload): LowRiskNormalize
 	} else if (isLowRiskIndustryEventFetched(event)) {
 		eventType = "industry";
 		status = "fetched";
+		content = event.content;
+	} else if (isLowRiskIndustryEventDone(event)) {
+		eventType = "industry";
+		status = "done";
 		content = event.content;
 	} else if (isLowRiskStockEventFetching(event)) {
 		eventType = "stock";

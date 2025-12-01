@@ -80,6 +80,36 @@ export function EventMessage({ event }: EventMessageProps) {
 		)
 	}
 
+	// INDUSTRY - DONE
+	if (kind === "industry" && status === "done") {
+		const industries = content?.industries || []
+		const message = content?.message || "Industry analysis complete."
+
+		return (
+			<div className="flex items-start gap-3 text-sm">
+				<CheckCircle2 className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
+				<div className="flex-1 text-white/90">
+					<div className="mb-2">
+						<span className="text-emerald-300 font-semibold">{message}</span>
+					</div>
+					{industries.length > 0 && (
+						<div className="mt-2 pl-4 border-l border-white/10 space-y-1.5 text-xs text-white/70">
+							{industries.map((industry: any, idx: number) => (
+								<div key={idx}>
+									<span className="text-white/50">• {industry.name}:</span>{" "}
+									<span className="text-emerald-200 font-medium">{industry.percentage}%</span>
+									{industry.reasoning && (
+										<span className="text-white/60"> — {industry.reasoning}</span>
+									)}
+								</div>
+							))}
+						</div>
+					)}
+				</div>
+			</div>
+		)
+	}
+
 	// STOCK - FETCHING
 	if (kind === "stock" && status === "fetching") {
 		const ticker = content?.content || "Unknown"

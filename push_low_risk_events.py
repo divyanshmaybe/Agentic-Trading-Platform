@@ -7,248 +7,6 @@ import random
 from datetime import datetime, timezone
 from typing import Optional, Literal
 
-# -------------------------------------------------------------------
-# Minimal deps: Pydantic + shared kafka layer
-# -------------------------------------------------------------------
-try:
-    from pydantic import BaseModel, ConfigDict
-except Exception:
-    sys.stderr.write("pydantic is required.\n")
-    raise
-
-try:
-    from shared.py.kafka_service import (
-        KafkaEventBus,
-        KafkaSettings,
-        PublisherAlreadyRegistered,
-    )
-except Exception:
-    sys.stderr.write("Failed to import kafka_service.\n")
-    raise
-
-# -------------------------------------------------------------------
-# Timing helpers
-# -------------------------------------------------------------------
-def sleep_min(max_ms=1500, min_ms=400):
-    time.sleep(random.uniform(min_ms / 1000, max_ms / 1000))
-
-def sleep_phase(sec):
-    time.sleep(sec)
-
-# -------------------------------------------------------------------
-# Kafka bootstrap override
-# -------------------------------------------------------------------
-if "KAFKA_BOOTSTRAP_SERVERS_HOST" in os.environ:
-    os.environ["KAFKA_BOOTSTRAP_SERVERS"] = os.environ["KAFKA_BOOTSTRAP_SERVERS_HOST"]
-elif "KAFKA_BOOTSTRAP_SERVERS" not in os.environ \
-     or os.environ.get("KAFKA_BOOTSTRAP_SERVERS") == "kafka:9092":
-    os.environ["KAFKA_BOOTSTRAP_SERVERS"] = "localhost:9092"
-
-SETTINGS = KafkaSettings()
-BUS = KafkaEventBus(SETTINGS)
-
-# -------------------------------------------------------------------
-# Helpers
-# -------------------------------------------------------------------
-def ensure_publisher(name, topic):
-    try:
-        return BUS.register_publisher(
-            name,
-            topic=topic,
-            value_model=None,
-            default_headers={"source": "low_risk_pipeline"},
-            auto_start=True,
-        )
-    except PublisherAlreadyRegistered:
-        pub = BUS.get_publisher(name)
-        pub.start()
-        return pub
-
-def publish(name, payload_dict):
-    pub = ensure_publisher(name, TOPICS["low_risk_logs"])
-    key = payload_dict.get("user_id")
-    pub.publish(payload_dict, key=key, block=True)
-    print(f"\n✓ EVENT: {name}")
-    print(json.dumps(payload_dict, indent=2, ensure_ascii=False))
-    sleep_min()
-
-# -------------------------------------------------------------------
-# MODELS
-# -------------------------------------------------------------------
-class LowRiskBase(BaseModel):
-    user_id: str
-    type: str
-    status: Optional[str] = None
-    content: Optional[dict] = None
-    model_config = ConfigDict(extra="allow")
-
-class LowRiskInfoEvent(LowRiskBase):
-    type: Literal["info"]
-    content: str
-
-class LowRiskIndustryFetchingEvent(LowRiskBase):
-    type: Literal["industry"]
-    status: Literal["fetching"]
-    content: dict
-
-class LowRiskIndustryFetchedEvent(LowRiskBase):
-    type: Literal["industry"]
-    status: Literal["fetched"]
-    content: dict
-
-class LowRiskStockFetchingEvent(LowRiskBase):
-    type: Literal["stock"]
-    status: Literal["fetching"]
-    content: dict
-
-class LowRiskStockFetchedEvent(LowRiskBase):
-    type: Literal["stock"]
-    status: Literal["fetched"]
-    content: dict
-
-class LowRiskReportGeneratingEvent(LowRiskBase):
-    type: Literal["report"]
-    status: Literal["generating"]
-    content: dict
-
-class LowRiskReportGeneratedEvent(LowRiskBase):
-    type: Literal["report"]
-    status: Literal["generated"]
-    content: dict
-
-class LowRiskReasoningEvent(LowRiskBase):
-    type: Literal["reasoning"]
-    status: Literal["thinking"]
-    content: dict
-
-class LowRiskSummaryEvent(LowRiskBase):
-    type: Literal["summary"]
-    content: dict
-
-# -------------------------------------------------------------------
-# TOPICS
-# -------------------------------------------------------------------
-TOPICS = {
-    "low_risk_logs": os.getenv("LOW_RISK_AGENT_LOGS_TOPIC", "low_risk_agent_logs"),
-}
-
-user_id = "23a4691a-5804-412a-b9d6-5de0077d24ef"
-
-# -------------------------------------------------------------------
-# Pipeline Simulation
-# -------------------------------------------------------------------
-print("\n=== 🚀 Starting Low-Risk 2-Minute AI Agent Simulation ===\n")
-time.sleep(1)
-
-# -------------------------------------------------------
-# INFO EVENTS
-# -------------------------------------------------------
-msgs = [
-    "Running macro scan...",
-    "PMI processing...",
-    "Volatility clustering...",
-    "Validating universe...",
-    "Detecting inflation regime...",
-    "Checking liquidity flows...",
-    "Sector rotation logic running...",
-]
-for i in range(7):
-    publish(f"info_{i}", LowRiskInfoEvent(
-        user_id=user_id, type="info", content=random.choice(msgs)
-    ).model_dump())
-
-# Reasoning event after initial info
-publish("reasoning_1", LowRiskReasoningEvent(
-    user_id=user_id, type="reasoning", status="thinking",
-    content={"message": "Analyzing macro indicators suggests we're in an overheating regime. Commodity sectors may outperform."}
-).model_dump())
-
-sleep_phase(3)
-
-# -------------------------------------------------------
-# INDUSTRY PHASE
-# -------------------------------------------------------
-industries = [
-    "Metals & Mining",
-    "Oil Gas & Consumable Fuels",
-    "Power",
-    "Financial Services",
-    "Capital Goods",
-    "Construction Materials",
-]
-
-publish("industry_fetching", LowRiskIndustryFetchingEvent(
-    user_id=user_id, type="industry", status="fetching",
-    content={"industries": industries},
-).model_dump())
-
-# Reasoning event before industry analysis
-publish("reasoning_2", LowRiskReasoningEvent(
-    user_id=user_id, type="reasoning", status="thinking",
-    content={"message": "Focusing on industries with strong momentum and inflation protection characteristics."}
-).model_dump())
-
-sleep_phase(3)
-
-metrics = {
-    "Metals & Mining": {
-        "pct_above_ema200": 0.82,
-        "median_rsi": 44.2,
-        "industry_ret_6m": 0.143,
-    }
-}
-
-publish("industry_fetched", LowRiskIndustryFetchedEvent(
-    user_id=user_id, type="industry", status="fetched",
-    content={"industries": industries, "metrics": metrics},
-).model_dump())
-
-# Reasoning event after industry analysis
-publish("reasoning_3", LowRiskReasoningEvent(
-    user_id=user_id, type="reasoning", status="thinking",
-    content={"message": "Metals & Mining shows strong technical setup. Evaluating individual stocks with best risk-reward ratios."}
-).model_dump())
-
-# -------------------------------------------------------
-# STOCK PHASE
-# -------------------------------------------------------
-tickers = ["IGL", "GAIL", "HINDALCO", "NATIONALUM", "PETRONET"]
-for t in tickers:
-    publish(f"stock_fetching_{t}", LowRiskStockFetchingEvent(
-        user_id=user_id, type="stock", status="fetching", content={"content": t}
-    ).model_dump())
-    sleep_phase(1)
-    publish(f"stock_fetched_{t}", LowRiskStockFetchedEvent(
-        user_id=user_id, type="stock", status="fetched",
-        content={
-            "content": t,
-        }
-    ).model_dump())
-
-# Reasoning event during stock selection
-if t == "HINDALCO":
-    publish("reasoning_4", LowRiskReasoningEvent(
-        user_id=user_id, type="reasoning", status="thinking",
-        content={"message": "HINDALCO shows strong fundamentals with low debt. Considering for portfolio allocation."}
-    ).model_dump())
-
-# -------------------------------------------------------
-# REPORT PHASE
-# -------------------------------------------------------
-for t in ["IGL", "HINDALCO", "NATIONALUM"]:
-    publish(f"report_generating_{t}", LowRiskReportGeneratingEvent(
-        user_id=user_id, type="report", status="generating", content={"ticker": t}
-    ).model_dump())
-    sleep_phase(1)
-    publish(f"report_generated_{t}", LowRiskReportGeneratedEvent(
-        user_id=user_id, type="report", status="generated", content={"ticker": t}
-    ).model_dump())
-
-# Reasoning event before final summary
-publish("reasoning_5", LowRiskReasoningEvent(
-    user_id=user_id, type="reasoning", status="thinking",
-    content={"message": "Portfolio construction complete. Optimizing allocation weights based on risk-adjusted returns and diversification principles."}
-).model_dump())
 
 # -------------------------------------------------------
 # FINAL SUMMARY — FULL STRUCTURE, SHORTENED TEXT
@@ -371,6 +129,262 @@ summary_content = {
         "utilization_rate": 9442.48
     }
 }
+
+# -------------------------------------------------------------------
+# Minimal deps: Pydantic + shared kafka layer
+# -------------------------------------------------------------------
+try:
+    from pydantic import BaseModel, ConfigDict
+except Exception:
+    sys.stderr.write("pydantic is required.\n")
+    raise
+
+try:
+    from shared.py.kafka_service import (
+        KafkaEventBus,
+        KafkaSettings,
+        PublisherAlreadyRegistered,
+    )
+except Exception:
+    sys.stderr.write("Failed to import kafka_service.\n")
+    raise
+
+# -------------------------------------------------------------------
+# Timing helpers
+# -------------------------------------------------------------------
+def sleep_min(max_ms=1500, min_ms=400):
+    time.sleep(random.uniform(min_ms / 1000, max_ms / 1000))
+
+def sleep_phase(sec):
+    time.sleep(sec)
+
+# -------------------------------------------------------------------
+# Kafka bootstrap override
+# -------------------------------------------------------------------
+if "KAFKA_BOOTSTRAP_SERVERS_HOST" in os.environ:
+    os.environ["KAFKA_BOOTSTRAP_SERVERS"] = os.environ["KAFKA_BOOTSTRAP_SERVERS_HOST"]
+elif "KAFKA_BOOTSTRAP_SERVERS" not in os.environ \
+     or os.environ.get("KAFKA_BOOTSTRAP_SERVERS") == "kafka:9092":
+    os.environ["KAFKA_BOOTSTRAP_SERVERS"] = "localhost:9092"
+
+SETTINGS = KafkaSettings()
+BUS = KafkaEventBus(SETTINGS)
+
+# -------------------------------------------------------------------
+# Helpers
+# -------------------------------------------------------------------
+def ensure_publisher(name, topic):
+    try:
+        return BUS.register_publisher(
+            name,
+            topic=topic,
+            value_model=None,
+            default_headers={"source": "low_risk_pipeline"},
+            auto_start=True,
+        )
+    except PublisherAlreadyRegistered:
+        pub = BUS.get_publisher(name)
+        pub.start()
+        return pub
+
+def publish(name, payload_dict):
+    pub = ensure_publisher(name, TOPICS["low_risk_logs"])
+    key = payload_dict.get("user_id")
+    pub.publish(payload_dict, key=key, block=True)
+    print(f"\n✓ EVENT: {name}")
+    print(json.dumps(payload_dict, indent=2, ensure_ascii=False))
+    sleep_min()
+
+# -------------------------------------------------------------------
+# MODELS
+# -------------------------------------------------------------------
+class LowRiskBase(BaseModel):
+    user_id: str
+    type: str
+    status: Optional[str] = None
+    content: Optional[dict] = None
+    model_config = ConfigDict(extra="allow")
+
+class LowRiskInfoEvent(LowRiskBase):
+    type: Literal["info"]
+    content: str
+
+class LowRiskIndustryFetchingEvent(LowRiskBase):
+    type: Literal["industry"]
+    status: Literal["fetching"]
+    content: dict
+
+class LowRiskIndustryFetchedEvent(LowRiskBase):
+    type: Literal["industry"]
+    status: Literal["fetched"]
+    content: dict
+
+class LowRiskStockFetchingEvent(LowRiskBase):
+    type: Literal["stock"]
+    status: Literal["fetching"]
+    content: dict
+
+class LowRiskStockFetchedEvent(LowRiskBase):
+    type: Literal["stock"]
+    status: Literal["fetched"]
+    content: dict
+
+class LowRiskReportGeneratingEvent(LowRiskBase):
+    type: Literal["report"]
+    status: Literal["generating"]
+    content: dict
+
+class LowRiskReportGeneratedEvent(LowRiskBase):
+    type: Literal["report"]
+    status: Literal["generated"]
+    content: dict
+
+class LowRiskReasoningEvent(LowRiskBase):
+    type: Literal["reasoning"]
+    status: Literal["thinking"]
+    content: dict
+
+class LowRiskSummaryEvent(LowRiskBase):
+    type: Literal["summary"]
+    content: dict
+
+class LowRiskIndustryDoneEvent(LowRiskBase):
+    type: Literal["industry"]
+    status: Literal["done"]
+    content: dict
+
+# -------------------------------------------------------------------
+# TOPICS
+# -------------------------------------------------------------------
+TOPICS = {
+    "low_risk_logs": os.getenv("LOW_RISK_AGENT_LOGS_TOPIC", "low_risk_agent_logs"),
+}
+
+user_id = "f733ab80-7956-4598-9b9d-4d9f3a93b634"
+
+# -------------------------------------------------------------------
+# Pipeline Simulation
+# -------------------------------------------------------------------
+print("\n=== 🚀 Starting Low-Risk 2-Minute AI Agent Simulation ===\n")
+time.sleep(1)
+
+# -------------------------------------------------------
+# INFO EVENTS
+# -------------------------------------------------------
+msgs = [
+    "Running macro scan...",
+    "PMI processing...",
+    "Volatility clustering...",
+    "Validating universe...",
+    "Detecting inflation regime...",
+    "Checking liquidity flows...",
+    "Sector rotation logic running...",
+]
+for i in range(7):
+    publish(f"info_{i}", LowRiskInfoEvent(
+        user_id=user_id, type="info", content=random.choice(msgs)
+    ).model_dump())
+
+# Reasoning event after initial info
+publish("reasoning_1", LowRiskReasoningEvent(
+    user_id=user_id, type="reasoning", status="thinking",
+    content={"message": "Analyzing macro indicators suggests we're in an overheating regime. Commodity sectors may outperform."}
+).model_dump())
+
+sleep_phase(3)
+
+# -------------------------------------------------------
+# INDUSTRY PHASE
+# -------------------------------------------------------
+industries = [
+    "Metals & Mining",
+    "Oil Gas & Consumable Fuels",
+    "Power",
+    "Financial Services",
+    "Capital Goods",
+    "Construction Materials",
+]
+
+publish("industry_fetching", LowRiskIndustryFetchingEvent(
+    user_id=user_id, type="industry", status="fetching",
+    content={"industries": industries},
+).model_dump())
+
+# Reasoning event before industry analysis
+publish("reasoning_2", LowRiskReasoningEvent(
+    user_id=user_id, type="reasoning", status="thinking",
+    content={"message": "Focusing on industries with strong momentum and inflation protection characteristics."}
+).model_dump())
+
+sleep_phase(3)
+
+metrics = {
+    "Metals & Mining": {
+        "pct_above_ema200": 0.82,
+        "median_rsi": 44.2,
+        "industry_ret_6m": 0.143,
+    }
+}
+
+publish("industry_fetched", LowRiskIndustryFetchedEvent(
+    user_id=user_id, type="industry", status="fetched",
+    content={"industries": industries, "metrics": metrics},
+).model_dump())
+
+# Reasoning event after industry analysis
+publish("reasoning_3", LowRiskReasoningEvent(
+    user_id=user_id, type="reasoning", status="thinking",
+    content={"message": "Metals & Mining shows strong technical setup. Evaluating individual stocks with best risk-reward ratios."}
+).model_dump())
+
+# -------------------------------------------------------
+# STOCK PHASE
+# -------------------------------------------------------
+tickers = ["IGL", "GAIL", "HINDALCO", "NATIONALUM", "PETRONET"]
+for t in tickers:
+    publish(f"stock_fetching_{t}", LowRiskStockFetchingEvent(
+        user_id=user_id, type="stock", status="fetching", content={"content": t}
+    ).model_dump())
+    sleep_phase(1)
+    publish(f"stock_fetched_{t}", LowRiskStockFetchedEvent(
+        user_id=user_id, type="stock", status="fetched",
+        content={
+            "content": t,
+        }
+    ).model_dump())
+
+# Reasoning event during stock selection
+if t == "HINDALCO":
+    publish("reasoning_4", LowRiskReasoningEvent(
+        user_id=user_id, type="reasoning", status="thinking",
+        content={"message": "HINDALCO shows strong fundamentals with low debt. Considering for portfolio allocation."}
+    ).model_dump())
+
+publish("industry_done", LowRiskIndustryDoneEvent(
+    user_id=user_id, type="industry", status="done",
+    content={
+        "industries": summary_content["industry_list"],
+        "message": "Industry analysis complete. Final allocations determined based on macro regime and technical indicators."
+    }
+).model_dump())
+
+# -------------------------------------------------------
+# REPORT PHASE
+# -------------------------------------------------------
+for t in ["IGL", "HINDALCO", "NATIONALUM"]:
+    publish(f"report_generating_{t}", LowRiskReportGeneratingEvent(
+        user_id=user_id, type="report", status="generating", content={"ticker": t}
+    ).model_dump())
+    sleep_phase(1)
+    publish(f"report_generated_{t}", LowRiskReportGeneratedEvent(
+        user_id=user_id, type="report", status="generated", content={"ticker": t}
+    ).model_dump())
+
+# Reasoning event before final summary
+publish("reasoning_5", LowRiskReasoningEvent(
+    user_id=user_id, type="reasoning", status="thinking",
+    content={"message": "Portfolio construction complete. Optimizing allocation weights based on risk-adjusted returns and diversification principles."}
+).model_dump())
 
 summary_event = LowRiskSummaryEvent(
     user_id=user_id,
