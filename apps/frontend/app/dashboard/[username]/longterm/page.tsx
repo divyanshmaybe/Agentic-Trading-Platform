@@ -162,12 +162,17 @@ export default function LongTermPage() {
 							) : (
 								/* Streaming layout with events */
 								<div className="flex flex-1 flex-col gap-6">
-									{/* Top section with message */}
+									{/* Top section with AI thinking indicator */}
 									{!hasSummary && (
-										<div className="flex flex-col items-center gap-6">
-											<p className="text-center text-white/70 text-lg max-w-2xl">
-												Pipeline is running... Building your long-term investment portfolio.
-											</p>
+										<div className="flex flex-col items-center justify-center gap-6 py-4">
+											<div className="flex items-center gap-3">
+												{/* Pulsing dot */}
+												<div className="w-3 h-3 rounded-full bg-[#06B6D4] animate-pulse-dot"></div>
+												{/* Blinking text */}
+												<span className="text-white/70 text-lg font-medium animate-blink-text">
+													Thinking…
+												</span>
+											</div>
 										</div>
 									)}
 
