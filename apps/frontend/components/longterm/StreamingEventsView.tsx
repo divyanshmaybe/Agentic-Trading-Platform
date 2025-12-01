@@ -1,5 +1,6 @@
 "use client"
 
+import { useEffect, useRef, useState } from "react"
 import { EventMessage } from "./EventMessage"
 
 interface Event {
@@ -15,6 +16,37 @@ interface StreamingEventsViewProps {
 const debug = false // set to true to see the raw events
 
 export function StreamingEventsView({ events }: StreamingEventsViewProps) {
+	const previousEventIdsRef = useRef<Set<string>>(new Set())
+	const [newEventIds, setNewEventIds] = useState<Set<string>>(new Set())
+
+	// Track which events are new (not seen before)
+	useEffect(() => {
+		const currentIds = new Set(events.map(e => e.id))
+		const newIds = new Set<string>()
+
+		// Find events that weren't in the previous set
+		events.forEach(event => {
+			if (!previousEventIdsRef.current.has(event.id)) {
+				newIds.add(event.id)
+			}
+		})
+
+		// Update the new events set
+		if (newIds.size > 0) {
+			setNewEventIds(newIds)
+		}
+
+		// Update previous set for next render
+		previousEventIdsRef.current = currentIds
+
+		// Clear animation class after animation completes
+		const timeout = setTimeout(() => {
+			setNewEventIds(new Set())
+		}, 600) // Match animation duration
+
+		return () => clearTimeout(timeout)
+	}, [events])
+
 	return (
 		<div className="flex-1 overflow-hidden">
 			<div className="max-h-[600px] overflow-y-auto">
@@ -31,7 +63,14 @@ export function StreamingEventsView({ events }: StreamingEventsViewProps) {
 								</pre>
 							</div>
 						))
-					) : events.map((event) => <EventMessage key={event.id} event={event} />)
+					) : events.map((event) => (
+						<div
+							key={event.id}
+							className={newEventIds.has(event.id) ? "animate-event-enter" : ""}
+						>
+							<EventMessage event={event} />
+						</div>
+					))
 				 }
 				</div>
 			</div>

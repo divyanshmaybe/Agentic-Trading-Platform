@@ -203,3 +203,19 @@ h1, h2, h3 { font-family: 'Playfair Display', serif; }
 .animate-blink-text {
   animation: blink-text 1.5s ease-in-out infinite;
 }
+
+/* Event message enter animation - slide in horizontally from left */
+@keyframes event-enter {
+  0% {
+    opacity: 0;
+    transform: translateX(-16px) scale(0.98);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+.animate-event-enter {
+  animation: event-enter 0.5s ease-out forwards;
+}

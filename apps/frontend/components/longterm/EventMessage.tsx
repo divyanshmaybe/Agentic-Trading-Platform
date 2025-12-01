@@ -48,14 +48,14 @@ export function EventMessage({ event }: EventMessageProps) {
 		const industries = content?.industries || []
 		const metrics = content?.metrics || {}
 		const industryCount = industries.length
-		
+
 		return (
 			<div className="flex items-start gap-3 text-sm">
-				<CheckCircle2 className="w-4 h-4 text-green-400 mt-0.5 shrink-0" />
+				<Building2 className="w-4 h-4 text-amber-300 mt-0.5 shrink-0" />
 				<div className="flex-1 text-white/90">
 					<div className="mb-1">
 						<span className="text-white/70">Completed analysis of</span>{" "}
-						<span className="text-green-300 font-medium">{industryCount} industries</span>
+						<span className="text-amber-200 font-medium">{industryCount} industries</span>
 					</div>
 					{Object.keys(metrics).length > 0 && (
 						<div className="mt-2 pl-4 border-l border-white/10 text-xs text-white/60">
@@ -86,10 +86,10 @@ export function EventMessage({ event }: EventMessageProps) {
 		const ticker = content?.content || "Unknown"
 		return (
 			<div className="flex items-start gap-3 text-sm">
-				<CheckCircle2 className="w-4 h-4 text-green-400 mt-0.5 shrink-0" />
+				<TrendingUp className="w-4 h-4 text-emerald-300 mt-0.5 shrink-0" />
 				<div className="flex-1 text-white/90">
 					<span className="text-white/70">Data retrieved for</span>{" "}
-					<span className="text-green-300 font-mono font-medium">{ticker}</span>
+					<span className="text-emerald-200 font-mono font-medium">{ticker}</span>
 				</div>
 			</div>
 		)
@@ -114,10 +114,10 @@ export function EventMessage({ event }: EventMessageProps) {
 		const ticker = content?.ticker || "Unknown"
 		return (
 			<div className="flex items-start gap-3 text-sm">
-				<CheckCircle2 className="w-4 h-4 text-green-400 mt-0.5 shrink-0" />
+				<FileText className="w-4 h-4 text-indigo-300 mt-0.5 shrink-0" />
 				<div className="flex-1 text-white/90">
 					<span className="text-white/70">Report generated for</span>{" "}
-					<span className="text-green-300 font-mono font-medium">{ticker}</span>
+					<span className="text-indigo-200 font-mono font-medium">{ticker}</span>
 				</div>
 			</div>
 		)
