@@ -297,7 +297,14 @@ class FinancialStatementsStorage:
         else:
             collection = pd.DataFrame()
 
-        return pd.concat([collection, wrapped], axis=1)
+        if collection.empty:
+            return wrapped
+
+        # Use join='inner' to only keep rows that exist in both DataFrames
+        # This prevents NaN values from appearing when row indices differ
+        # between the existing collection and the new ticker data.
+        # Each ticker's data will be complete for its own rows.
+        return pd.concat([collection, wrapped], axis=1, join='outer')
 
     @staticmethod
     def _wrap_with_ticker(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
@@ -316,7 +323,10 @@ class FinancialStatementsStorage:
             return pd.DataFrame()
         if ticker not in collection.columns.get_level_values(0):
             return pd.DataFrame()
-        return collection.xs(ticker, axis=1, level=0)
+        extracted = collection.xs(ticker, axis=1, level=0)
+        # Drop rows where ALL values are NaN (these are rows that didn't exist
+        # in the original fetch for this ticker but exist for other tickers)
+        return extracted.dropna(how='all')
 
     @staticmethod
     def _validate_dataframe(

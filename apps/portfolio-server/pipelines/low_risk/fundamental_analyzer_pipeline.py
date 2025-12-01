@@ -10,61 +10,32 @@ This module provides two pieces:
    statements through :class:`utils.financial_statements_storage.
    FinancialStatementsStorage`, and returns a consolidated DataFrame with all
    computed indicators.
+
+The pipeline also caches the final computed metrics DataFrame in a pickle file,
+so subsequent runs can skip recomputation if nothing has changed.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
-import time
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 import numpy as np
 import pandas as pd
 import yfinance as yf
-from yfinance import data as yf_data
 
 from utils.financial_statements_storage import FinancialStatementsStorage
 
 logger = logging.getLogger(__name__)
 
-
-_YFINANCE_PATCHED = False
-
-
-def _patch_yfinance_rate_limit() -> None:
-    """Monkeypatch YF crumb retrieval to retry on 429 responses."""
-
-    global _YFINANCE_PATCHED
-    if _YFINANCE_PATCHED:
-        return
-
-    original_get_crumb_basic = yf_data.YfData._get_crumb_basic
-
-    def _resilient_get_crumb_basic(self, proxy=None, timeout=30):  # type: ignore[override]
-        attempts = 0
-        while True:
-            crumb = original_get_crumb_basic(self, proxy, timeout)
-            if crumb and "Too Many Requests" not in crumb:
-                return crumb.strip()
-            # Reset cached crumb and back off before re-fetching.
-            self._crumb = None
-            attempts += 1
-            if attempts >= 6:
-                return crumb
-            sleep_for = min(2 ** (attempts - 1), 10)
-            logger.warning(
-                "Yahoo crumb request throttled (attempt %s), retrying in %.1fs",
-                attempts,
-                sleep_for,
-            )
-            time.sleep(sleep_for)
-
-    yf_data.YfData._get_crumb_basic = _resilient_get_crumb_basic  # type: ignore[assignment]
-    _YFINANCE_PATCHED = True
-
-
-_patch_yfinance_rate_limit()
+# Cache file for final computed metrics
+METRICS_CACHE_FILE = "fundamental_metrics.pkl"
+METRICS_METADATA_FILE = "fundamental_metrics_metadata.json"
 
 
 class FundamentalAnalyzer:
@@ -74,16 +45,30 @@ class FundamentalAnalyzer:
         self.ticker_symbol = ticker_symbol
         self.ticker = yf.Ticker(ticker_symbol)
 
-        self._balance_sheet: Optional[pd.DataFrame] = None
-        self._income_stmt: Optional[pd.DataFrame] = None
-        self._cashflow: Optional[pd.DataFrame] = None
-        self._info: Dict[str, Any] = {}
+        self._balance_sheet = None
+        self._income_stmt = None
+        self._cashflow = None
+        self._info = None
         self._financials_loaded = False
         self.raw = raw
 
     # ------------------------------------------------------------------
     # Loading helpers
     # ------------------------------------------------------------------
+
+    def _fetch_financials(self):
+        if self._financials_loaded:
+            return True
+        try:
+            self._balance_sheet = self.ticker.get_balance_sheet(freq="yearly")
+            self._income_stmt = self.ticker.income_stmt
+            self._cashflow = self.ticker.get_cashflow(freq="yearly")
+            self._info = self.ticker.get_info()
+            self._financials_loaded = True
+            return True
+        except Exception as e:
+            print(f"Error fetching financials for {self.ticker_symbol}: {e}")
+            return False
 
     def populate_financials(
         self,
@@ -100,7 +85,7 @@ class FundamentalAnalyzer:
         self._info = info or {}
         self._financials_loaded = True
 
-    def _get(self, df: Optional[pd.DataFrame], field: str, col: int = 0, default=pd.NA):
+    def _get(self, df, field, col=0, default=pd.NA):
         try:
             if df is None or field not in df.index:
                 return default
@@ -108,10 +93,10 @@ class FundamentalAnalyzer:
                 return default
             val = df.loc[field, df.columns[col]]
             return val if pd.notna(val) else default
-        except Exception:
+        except:
             return default
 
-    def _prev(self, df: Optional[pd.DataFrame], field: str, col: int = 1, default=pd.NA):
+    def _prev(self, df, field, col=1, default=pd.NA):
         return self._get(df, field, col, default)
 
     # ------------------------------------------------------------------
@@ -119,7 +104,7 @@ class FundamentalAnalyzer:
     # ------------------------------------------------------------------
 
     def compute_piotroski_fscore(self):
-        if not self._financials_loaded:
+        if not self._fetch_financials():
             return pd.NA
 
         score = 0
@@ -151,25 +136,43 @@ class FundamentalAnalyzer:
         )
         SH_prev = self._prev(self._balance_sheet, "OrdinarySharesNumber")
 
+        # ROA > 0
         if pd.notna(NI) and pd.notna(TA) and TA > 0 and NI / TA > 0:
             score += 1
+
+        # CFO > 0
         if pd.notna(CFO) and CFO > 0:
             score += 1
+
+        # ΔROA > 0
         if all(pd.notna(v) for v in [NI, TA, NI_prev, TA_prev]):
-            if TA > 0 and TA_prev > 0 and (NI / TA) > (NI_prev / TA_prev):
-                score += 1
+            if TA > 0 and TA_prev > 0:
+                if (NI / TA) > (NI_prev / TA_prev):
+                    score += 1
+
+        # CFO > NI (accruals)
         if pd.notna(CFO) and pd.notna(NI) and CFO > NI:
             score += 1
+
+        # Debt decreasing
         if pd.notna(LTD) and pd.notna(LTD_prev) and LTD <= LTD_prev:
             score += 1
+
+        # Current Ratio improving
         if all(pd.notna(v) for v in [CA, CL, CA_prev, CL_prev]) and CL > 0 and CL_prev > 0:
-            if (CA / CL) > (CA_prev / CL_prev):
+            if (CA/CL) > (CA_prev/CL):
                 score += 1
+
+        # No equity issuance
         if pd.notna(SH) and pd.notna(SH_prev) and SH <= SH_prev:
             score += 1
+
+        # Gross Margin increasing
         if all(pd.notna(v) for v in [GP, REV, GP_prev, REV_prev]) and REV > 0 and REV_prev > 0:
             if (GP / REV) > (GP_prev / REV_prev):
                 score += 1
+
+        # Asset Turnover increasing
         if all(pd.notna(v) for v in [REV, TA, REV_prev, TA_prev]) and TA > 0 and TA_prev > 0:
             if (REV / TA) > (REV_prev / TA_prev):
                 score += 1
@@ -177,7 +180,7 @@ class FundamentalAnalyzer:
         return int(score)
 
     def compute_sloan_ratio(self):
-        if not self._financials_loaded:
+        if not self._fetch_financials():
             return pd.NA
 
         NI = self._get(self._income_stmt, "Net Income")
@@ -195,7 +198,7 @@ class FundamentalAnalyzer:
         return float((NI - CFO) / avg_assets)
 
     def compute_ccc(self):
-        if not self._financials_loaded:
+        if not self._fetch_financials():
             return pd.NA
 
         inventory = self._get(self._balance_sheet, "Inventory", default=0)
@@ -218,7 +221,7 @@ class FundamentalAnalyzer:
         return float(dio + dso - dpo)
 
     def compute_beneish_mscore(self):
-        if not self._financials_loaded:
+        if not self._fetch_financials():
             return pd.NA
 
         AR = self._get(self._balance_sheet, "AccountsReceivable", default=0)
@@ -285,7 +288,8 @@ class FundamentalAnalyzer:
         return float(m)
 
     def compute_shareholder_yield(self):
-        if not self._financials_loaded:
+        """Shareholder Yield = Dividend Yield + (FCF / Market Cap)"""
+        if not self._fetch_financials():
             return pd.NA
 
         div_yield = self._info.get("dividendYield", 0)
@@ -296,17 +300,21 @@ class FundamentalAnalyzer:
             return pd.NA
 
         fcf_yield = fcf / market_cap if fcf else 0
-        return float((div_yield or 0) + fcf_yield)
+        return float(div_yield + fcf_yield)
 
     def compute_roic(self):
-        if not self._financials_loaded:
+        """Return on Invested Capital = EBIT * (1 - Tax Rate) / Invested Capital"""
+        if not self._fetch_financials():
             return pd.NA
 
         ebit = self._get(self._income_stmt, "EBIT")
         tax_rate = self._get(self._income_stmt, "Tax Rate For Calcs", default=0.25)
+
+        # Try to get InvestedCapital directly, otherwise calculate it
         invested_capital = self._get(self._balance_sheet, "InvestedCapital")
 
         if pd.isna(invested_capital):
+            # Calculate as Total Debt + Stockholders Equity - Cash
             total_debt = self._get(self._balance_sheet, "TotalDebt", default=0)
             equity = self._get(self._balance_sheet, "StockholdersEquity", default=0)
             cash = self._get(self._balance_sheet, "CashAndCashEquivalents", default=0)
@@ -319,18 +327,22 @@ class FundamentalAnalyzer:
         return float(nopat / invested_capital)
 
     def compute_rs_ratio(self):
+        """Relative Strength Ratio = Stock Price / Nifty 500 Index"""
         try:
             if self.raw is None or self.raw.empty:
                 return pd.NA
 
+            # Get stock data
             stock_data = self.raw[self.raw["Ticker"] == self.ticker_symbol]
             if stock_data.empty:
                 return pd.NA
 
-            index_data = self.raw[self.raw["Ticker"] == "^CRSLDX"]
+            # Get Nifty 500 index data
+            index_data = self.raw[self.raw["Ticker"] == "Nifty 500"]
             if index_data.empty:
                 return pd.NA
 
+            # Get latest prices
             latest_stock_price = stock_data["Close"].iloc[-1]
             latest_index_price = index_data["Close"].iloc[-1]
 
@@ -338,32 +350,38 @@ class FundamentalAnalyzer:
                 return pd.NA
 
             return float(latest_stock_price / latest_index_price)
-        except Exception:
+        except:
             return pd.NA
 
     def compute_momentum_6_1(self):
+        """Momentum 6-1 = (P_t-1 / P_t-6) - 1"""
         try:
             if self.raw is None or self.raw.empty:
                 return pd.NA
 
             stock_data = self.raw[self.raw["Ticker"] == self.ticker_symbol].sort_values("Date")
 
+            # Need at least 126 trading days (6 months)
             if len(stock_data) < 126:
                 return pd.NA
 
+            # Price 1 month ago (21 trading days)
             if len(stock_data) < 21:
                 return pd.NA
             price_t_1 = stock_data["Close"].iloc[-21]
+
+            # Price 6 months ago (126 trading days)
             price_t_6 = stock_data["Close"].iloc[-126]
 
             if pd.isna(price_t_1) or pd.isna(price_t_6) or price_t_6 == 0:
                 return pd.NA
 
             return float((price_t_1 / price_t_6) - 1)
-        except Exception:
+        except:
             return pd.NA
 
     def compute_rsi_14(self):
+        """RSI (14-day) using Wilder's smoothing method"""
         try:
             if self.raw is None or self.raw.empty:
                 return pd.NA
@@ -374,10 +392,15 @@ class FundamentalAnalyzer:
                 return pd.NA
 
             close_prices = stock_data["Close"].values
+
+            # Calculate price changes
             deltas = np.diff(close_prices)
+
+            # Separate gains and losses
             gains = np.where(deltas > 0, deltas, 0)
             losses = np.where(deltas < 0, -deltas, 0)
 
+            # Wilder's smoothing (14-period)
             avg_gain = np.mean(gains[-14:])
             avg_loss = np.mean(losses[-14:])
 
@@ -388,10 +411,11 @@ class FundamentalAnalyzer:
             rsi = 100 - (100 / (1 + rs))
 
             return float(rsi)
-        except Exception:
+        except:
             return pd.NA
 
     def _compute_ema(self, length: int):
+        """Helper to compute Exponential Moving Average"""
         try:
             if self.raw is None or self.raw.empty:
                 return pd.NA
@@ -401,19 +425,23 @@ class FundamentalAnalyzer:
             if len(stock_data) < length:
                 return pd.NA
 
+            # Calculate EMA
             ema_series = stock_data["Close"].ewm(span=length, adjust=False).mean()
             return float(ema_series.iloc[-1])
-        except Exception:
+        except:
             return pd.NA
 
     def compute_ema50(self):
+        """Compute 50-day Exponential Moving Average"""
         return self._compute_ema(50)
 
     def compute_ema200(self):
+        """Compute 200-day Exponential Moving Average"""
         return self._compute_ema(200)
 
     def get_valuation_metrics(self):
-        if not self._financials_loaded:
+        """Extract valuation metrics from ticker.info"""
+        if not self._fetch_financials():
             return {}
 
         return {
@@ -423,7 +451,8 @@ class FundamentalAnalyzer:
         }
 
     def get_growth_metrics(self):
-        if not self._financials_loaded:
+        """Extract growth metrics from ticker.info"""
+        if not self._fetch_financials():
             return {}
 
         return {
@@ -433,7 +462,8 @@ class FundamentalAnalyzer:
         }
 
     def get_financial_health_metrics(self):
-        if not self._financials_loaded:
+        """Extract financial health metrics from ticker.info"""
+        if not self._fetch_financials():
             return {}
 
         return {
@@ -441,16 +471,20 @@ class FundamentalAnalyzer:
         }
 
     def get_price_metrics(self):
-        if not self._financials_loaded:
+        """Extract price-related metrics from ticker.info"""
+        if not self._fetch_financials():
             return {}
 
+        current_price = self._info.get("currentPrice", self._info.get("regularMarketPrice", pd.NA))
+
         return {
-            "current_price": self._info.get("currentPrice", self._info.get("regularMarketPrice", pd.NA)),
+            "current_price": current_price,
             "fifty_two_week_change": self._info.get("52WeekChange", pd.NA),
         }
 
     def get_volume_metrics(self):
-        if not self._financials_loaded:
+        """Extract volume and share metrics from ticker.info"""
+        if not self._fetch_financials():
             return {}
 
         return {
@@ -458,6 +492,7 @@ class FundamentalAnalyzer:
         }
 
     def compute_all_indicators(self) -> Dict[str, Any]:
+        """Compute all fundamental, quality, market, and technical indicators"""
         result = {
             "ticker": self.ticker_symbol,
             "piotroski_fscore": self.compute_piotroski_fscore(),
@@ -473,11 +508,13 @@ class FundamentalAnalyzer:
             "ema200": self.compute_ema200(),
         }
 
+        # Add all info-based metrics
         result.update(self.get_valuation_metrics())
         result.update(self.get_growth_metrics())
         result.update(self.get_financial_health_metrics())
         result.update(self.get_price_metrics())
         result.update(self.get_volume_metrics())
+
         return result
 
 
@@ -487,23 +524,89 @@ class PipelineResult:
 
     tickers_analyzed: List[str]
     dataframe: pd.DataFrame
+    from_cache: bool = False
 
 
 class FundamentalAnalyzerPipeline:
-    """Run FundamentalAnalyzer across a universe with cached statements."""
+    """Run FundamentalAnalyzer across a universe with cached statements.
+    
+    This pipeline caches both:
+    1. Financial statements (balance_sheet, income_statement, cashflow) per ticker
+    2. Final computed metrics DataFrame for all tickers
+    
+    On subsequent runs, if nothing has changed (same tickers, no force_refresh),
+    it returns the cached metrics directly without recomputation.
+    
+    OHLCV data is automatically loaded from the industry candles CSV file at:
+    data/market_data/industry_cache/industry_candles_ONE_DAY_365.csv
+    """
+
+    # Default path for OHLCV data (always updated)
+    DEFAULT_OHLCV_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "market_data" / "industry_cache" / "industry_candles_ONE_DAY_365.csv"
 
     def __init__(
         self,
         *,
         storage: Optional[FinancialStatementsStorage] = None,
         raw_data: Optional[pd.DataFrame] = None,
-        max_tickers: int,
+        ohlcv_path: Optional[Path] = None,
+        max_tickers: int = 500,
         force_refresh: bool = False,
     ) -> None:
         self.storage = storage or FinancialStatementsStorage()
-        self.raw_data = raw_data
         self.max_tickers = max_tickers
         self.force_refresh = force_refresh
+        self._metrics_df: Optional[pd.DataFrame] = None
+        
+        # Cache paths
+        self._cache_dir = self.storage.data_dir
+        self._metrics_cache_path = self._cache_dir / METRICS_CACHE_FILE
+        self._metrics_metadata_path = self._cache_dir / METRICS_METADATA_FILE
+        
+        # Load OHLCV data: use provided raw_data, or load from file
+        if raw_data is not None:
+            self.raw_data = raw_data
+        else:
+            ohlcv_file = ohlcv_path or self.DEFAULT_OHLCV_PATH
+            self.raw_data = self._load_ohlcv_data(ohlcv_file)
+
+    def _load_ohlcv_data(self, ohlcv_path: Path) -> Optional[pd.DataFrame]:
+        """Load and normalize OHLCV data from the industry candles CSV."""
+        if not ohlcv_path.exists():
+            logger.warning("OHLCV file not found: %s. Technical indicators will be unavailable.", ohlcv_path)
+            return None
+        
+        try:
+            logger.info("Loading OHLCV data from %s", ohlcv_path)
+            df = pd.read_csv(ohlcv_path)
+            
+            # Normalize column names to expected format
+            df = df.rename(columns={
+                'timestamp': 'Date',
+                'symbol': 'Ticker',
+                'close': 'Close',
+                'open': 'Open',
+                'high': 'High',
+                'low': 'Low',
+                'volume': 'Volume'
+            })
+            
+            # Add .NS suffix to stock tickers (but not to index like 'Nifty 500')
+            df['Ticker'] = df['Ticker'].apply(
+                lambda x: x if x == 'Nifty 500' else (
+                    f'{x}.NS' if not str(x).endswith('.NS') else x
+                )
+            )
+            
+            # Parse dates
+            df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+            
+            logger.info("Loaded OHLCV data: %d rows, %d tickers", len(df), df['Ticker'].nunique())
+            return df
+            
+        except Exception as e:
+            logger.warning("Failed to load OHLCV data from %s: %s", ohlcv_path, e)
+            return None
 
     def run(
         self,
@@ -520,6 +623,20 @@ class FundamentalAnalyzerPipeline:
         symbols = symbols[:limit]
         refresh = self.force_refresh if force_refresh is None else force_refresh
 
+        # Check if we can use cached metrics
+        if not refresh:
+            cached_df = self._load_cached_metrics(symbols)
+            if cached_df is not None:
+                logger.info("[METRICS CACHE HIT] Returning cached metrics for %d tickers", len(symbols))
+                self._metrics_df = cached_df
+                return PipelineResult(
+                    tickers_analyzed=symbols, 
+                    dataframe=cached_df,
+                    from_cache=True
+                )
+
+        # Need to compute fresh metrics
+        logger.info("[COMPUTING] Computing metrics for %d tickers...", len(symbols))
         records: List[Dict[str, Any]] = []
         failures: List[str] = []
 
@@ -540,92 +657,250 @@ class FundamentalAnalyzerPipeline:
         df = pd.DataFrame(records)
         if failures:
             df.attrs["failed_tickers"] = failures
-        return PipelineResult(tickers_analyzed=symbols, dataframe=df)
+        
+        # Cache the computed metrics
+        self._save_cached_metrics(df, symbols)
+        self._metrics_df = df
+        
+        return PipelineResult(
+            tickers_analyzed=symbols, 
+            dataframe=df,
+            from_cache=False
+        )
+
+    def get_metrics(self, ticker: str) -> Optional[Dict[str, Any]]:
+        """Get computed metrics for a specific ticker as JSON.
+        
+        Args:
+            ticker: The ticker symbol (with or without .NS suffix)
+            
+        Returns:
+            Dict with all computed metrics for the ticker (NaN replaced with "NOT_AVAILABLE"),
+            or None if not found.
+        """
+        ticker_fmt = ticker.upper()
+        if not ticker_fmt.endswith(".NS"):
+            ticker_fmt = f"{ticker_fmt}.NS"
+        
+        row = None
+        
+        # Load from memory if available
+        if self._metrics_df is not None:
+            mask = self._metrics_df["ticker"] == ticker_fmt
+            if mask.any():
+                row = self._metrics_df[mask].iloc[0]
+        
+        # Try loading from cache
+        if row is None and self._metrics_cache_path.exists():
+            try:
+                df = pd.read_pickle(self._metrics_cache_path)
+                mask = df["ticker"] == ticker_fmt
+                if mask.any():
+                    self._metrics_df = df  # Cache in memory
+                    row = df[mask].iloc[0]
+            except Exception as e:
+                logger.warning("Failed to load metrics cache: %s", e)
+        
+        if row is None:
+            return None
+        
+        # Convert to dict, replace NaN with "NOT_AVAILABLE", and round numbers to 3 decimal places
+        result = row.to_dict()
+        for key, value in result.items():
+            if pd.isna(value):
+                result[key] = "NOT_AVAILABLE"
+            elif isinstance(value, float):
+                result[key] = round(value, 3)
+        
+        return result
+
+    def get_all_metrics(self) -> Optional[pd.DataFrame]:
+        """Get the full metrics DataFrame for all tickers.
+        
+        Returns:
+            pd.DataFrame with all computed metrics, or None if not available.
+        """
+        if self._metrics_df is not None:
+            return self._metrics_df.copy()
+        
+        # Try loading from cache
+        if self._metrics_cache_path.exists():
+            try:
+                df = pd.read_pickle(self._metrics_cache_path)
+                self._metrics_df = df
+                return df.copy()
+            except Exception as e:
+                logger.warning("Failed to load metrics cache: %s", e)
+        
+        return None
+
+    # ------------------------------------------------------------------
+    # Metrics caching helpers
+    # ------------------------------------------------------------------
+
+    def _compute_tickers_hash(self, tickers: List[str]) -> str:
+        """Compute a hash of the ticker list for cache validation."""
+        tickers_str = ",".join(sorted(tickers))
+        return hashlib.md5(tickers_str.encode()).hexdigest()
+
+    def _load_cached_metrics(self, tickers: List[str]) -> Optional[pd.DataFrame]:
+        """Load cached metrics if valid and up-to-date."""
+        if not self._metrics_cache_path.exists() or not self._metrics_metadata_path.exists():
+            logger.debug("Metrics cache files not found")
+            return None
+        
+        try:
+            # Load and validate metadata
+            metadata = json.loads(self._metrics_metadata_path.read_text())
+            
+            # Check if ticker list matches
+            expected_hash = self._compute_tickers_hash(tickers)
+            if metadata.get("tickers_hash") != expected_hash:
+                logger.debug("Metrics cache ticker hash mismatch")
+                return None
+            
+            # Check if underlying statements have been updated
+            statements_updated = metadata.get("statements_last_updated", "")
+            current_statements_ts = self._get_statements_timestamp()
+            
+            if current_statements_ts and statements_updated != current_statements_ts:
+                logger.debug("Underlying statements have been updated, recomputing metrics")
+                return None
+            
+            # Load the cached DataFrame
+            df = pd.read_pickle(self._metrics_cache_path)
+            
+            # Verify all requested tickers are present
+            cached_tickers = set(df["ticker"].tolist())
+            requested_tickers = set(tickers)
+            if not requested_tickers.issubset(cached_tickers):
+                logger.debug("Cached metrics missing some tickers")
+                return None
+            
+            # Filter to only requested tickers (in case cache has more)
+            df = df[df["ticker"].isin(requested_tickers)]
+            
+            logger.info(
+                "[METRICS CACHE] Loaded from cache (last_updated: %s)",
+                metadata.get("last_updated", "unknown")
+            )
+            return df
+            
+        except Exception as e:
+            logger.warning("Failed to load metrics cache: %s", e)
+            return None
+
+    def _save_cached_metrics(self, df: pd.DataFrame, tickers: List[str]) -> None:
+        """Save computed metrics to cache."""
+        try:
+            # Save DataFrame
+            df.to_pickle(self._metrics_cache_path)
+            
+            # Save metadata
+            metadata = {
+                "last_updated": datetime.utcnow().isoformat(),
+                "tickers_hash": self._compute_tickers_hash(tickers),
+                "tickers_count": len(tickers),
+                "statements_last_updated": self._get_statements_timestamp(),
+            }
+            self._metrics_metadata_path.write_text(json.dumps(metadata, indent=2))
+            
+            logger.info(
+                "[METRICS CACHED] Saved %d tickers to %s (%.2f MB)",
+                len(tickers),
+                self._metrics_cache_path.name,
+                self._metrics_cache_path.stat().st_size / (1024 * 1024)
+            )
+        except Exception as e:
+            logger.warning("Failed to save metrics cache: %s", e)
+
+    def _get_statements_timestamp(self) -> str:
+        """Get a combined timestamp of all statement files for cache validation."""
+        timestamps = []
+        for stmt_type in ["balance_sheet", "income_statement", "cashflow"]:
+            meta_file = self._cache_dir / f"{stmt_type}_metadata.json"
+            if meta_file.exists():
+                try:
+                    # Use file modification time as a simple proxy
+                    timestamps.append(str(meta_file.stat().st_mtime))
+                except Exception:
+                    pass
+        return "|".join(sorted(timestamps)) if timestamps else ""
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
     def _load_financials(self, analyzer: FundamentalAnalyzer, *, force_refresh: bool) -> None:
+        """Load financial statements for a ticker, using cache if available.
+        
+        The cache automatically updates when:
+        1. force_refresh=True is passed
+        2. Cache is older than max_age_days (default 30 days)
+        3. Ticker not found in cache
+        
+        When fetching new data, it also checks for new periods (dates) and
+        merges them into the existing cache.
+        """
         ticker = analyzer.ticker_symbol
         yf_ticker = analyzer.ticker
 
-        bs_record = self.storage.get_balance_sheet(
-            ticker,
-            fetcher=lambda: self._fetch_balance_sheet(yf_ticker),
-            force_refresh=force_refresh,
-        )
-        income_record = self.storage.get_income_statement(
-            ticker,
-            fetcher=lambda: self._fetch_income_statement(yf_ticker),
-            force_refresh=force_refresh,
-        )
-        cash_record = self.storage.get_cashflow(
-            ticker,
-            fetcher=lambda: self._fetch_cashflow(yf_ticker),
-            force_refresh=force_refresh,
-        )
-
-        info = yf_ticker.get_info()
-
-        analyzer.populate_financials(
-            balance_sheet=bs_record.dataframe,
-            income_statement=income_record.dataframe,
-            cashflow=cash_record.dataframe,
-            info=info,
-        )
-
-    # ------------------------------------------------------------------
-    # Yahoo fetch fallbacks
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _first_non_empty(fetchers, label: str, ticker: str) -> pd.DataFrame:
-        last_exc: Optional[Exception] = None
-        for fetch in fetchers:
+        # Try to get from cache first (unless force_refresh)
+        if not force_refresh:
             try:
-                df = fetch()
-            except Exception as exc:
-                last_exc = exc
-                continue
-            if df is not None and not df.empty:
-                return df
-        if last_exc:
-            raise last_exc
-        raise ValueError(f"No {label} data returned for {ticker}")
+                bs_record = self.storage.get_balance_sheet(ticker)
+                income_record = self.storage.get_income_statement(ticker)
+                cash_record = self.storage.get_cashflow(ticker)
+                
+                # If all cached, use them
+                if (not bs_record.dataframe.empty and 
+                    not income_record.dataframe.empty and 
+                    not cash_record.dataframe.empty):
+                    
+                    # Log cache hit with details
+                    logger.info(
+                        "[CACHE HIT] %s - loaded from cache (updated: %s, source: %s)",
+                        ticker, 
+                        bs_record.last_updated.strftime("%Y-%m-%d %H:%M"),
+                        bs_record.source
+                    )
+                    logger.debug(
+                        "  Balance sheet periods: %s", 
+                        list(bs_record.dataframe.columns[:4])
+                    )
+                    
+                    info = yf_ticker.info or {}
+                    analyzer.populate_financials(
+                        balance_sheet=bs_record.dataframe,
+                        income_statement=income_record.dataframe,
+                        cashflow=cash_record.dataframe,
+                        info=info,
+                    )
+                    return
+            except Exception as e:
+                logger.debug("Cache miss for %s: %s", ticker, e)
 
-    def _fetch_balance_sheet(self, yf_ticker: yf.Ticker) -> pd.DataFrame:
-        return self._first_non_empty(
-            [
-                lambda: yf_ticker.get_balance_sheet(freq="yearly"),
-                lambda: yf_ticker.balance_sheet,
-                lambda: yf_ticker.get_balance_sheet(freq="quarterly"),
-            ],
-            "balance_sheet",
-            yf_ticker.ticker,
-        )
+        # Fetch directly from yfinance (simple approach like original)
+        logger.info("[FETCHING] %s - downloading from Yahoo Finance...", ticker)
+        if not analyzer._fetch_financials():
+            raise ValueError(f"Failed to fetch financials for {ticker}")
 
-    def _fetch_income_statement(self, yf_ticker: yf.Ticker) -> pd.DataFrame:
-        return self._first_non_empty(
-            [
-                lambda: yf_ticker.income_stmt,
-                lambda: yf_ticker.get_income_stmt(freq="yearly"),
-                lambda: yf_ticker.get_income_stmt(freq="quarterly"),
-            ],
-            "income_statement",
-            yf_ticker.ticker,
-        )
+        # Log fetched data periods
+        if analyzer._balance_sheet is not None:
+            periods = list(analyzer._balance_sheet.columns[:4])
+            logger.info("[FETCHED] %s - balance sheet periods: %s", ticker, periods)
 
-    def _fetch_cashflow(self, yf_ticker: yf.Ticker) -> pd.DataFrame:
-        return self._first_non_empty(
-            [
-                lambda: yf_ticker.get_cashflow(freq="yearly"),
-                lambda: yf_ticker.cashflow,
-                lambda: yf_ticker.get_cashflow(freq="quarterly"),
-            ],
-            "cashflow",
-            yf_ticker.ticker,
-        )
+        # Cache the fetched data for next time (with automatic period merging)
+        try:
+            if analyzer._balance_sheet is not None and not analyzer._balance_sheet.empty:
+                self.storage.cache_statement("balance_sheet", ticker, analyzer._balance_sheet)
+            if analyzer._income_stmt is not None and not analyzer._income_stmt.empty:
+                self.storage.cache_statement("income_statement", ticker, analyzer._income_stmt)
+            if analyzer._cashflow is not None and not analyzer._cashflow.empty:
+                self.storage.cache_statement("cashflow", ticker, analyzer._cashflow)
+            logger.info("[CACHED] %s - statements saved to cache", ticker)
+        except Exception as e:
+            logger.warning("Failed to cache statements for %s: %s", ticker, e)
 
 
 __all__ = [
