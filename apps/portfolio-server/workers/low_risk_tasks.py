@@ -155,6 +155,10 @@ class PipelineStatus:
     retry_kwargs={"max_retries": 2},
     acks_late=True,
     reject_on_worker_lost=True,
+    # Extended time limits - pipeline fetches ~500 symbols at 1 req/sec
+    # Typical runtime: 10-20 minutes, max 1 hour for safety
+    soft_time_limit=3600,  # 1 hour (no SoftTimeLimitExceeded interruption)
+    time_limit=3600,  # 1 hour hard limit
 )
 def run_low_risk_pipeline(
     self,

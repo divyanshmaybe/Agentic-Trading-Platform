@@ -366,6 +366,15 @@ celery_app.conf.task_annotations = {
         }
         for task_name in LONG_RUNNING_TASKS
     },
+    # Low-risk pipeline - needs extended time limit (fetches ~500 symbols at 1 req/sec)
+    # Typical runtime: 10-20 minutes, max 1 hour for safety
+    "pipeline.low_risk.run": {
+        "soft_time_limit": 3600*24,  # 24 hours soft limit (no interruption)
+        "time_limit": 3600*24,  # 24 hours hard limit
+        "rate_limit": "1/h",  # Only 1 per hour per user (has Redis lock too)
+        "acks_late": True,  # Acknowledge after completion for reliability
+        "max_retries": 2,  # Allow retries on failure
+    },
     # Quick tasks - short limits, high rate
     **{
         task_name: {

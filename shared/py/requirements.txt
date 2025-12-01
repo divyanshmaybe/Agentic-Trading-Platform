@@ -5,7 +5,7 @@ motor==3.6.0
 pathway==0.26.4
 prisma==0.15.0
 pydantic==2.12.4
-pymongo==4.10.1
+pymongo==4.9.2
 PyJWT==2.10.1
 pyotp==2.9.0
 python-dotenv==1.2.1
