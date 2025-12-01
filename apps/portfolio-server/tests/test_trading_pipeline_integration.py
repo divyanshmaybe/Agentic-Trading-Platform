@@ -25,6 +25,7 @@ sys.modules['kafka_service'] = kafka_service_mock
 import asyncio
 import json
 import sys
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -500,6 +501,14 @@ async def test_pipeline_service_processes_trade_signals(monkeypatch: pytest.Monk
         
         async def disconnect(self):
             pass
+
+        @asynccontextmanager
+        async def session(self):
+            yield self._client
+
+        @asynccontextmanager
+        async def session(self):
+            yield self._client
     
     def fake_get_db_client():
         return FakeDBManagerInstance(fake_client)
@@ -835,6 +844,10 @@ async def test_complete_trading_pipeline_flow(monkeypatch: pytest.MonkeyPatch) -
         
         def get_client(self):
             return self._client
+
+        @asynccontextmanager
+        async def session(self):
+            yield self._client
     
     class FakeDBManagerInstance:
         def __init__(self, client):

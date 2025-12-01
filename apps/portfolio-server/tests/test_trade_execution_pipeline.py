@@ -1,5 +1,6 @@
 from __future__ import annotations
 import sys
+from contextlib import asynccontextmanager
 from datetime import datetime
 import json
 from decimal import Decimal
@@ -502,6 +503,10 @@ class FakeDBManager:
     def get_client(self) -> FakeClient:
         return self._client
 
+    @asynccontextmanager
+    async def session(self):
+        yield self._client
+
 
 @pytest.mark.asyncio
 async def test_trade_execution_service_persist_and_execute(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -606,6 +611,10 @@ async def test_pipeline_service_process_trade_signals(monkeypatch: pytest.Monkey
         
         async def disconnect(self):
             pass
+
+        @asynccontextmanager
+        async def session(self):
+            yield self._client
     
     fake_manager = FakePipelineManager([portfolio])
     
@@ -896,6 +905,10 @@ async def test_pipeline_service_skips_portfolios_with_inactive_agents(
         
         async def disconnect(self):
             await self._client.disconnect()
+
+        @asynccontextmanager
+        async def session(self):
+            yield self._client
     
     def fake_get_db_client():
         return FakeDBManagerInstance()

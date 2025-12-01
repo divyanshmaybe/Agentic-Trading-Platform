@@ -5,6 +5,7 @@ Unit tests for allocation tasks to verify portfolio allocations, trading agents,
 import asyncio
 import sys
 import types
+from contextlib import asynccontextmanager
 from datetime import datetime
 from decimal import Decimal
 from typing import Any, Dict, List
@@ -71,6 +72,12 @@ def mock_db_manager(mock_db):
     manager.connect = AsyncMock(return_value=mock_db)
     manager.get_client = MagicMock(return_value=mock_db)
     
+    @asynccontextmanager
+    async def session():
+        yield mock_db
+    
+    manager.session = session
+    
     return manager
 
 
@@ -127,11 +134,47 @@ async def test_allocate_for_objective_task_creates_allocations(monkeypatch, mock
         async def disconnect(self):
             pass
 
+        @asynccontextmanager
+        async def session(self):
+            yield self._client
+
+        @asynccontextmanager
+        async def session(self):
+            yield self._client
+
+        @asynccontextmanager
+        async def session(self):
+            yield self._client
+
+        @asynccontextmanager
+        async def session(self):
+            yield self._client
+
+        @asynccontextmanager
+        async def session(self):
+            yield self._client
+
+        @asynccontextmanager
+        async def session(self):
+            yield self._client
+
+        @asynccontextmanager
+        async def session(self):
+            yield self._client
+
+        @asynccontextmanager
+        async def session(self):
+            yield self._client
+
         async def __aenter__(self):
-            return mock_db
+            return self._client
 
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             pass
+
+        @asynccontextmanager
+        async def session(self):
+            yield self._client
 
     monkeypatch.setattr("dbManager.DBManager", MockDatabaseClient)
     

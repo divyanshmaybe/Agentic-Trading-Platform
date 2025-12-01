@@ -4,6 +4,7 @@ import asyncio
 import json
 import sys
 import types
+from contextlib import asynccontextmanager
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -630,6 +631,10 @@ async def test_objective_creation_and_allocation_flow(monkeypatch: pytest.Monkey
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             pass
 
+        @asynccontextmanager
+        async def session(self):
+            yield self._client
+
     monkeypatch.setattr("dbManager.DBManager", FakeDBManager)
 
     allocation_task = allocation_tasks_module.allocate_for_objective_task._get_current_object()
@@ -845,6 +850,10 @@ async def test_objective_intake_then_allocation(monkeypatch: pytest.MonkeyPatch)
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             pass
 
+        @asynccontextmanager
+        async def session(self):
+            yield self._client
+
     monkeypatch.setattr("dbManager.DBManager", FakeDBManager2)
 
     allocation_task = allocation_tasks_module.allocate_for_objective_task._get_current_object()
@@ -980,6 +989,10 @@ async def test_allocation_enables_subscribed_agent(monkeypatch: pytest.MonkeyPat
 
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             pass
+
+        @asynccontextmanager
+        async def session(self):
+            yield self._client
 
     monkeypatch.setattr("dbManager.DBManager", FakeDBManager3)
 
