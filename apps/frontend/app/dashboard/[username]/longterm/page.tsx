@@ -30,6 +30,8 @@ export default function LongTermPage() {
 	const { data: agentData, loading: agentLoading, isAllocating } = useAgentDashboard("low_risk")
 	const { events, loading: eventsLoading, startStreaming, stopStreaming, streaming, hasSummary } = useLowRiskEvents()
 	const [showAllEvents, setShowAllEvents] = useState(false)
+	const [triggeringPipeline, setTriggeringPipeline] = useState(false)
+	const [pipelineError, setPipelineError] = useState<string | null>(null)
 
 	// Extract summary event data
 	const summaryEvent = useMemo(() => {
@@ -52,9 +54,71 @@ export default function LongTermPage() {
 	const industryChartData = useMemo(() => createDynamicPieChartData(industryList), [industryList])
 	const portfolioChartData = useMemo(() => createDynamicPieChartData(finalPortfolio), [finalPortfolio])
 
-	const handleRunPipeline = () => {
-		startStreaming()
+	const handleRunPipeline = async () => {
+		setTriggeringPipeline(true)
+		setPipelineError(null)
 		setShowAllEvents(false) // Close events view when starting new stream
+
+		try {
+			// Default fund allocation: ₹100,000
+			const fundAllocated = 100000.0
+
+			// Get portfolio server URL from environment
+			const portfolioServerUrl = process.env.NEXT_PUBLIC_PORTFOLIO_API_URL || process.env.NEXT_PUBLIC_PORTFOLIO_SERVER_URL || "http://localhost:8000"
+			
+			// Get auth token from cookie or localStorage
+			let token: string | null = null
+			if (typeof window !== "undefined") {
+				const match = document.cookie.match(/(^| )access_token=([^;]+)/)
+				token = match ? match[2] : localStorage.getItem("access_token")
+			}
+
+			const headers: HeadersInit = {
+				"Content-Type": "application/json",
+			}
+			if (token) {
+				headers["Authorization"] = `Bearer ${token}`
+			}
+
+			const response = await fetch(`${portfolioServerUrl}/api/low-risk/trigger`, {
+				method: "POST",
+				headers,
+				credentials: "include",
+				body: JSON.stringify({
+					fund_allocated: fundAllocated,
+				}),
+			})
+
+			// Check if response is JSON before parsing
+			const contentType = response.headers.get("content-type")
+			if (!contentType || !contentType.includes("application/json")) {
+				const text = await response.text()
+				throw new Error(`Invalid response format: ${text.substring(0, 100)}`)
+			}
+
+			const data = await response.json()
+
+			if (!response.ok) {
+				throw new Error(data.message || data.detail || "Failed to trigger pipeline")
+			}
+
+			// Check if pipeline was successfully triggered or already running
+			if (data.success) {
+				// Pipeline started successfully, start streaming to receive events
+				startStreaming()
+			} else {
+				// Pipeline already running - show message but still start streaming to see updates
+				setPipelineError(data.message || "Pipeline is already running")
+				startStreaming()
+			}
+		} catch (error) {
+			console.error("[LongTerm Page] Failed to trigger pipeline:", error)
+			setPipelineError(
+				error instanceof Error ? error.message : "Failed to trigger pipeline. Please try again."
+			)
+		} finally {
+			setTriggeringPipeline(false)
+		}
 	}
 
 	const handleStopPipeline = () => {
@@ -117,12 +181,20 @@ export default function LongTermPage() {
 								) : hasEvents ? (
 									/* Show toggleable events when events exist */
 									<div className="flex flex-1 flex-col gap-6">
+										{/* Show error message if pipeline trigger failed */}
+										{pipelineError && (
+											<div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-4 text-yellow-400">
+												<p className="text-sm">{pipelineError}</p>
+											</div>
+										)}
+
 										{!hasSummary && (
 											<EmptyStateMessage
 												message="Start your long-term investment journey with our automated low-risk pipeline. Build wealth steadily through carefully selected positions."
 												showButton={true}
 												onButtonClick={handleRunPipeline}
-												buttonLabel="Run Pipeline"
+												buttonLabel={triggeringPipeline ? "Starting..." : "Run Pipeline"}
+												buttonDisabled={triggeringPipeline || streaming}
 											/>
 										)}
 
@@ -204,13 +276,21 @@ export default function LongTermPage() {
 								) : (
 									/* Show run pipeline button when no events */
 									!hasSummary && (
-										<EmptyStateMessage
-											message="Start your long-term investment journey with our automated low-risk pipeline. Build wealth steadily through carefully selected positions."
-											showButton={true}
-											onButtonClick={handleRunPipeline}
-											buttonLabel="Run Pipeline"
-											buttonDisabled={streaming}
-										/>
+										<>
+											{/* Show error message if pipeline trigger failed */}
+											{pipelineError && (
+												<div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-4 text-yellow-400 mb-4">
+													<p className="text-sm">{pipelineError}</p>
+												</div>
+											)}
+											<EmptyStateMessage
+												message="Start your long-term investment journey with our automated low-risk pipeline. Build wealth steadily through carefully selected positions."
+												showButton={true}
+												onButtonClick={handleRunPipeline}
+												buttonLabel={triggeringPipeline ? "Starting..." : "Run Pipeline"}
+												buttonDisabled={triggeringPipeline || streaming}
+											/>
+										</>
 									)
 								)
 							) : (
