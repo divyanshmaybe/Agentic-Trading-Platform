@@ -18,7 +18,7 @@ export function StreamingEventsView({ events }: StreamingEventsViewProps) {
 	return (
 		<div className="flex-1 overflow-hidden">
 			<div className="max-h-[600px] overflow-y-auto">
-				<div className="space-y-4">
+				<div className="space-y-3">
 				 {
 					debug ? (
 						events.map((event) => (
@@ -31,16 +31,7 @@ export function StreamingEventsView({ events }: StreamingEventsViewProps) {
 								</pre>
 							</div>
 						))
-					) : (
-						events.map((event) => (
-							<div
-								key={event.id}
-								className="rounded-lg border border-white/10 bg-black/25 p-4 backdrop-blur-sm transition-all hover:bg-black/30"
-							>
-								<EventMessage event={event} />
-							</div>
-						))
-					)
+					) : events.map((event) => <EventMessage key={event.id} event={event} />)
 				 }
 				</div>
 			</div>
