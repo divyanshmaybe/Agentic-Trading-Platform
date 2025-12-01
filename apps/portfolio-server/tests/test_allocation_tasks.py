@@ -446,6 +446,10 @@ async def test_check_regime_and_rebalance_task_regime_unchanged(monkeypatch, moc
         
         async def disconnect(self):
             pass
+        
+        @asynccontextmanager
+        async def session(self):
+            yield self._client
     
     monkeypatch.setattr("dbManager.DBManager", MockDatabaseClient)
     
@@ -569,6 +573,10 @@ async def test_check_regime_and_rebalance_task_regime_changed(monkeypatch, mock_
         
         async def disconnect(self):
             pass
+        
+        @asynccontextmanager
+        async def session(self):
+            yield self._client
     
     monkeypatch.setattr("dbManager.DBManager", MockDatabaseClient)
     
@@ -673,6 +681,10 @@ async def test_check_regime_and_rebalance_task_no_previous_regime(monkeypatch, m
         
         async def disconnect(self):
             pass
+        
+        @asynccontextmanager
+        async def session(self):
+            yield self._client
     
     monkeypatch.setattr("dbManager.DBManager", MockDatabaseClient)
     
@@ -790,6 +802,10 @@ async def test_check_regime_and_rebalance_task_deduplication(monkeypatch, mock_d
         
         async def disconnect(self):
             pass
+        
+        @asynccontextmanager
+        async def session(self):
+            yield self._client
     
     monkeypatch.setattr("dbManager.DBManager", MockDatabaseClient)
     
