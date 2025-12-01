@@ -40,5 +40,3 @@ Thumbs.db
 *.tmp
 *.temp
 *.bak
-
-data/pipeline/**
