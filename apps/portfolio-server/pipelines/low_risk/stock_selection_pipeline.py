@@ -31,6 +31,8 @@ from pathlib import Path
 
 import concurrent.futures
 
+from . fundamental_analyzer_pipeline import FundamentalAnalyzerPipeline
+
 # Resolve path to .env file
 env_path = Path(__file__).parent.parent / ".env"
 load_dotenv(dotenv_path=env_path)
@@ -65,6 +67,7 @@ class StockSelectionPipeline:
 
     def __init__(
         self,
+        pipeline: FundamentalAnalyzerPipeline,
         company_df: pd.DataFrame,
         industry_list: List[Dict[str, Any]],
         gemini_api_key: Optional[str] = None,
@@ -196,6 +199,26 @@ class StockSelectionPipeline:
             raise RuntimeError("Background event loop not running")
         future = asyncio.run_coroutine_threadsafe(coro, self._background_loop)
         return future.result(timeout=timeout)
+
+    def create_company_metrics_tool(pipeline: FundamentalAnalyzerPipeline) -> Any:
+        """
+        Create the company_report_tool function that can be used by the LLM agent.
+        """
+        @tool
+        def company_metrics(ticker: str, metrics: list[str]) -> Dict[str, Dict[str, Any]]:
+            try:
+                res_json = pipeline.get_ticker_metric(ticker)
+                result = {}
+                if res_json is None:
+                    logger.warning(f"No metrics found for {ticker}")
+                result["ticker"] = res_json
+
+                return result
+            except Exception as e:
+                logger.error(f"Error in company_metrics tool: {e}", exc_info=True)
+
+        return company_metrics
+
 
     def create_company_report_tool(self, gemini_api_key: str) -> Any:
         """
@@ -374,6 +397,7 @@ class StockSelectionPipeline:
 
     def stock_selection_indwise(
         self,
+        pipeline: FundamentalAnalyzerPipeline,
         industry: str,
         industry_allocation: float,
         company_df: pd.DataFrame,
@@ -406,7 +430,8 @@ class StockSelectionPipeline:
             )
 
             # Create company report tool
-            company_tool = self.create_company_report_tool(self.gemini_api_key)
+            company_report_tool = self.create_company_report_tool(self.gemini_api_key)
+            company_metric_tool = self.create_company_metrics_tool(pipeline)
             reasoning_tool = self.create_reasoning_tool(self.gemini_api_key, industry, company_df)
 
             class StockWithReasonState(AgentState):
@@ -415,7 +440,7 @@ class StockSelectionPipeline:
             # Create agent
             stock_selection_agent = create_agent(
                 model=llm,
-                tools=[company_tool, reasoning_tool],
+                tools=[company_report_tool, company_metric_tool, reasoning_tool],
                 system_prompt=rendered_prompt,
                 state_schema=StockWithReasonState
             )
