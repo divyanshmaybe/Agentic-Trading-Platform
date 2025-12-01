@@ -31,6 +31,15 @@ from utils.low_risk_utils import (
 )
 from .industry_indicators_pipeline import IndustryIndicatorsPipeline
 
+# Extract LANGSMITH_API_KEY
+langsmith_api_key = os.getenv("LANGSMITH_API_KEY", "")
+if not langsmith_api_key:
+    raise ValueError("LANGSMITH_API_KEY not found in .env file")
+os.environ["LANGSMITH_API_KEY"] = langsmith_api_key
+os.environ["LANGSMITH_TRACING_V2"] = "true"
+os.environ["LANGSMITH_PROJECT"] = "portfolio_prod"
+
+
 # Import KafkaPublisher type for type hints
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:

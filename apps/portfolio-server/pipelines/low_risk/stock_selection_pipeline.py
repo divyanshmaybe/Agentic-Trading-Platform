@@ -41,7 +41,7 @@ if not langsmith_api_key:
     raise ValueError("LANGSMITH_API_KEY not found in .env file")
 os.environ["LANGSMITH_API_KEY"] = langsmith_api_key
 os.environ["LANGSMITH_TRACING_V2"] = "true"
-os.environ["LANGSMITH_PROJECT"] = "low_risk_prod"
+os.environ["LANGSMITH_PROJECT"] = "portfolio_prod"
 
 from utils.low_risk_utils import (
     trade_converter,
@@ -308,7 +308,7 @@ class StockSelectionPipeline:
             Output:
             - A string of reasoning tokens with proper analysis, interpretation, and possible next steps.
             """
-            reasoning_llm = ChatGoogleGenerativeAI(model="gemini-3-pro-preview")
+            reasoning_llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro")
             messages = runtime.state["messages"]
             reasoning_messages = runtime.state["reasoning_messages"]
             if len(reasoning_messages) == 0:
@@ -323,6 +323,7 @@ class StockSelectionPipeline:
                 last_tn = messages[-2].name
                 # last tool message
                 last_tm = messages[-2].content
+                publish_to_kafka({"content": f"🧠 Comparing..."}, user_id=self.user_id, message_type="info")
                 new_reasoning_message = reasoning_llm.invoke(reasoning_messages + [HumanMessage(
                     f"New Tool Call for {last_tn} with output {last_tm}"
                 )])
