@@ -405,7 +405,7 @@ def industry_selector(
     )
 
     # Invoke agent
-    msg = "🤖 Invoking industry selection agent..."
+    msg = "Invoking industry selection agent..."
     logger.info(msg)
     publish_to_kafka({"content": msg}, user_id=user_id,message_type="start")
     messages = []

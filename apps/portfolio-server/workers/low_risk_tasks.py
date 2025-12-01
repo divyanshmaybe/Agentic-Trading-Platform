@@ -2,7 +2,7 @@
 Low Risk Pipeline Celery Tasks
 
 Provides production-ready task execution for the low-risk stock selection pipeline
-with comprehensive concurrency control, status tracking, and error handling.
+with comprehensive concurrency control, status tracking, error handling, and Kafka logging.
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ if str(PORTFOLIO_SERVER_PATH) not in sys.path:
     sys.path.insert(0, str(PORTFOLIO_SERVER_PATH))
 
 from celery_app import celery_app, BROKER_URL
+from utils.low_risk_utils import LowRiskKafkaPublisher, publish_to_kafka
 
 task_logger = get_task_logger(__name__)
 
@@ -155,10 +156,8 @@ class PipelineStatus:
     retry_kwargs={"max_retries": 2},
     acks_late=True,
     reject_on_worker_lost=True,
-    # Extended time limits - pipeline fetches ~500 symbols at 1 req/sec
-    # Typical runtime: 10-20 minutes, max 1 hour for safety
-    soft_time_limit=3600,  # 1 hour (no SoftTimeLimitExceeded interruption)
-    time_limit=3600,  # 1 hour hard limit
+    soft_time_limit=3600*2,  # 2 hours (no SoftTimeLimitExceeded interruption)
+    time_limit=3600*2,  # 2 hours hard limit
 )
 def run_low_risk_pipeline(
     self,
@@ -199,24 +198,28 @@ def run_low_risk_pipeline(
     is_running, start_time = pipeline_status.is_running()
     if is_running:
         elapsed_minutes = int((time.time() - start_time) / 60) if start_time else 0
-        task_logger.warning(
-            f"Low-risk pipeline already running for user {user_id} "
-            f"(started {elapsed_minutes} minutes ago). Aborting this execution."
-        )
+        msg = f"Low-risk pipeline already running (started {elapsed_minutes} minutes ago)"
+        task_logger.warning(msg)
         return {
             "success": False,
             "error": "Pipeline already running",
             "elapsed_minutes": elapsed_minutes
         }
     
-    # Acquire lock
-    if not pipeline_status.acquire_lock(ttl=1800):  # 30 minute lock
+    # Acquire lock (2 hour TTL to match task time limit)
+    if not pipeline_status.acquire_lock(ttl=7200):
         return {
             "success": False,
             "error": "Failed to acquire pipeline lock"
         }
     
     try:
+        # === STAGE 1: Initialization ===
+        publish_to_kafka(
+            {"content": f"Starting low-risk pipeline with fund: ₹{fund_allocated:,.2f}", "stage": "init", "status": "start"},
+            user_id=user_id,
+            message_type="stage"
+        )
         task_logger.info(f"🚀 Starting low-risk pipeline for user {user_id} with fund: ₹{fund_allocated:,.2f}")
         
         # Import pipeline components
@@ -234,6 +237,11 @@ def run_low_risk_pipeline(
                 f"Please ensure ind_nifty500listbrief.csv exists."
             )
         
+        publish_to_kafka(
+            {"content": f"Loading company data...", "stage": "init", "status": "progress"},
+            user_id=user_id,
+            message_type="stage"
+        )
         task_logger.info(f"📊 Loading company data from {nifty_500_path}")
         company_df = pd.read_csv(nifty_500_path)
         
@@ -250,14 +258,34 @@ def run_low_risk_pipeline(
         
         # Initialize storage
         storage = get_storage()
+        publish_to_kafka(
+            {"content": f"Initialization complete. Loaded {len(company_df)} companies.", "stage": "init", "status": "done"},
+            user_id=user_id,
+            message_type="stage"
+        )
         task_logger.info("🗄️ Economic indicators storage initialized")
         
-        # Initialize market data service
+        # === STAGE 2: Market Data Service ===
+        publish_to_kafka(
+            {"content": "Initializing market data service...", "stage": "market_data", "status": "start"},
+            user_id=user_id,
+            message_type="stage"
+        )
         task_logger.info("🔧 Initializing Angel One market data service...")
         market_service = get_market_data_service()
         angel_fetcher = create_fetcher_from_market_service(market_service)
+        publish_to_kafka(
+            {"content": "Market service initialized", "stage": "market_data", "status": "done"},
+            user_id=user_id,
+            message_type="stage"
+        )
         
-        # Create industry indicators pipeline
+        # === STAGE 3: Industry Indicators ===
+        publish_to_kafka(
+            {"content": "Computing industry indicators (fetching ~500 stocks)...", "stage": "industry_indicators", "status": "start"},
+            user_id=user_id,
+            message_type="stage"
+        )
         task_logger.info("📈 Computing industry indicators...")
         industry_indicators = IndustryIndicatorsPipeline(
             stocks_csv_path=str(nifty_500_path),
@@ -265,9 +293,19 @@ def run_low_risk_pipeline(
             Demo=False
         )
         industry_indicators.compute()
+        publish_to_kafka(
+            {"content": "Industry indicators computed successfully", "stage": "industry_indicators", "status": "done"},
+            user_id=user_id,
+            message_type="stage"
+        )
         task_logger.info("✅ Industry indicators computed")
         
-        # Create industry selection pipeline
+        # === STAGE 4: Industry Selection ===
+        publish_to_kafka(
+            {"content": "Running LLM-based industry selection...", "stage": "industry_selection", "status": "start"},
+            user_id=user_id,
+            message_type="stage"
+        )
         task_logger.info("🏭 Running industry selection pipeline...")
         industry_pipeline = IndustrySelectionPipeline(
             industry_pipeline=industry_indicators,
@@ -276,9 +314,24 @@ def run_low_risk_pipeline(
             storage=storage
         )
         industry_list = industry_pipeline.run()
+        publish_to_kafka(
+            {
+                "content": f"Selected {len(industry_list)} industries",
+                "stage": "industry_selection",
+                "status": "done",
+                "result": {"industries": [i.get("name") for i in industry_list]}
+            },
+            user_id=user_id,
+            message_type="stage"
+        )
         task_logger.info(f"✅ Selected {len(industry_list)} industries")
         
-        # Create stock selection pipeline
+        # === STAGE 5: Stock Selection ===
+        publish_to_kafka(
+            {"content": f"Running stock selection for {len(industry_list)} industries...", "stage": "stock_selection", "status": "start"},
+            user_id=user_id,
+            message_type="stage"
+        )
         task_logger.info("📈 Running stock selection pipeline...")
         stock_pipeline = StockSelectionPipeline(
             company_df=company_df,
@@ -292,11 +345,34 @@ def run_low_risk_pipeline(
         
         # Extract summary
         summary = result["summary"]
+        publish_to_kafka(
+            {
+                "content": f"Stock selection complete: {summary['total_stocks']} stocks selected",
+                "stage": "stock_selection",
+                "status": "done",
+                "result": summary
+            },
+            user_id=user_id,
+            message_type="stage"
+        )
         task_logger.info(
             f"✅ Pipeline completed: {summary['total_stocks']} stocks, "
             f"{summary['total_trades']} trades, "
             f"₹{summary['total_invested']:,.2f} invested "
             f"({summary['utilization_rate']:.2f}% utilization)"
+        )
+        
+        # === STAGE 6: Completion ===
+        completion_msg = (
+            f"Pipeline completed: {summary['total_stocks']} stocks, "
+            f"{summary['total_trades']} trades, "
+            f"₹{summary['total_invested']:,.2f} invested "
+            f"({summary['utilization_rate']:.2f}% utilization)"
+        )
+        publish_to_kafka(
+            {"content": completion_msg, "stage": "completion", "status": "done", "result": summary},
+            user_id=user_id,
+            message_type="stage"
         )
         
         # Release lock and mark success
@@ -316,6 +392,11 @@ def run_low_risk_pipeline(
         # Log error and update status
         error_message = str(e)
         task_logger.error(f"❌ Low-risk pipeline failed for user {user_id}: {error_message}", exc_info=True)
+        publish_to_kafka(
+            {"content": f"Pipeline failed: {error_message}", "stage": "error", "status": "error", "error": error_message},
+            user_id=user_id,
+            message_type="error"
+        )
         pipeline_status.set_error(error_message)
         
         # Re-raise for Celery retry mechanism

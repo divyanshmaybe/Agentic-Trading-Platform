@@ -323,7 +323,7 @@ class StockSelectionPipeline:
                 last_tn = messages[-2].name
                 # last tool message
                 last_tm = messages[-2].content
-                publish_to_kafka({"content": f"🧠 Comparing..."}, user_id=self.user_id, message_type="info")
+                publish_to_kafka({"content": f"Comparing..."}, user_id=self.user_id, message_type="info")
                 new_reasoning_message = reasoning_llm.invoke(reasoning_messages + [HumanMessage(
                     f"New Tool Call for {last_tn} with output {last_tm}"
                 )])
@@ -381,7 +381,7 @@ class StockSelectionPipeline:
     ) -> List[Dict[str, Any]]:
         """Select stocks within a single industry using LLM agent."""
         try:
-            msg = f"🎯 Selecting stocks for {industry} ({industry_allocation}% allocation)..."
+            msg = f"Selecting stocks for {industry} ({industry_allocation}% allocation)..."
             logger.info(msg)
             publish_to_kafka({"content": msg}, user_id=self.user_id)
 
@@ -421,7 +421,7 @@ class StockSelectionPipeline:
             )
 
             # Invoke agent
-            msg = f"🤖 Invoking stock selection agent for {industry}..."
+            msg = f"Invoking stock selection agent for {industry}..."
             logger.info(msg)
             publish_to_kafka({"content": msg}, user_id=self.user_id)
 
@@ -487,7 +487,7 @@ class StockSelectionPipeline:
         gemini_api_key: str,
     ) -> List[Dict[str, Any]]:
         """Generate complete stock portfolio across all selected industries."""
-        msg = f"📊 Generating stock portfolio across {len(industry_list)} industries..."
+        msg = f"Generating stock portfolio across {len(industry_list)} industries..."
         logger.info(msg)
         publish_to_kafka({"content": msg}, user_id=self.user_id)
 
@@ -546,7 +546,7 @@ class StockSelectionPipeline:
 
         # Use provided industry list
         try:
-            msg = "📊 Using provided industry allocations..."
+            msg = "Using provided industry allocations..."
             logger.info(msg)
             publish_to_kafka({"content": msg}, user_id=self.user_id)
             industry_list = self.industry_list
