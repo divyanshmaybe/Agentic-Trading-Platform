@@ -49,6 +49,10 @@ class NSEAnnouncementSchema(pw.Schema):
     sort_date: str
     attchmntText: str
     fileSize: str
+    # New fields from XBRL data
+    subject_of_announcement: str  # SubjectOfAnnouncement from XBRL
+    attachment_url: str  # AttachmentURL from XBRL (may differ from attchmntFile)
+    date_time_of_submission: str  # DateAndTimeOfSubmission from XBRL
 
 
 def get_session_headers() -> Dict[str, str]:
@@ -438,12 +442,23 @@ class NSEScraperSubject(ConnectorSubject):
                         
                         is_relevant = process_all  # If process_all is True, skip filtering
                         
+                        # Initialize XBRL fields with defaults
+                        xbrl_subject = ""
+                        xbrl_attachment_url = ""
+                        xbrl_datetime = ""
+                        
                         if not is_relevant and xbrl_url:
                             try:
                                 xbrl_data = fetch_xbrl_content(xbrl_url)
                                 if is_relevant_announcement(xbrl_data):
                                     is_relevant = True
                                     print(f"[INFO] ✓ New relevant XBRL: {symbol} - {desc[:80]}")
+                                    
+                                    # Extract XBRL fields
+                                    if xbrl_data:
+                                        xbrl_subject = xbrl_data.get('subject', '')
+                                        xbrl_attachment_url = xbrl_data.get('attachment_url', '')
+                                        xbrl_datetime = xbrl_data.get('datetime', '')
                                     
                                     # Update PDF URL from XBRL if available
                                     if xbrl_data and 'attachment_url' in xbrl_data:
@@ -492,6 +507,10 @@ class NSEScraperSubject(ConnectorSubject):
                                 sort_date=ann.get('sort_date', ''),
                                 attchmntText=ann.get('attchmntText', ''),
                                 fileSize=ann.get('fileSize', ''),
+                                # New XBRL fields
+                                subject_of_announcement=xbrl_subject,
+                                attachment_url=xbrl_attachment_url,
+                                date_time_of_submission=xbrl_datetime,
                             )
                             emitted_count += 1
                             

@@ -130,6 +130,10 @@ class NSEFilingSchema(pw.Schema):
     seq_id: str
     attchmntText: str
     fileSize: str
+    # New fields from XBRL data
+    subject_of_announcement: str  # SubjectOfAnnouncement from XBRL
+    attachment_url: str  # AttachmentURL from XBRL (may differ from attchmntFile)
+    date_time_of_submission: str  # DateAndTimeOfSubmission from XBRL
 
 
 class FilingWithTextSchema(pw.Schema):
@@ -178,6 +182,10 @@ class NSESignalEvent(BaseModel):
     confidence: float
     generated_at: str
     source: str = "nse_filings_pipeline"
+    # New fields from XBRL data
+    subject_of_announcement: str = ""  # SubjectOfAnnouncement from XBRL
+    attachment_url: str = ""  # AttachmentURL from XBRL
+    date_time_of_submission: str = ""  # DateAndTimeOfSubmission from XBRL
 
 
 _signal_publisher: Optional[KafkaPublisher] = None
@@ -236,6 +244,9 @@ def publish_signal_to_kafka(
     explanation: str,
     confidence: float,
     stocktechdata: str,
+    subject_of_announcement: str = "",
+    attachment_url: str = "",
+    date_time_of_submission: str = "",
 ) -> str:
     """
     Queue trade execution via Celery, then publish signal to Kafka for analytics.
@@ -274,6 +285,10 @@ def publish_signal_to_kafka(
         explanation=explanation or "",
         confidence=safe_confidence,
         generated_at=datetime.utcnow().isoformat() + "Z",
+        # Include new XBRL fields
+        subject_of_announcement=subject_of_announcement or "",
+        attachment_url=attachment_url or "",
+        date_time_of_submission=date_time_of_submission or "",
     )
     
     # Prepare payload with reference_price for trade execution
@@ -1022,6 +1037,10 @@ def create_nse_filings_pipeline(
         attchmntFile=pw.this.attchmntFile,
         filename=pw.this.filename,
         text=download_and_parse_pdf(pw.this.attchmntFile, pw.this.filename),
+        # Carry through XBRL fields
+        subject_of_announcement=pw.this.subject_of_announcement,
+        attachment_url=pw.this.attachment_url,
+        date_time_of_submission=pw.this.date_time_of_submission,
     ).filter(pw.this.text != "")
     
     print("[SENTIMENT] Step 2 complete: PDFs parsed, proceeding to sentiment analysis...")
@@ -1064,6 +1083,10 @@ def create_nse_filings_pipeline(
         explanation=parse_trading_signal_explanation(pw.this.llm_response),
         confidence=parse_trading_signal_confidence(pw.this.llm_response),
         stocktechdata=pw.this.stocktechdata,  # Pass through for price extraction
+        # Carry through XBRL fields
+        subject_of_announcement=pw.this.subject_of_announcement,
+        attachment_url=pw.this.attachment_url,
+        date_time_of_submission=pw.this.date_time_of_submission,
     )
  
     print("[SENTIMENT] Step 6: Publishing signals to Kafka and writing to disk...")
@@ -1080,7 +1103,14 @@ def create_nse_filings_pipeline(
             pw.this.explanation,
             pw.this.confidence,
             pw.this.stocktechdata,  # Pass stocktechdata for price extraction
+            pw.this.subject_of_announcement,  # XBRL field
+            pw.this.attachment_url,  # XBRL field
+            pw.this.date_time_of_submission,  # XBRL field
         ),
+        # Include XBRL fields in output
+        subject_of_announcement=pw.this.subject_of_announcement,
+        attachment_url=pw.this.attachment_url,
+        date_time_of_submission=pw.this.date_time_of_submission,
     )
 
     pw.io.jsonlines.write(
@@ -1090,6 +1120,9 @@ def create_nse_filings_pipeline(
             signal=pw.this.signal,
             explanation=pw.this.explanation,
             confidence=pw.this.confidence,
+            subject_of_announcement=pw.this.subject_of_announcement,
+            attachment_url=pw.this.attachment_url,
+            date_time_of_submission=pw.this.date_time_of_submission,
         ),
         output_path,
     )

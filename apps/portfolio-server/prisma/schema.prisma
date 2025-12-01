@@ -321,6 +321,7 @@ model TradeExecutionLog {
   execution_time  DateTime?
   order_type      String
   trade_id        String
+  trade_delay     Int?      // Delay in milliseconds between signal generation and trade execution (for buy/short_sell)
   trade           Trade     @relation(fields: [trade_id], references: [id], onDelete: Cascade)
 
   @@index([trade_id])
