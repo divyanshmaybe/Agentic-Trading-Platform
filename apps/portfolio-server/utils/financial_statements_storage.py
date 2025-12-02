@@ -32,7 +32,7 @@ from typing import Callable, Dict, Iterable, List, Literal, Optional
 
 import pandas as pd
 
-StatementType = Literal["balance_sheet", "income_statement", "cashflow"]
+StatementType = Literal["balance_sheet", "income_statement", "cashflow", "financials"]
 
 
 @dataclass
@@ -53,7 +53,10 @@ class FinancialStatementsStorage:
         "balance_sheet": "balance_sheet.pkl",
         "income_statement": "income_statement.pkl",
         "cashflow": "cashflow.pkl",
+        "financials": "financials.pkl",
     }
+
+    INFO_FILE = "ticker_info.json"
 
     def __init__(
         self,
@@ -81,6 +84,9 @@ class FinancialStatementsStorage:
         fetcher: Optional[Callable[[], pd.DataFrame]] = None,
         force_refresh: bool = False,
     ) -> StatementRecord:
+        """Get balance sheet, returning empty record if not cached and no fetcher."""
+        if fetcher is None and not force_refresh:
+            return self._get_cached_or_empty("balance_sheet", ticker)
         return self._get_statement("balance_sheet", ticker, fetcher, force_refresh)
 
     def get_income_statement(
@@ -90,6 +96,9 @@ class FinancialStatementsStorage:
         fetcher: Optional[Callable[[], pd.DataFrame]] = None,
         force_refresh: bool = False,
     ) -> StatementRecord:
+        """Get income statement, returning empty record if not cached and no fetcher."""
+        if fetcher is None and not force_refresh:
+            return self._get_cached_or_empty("income_statement", ticker)
         return self._get_statement("income_statement", ticker, fetcher, force_refresh)
 
     def get_cashflow(
@@ -99,7 +108,75 @@ class FinancialStatementsStorage:
         fetcher: Optional[Callable[[], pd.DataFrame]] = None,
         force_refresh: bool = False,
     ) -> StatementRecord:
+        """Get cashflow, returning empty record if not cached and no fetcher."""
+        if fetcher is None and not force_refresh:
+            return self._get_cached_or_empty("cashflow", ticker)
         return self._get_statement("cashflow", ticker, fetcher, force_refresh)
+
+    def get_financials(
+        self,
+        ticker: str,
+        *,
+        fetcher: Optional[Callable[[], pd.DataFrame]] = None,
+        force_refresh: bool = False,
+    ) -> StatementRecord:
+        """Get financials statement, returning empty record if not cached and no fetcher."""
+        if fetcher is None and not force_refresh:
+            return self._get_cached_or_empty("financials", ticker)
+        return self._get_statement("financials", ticker, fetcher, force_refresh)
+
+    def _get_cached_or_empty(
+        self,
+        statement_type: StatementType,
+        ticker: str,
+    ) -> StatementRecord:
+        """Return cached statement or empty record (never raises)."""
+        ticker_fmt = self._fmt_ticker(ticker)
+        collection = self._load_collection(statement_type)
+        metadata = self._load_metadata(statement_type)
+        cached_df = self._extract_ticker(collection, ticker_fmt)
+        
+        last_updated = datetime.utcnow()
+        if ticker_fmt in metadata:
+            last_updated = datetime.fromisoformat(metadata[ticker_fmt])
+        
+        return StatementRecord(
+            ticker=ticker_fmt,
+            statement_type=statement_type,
+            dataframe=cached_df,  # May be empty DataFrame
+            source="cache",
+            last_updated=last_updated,
+        )
+
+    def get_info(
+        self,
+        ticker: str,
+    ) -> Dict:
+        """Get cached ticker info or return empty dict."""
+        ticker_fmt = self._fmt_ticker(ticker)
+        info_path = self.data_dir / self.INFO_FILE
+        if not info_path.exists():
+            return {}
+        try:
+            all_info = json.loads(info_path.read_text())
+            return all_info.get(ticker_fmt, {})
+        except Exception:
+            return {}
+
+    def cache_info(
+        self,
+        ticker: str,
+        info: Dict,
+    ) -> None:
+        """Cache ticker info to JSON file."""
+        ticker_fmt = self._fmt_ticker(ticker)
+        info_path = self.data_dir / self.INFO_FILE
+        try:
+            all_info = json.loads(info_path.read_text()) if info_path.exists() else {}
+        except Exception:
+            all_info = {}
+        all_info[ticker_fmt] = info
+        info_path.write_text(json.dumps(all_info, indent=2, default=str))
 
     def cache_statement(
         self,
@@ -346,5 +423,7 @@ class FinancialStatementsStorage:
         ticker = ticker.strip().upper()
         return ticker if ticker.endswith(".NS") else f"{ticker}.NS"
 
+
+from typing import Any
 
 __all__ = ["FinancialStatementsStorage", "StatementRecord"]

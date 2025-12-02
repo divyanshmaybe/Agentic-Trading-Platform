@@ -76,6 +76,7 @@ class FundamentalAnalyzer:
             self._income_stmt = self.ticker.income_stmt
             self._cashflow = self.ticker.get_cashflow(freq="yearly")
             self._info = self.ticker.get_info()
+            self._financials = self.ticker.financials
             self._financials_loaded = True
             return True
         except Exception as e:
@@ -89,12 +90,14 @@ class FundamentalAnalyzer:
         income_statement: pd.DataFrame,
         cashflow: pd.DataFrame,
         info: Dict[str, Any],
+        financials: pd.DataFrame,
     ) -> None:
         """Inject already-fetched statements/info and flag as loaded."""
         self._balance_sheet = balance_sheet
         self._income_stmt = income_statement
         self._cashflow = cashflow
         self._info = info or {}
+        self._financials = financials
         self._financials_loaded = True
 
     def _get(self, df, field, col=0, default=pd.NA):
@@ -999,6 +1002,8 @@ class FundamentalAnalyzerPipeline:
         
         When fetching new data, it also checks for new periods (dates) and
         merges them into the existing cache.
+        
+        Caches: balance_sheet, income_statement, cashflow, financials, info
         """
         ticker = analyzer.ticker_symbol
         yf_ticker = analyzer.ticker
@@ -1009,8 +1014,10 @@ class FundamentalAnalyzerPipeline:
                 bs_record = self.storage.get_balance_sheet(ticker)
                 income_record = self.storage.get_income_statement(ticker)
                 cash_record = self.storage.get_cashflow(ticker)
+                fin_record = self.storage.get_financials(ticker)
+                cached_info = self.storage.get_info(ticker)
                 
-                # If all cached, use them
+                # If all core statements cached, use them
                 if (not bs_record.dataframe.empty and 
                     not income_record.dataframe.empty and 
                     not cash_record.dataframe.empty):
@@ -1027,12 +1034,17 @@ class FundamentalAnalyzerPipeline:
                         list(bs_record.dataframe.columns[:4])
                     )
                     
-                    info = yf_ticker.info or {}
+                    # Use cached info or fetch fresh if missing
+                    info = cached_info if cached_info else (yf_ticker.info or {})
+                    # Use cached financials or empty df if missing
+                    financials_df = fin_record.dataframe if not fin_record.dataframe.empty else pd.DataFrame()
+                    
                     analyzer.populate_financials(
                         balance_sheet=bs_record.dataframe,
                         income_statement=income_record.dataframe,
                         cashflow=cash_record.dataframe,
                         info=info,
+                        financials=financials_df,
                     )
                     return
             except Exception as e:
@@ -1056,7 +1068,11 @@ class FundamentalAnalyzerPipeline:
                 self.storage.cache_statement("income_statement", ticker, analyzer._income_stmt)
             if analyzer._cashflow is not None and not analyzer._cashflow.empty:
                 self.storage.cache_statement("cashflow", ticker, analyzer._cashflow)
-            logger.info("[CACHED] %s - statements saved to cache", ticker)
+            if analyzer._financials is not None and not analyzer._financials.empty:
+                self.storage.cache_statement("financials", ticker, analyzer._financials)
+            if analyzer._info:
+                self.storage.cache_info(ticker, analyzer._info)
+            logger.info("[CACHED] %s - statements and info saved to cache", ticker)
         except Exception as e:
             logger.warning("Failed to cache statements for %s: %s", ticker, e)
 

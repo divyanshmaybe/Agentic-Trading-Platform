@@ -54,8 +54,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-tickers",
         type=int,
-        default=5,
-        help="Maximum number of tickers to process (default: 5).",
+        default=500,
+        help="Maximum number of tickers to process (default: 500 for full Nifty 500).",
     )
     parser.add_argument(
         "--force-refresh",
@@ -71,8 +71,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=None,
-        help="Optional path to export the resulting DataFrame as CSV.",
+        default=SERVER_ROOT / "data" / "fundamental_metrics_nifty500.csv",
+        help="Path to export the resulting DataFrame as CSV (default: data/fundamental_metrics_nifty500.csv).",
     )
     return parser.parse_args()
 
@@ -89,16 +89,32 @@ def _load_raw_dataframe(csv_path: Optional[Path]) -> Optional[pd.DataFrame]:
     return df
 
 
-def _describe_result(tickers: List[str], df: pd.DataFrame) -> None:
+def _describe_result(tickers: List[str], df: pd.DataFrame, output_path: Optional[Path] = None) -> None:
     logger.info("\n======== FUNDAMENTAL ANALYZER REPORT ========")
-    logger.info("Analyzed tickers: %s", ", ".join(tickers))
+    logger.info("Analyzed tickers: %d total", len(tickers))
     logger.info("Columns returned: %d", len(df.columns))
     logger.info("Rows returned: %d", len(df))
-    preview = df.head()
-    logger.info("\nTop rows:\n%s", preview.to_string(index=False))
+    
+    # Show summary statistics for key metrics
+    key_metrics = ['piotroski_fscore', 'roic', 'pe_ratio', 'debt_to_equity', 'roe']
+    available_metrics = [m for m in key_metrics if m in df.columns]
+    if available_metrics:
+        logger.info("\nKey metrics summary:")
+        logger.info(df[available_metrics].describe().to_string())
+    
+    # Show top 10 by Piotroski F-Score
+    if 'piotroski_fscore' in df.columns:
+        top_piotroski = df.nlargest(10, 'piotroski_fscore')[['ticker', 'piotroski_fscore', 'roic', 'pe_ratio', 'roe']]
+        logger.info("\nTop 10 by Piotroski F-Score:\n%s", top_piotroski.to_string(index=False))
+    
     failed = df.attrs.get("failed_tickers")
     if failed:
-        logger.warning("Tickers failed and skipped: %s", ", ".join(failed))
+        logger.warning("\nTickers failed and skipped (%d): %s", len(failed), ", ".join(failed[:20]))
+        if len(failed) > 20:
+            logger.warning("... and %d more", len(failed) - 20)
+    
+    if output_path:
+        logger.info("\nResults saved to: %s", output_path)
 
 
 def main() -> int:
@@ -123,12 +139,13 @@ def main() -> int:
         force_refresh=args.force_refresh,
     )
 
-    _describe_result(result.tickers_analyzed, result.dataframe)
+    # Always save to CSV
+    output_path = args.output
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    result.dataframe.to_csv(output_path, index=False)
+    logger.info("Saved results to %s", output_path)
 
-    if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        result.dataframe.to_csv(args.output, index=False)
-        logger.info("Saved results to %s", args.output)
+    _describe_result(result.tickers_analyzed, result.dataframe, output_path)
 
     return 0
 
