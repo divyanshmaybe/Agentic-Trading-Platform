@@ -9,6 +9,7 @@ import {
 	DialogTitle,
 } from "@/components/ui/dialog"
 import { apiClient } from "@/lib/api"
+import { downloadCompanyReportPdf } from "@/components/utils/downloadModalPdf"
 
 interface CompanyReport {
 	ticker: string
@@ -88,30 +89,42 @@ export function CompanyReportModal({ open, onOpenChange, ticker }: CompanyReport
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto bg-white border-gray-200 p-0 [&>button]:text-gray-600 [&>button]:hover:text-gray-900 [&>button]:hover:bg-gray-100 [&>button]:rounded-md [&>button]:p-1 [&>button]:transition-colors">
-				<DialogHeader className="px-8 pt-8 pb-6 border-b border-gray-200">
-					<DialogTitle className="text-2xl font-bold text-gray-900">
-						{report?.company_name || `Company Report: ${ticker}`}
-					</DialogTitle>
-					{report?.ticker && (
-						<p className="text-sm text-gray-500 mt-1">Ticker: {report.ticker}</p>
+				<div id="company-report-pdf" className="p-8">
+					<DialogHeader className="px-0 pt-0 pb-6 border-b border-gray-200">
+						<DialogTitle className="text-2xl font-bold text-gray-900">
+							{report?.company_name || `Company Report: ${ticker}`}
+						</DialogTitle>
+						{report?.ticker && (
+							<p className="text-sm text-gray-500 mt-1">Ticker: {report.ticker}</p>
+						)}
+					</DialogHeader>
+
+					{!loading && !error && report && (
+						<div className="pt-4">
+							<button
+								onClick={downloadCompanyReportPdf}
+								className="px-4 py-2 bg-black text-white rounded hover:bg-gray-800"
+							>
+								Download PDF
+							</button>
+						</div>
 					)}
-				</DialogHeader>
 
-				{loading && (
-					<div className="flex items-center justify-center py-12 px-8">
-						<Loader2 className="w-6 h-6 animate-spin text-gray-600" />
-						<span className="ml-3 text-gray-700">Loading report...</span>
-					</div>
-				)}
+					{loading && (
+						<div className="flex items-center justify-center py-12">
+							<Loader2 className="w-6 h-6 animate-spin text-gray-600" />
+							<span className="ml-3 text-gray-700">Loading report...</span>
+						</div>
+					)}
 
-				{error && (
-					<div className="mx-8 mt-6 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-red-700">
-						{error}
-					</div>
-				)}
+					{error && (
+						<div className="mt-6 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-red-700">
+							{error}
+						</div>
+					)}
 
-				{!loading && !error && report && (
-					<div className="px-8 py-6 space-y-8 text-gray-900">
+					{!loading && !error && report && (
+						<div className="py-6 space-y-8 text-gray-900">
 						{report.company_description && (
 							<section>
 								<h2 className="text-xl font-semibold mb-3 text-gray-900">Company Description</h2>
@@ -267,7 +280,8 @@ export function CompanyReportModal({ open, onOpenChange, ticker }: CompanyReport
 							</section>
 						)}
 					</div>
-				)}
+					)}
+				</div>
 			</DialogContent>
 		</Dialog>
 	)
