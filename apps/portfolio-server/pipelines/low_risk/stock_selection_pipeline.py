@@ -106,7 +106,7 @@ class StockSelectionPipeline:
         self._loop_ready = threading.Event()
         self._start_background_loop()
 
-        logger.info(f"✓ Stock selection pipeline initialized with {len(company_df)} companies")
+        logger.info(f"Stock selection pipeline initialized with {len(company_df)} companies")
 
     async def generate_company_report(self, ticker: str) -> Dict[str, Any]:
         """
@@ -167,10 +167,14 @@ class StockSelectionPipeline:
             await self.report_service.upsert_report(report)
             logger.info(f"✅ Report stored to MongoDB for {ticker}")
 
-            msg = f"✅ Company report generated for {ticker}"
+            msg = f"Company report generated for {ticker}"
             logger.info(msg)
             publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
-
+            to_send = {
+                                "status": "fetched",
+                                "content": {"content": ticker}
+                        }
+            publish_to_kafka(to_send, user_id=self.user_id, message_type="stock", task_id=self.task_id)
             return report
 
         except Exception as e:
@@ -269,7 +273,7 @@ class StockSelectionPipeline:
                     "status": "cached",
                     "content": {"ticker": ticker}
                 }
-                logger.info(f"📋 Using cached report for {ticker}")
+                logger.info(f"Using cached report for {ticker}")
                 publish_to_kafka(to_send, user_id=self.user_id, message_type="report", task_id=self.task_id)
                 return company_report_db[ticker]
 
@@ -575,7 +579,7 @@ class StockSelectionPipeline:
             raise ValueError("No stocks selected in final portfolio")
 
         total_allocation = sum(item["percentage"] for item in final_portfolio)
-        msg = f"✅ Stock portfolio complete: {len(final_portfolio)} stocks, total allocation: {total_allocation:.1f}%"
+        msg = f"Stock portfolio complete: {len(final_portfolio)} stocks, total allocation: {total_allocation:.1f}%"
         logger.info(msg)
         publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
 
@@ -589,7 +593,7 @@ class StockSelectionPipeline:
 
     def run(self, fund_allocated: float) -> Dict[str, Any]:
         """Run the complete stock selection and trade generation pipeline."""
-        msg = "🚀 Starting stock selection pipeline..."
+        msg = "Starting stock selection pipeline..."
         logger.info(msg)
         publish_to_kafka({"content": msg}, user_id=self.user_id, message_type="info", task_id=self.task_id)
 
@@ -603,7 +607,7 @@ class StockSelectionPipeline:
             logger.info(msg)
             publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
             industry_list = self.industry_list
-            msg = f"✅ Using {len(industry_list)} industries"
+            msg = f"Using {len(industry_list)} industries"
             logger.info(msg)
             publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
         except Exception as e:
@@ -623,13 +627,13 @@ class StockSelectionPipeline:
 
         # Convert portfolio to trade list
         try:
-            msg = f"💰 Converting portfolio to trades (fund: ₹{fund_allocated:,.2f})..."
+            msg = f"Converting portfolio to trades (fund: ₹{fund_allocated:,.2f})..."
             logger.info(msg)
             publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
 
             trade_list = trade_converter(final_portfolio, fund_allocated)
 
-            msg = f"✅ Trade list generated: {len(trade_list)} trades"
+            msg = f"Trade list generated: {len(trade_list)} trades"
             logger.info(msg)
             publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
         except Exception as e:
@@ -641,7 +645,7 @@ class StockSelectionPipeline:
         total_shares = sum(trade["no_of_shares_bought"] for trade in trade_list)
 
         logger.info(
-            f"📈 Portfolio summary: {len(trade_list)} trades, "
+            f"Portfolio summary: {len(trade_list)} trades, "
             f"₹{total_invested:,.2f} invested, {total_shares:,.0f} shares"
         )
 
