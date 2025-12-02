@@ -190,6 +190,9 @@ def run_low_risk_pipeline(
     # Load environment
     load_dotenv()
     
+    # Get task_id from Celery request for Kafka tracking
+    task_id = self.request.id
+    
     # Initialize Redis for status tracking
     redis_client = Redis.from_url(BROKER_URL)
     pipeline_status = PipelineStatus(redis_client, user_id)
@@ -218,7 +221,8 @@ def run_low_risk_pipeline(
         publish_to_kafka(
             {"content": f"Starting low-risk pipeline with fund: ₹{fund_allocated:,.2f}", "stage": "init", "status": "start"},
             user_id=user_id,
-            message_type="stage"
+            message_type="stage",
+            task_id=task_id,
         )
         task_logger.info(f"🚀 Starting low-risk pipeline for user {user_id} with fund: ₹{fund_allocated:,.2f}")
         
@@ -241,7 +245,8 @@ def run_low_risk_pipeline(
         publish_to_kafka(
             {"content": f"Loading company data...", "stage": "init", "status": "progress"},
             user_id=user_id,
-            message_type="stage"
+            message_type="stage",
+            task_id=task_id,
         )
         task_logger.info(f"📊 Loading company data from {nifty_500_path}")
         company_df = pd.read_csv(nifty_500_path)
@@ -262,7 +267,8 @@ def run_low_risk_pipeline(
         publish_to_kafka(
             {"content": f"Initialization complete. Loaded {len(company_df)} companies.", "stage": "init", "status": "done"},
             user_id=user_id,
-            message_type="stage"
+            message_type="stage",
+            task_id=task_id,
         )
         task_logger.info("🗄️ Economic indicators storage initialized")
         
@@ -270,7 +276,8 @@ def run_low_risk_pipeline(
         publish_to_kafka(
             {"content": "Initializing market data service...", "stage": "market_data", "status": "start"},
             user_id=user_id,
-            message_type="stage"
+            message_type="stage",
+            task_id=task_id,
         )
         task_logger.info("🔧 Initializing Angel One market data service...")
         market_service = get_market_data_service()
@@ -278,14 +285,16 @@ def run_low_risk_pipeline(
         publish_to_kafka(
             {"content": "Market service initialized", "stage": "market_data", "status": "done"},
             user_id=user_id,
-            message_type="stage"
+            message_type="stage",
+            task_id=task_id,
         )
         
         # === STAGE 3: Industry Indicators ===
         publish_to_kafka(
             {"content": "Computing industry indicators (fetching ~500 stocks)...", "stage": "industry_indicators", "status": "start"},
             user_id=user_id,
-            message_type="stage"
+            message_type="stage",
+            task_id=task_id,
         )
         task_logger.info("📈 Computing industry indicators...")
         industry_indicators = IndustryIndicatorsPipeline(
@@ -297,7 +306,8 @@ def run_low_risk_pipeline(
         publish_to_kafka(
             {"content": "Industry indicators computed successfully", "stage": "industry_indicators", "status": "done"},
             user_id=user_id,
-            message_type="stage"
+            message_type="stage",
+            task_id=task_id,
         )
         task_logger.info("✅ Industry indicators computed")
         
@@ -305,7 +315,8 @@ def run_low_risk_pipeline(
         publish_to_kafka(
             {"content": "Running LLM-based industry selection...", "stage": "industry_selection", "status": "start"},
             user_id=user_id,
-            message_type="stage"
+            message_type="stage",
+            task_id=task_id,
         )
         task_logger.info("🏭 Running industry selection pipeline...")
         industry_pipeline = IndustrySelectionPipeline(
@@ -323,7 +334,8 @@ def run_low_risk_pipeline(
                 "result": {"industries": [i.get("name") for i in industry_list]}
             },
             user_id=user_id,
-            message_type="stage"
+            message_type="stage",
+            task_id=task_id,
         )
         task_logger.info(f"✅ Selected {len(industry_list)} industries")
         
@@ -331,7 +343,8 @@ def run_low_risk_pipeline(
         publish_to_kafka(
             {"content": "Running fundamental analyzer...", "stage": "fundamental", "status": "start"},
             user_id=user_id,
-            message_type="stage"
+            message_type="stage",
+            task_id=task_id,
         )
         task_logger.info("📊 Running fundamental analyzer pipeline...")
         fundamental_pipeline = FundamentalAnalyzerPipeline()
@@ -343,14 +356,16 @@ def run_low_risk_pipeline(
                 "status": "done"
             },
             user_id=user_id,
-            message_type="stage"
+            message_type="stage",
+            task_id=task_id,
         )
 
         # === STAGE 6: Stock Selection ===
         publish_to_kafka(
             {"content": f"Running stock selection for {len(industry_list)} industries...", "stage": "stock_selection", "status": "start"},
             user_id=user_id,
-            message_type="stage"
+            message_type="stage",
+            task_id=task_id,
         )
         task_logger.info("📈 Running stock selection pipeline...")
         stock_pipeline = StockSelectionPipeline(
@@ -359,6 +374,7 @@ def run_low_risk_pipeline(
             industry_list=industry_list,
             gemini_api_key=gemini_api_key,
             user_id=user_id,
+            task_id=task_id,
         )
         
         # Run pipeline and generate trades
@@ -374,7 +390,8 @@ def run_low_risk_pipeline(
                 "result": summary
             },
             user_id=user_id,
-            message_type="stage"
+            message_type="stage",
+            task_id=task_id,
         )
         task_logger.info(
             f"✅ Pipeline completed: {summary['total_stocks']} stocks, "
@@ -393,7 +410,8 @@ def run_low_risk_pipeline(
         publish_to_kafka(
             {"content": completion_msg, "stage": "completion", "status": "done", "result": summary},
             user_id=user_id,
-            message_type="stage"
+            message_type="stage",
+            task_id=task_id,
         )
         
         # Release lock and mark success
@@ -416,7 +434,8 @@ def run_low_risk_pipeline(
         publish_to_kafka(
             {"content": f"Pipeline failed: {error_message}", "stage": "error", "status": "error", "error": error_message},
             user_id=user_id,
-            message_type="error"
+            message_type="error",
+            task_id=task_id,
         )
         pipeline_status.set_error(error_message)
         

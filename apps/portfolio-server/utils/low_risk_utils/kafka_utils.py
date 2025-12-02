@@ -98,19 +98,22 @@ class LowRiskKafkaPublisher:
         self,
         data: Dict[str, Any],
         user_id: str,
-        message_type: str = "info"
+        message_type: str = "info",
+        task_id: Optional[str] = None,
     ) -> None:
         """
         Publish data to Kafka with consistent structure.
         
         Thread-safe, production-ready design:
         - user_id MUST be passed per message (not stored globally)
+        - task_id allows frontend to track specific pipeline executions
         - Supports concurrent requests from different users
         - Each message is independent
         
         Message structure:
         {
             "user_id": str,
+            "task_id": str | None,
             "type": str,
             ...additional data from 'data' dict
         }
@@ -119,6 +122,7 @@ class LowRiskKafkaPublisher:
             data: Dictionary containing the message data
             user_id: User identifier (REQUIRED for proper multi-user support)
             message_type: Message type identifier (default: "info")
+            task_id: Celery task ID for tracking pipeline execution (optional)
         """
         if not self._publisher:
             return
@@ -130,10 +134,12 @@ class LowRiskKafkaPublisher:
             # Build message with consistent structure
             message = {
                 "user_id": user_id,
+                "task_id": task_id,
                 "type": message_type,
                 **data
             }
-            self._publisher.publish(message, block=False)
+            # Pass task_id as Kafka message key for frontend filtering/routing
+            self._publisher.publish(message, key=task_id, block=False)
         except Exception as e:
             logger.warning(f"Failed to publish to Kafka: {e}")
 
@@ -142,6 +148,7 @@ def publish_to_kafka(
     data: Dict[str, Any],
     user_id: Optional[str] = None,
     message_type: str = "info",
+    task_id: Optional[str] = None,
 ) -> None:
     """
     Publish data to Kafka with consistent structure.
@@ -150,12 +157,12 @@ def publish_to_kafka(
     
     Args:
         data: Dictionary containing the message data
-        publisher: Ignored - kept for backward compatibility
         user_id: User identifier (REQUIRED for production)
         message_type: Message type identifier (default: "info")
+        task_id: Celery task ID for tracking pipeline execution (optional)
     """
     instance = LowRiskKafkaPublisher()
-    instance.publish(data, user_id=user_id or "", message_type=message_type)
+    instance.publish(data, user_id=user_id or "", message_type=message_type, task_id=task_id)
 
 
 __all__ = [

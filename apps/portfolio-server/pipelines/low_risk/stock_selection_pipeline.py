@@ -72,6 +72,7 @@ class StockSelectionPipeline:
         industry_list: List[Dict[str, Any]],
         gemini_api_key: Optional[str] = None,
         user_id: Optional[str] = None,
+        task_id: Optional[str] = None,
     ):
         """Initialize the stock selection pipeline."""
         # Validate company DataFrame
@@ -89,6 +90,7 @@ class StockSelectionPipeline:
         self.kafka = LowRiskKafkaPublisher()
         self.publisher = self.kafka.get_publisher()
         self.user_id = user_id
+        self.task_id = task_id
         self.pipeline = pipeline
 
         # Get Gemini API key
@@ -146,7 +148,7 @@ class StockSelectionPipeline:
 
             msg = f"🔍 Generating company report for {ticker}..."
             logger.info(msg)
-            publish_to_kafka({"content": msg}, user_id=self.user_id)
+            publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
 
             response = model_with_search.invoke(messages)
             report_text = response.content
@@ -170,7 +172,7 @@ class StockSelectionPipeline:
 
             msg = f"✅ Company report generated for {ticker}"
             logger.info(msg)
-            publish_to_kafka({"content": msg}, user_id=self.user_id)
+            publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
 
             return report
 
@@ -233,6 +235,7 @@ class StockSelectionPipeline:
                     {"content": f"Fetching metrics {metrics_list} for {tickers_list}"},
                     user_id=self.user_id,
                     message_type="info",
+                    task_id=self.task_id,
                 )
 
                 return result
@@ -267,7 +270,7 @@ class StockSelectionPipeline:
                     "content": {"ticker": ticker}
                 }
                 logger.info(f"📋 Using cached report for {ticker}")
-                publish_to_kafka(to_send, user_id=self.user_id, message_type="report")
+                publish_to_kafka(to_send, user_id=self.user_id, message_type="report", task_id=self.task_id)
                 return company_report_db[ticker]
 
             # Generate new report
@@ -276,7 +279,7 @@ class StockSelectionPipeline:
                     "status": "generating",
                     "content": {"ticker": ticker}
                 }
-                publish_to_kafka(to_send, user_id=self.user_id, message_type="report")
+                publish_to_kafka(to_send, user_id=self.user_id, message_type="report", task_id=self.task_id)
 
                 # Run async workflow on dedicated loop
                 report = self._run_in_background_loop(
@@ -291,7 +294,7 @@ class StockSelectionPipeline:
                     "status": "generated",
                     "content": {"ticker": ticker}
                 }
-                publish_to_kafka(to_send, user_id=self.user_id, message_type="report")
+                publish_to_kafka(to_send, user_id=self.user_id, message_type="report", task_id=self.task_id)
 
                 return report
 
@@ -370,7 +373,7 @@ class StockSelectionPipeline:
                 last_tn = messages[-2].name
                 # last tool message
                 last_tm = messages[-2].content
-                publish_to_kafka({"content": f"Comparing..."}, user_id=self.user_id, message_type="info")
+                publish_to_kafka({"content": f"Comparing..."}, user_id=self.user_id, message_type="info", task_id=self.task_id)
                 new_reasoning_message = reasoning_llm.invoke(reasoning_messages + [HumanMessage(
                     f"New Tool Call for {last_tn} with output {last_tm}"
                 )])
@@ -386,7 +389,7 @@ class StockSelectionPipeline:
                     "message": msg
                 }
             }
-            publish_to_kafka(to_send, user_id=self.user_id, message_type="reasoning")
+            publish_to_kafka(to_send, user_id=self.user_id, message_type="reasoning", task_id=self.task_id)
 
             return Command(
                 update={
@@ -430,7 +433,7 @@ class StockSelectionPipeline:
         try:
             msg = f"Selecting stocks for {industry} ({industry_allocation}% allocation)..."
             logger.info(msg)
-            publish_to_kafka({"content": msg}, user_id=self.user_id)
+            publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
 
             # Load prompts
             stock_selection_prompt = load_prompt_from_template("stock_selection_system_prompt")
@@ -473,7 +476,7 @@ class StockSelectionPipeline:
             # Invoke agent
             msg = f"Invoking stock selection agent for {industry}..."
             logger.info(msg)
-            publish_to_kafka({"content": msg}, user_id=self.user_id)
+            publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
 
             # Stream agent responses
             messages = []
@@ -498,7 +501,7 @@ class StockSelectionPipeline:
                                 "status": "fetching",
                                 "content": {"content": ticker}
                             }
-                            publish_to_kafka(to_send, user_id=self.user_id, message_type="stock")
+                            publish_to_kafka(to_send, user_id=self.user_id, message_type="stock", task_id=self.task_id)
 
             result = {"messages": messages}
 
@@ -522,7 +525,7 @@ class StockSelectionPipeline:
 
             msg = f"✅ Stock selection complete for {industry}: {len(ind_portfolio)} stocks selected"
             logger.info(msg)
-            publish_to_kafka({"content": msg}, user_id=self.user_id)
+            publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
 
             return ind_portfolio
 
@@ -539,7 +542,7 @@ class StockSelectionPipeline:
         """Generate complete stock portfolio across all selected industries."""
         msg = f"Generating stock portfolio across {len(industry_list)} industries..."
         logger.info(msg)
-        publish_to_kafka({"content": msg}, user_id=self.user_id)
+        publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
 
         final_portfolio = []
 
@@ -574,7 +577,7 @@ class StockSelectionPipeline:
         total_allocation = sum(item["percentage"] for item in final_portfolio)
         msg = f"✅ Stock portfolio complete: {len(final_portfolio)} stocks, total allocation: {total_allocation:.1f}%"
         logger.info(msg)
-        publish_to_kafka({"content": msg}, user_id=self.user_id)
+        publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
 
         # Normalize if needed
         if abs(total_allocation - 100.0) > 1.0:
@@ -588,7 +591,7 @@ class StockSelectionPipeline:
         """Run the complete stock selection and trade generation pipeline."""
         msg = "🚀 Starting stock selection pipeline..."
         logger.info(msg)
-        publish_to_kafka({"content": msg}, user_id=self.user_id, message_type="info")
+        publish_to_kafka({"content": msg}, user_id=self.user_id, message_type="info", task_id=self.task_id)
 
         # Validate inputs
         if fund_allocated <= 0:
@@ -598,11 +601,11 @@ class StockSelectionPipeline:
         try:
             msg = "Using provided industry allocations..."
             logger.info(msg)
-            publish_to_kafka({"content": msg}, user_id=self.user_id)
+            publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
             industry_list = self.industry_list
             msg = f"✅ Using {len(industry_list)} industries"
             logger.info(msg)
-            publish_to_kafka({"content": msg}, user_id=self.user_id)
+            publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
         except Exception as e:
             logger.error(f"Failed to use industry list: {e}", exc_info=True)
             raise
@@ -622,13 +625,13 @@ class StockSelectionPipeline:
         try:
             msg = f"💰 Converting portfolio to trades (fund: ₹{fund_allocated:,.2f})..."
             logger.info(msg)
-            publish_to_kafka({"content": msg}, user_id=self.user_id)
+            publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
 
             trade_list = trade_converter(final_portfolio, fund_allocated)
 
             msg = f"✅ Trade list generated: {len(trade_list)} trades"
             logger.info(msg)
-            publish_to_kafka({"content": msg}, user_id=self.user_id)
+            publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
         except Exception as e:
             logger.error(f"Failed to convert portfolio to trades: {e}", exc_info=True)
             raise
@@ -656,7 +659,7 @@ class StockSelectionPipeline:
             }
         }
 
-        publish_to_kafka({"content": res}, user_id=self.user_id, message_type="summary")
+        publish_to_kafka({"content": res}, user_id=self.user_id, message_type="summary", task_id=self.task_id)
         return res
 
     def __del__(self):
