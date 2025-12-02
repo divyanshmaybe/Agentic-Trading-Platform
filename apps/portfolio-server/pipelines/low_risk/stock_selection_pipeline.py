@@ -89,6 +89,7 @@ class StockSelectionPipeline:
         self.kafka = LowRiskKafkaPublisher()
         self.publisher = self.kafka.get_publisher()
         self.user_id = user_id
+        self.pipeline = pipeline
 
         # Get Gemini API key
         if gemini_api_key is None:
@@ -200,7 +201,7 @@ class StockSelectionPipeline:
         future = asyncio.run_coroutine_threadsafe(coro, self._background_loop)
         return future.result(timeout=timeout)
 
-    def create_company_metrics_tool(self, pipeline: FundamentalAnalyzerPipeline) -> Any:
+    def create_company_metrics_tool(self) -> Any:
         """
         Create the company_metrics_tool function that can be used by the LLM agent.
         """
@@ -218,7 +219,7 @@ class StockSelectionPipeline:
             try:
                 result = {}
                 for ticker in tickers:
-                    res_json = pipeline.get_ticker_metric(ticker)
+                    res_json = self.pipeline.get_metrics(ticker)
                     if res_json is None:
                         logger.warning(f"No metrics found for {ticker}")
                     ticker_result = {}
@@ -388,7 +389,7 @@ class StockSelectionPipeline:
             )
         return reasoning_tool
 
-    def get_company_prompt(self, industry: str, company_df: pd.DataFrame) -> str:
+    def get_company_prompt(self, industry: str, company_df: pd.DataFrame, pipeline) -> str:
         """Generate a prompt containing company descriptions for an industry."""
         company_prompt = ""
 
@@ -413,7 +414,6 @@ class StockSelectionPipeline:
 
     def stock_selection_indwise(
         self,
-        pipeline: FundamentalAnalyzerPipeline,
         industry: str,
         industry_allocation: float,
         company_df: pd.DataFrame,
@@ -449,7 +449,7 @@ class StockSelectionPipeline:
 
             # Create company report tool
             company_report_tool = self.create_company_report_tool(self.gemini_api_key)
-            company_metrics_tool = self.create_company_metrics_tool(pipeline)
+            company_metrics_tool = self.create_company_metrics_tool()
             reasoning_tool = self.create_reasoning_tool(self.gemini_api_key, industry, company_df)
 
             class StockWithReasonState(AgentState):

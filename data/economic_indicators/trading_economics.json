@@ -1,0 +1,2365 @@
+{
+  "scraper": "trading_economics",
+  "last_updated": "2025-12-02T12:19:34.665844Z",
+  "row_count": 131,
+  "data": [
+    {
+      "indicator": "Currency",
+      "indicator_link": "https://tradingeconomics.com/india/currency",
+      "col_0": "Currency",
+      "last": "90",
+      "previous": "89.61",
+      "unit": "90.06",
+      "date": "0.01",
+      "raw_columns": [
+        "Currency",
+        "90",
+        "89.61",
+        "90.06",
+        "0.01",
+        "",
+        "Dec/25"
+      ]
+    },
+    {
+      "indicator": "Stock Market",
+      "indicator_link": "https://tradingeconomics.com/india/stock-market",
+      "col_0": "Stock Market",
+      "last": "85234",
+      "previous": "85642",
+      "unit": "86159",
+      "date": "113",
+      "raw_columns": [
+        "Stock Market",
+        "85234",
+        "85642",
+        "86159",
+        "113",
+        "points",
+        "Dec/25"
+      ]
+    },
+    {
+      "indicator": "GDP Growth Rate",
+      "indicator_link": "https://tradingeconomics.com/india/gdp-growth",
+      "col_0": "GDP Growth Rate",
+      "last": "1.7",
+      "previous": "2",
+      "unit": "22.6",
+      "date": "-22.8",
+      "raw_columns": [
+        "GDP Growth Rate",
+        "1.7",
+        "2",
+        "22.6",
+        "-22.8",
+        "percent",
+        "Jun/25"
+      ]
+    },
+    {
+      "indicator": "GDP Annual Growth Rate",
+      "indicator_link": "https://tradingeconomics.com/india/gdp-growth-annual",
+      "col_0": "GDP Annual Growth Rate",
+      "last": "8.2",
+      "previous": "7.8",
+      "unit": "22.6",
+      "date": "-23.1",
+      "raw_columns": [
+        "GDP Annual Growth Rate",
+        "8.2",
+        "7.8",
+        "22.6",
+        "-23.1",
+        "percent",
+        "Sep/25"
+      ]
+    },
+    {
+      "indicator": "Unemployment Rate",
+      "indicator_link": "https://tradingeconomics.com/india/unemployment-rate",
+      "col_0": "Unemployment Rate",
+      "last": "5.2",
+      "previous": "5.2",
+      "unit": "20.8",
+      "date": "5.1",
+      "raw_columns": [
+        "Unemployment Rate",
+        "5.2",
+        "5.2",
+        "20.8",
+        "5.1",
+        "percent",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "Inflation Rate",
+      "indicator_link": "https://tradingeconomics.com/india/inflation-cpi",
+      "col_0": "Inflation Rate",
+      "last": "0.25",
+      "previous": "1.44",
+      "unit": "12.17",
+      "date": "0.25",
+      "raw_columns": [
+        "Inflation Rate",
+        "0.25",
+        "1.44",
+        "12.17",
+        "0.25",
+        "percent",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "Interest Rate",
+      "indicator_link": "https://tradingeconomics.com/india/interest-rate",
+      "col_0": "Interest Rate",
+      "last": "5.5",
+      "previous": "5.5",
+      "unit": "14.5",
+      "date": "4",
+      "raw_columns": [
+        "Interest Rate",
+        "5.5",
+        "5.5",
+        "14.5",
+        "4",
+        "percent",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "Cash Reserve Ratio",
+      "indicator_link": "https://tradingeconomics.com/india/cash-reserve-ratio",
+      "col_0": "Cash Reserve Ratio",
+      "last": "3.75",
+      "previous": "3.75",
+      "unit": "10.5",
+      "date": "3",
+      "raw_columns": [
+        "Cash Reserve Ratio",
+        "3.75",
+        "3.75",
+        "10.5",
+        "3",
+        "percent",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "Balance of Trade",
+      "indicator_link": "https://tradingeconomics.com/india/balance-of-trade",
+      "col_0": "Balance of Trade",
+      "last": "-41.68",
+      "previous": "-32.15",
+      "unit": "0.71",
+      "date": "-41.68",
+      "raw_columns": [
+        "Balance of Trade",
+        "-41.68",
+        "-32.15",
+        "0.71",
+        "-41.68",
+        "USD Billion",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "Current Account",
+      "indicator_link": "https://tradingeconomics.com/india/current-account",
+      "col_0": "Current Account",
+      "last": "-12292",
+      "previous": "-2722",
+      "unit": "19083",
+      "date": "-31857",
+      "raw_columns": [
+        "Current Account",
+        "-12292",
+        "-2722",
+        "19083",
+        "-31857",
+        "USD Million",
+        "Sep/25"
+      ]
+    },
+    {
+      "indicator": "Current Account to GDP",
+      "indicator_link": "https://tradingeconomics.com/india/current-account-to-gdp",
+      "col_0": "Current Account to GDP",
+      "last": "-0.6",
+      "previous": "-0.7",
+      "unit": "2.3",
+      "date": "-4.8",
+      "raw_columns": [
+        "Current Account to GDP",
+        "-0.6",
+        "-0.7",
+        "2.3",
+        "-4.8",
+        "percent of GDP",
+        "Dec/24"
+      ]
+    },
+    {
+      "indicator": "Government Debt to GDP",
+      "indicator_link": "https://tradingeconomics.com/india/government-debt-to-gdp",
+      "col_0": "Government Debt to GDP",
+      "last": "81.92",
+      "previous": "81.76",
+      "unit": "89.24",
+      "date": "47.94",
+      "raw_columns": [
+        "Government Debt to GDP",
+        "81.92",
+        "81.76",
+        "89.24",
+        "47.94",
+        "percent of GDP",
+        "Dec/24"
+      ]
+    },
+    {
+      "indicator": "Government Budget",
+      "indicator_link": "https://tradingeconomics.com/india/government-budget",
+      "col_0": "Government Budget",
+      "last": "-4.8",
+      "previous": "-5.87",
+      "unit": "-2.53",
+      "date": "-9.16",
+      "raw_columns": [
+        "Government Budget",
+        "-4.8",
+        "-5.87",
+        "-2.53",
+        "-9.16",
+        "percent of GDP",
+        "Dec/24"
+      ]
+    },
+    {
+      "indicator": "Business Confidence",
+      "indicator_link": "https://tradingeconomics.com/india/business-confidence",
+      "col_0": "Business Confidence",
+      "last": "126",
+      "previous": "126",
+      "unit": "139",
+      "date": "96.4",
+      "raw_columns": [
+        "Business Confidence",
+        "126",
+        "126",
+        "139",
+        "96.4",
+        "points",
+        "Dec/25"
+      ]
+    },
+    {
+      "indicator": "Manufacturing PMI",
+      "indicator_link": "https://tradingeconomics.com/india/manufacturing-pmi",
+      "col_0": "Manufacturing PMI",
+      "last": "56.6",
+      "previous": "59.2",
+      "unit": "59.3",
+      "date": "27.4",
+      "raw_columns": [
+        "Manufacturing PMI",
+        "56.6",
+        "59.2",
+        "59.3",
+        "27.4",
+        "points",
+        "Nov/25"
+      ]
+    },
+    {
+      "indicator": "Services PMI",
+      "indicator_link": "https://tradingeconomics.com/india/services-pmi",
+      "col_0": "Services PMI",
+      "last": "59.5",
+      "previous": "58.9",
+      "unit": "62.9",
+      "date": "5.4",
+      "raw_columns": [
+        "Services PMI",
+        "59.5",
+        "58.9",
+        "62.9",
+        "5.4",
+        "points",
+        "Nov/25"
+      ]
+    },
+    {
+      "indicator": "Consumer Confidence",
+      "indicator_link": "https://tradingeconomics.com/india/consumer-confidence",
+      "col_0": "Consumer Confidence",
+      "last": "96.9",
+      "previous": "96.5",
+      "unit": "117",
+      "date": "48.5",
+      "raw_columns": [
+        "Consumer Confidence",
+        "96.9",
+        "96.5",
+        "117",
+        "48.5",
+        "points",
+        "Sep/25"
+      ]
+    },
+    {
+      "indicator": "Corporate Tax Rate",
+      "indicator_link": "https://tradingeconomics.com/india/corporate-tax-rate",
+      "col_0": "Corporate Tax Rate",
+      "last": "34.94",
+      "previous": "34.94",
+      "unit": "38.95",
+      "date": "25.17",
+      "raw_columns": [
+        "Corporate Tax Rate",
+        "34.94",
+        "34.94",
+        "38.95",
+        "25.17",
+        "percent",
+        "Dec/25"
+      ]
+    },
+    {
+      "indicator": "Personal Income Tax Rate",
+      "indicator_link": "https://tradingeconomics.com/india/personal-income-tax-rate",
+      "col_0": "Personal Income Tax Rate",
+      "last": "39",
+      "previous": "42.74",
+      "unit": "42.74",
+      "date": "30",
+      "raw_columns": [
+        "Personal Income Tax Rate",
+        "39",
+        "42.74",
+        "42.74",
+        "30",
+        "percent",
+        "Dec/25"
+      ]
+    },
+    {
+      "indicator": "GDP Growth Rate",
+      "indicator_link": "https://tradingeconomics.com/india/gdp-growth",
+      "col_0": "GDP Growth Rate",
+      "last": "1.7",
+      "previous": "2",
+      "unit": "22.6",
+      "date": "-22.8",
+      "raw_columns": [
+        "GDP Growth Rate",
+        "1.7",
+        "2",
+        "22.6",
+        "-22.8",
+        "percent",
+        "Jun/25"
+      ]
+    },
+    {
+      "indicator": "GDP Annual Growth Rate",
+      "indicator_link": "https://tradingeconomics.com/india/gdp-growth-annual",
+      "col_0": "GDP Annual Growth Rate",
+      "last": "8.2",
+      "previous": "7.8",
+      "unit": "22.6",
+      "date": "-23.1",
+      "raw_columns": [
+        "GDP Annual Growth Rate",
+        "8.2",
+        "7.8",
+        "22.6",
+        "-23.1",
+        "percent",
+        "Sep/25"
+      ]
+    },
+    {
+      "indicator": "GDP",
+      "indicator_link": "https://tradingeconomics.com/india/gdp",
+      "col_0": "GDP",
+      "last": "3913",
+      "previous": "3638",
+      "unit": "3913",
+      "date": "37.03",
+      "raw_columns": [
+        "GDP",
+        "3913",
+        "3638",
+        "3913",
+        "37.03",
+        "USD Billion",
+        "Dec/24"
+      ]
+    },
+    {
+      "indicator": "GDP Constant Prices",
+      "indicator_link": "https://tradingeconomics.com/india/gdp-constant-prices",
+      "col_0": "GDP Constant Prices",
+      "last": "47886",
+      "previous": "51352",
+      "unit": "51352",
+      "date": "20429",
+      "raw_columns": [
+        "GDP Constant Prices",
+        "47886",
+        "51352",
+        "51352",
+        "20429",
+        "INR Billion",
+        "Jun/25"
+      ]
+    },
+    {
+      "indicator": "Gross National Product",
+      "indicator_link": "https://tradingeconomics.com/india/gross-national-product",
+      "col_0": "Gross National Product",
+      "last": "18523133",
+      "previous": "17404638",
+      "unit": "18523133",
+      "date": "5442938",
+      "raw_columns": [
+        "Gross National Product",
+        "18523133",
+        "17404638",
+        "18523133",
+        "5442938",
+        "INR Tens Of Million",
+        "Dec/24"
+      ]
+    },
+    {
+      "indicator": "Gross Fixed Capital Formation",
+      "indicator_link": "https://tradingeconomics.com/india/gross-fixed-capital-formation",
+      "col_0": "Gross Fixed Capital Formation",
+      "last": "16553",
+      "previous": "17412",
+      "unit": "17412",
+      "date": "6872",
+      "raw_columns": [
+        "Gross Fixed Capital Formation",
+        "16553",
+        "17412",
+        "17412",
+        "6872",
+        "INR Billion",
+        "Jun/25"
+      ]
+    },
+    {
+      "indicator": "GDP per Capita",
+      "indicator_link": "https://tradingeconomics.com/india/gdp-per-capita",
+      "col_0": "GDP per Capita",
+      "last": "2397",
+      "previous": "2271",
+      "unit": "2397",
+      "date": "313",
+      "raw_columns": [
+        "GDP per Capita",
+        "2397",
+        "2271",
+        "2397",
+        "313",
+        "USD",
+        "Dec/24"
+      ]
+    },
+    {
+      "indicator": "GDP per Capita PPP",
+      "indicator_link": "https://tradingeconomics.com/india/gdp-per-capita-ppp",
+      "col_0": "GDP per Capita PPP",
+      "last": "9817",
+      "previous": "9302",
+      "unit": "9817",
+      "date": "2179",
+      "raw_columns": [
+        "GDP per Capita PPP",
+        "9817",
+        "9302",
+        "9817",
+        "2179",
+        "USD",
+        "Dec/24"
+      ]
+    },
+    {
+      "indicator": "Full Year GDP Growth",
+      "indicator_link": "https://tradingeconomics.com/india/full-year-gdp-growth",
+      "col_0": "Full Year GDP Growth",
+      "last": "6.5",
+      "previous": "9.2",
+      "unit": "9.7",
+      "date": "-5.8",
+      "raw_columns": [
+        "Full Year GDP Growth",
+        "6.5",
+        "9.2",
+        "9.7",
+        "-5.8",
+        "percent",
+        "Mar/25"
+      ]
+    },
+    {
+      "indicator": "GDP from Agriculture",
+      "indicator_link": "https://tradingeconomics.com/india/gdp-from-agriculture",
+      "col_0": "GDP from Agriculture",
+      "last": "5684",
+      "previous": "6774",
+      "unit": "7757",
+      "date": "2691",
+      "raw_columns": [
+        "GDP from Agriculture",
+        "5684",
+        "6774",
+        "7757",
+        "2691",
+        "INR Billion",
+        "Jun/25"
+      ]
+    },
+    {
+      "indicator": "GDP from Construction",
+      "indicator_link": "https://tradingeconomics.com/india/gdp-from-construction",
+      "col_0": "GDP from Construction",
+      "last": "3980",
+      "previous": "4636",
+      "unit": "4636",
+      "date": "1438",
+      "raw_columns": [
+        "GDP from Construction",
+        "3980",
+        "4636",
+        "4636",
+        "1438",
+        "INR Billion",
+        "Jun/25"
+      ]
+    },
+    {
+      "indicator": "GDP from Manufacturing",
+      "indicator_link": "https://tradingeconomics.com/india/gdp-from-manufacturing",
+      "col_0": "GDP from Manufacturing",
+      "last": "7614",
+      "previous": "8300",
+      "unit": "8300",
+      "date": "3331",
+      "raw_columns": [
+        "GDP from Manufacturing",
+        "7614",
+        "8300",
+        "8300",
+        "3331",
+        "INR Billion",
+        "Jun/25"
+      ]
+    },
+    {
+      "indicator": "GDP from Mining",
+      "indicator_link": "https://tradingeconomics.com/india/gdp-from-mining",
+      "col_0": "GDP from Mining",
+      "last": "873",
+      "previous": "1013",
+      "unit": "1057",
+      "date": "556",
+      "raw_columns": [
+        "GDP from Mining",
+        "873",
+        "1013",
+        "1057",
+        "556",
+        "INR Billion",
+        "Jun/25"
+      ]
+    },
+    {
+      "indicator": "GDP from Public Administration",
+      "indicator_link": "https://tradingeconomics.com/india/gdp-from-public-administration",
+      "col_0": "GDP from Public Administration",
+      "last": "5614",
+      "previous": "5624",
+      "unit": "5624",
+      "date": "2329",
+      "raw_columns": [
+        "GDP from Public Administration",
+        "5614",
+        "5624",
+        "5624",
+        "2329",
+        "INR Billion",
+        "Jun/25"
+      ]
+    },
+    {
+      "indicator": "GDP from Utilities",
+      "indicator_link": "https://tradingeconomics.com/india/gdp-from-utilities",
+      "col_0": "GDP from Utilities",
+      "last": "1065",
+      "previous": "1000",
+      "unit": "1065",
+      "date": "463",
+      "raw_columns": [
+        "GDP from Utilities",
+        "1065",
+        "1000",
+        "1065",
+        "463",
+        "INR Billion",
+        "Jun/25"
+      ]
+    },
+    {
+      "indicator": "Unemployment Rate",
+      "indicator_link": "https://tradingeconomics.com/india/unemployment-rate",
+      "col_0": "Unemployment Rate",
+      "last": "5.2",
+      "previous": "5.2",
+      "unit": "20.8",
+      "date": "5.1",
+      "raw_columns": [
+        "Unemployment Rate",
+        "5.2",
+        "5.2",
+        "20.8",
+        "5.1",
+        "percent",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "Labor Force Participation Rate",
+      "indicator_link": "https://tradingeconomics.com/india/labor-force-participation-rate",
+      "col_0": "Labor Force Participation Rate",
+      "last": "55.4",
+      "previous": "55.3",
+      "unit": "63.7",
+      "date": "45.9",
+      "raw_columns": [
+        "Labor Force Participation Rate",
+        "55.4",
+        "55.3",
+        "63.7",
+        "45.9",
+        "percent",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "Population",
+      "indicator_link": "https://tradingeconomics.com/india/population",
+      "col_0": "Population",
+      "last": "1399",
+      "previous": "1386",
+      "unit": "1399",
+      "date": "359",
+      "raw_columns": [
+        "Population",
+        "1399",
+        "1386",
+        "1399",
+        "359",
+        "Million",
+        "Dec/24"
+      ]
+    },
+    {
+      "indicator": "Retirement Age Women",
+      "indicator_link": "https://tradingeconomics.com/india/retirement-age-women",
+      "col_0": "Retirement Age Women",
+      "last": "60",
+      "previous": "60",
+      "unit": "60",
+      "date": "60",
+      "raw_columns": [
+        "Retirement Age Women",
+        "60",
+        "60",
+        "60",
+        "60",
+        "Years",
+        "Dec/25"
+      ]
+    },
+    {
+      "indicator": "Retirement Age Men",
+      "indicator_link": "https://tradingeconomics.com/india/retirement-age-men",
+      "col_0": "Retirement Age Men",
+      "last": "60",
+      "previous": "60",
+      "unit": "60",
+      "date": "60",
+      "raw_columns": [
+        "Retirement Age Men",
+        "60",
+        "60",
+        "60",
+        "60",
+        "Years",
+        "Dec/25"
+      ]
+    },
+    {
+      "indicator": "Average Weekly Hours",
+      "indicator_link": "https://tradingeconomics.com/india/average-weekly-hours",
+      "col_0": "Average Weekly Hours",
+      "last": "41.7",
+      "previous": "42.4",
+      "unit": "56.1",
+      "date": "37",
+      "raw_columns": [
+        "Average Weekly Hours",
+        "41.7",
+        "42.4",
+        "56.1",
+        "37",
+        "Hours",
+        "Jun/24"
+      ]
+    },
+    {
+      "indicator": "Employment Rate",
+      "indicator_link": "https://tradingeconomics.com/india/employment-rate",
+      "col_0": "Employment Rate",
+      "last": "52.5",
+      "previous": "52.4",
+      "unit": "52.8",
+      "date": "36.4",
+      "raw_columns": [
+        "Employment Rate",
+        "52.5",
+        "52.4",
+        "52.8",
+        "36.4",
+        "percent",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "Minimum Wages",
+      "indicator_link": "https://tradingeconomics.com/india/minimum-wages",
+      "col_0": "Minimum Wages",
+      "last": "178",
+      "previous": "178",
+      "unit": "178",
+      "date": "35",
+      "raw_columns": [
+        "Minimum Wages",
+        "178",
+        "178",
+        "178",
+        "35",
+        "INR/Day",
+        "Dec/25"
+      ]
+    },
+    {
+      "indicator": "Wages",
+      "indicator_link": "https://tradingeconomics.com/india/wages",
+      "col_0": "Wages",
+      "last": "21103",
+      "previous": "21036",
+      "unit": "21103",
+      "date": "15598",
+      "raw_columns": [
+        "Wages",
+        "21103",
+        "21036",
+        "21103",
+        "15598",
+        "INR/Month",
+        "Jun/24"
+      ]
+    },
+    {
+      "indicator": "Inflation Rate",
+      "indicator_link": "https://tradingeconomics.com/india/inflation-cpi",
+      "col_0": "Inflation Rate",
+      "last": "0.25",
+      "previous": "1.44",
+      "unit": "12.17",
+      "date": "0.25",
+      "raw_columns": [
+        "Inflation Rate",
+        "0.25",
+        "1.44",
+        "12.17",
+        "0.25",
+        "percent",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "Consumer Price Index CPI",
+      "indicator_link": "https://tradingeconomics.com/india/consumer-price-index-cpi",
+      "col_0": "Consumer Price Index CPI",
+      "last": "197",
+      "previous": "197",
+      "unit": "197",
+      "date": "86.81",
+      "raw_columns": [
+        "Consumer Price Index CPI",
+        "197",
+        "197",
+        "197",
+        "86.81",
+        "points",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "GDP Deflator",
+      "indicator_link": "https://tradingeconomics.com/india/gdp-deflator",
+      "col_0": "GDP Deflator",
+      "last": "173",
+      "previous": "170",
+      "unit": "173",
+      "date": "58.1",
+      "raw_columns": [
+        "GDP Deflator",
+        "173",
+        "170",
+        "173",
+        "58.1",
+        "points",
+        "Dec/24"
+      ]
+    },
+    {
+      "indicator": "Producer Prices",
+      "indicator_link": "https://tradingeconomics.com/india/producer-prices",
+      "col_0": "Producer Prices",
+      "last": "155",
+      "previous": "155",
+      "unit": "157",
+      "date": "62.44",
+      "raw_columns": [
+        "Producer Prices",
+        "155",
+        "155",
+        "157",
+        "62.44",
+        "points",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "Producer Prices Change",
+      "indicator_link": "https://tradingeconomics.com/india/producer-prices-change",
+      "col_0": "Producer Prices Change",
+      "last": "-1.21",
+      "previous": "0.13",
+      "unit": "34.68",
+      "date": "-11.31",
+      "raw_columns": [
+        "Producer Prices Change",
+        "-1.21",
+        "0.13",
+        "34.68",
+        "-11.31",
+        "percent",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "Export Prices",
+      "indicator_link": "https://tradingeconomics.com/india/export-prices",
+      "col_0": "Export Prices",
+      "last": "160",
+      "previous": "160",
+      "unit": "284",
+      "date": "100",
+      "raw_columns": [
+        "Export Prices",
+        "160",
+        "160",
+        "284",
+        "100",
+        "points",
+        "Dec/24"
+      ]
+    },
+    {
+      "indicator": "Import Prices",
+      "indicator_link": "https://tradingeconomics.com/india/import-prices",
+      "col_0": "Import Prices",
+      "last": "140",
+      "previous": "157",
+      "unit": "459",
+      "date": "84.5",
+      "raw_columns": [
+        "Import Prices",
+        "140",
+        "157",
+        "459",
+        "84.5",
+        "points",
+        "Dec/24"
+      ]
+    },
+    {
+      "indicator": "Food Inflation",
+      "indicator_link": "https://tradingeconomics.com/india/food-inflation",
+      "col_0": "Food Inflation",
+      "last": "-5.02",
+      "previous": "-2.28",
+      "unit": "14.72",
+      "date": "-5.02",
+      "raw_columns": [
+        "Food Inflation",
+        "-5.02",
+        "-2.28",
+        "14.72",
+        "-5.02",
+        "percent",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "Producer Price Inflation MoM",
+      "indicator_link": "https://tradingeconomics.com/india/producer-price-inflation-mom",
+      "col_0": "Producer Price Inflation MoM",
+      "last": "-0.06",
+      "previous": "0.19",
+      "unit": "2.58",
+      "date": "-1.89",
+      "raw_columns": [
+        "Producer Price Inflation MoM",
+        "-0.06",
+        "0.19",
+        "2.58",
+        "-1.89",
+        "percent",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "WPI Food Index YoY",
+      "indicator_link": "https://tradingeconomics.com/india/wpi-food-index-yoy",
+      "col_0": "WPI Food Index YoY",
+      "last": "-5.04",
+      "previous": "-1.99",
+      "unit": "14.14",
+      "date": "-5.04",
+      "raw_columns": [
+        "WPI Food Index YoY",
+        "-5.04",
+        "-1.99",
+        "14.14",
+        "-5.04",
+        "percent",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "WPI Fuel YoY",
+      "indicator_link": "https://tradingeconomics.com/india/wpi-fuel-yoy",
+      "col_0": "WPI Fuel YoY",
+      "last": "-2.55",
+      "previous": "-2.58",
+      "unit": "50.95",
+      "date": "-25.57",
+      "raw_columns": [
+        "WPI Fuel YoY",
+        "-2.55",
+        "-2.58",
+        "50.95",
+        "-25.57",
+        "percent",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "WPI Manufacturing YoY",
+      "indicator_link": "https://tradingeconomics.com/india/wpi-manufacturing-yoy",
+      "col_0": "WPI Manufacturing YoY",
+      "last": "1.54",
+      "previous": "2.33",
+      "unit": "12.87",
+      "date": "-2.97",
+      "raw_columns": [
+        "WPI Manufacturing YoY",
+        "1.54",
+        "2.33",
+        "12.87",
+        "-2.97",
+        "percent",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "CPI Housing Utilities",
+      "indicator_link": "https://tradingeconomics.com/india/cpi-housing-utilities",
+      "col_0": "CPI Housing Utilities",
+      "last": "188",
+      "previous": "186",
+      "unit": "188",
+      "date": "100",
+      "raw_columns": [
+        "CPI Housing Utilities",
+        "188",
+        "186",
+        "188",
+        "100",
+        "points",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "CPI Transportation",
+      "indicator_link": "https://tradingeconomics.com/india/cpi-transportation",
+      "col_0": "CPI Transportation",
+      "last": "172",
+      "previous": "174",
+      "unit": "174",
+      "date": "103",
+      "raw_columns": [
+        "CPI Transportation",
+        "172",
+        "174",
+        "174",
+        "103",
+        "points",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "Inflation Expectations",
+      "indicator_link": "https://tradingeconomics.com/india/inflation-expectations",
+      "col_0": "Inflation Expectations",
+      "last": "8.7",
+      "previous": "9",
+      "unit": "16",
+      "date": "7.9",
+      "raw_columns": [
+        "Inflation Expectations",
+        "8.7",
+        "9",
+        "16",
+        "7.9",
+        "percent",
+        "Sep/25"
+      ]
+    },
+    {
+      "indicator": "Inflation Rate MoM",
+      "indicator_link": "https://tradingeconomics.com/india/inflation-rate-mom",
+      "col_0": "Inflation Rate MoM",
+      "last": "0.15",
+      "previous": "0.1",
+      "unit": "2.93",
+      "date": "-1.55",
+      "raw_columns": [
+        "Inflation Rate MoM",
+        "0.15",
+        "0.1",
+        "2.93",
+        "-1.55",
+        "percent",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "Interest Rate",
+      "indicator_link": "https://tradingeconomics.com/india/interest-rate",
+      "col_0": "Interest Rate",
+      "last": "5.5",
+      "previous": "5.5",
+      "unit": "14.5",
+      "date": "4",
+      "raw_columns": [
+        "Interest Rate",
+        "5.5",
+        "5.5",
+        "14.5",
+        "4",
+        "percent",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "Cash Reserve Ratio",
+      "indicator_link": "https://tradingeconomics.com/india/cash-reserve-ratio",
+      "col_0": "Cash Reserve Ratio",
+      "last": "3.75",
+      "previous": "3.75",
+      "unit": "10.5",
+      "date": "3",
+      "raw_columns": [
+        "Cash Reserve Ratio",
+        "3.75",
+        "3.75",
+        "10.5",
+        "3",
+        "percent",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "Interbank Rate",
+      "indicator_link": "https://tradingeconomics.com/india/interbank-rate",
+      "col_0": "Interbank Rate",
+      "last": "6.1",
+      "previous": "6.1",
+      "unit": "12.27",
+      "date": "3.63",
+      "raw_columns": [
+        "Interbank Rate",
+        "6.1",
+        "6.1",
+        "12.27",
+        "3.63",
+        "percent",
+        "Nov/25"
+      ]
+    },
+    {
+      "indicator": "Money Supply M1",
+      "indicator_link": "https://tradingeconomics.com/india/money-supply-m1",
+      "col_0": "Money Supply M1",
+      "last": "68579",
+      "previous": "68338",
+      "unit": "70467",
+      "date": "17.01",
+      "raw_columns": [
+        "Money Supply M1",
+        "68579",
+        "68338",
+        "70467",
+        "17.01",
+        "INR Billion",
+        "Aug/25"
+      ]
+    },
+    {
+      "indicator": "Money Supply M2",
+      "indicator_link": "https://tradingeconomics.com/india/money-supply-m2",
+      "col_0": "Money Supply M2",
+      "last": "70702",
+      "previous": "70461",
+      "unit": "72591",
+      "date": "1127",
+      "raw_columns": [
+        "Money Supply M2",
+        "70702",
+        "70461",
+        "72591",
+        "1127",
+        "INR Billion",
+        "Aug/25"
+      ]
+    },
+    {
+      "indicator": "Money Supply M3",
+      "indicator_link": "https://tradingeconomics.com/india/money-supply-m3",
+      "col_0": "Money Supply M3",
+      "last": "289455",
+      "previous": "289951",
+      "unit": "289951",
+      "date": "20.57",
+      "raw_columns": [
+        "Money Supply M3",
+        "289455",
+        "289951",
+        "289951",
+        "20.57",
+        "INR Billion",
+        "Nov/25"
+      ]
+    },
+    {
+      "indicator": "Central Bank Balance Sheet",
+      "indicator_link": "https://tradingeconomics.com/india/central-bank-balance-sheet",
+      "col_0": "Central Bank Balance Sheet",
+      "last": "41165",
+      "previous": "43333",
+      "unit": "43333",
+      "date": "1624",
+      "raw_columns": [
+        "Central Bank Balance Sheet",
+        "41165",
+        "43333",
+        "43333",
+        "1624",
+        "INR Billion",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "Foreign Exchange Reserves",
+      "indicator_link": "https://tradingeconomics.com/india/foreign-exchange-reserves",
+      "col_0": "Foreign Exchange Reserves",
+      "last": "688100",
+      "previous": "692580",
+      "unit": "704890",
+      "date": "29048",
+      "raw_columns": [
+        "Foreign Exchange Reserves",
+        "688100",
+        "692580",
+        "704890",
+        "29048",
+        "USD Million",
+        "Nov/25"
+      ]
+    },
+    {
+      "indicator": "Loan Growth",
+      "indicator_link": "https://tradingeconomics.com/india/loan-growth",
+      "col_0": "Loan Growth",
+      "last": "11.4",
+      "previous": "11.3",
+      "unit": "20.8",
+      "date": "4.1",
+      "raw_columns": [
+        "Loan Growth",
+        "11.4",
+        "11.3",
+        "20.8",
+        "4.1",
+        "percent",
+        "Nov/25"
+      ]
+    },
+    {
+      "indicator": "Money Supply M0",
+      "indicator_link": "https://tradingeconomics.com/india/money-supply-m0",
+      "col_0": "Money Supply M0",
+      "last": "48335",
+      "previous": "48720",
+      "unit": "49625",
+      "date": "932",
+      "raw_columns": [
+        "Money Supply M0",
+        "48335",
+        "48720",
+        "49625",
+        "932",
+        "INR Billion",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "Reverse Repo Rate",
+      "indicator_link": "https://tradingeconomics.com/india/reverse-repo-rate",
+      "col_0": "Reverse Repo Rate",
+      "last": "3.35",
+      "previous": "3.35",
+      "unit": "13.5",
+      "date": "3.25",
+      "raw_columns": [
+        "Reverse Repo Rate",
+        "3.35",
+        "3.35",
+        "13.5",
+        "3.25",
+        "percent",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "Balance of Trade",
+      "indicator_link": "https://tradingeconomics.com/india/balance-of-trade",
+      "col_0": "Balance of Trade",
+      "last": "-41.68",
+      "previous": "-32.15",
+      "unit": "0.71",
+      "date": "-41.68",
+      "raw_columns": [
+        "Balance of Trade",
+        "-41.68",
+        "-32.15",
+        "0.71",
+        "-41.68",
+        "USD Billion",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "Current Account",
+      "indicator_link": "https://tradingeconomics.com/india/current-account",
+      "col_0": "Current Account",
+      "last": "-12292",
+      "previous": "-2722",
+      "unit": "19083",
+      "date": "-31857",
+      "raw_columns": [
+        "Current Account",
+        "-12292",
+        "-2722",
+        "19083",
+        "-31857",
+        "USD Million",
+        "Sep/25"
+      ]
+    },
+    {
+      "indicator": "Current Account to GDP",
+      "indicator_link": "https://tradingeconomics.com/india/current-account-to-gdp",
+      "col_0": "Current Account to GDP",
+      "last": "-0.6",
+      "previous": "-0.7",
+      "unit": "2.3",
+      "date": "-4.8",
+      "raw_columns": [
+        "Current Account to GDP",
+        "-0.6",
+        "-0.7",
+        "2.3",
+        "-4.8",
+        "percent of GDP",
+        "Dec/24"
+      ]
+    },
+    {
+      "indicator": "Exports",
+      "indicator_link": "https://tradingeconomics.com/india/exports",
+      "col_0": "Exports",
+      "last": "34.38",
+      "previous": "36.38",
+      "unit": "44.57",
+      "date": "0.06",
+      "raw_columns": [
+        "Exports",
+        "34.38",
+        "36.38",
+        "44.57",
+        "0.06",
+        "USD Billion",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "Imports",
+      "indicator_link": "https://tradingeconomics.com/india/imports",
+      "col_0": "Imports",
+      "last": "76.06",
+      "previous": "68.53",
+      "unit": "76.06",
+      "date": "0.12",
+      "raw_columns": [
+        "Imports",
+        "76.06",
+        "68.53",
+        "76.06",
+        "0.12",
+        "USD Billion",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "External Debt",
+      "indicator_link": "https://tradingeconomics.com/india/external-debt",
+      "col_0": "External Debt",
+      "last": "747200",
+      "previous": "736300",
+      "unit": "747200",
+      "date": "96392",
+      "raw_columns": [
+        "External Debt",
+        "747200",
+        "736300",
+        "747200",
+        "96392",
+        "USD Million",
+        "Jun/25"
+      ]
+    },
+    {
+      "indicator": "Terms of Trade",
+      "indicator_link": "https://tradingeconomics.com/india/terms-of-trade",
+      "col_0": "Terms of Trade",
+      "last": "147",
+      "previous": "147",
+      "unit": "147",
+      "date": "61.9",
+      "raw_columns": [
+        "Terms of Trade",
+        "147",
+        "147",
+        "147",
+        "61.9",
+        "points",
+        "Dec/24"
+      ]
+    },
+    {
+      "indicator": "Capital Flows",
+      "indicator_link": "https://tradingeconomics.com/india/capital-flows",
+      "col_0": "Capital Flows",
+      "last": "-157",
+      "previous": "-400",
+      "unit": "767",
+      "date": "-822",
+      "raw_columns": [
+        "Capital Flows",
+        "-157",
+        "-400",
+        "767",
+        "-822",
+        "USD Million",
+        "Sep/25"
+      ]
+    },
+    {
+      "indicator": "Foreign Direct Investment",
+      "indicator_link": "https://tradingeconomics.com/india/foreign-direct-investment",
+      "col_0": "Foreign Direct Investment",
+      "last": "1121",
+      "previous": "7304",
+      "unit": "19150",
+      "date": "58",
+      "raw_columns": [
+        "Foreign Direct Investment",
+        "1121",
+        "7304",
+        "19150",
+        "58",
+        "USD Million",
+        "Aug/25"
+      ]
+    },
+    {
+      "indicator": "Remittances",
+      "indicator_link": "https://tradingeconomics.com/india/remittances",
+      "col_0": "Remittances",
+      "last": "28547",
+      "previous": "24624",
+      "unit": "28547",
+      "date": "5999",
+      "raw_columns": [
+        "Remittances",
+        "28547",
+        "24624",
+        "28547",
+        "5999",
+        "USD Million",
+        "Sep/25"
+      ]
+    },
+    {
+      "indicator": "Tourist Arrivals",
+      "indicator_link": "https://tradingeconomics.com/india/tourist-arrivals",
+      "col_0": "Tourist Arrivals",
+      "last": "626000",
+      "previous": "742000",
+      "unit": "1225672",
+      "date": "2820",
+      "raw_columns": [
+        "Tourist Arrivals",
+        "626000",
+        "742000",
+        "1225672",
+        "2820",
+        "",
+        "Apr/25"
+      ]
+    },
+    {
+      "indicator": "Gold Reserves",
+      "indicator_link": "https://tradingeconomics.com/india/gold-reserves",
+      "col_0": "Gold Reserves",
+      "last": "880",
+      "previous": "880",
+      "unit": "880",
+      "date": "358",
+      "raw_columns": [
+        "Gold Reserves",
+        "880",
+        "880",
+        "880",
+        "358",
+        "Tonnes",
+        "Sep/25"
+      ]
+    },
+    {
+      "indicator": "Crude Oil Production",
+      "indicator_link": "https://tradingeconomics.com/india/crude-oil-production",
+      "col_0": "Crude Oil Production",
+      "last": "595",
+      "previous": "598",
+      "unit": "813",
+      "date": "463",
+      "raw_columns": [
+        "Crude Oil Production",
+        "595",
+        "598",
+        "813",
+        "463",
+        "BBL/D/1K",
+        "Jul/25"
+      ]
+    },
+    {
+      "indicator": "Terrorism Index",
+      "indicator_link": "https://tradingeconomics.com/india/terrorism-index",
+      "col_0": "Terrorism Index",
+      "last": "6.41",
+      "previous": "6.32",
+      "unit": "8.12",
+      "date": "6.32",
+      "raw_columns": [
+        "Terrorism Index",
+        "6.41",
+        "6.32",
+        "8.12",
+        "6.32",
+        "Points",
+        "Dec/24"
+      ]
+    },
+    {
+      "indicator": "Weapons Sales",
+      "indicator_link": "https://tradingeconomics.com/india/weapons-sales",
+      "col_0": "Weapons Sales",
+      "last": "25",
+      "previous": "41",
+      "unit": "153",
+      "date": "0",
+      "raw_columns": [
+        "Weapons Sales",
+        "25",
+        "41",
+        "153",
+        "0",
+        "SIPRI TIV Million",
+        "Dec/24"
+      ]
+    },
+    {
+      "indicator": "Government Debt to GDP",
+      "indicator_link": "https://tradingeconomics.com/india/government-debt-to-gdp",
+      "col_0": "Government Debt to GDP",
+      "last": "81.92",
+      "previous": "81.76",
+      "unit": "89.24",
+      "date": "47.94",
+      "raw_columns": [
+        "Government Debt to GDP",
+        "81.92",
+        "81.76",
+        "89.24",
+        "47.94",
+        "percent of GDP",
+        "Dec/24"
+      ]
+    },
+    {
+      "indicator": "Government Budget",
+      "indicator_link": "https://tradingeconomics.com/india/government-budget",
+      "col_0": "Government Budget",
+      "last": "-4.8",
+      "previous": "-5.87",
+      "unit": "-2.53",
+      "date": "-9.16",
+      "raw_columns": [
+        "Government Budget",
+        "-4.8",
+        "-5.87",
+        "-2.53",
+        "-9.16",
+        "percent of GDP",
+        "Dec/24"
+      ]
+    },
+    {
+      "indicator": "Government Budget Value",
+      "indicator_link": "https://tradingeconomics.com/india/government-budget-value",
+      "col_0": "Government Budget Value",
+      "last": "-825144",
+      "previous": "-573123",
+      "unit": "-9406",
+      "date": "-1821461",
+      "raw_columns": [
+        "Government Budget Value",
+        "-825144",
+        "-573123",
+        "-9406",
+        "-1821461",
+        "INR Tens of Million",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "Government Spending",
+      "indicator_link": "https://tradingeconomics.com/india/government-spending",
+      "col_0": "Government Spending",
+      "last": "4495",
+      "previous": "5084",
+      "unit": "5178",
+      "date": "1896",
+      "raw_columns": [
+        "Government Spending",
+        "4495",
+        "5084",
+        "5178",
+        "1896",
+        "INR Billion",
+        "Jun/25"
+      ]
+    },
+    {
+      "indicator": "Government Revenues",
+      "indicator_link": "https://tradingeconomics.com/india/government-revenues",
+      "col_0": "Government Revenues",
+      "last": "1730216",
+      "previous": "1282709",
+      "unit": "3078247",
+      "date": "82",
+      "raw_columns": [
+        "Government Revenues",
+        "1730216",
+        "1282709",
+        "3078247",
+        "82",
+        "INR Tens of Million",
+        "Sep/25"
+      ]
+    },
+    {
+      "indicator": "Fiscal Expenditure",
+      "indicator_link": "https://tradingeconomics.com/india/fiscal-expenditure",
+      "col_0": "Fiscal Expenditure",
+      "last": "2303339",
+      "previous": "1880862",
+      "unit": "4655517",
+      "date": "13655",
+      "raw_columns": [
+        "Fiscal Expenditure",
+        "2303339",
+        "1880862",
+        "4655517",
+        "13655",
+        "INR Tens of Million",
+        "Sep/25"
+      ]
+    },
+    {
+      "indicator": "Corruption Index",
+      "indicator_link": "https://tradingeconomics.com/india/corruption-index",
+      "col_0": "Corruption Index",
+      "last": "38",
+      "previous": "39",
+      "unit": "41",
+      "date": "26.3",
+      "raw_columns": [
+        "Corruption Index",
+        "38",
+        "39",
+        "41",
+        "26.3",
+        "Points",
+        "Dec/24"
+      ]
+    },
+    {
+      "indicator": "Corruption Rank",
+      "indicator_link": "https://tradingeconomics.com/india/corruption-rank",
+      "col_0": "Corruption Rank",
+      "last": "96",
+      "previous": "93",
+      "unit": "96",
+      "date": "35",
+      "raw_columns": [
+        "Corruption Rank",
+        "96",
+        "93",
+        "96",
+        "35",
+        "",
+        "Dec/24"
+      ]
+    },
+    {
+      "indicator": "Credit Rating",
+      "indicator_link": "https://tradingeconomics.com/india/rating",
+      "col_0": "Credit Rating",
+      "last": "56",
+      "previous": null,
+      "unit": null,
+      "date": null,
+      "raw_columns": [
+        "Credit Rating",
+        "56",
+        "",
+        "",
+        "",
+        "",
+        "Nov/25"
+      ]
+    },
+    {
+      "indicator": "Government Spending to GDP",
+      "indicator_link": "https://tradingeconomics.com/india/government-spending-to-gdp",
+      "col_0": "Government Spending to GDP",
+      "last": "14.77",
+      "previous": "15.2",
+      "unit": "19.42",
+      "date": "11.81",
+      "raw_columns": [
+        "Government Spending to GDP",
+        "14.77",
+        "15.2",
+        "19.42",
+        "11.81",
+        "percent of GDP",
+        "Dec/24"
+      ]
+    },
+    {
+      "indicator": "Military Expenditure",
+      "indicator_link": "https://tradingeconomics.com/india/military-expenditure",
+      "col_0": "Military Expenditure",
+      "last": "86126",
+      "previous": "82293",
+      "unit": "86126",
+      "date": "518",
+      "raw_columns": [
+        "Military Expenditure",
+        "86126",
+        "82293",
+        "86126",
+        "518",
+        "USD Million",
+        "Dec/24"
+      ]
+    },
+    {
+      "indicator": "Corporate Tax Rate",
+      "indicator_link": "https://tradingeconomics.com/india/corporate-tax-rate",
+      "col_0": "Corporate Tax Rate",
+      "last": "34.94",
+      "previous": "34.94",
+      "unit": "38.95",
+      "date": "25.17",
+      "raw_columns": [
+        "Corporate Tax Rate",
+        "34.94",
+        "34.94",
+        "38.95",
+        "25.17",
+        "percent",
+        "Dec/25"
+      ]
+    },
+    {
+      "indicator": "Personal Income Tax Rate",
+      "indicator_link": "https://tradingeconomics.com/india/personal-income-tax-rate",
+      "col_0": "Personal Income Tax Rate",
+      "last": "39",
+      "previous": "42.74",
+      "unit": "42.74",
+      "date": "30",
+      "raw_columns": [
+        "Personal Income Tax Rate",
+        "39",
+        "42.74",
+        "42.74",
+        "30",
+        "percent",
+        "Dec/25"
+      ]
+    },
+    {
+      "indicator": "Sales Tax Rate",
+      "indicator_link": "https://tradingeconomics.com/india/sales-tax-rate",
+      "col_0": "Sales Tax Rate",
+      "last": "18",
+      "previous": "18",
+      "unit": "18",
+      "date": "12.36",
+      "raw_columns": [
+        "Sales Tax Rate",
+        "18",
+        "18",
+        "18",
+        "12.36",
+        "percent",
+        "Dec/25"
+      ]
+    },
+    {
+      "indicator": "Social Security Rate",
+      "indicator_link": "https://tradingeconomics.com/india/social-security-rate",
+      "col_0": "Social Security Rate",
+      "last": "24",
+      "previous": "24",
+      "unit": "24",
+      "date": "24",
+      "raw_columns": [
+        "Social Security Rate",
+        "24",
+        "24",
+        "24",
+        "24",
+        "percent",
+        "Dec/25"
+      ]
+    },
+    {
+      "indicator": "Social Security Rate For Companies",
+      "indicator_link": "https://tradingeconomics.com/india/social-security-rate-for-companies",
+      "col_0": "Social Security Rate For Companies",
+      "last": "12",
+      "previous": "12",
+      "unit": "12",
+      "date": "12",
+      "raw_columns": [
+        "Social Security Rate For Companies",
+        "12",
+        "12",
+        "12",
+        "12",
+        "percent",
+        "Dec/25"
+      ]
+    },
+    {
+      "indicator": "Social Security Rate For Employees",
+      "indicator_link": "https://tradingeconomics.com/india/social-security-rate-for-employees",
+      "col_0": "Social Security Rate For Employees",
+      "last": "12",
+      "previous": "12",
+      "unit": "12",
+      "date": "12",
+      "raw_columns": [
+        "Social Security Rate For Employees",
+        "12",
+        "12",
+        "12",
+        "12",
+        "percent",
+        "Dec/25"
+      ]
+    },
+    {
+      "indicator": "Withholding Tax Rate",
+      "indicator_link": "https://tradingeconomics.com/india/withholding-tax-rate",
+      "col_0": "Withholding Tax Rate",
+      "last": "20",
+      "previous": "20",
+      "unit": "20",
+      "date": "20",
+      "raw_columns": [
+        "Withholding Tax Rate",
+        "20",
+        "20",
+        "20",
+        "20",
+        "percent",
+        "Dec/25"
+      ]
+    },
+    {
+      "indicator": "Business Confidence",
+      "indicator_link": "https://tradingeconomics.com/india/business-confidence",
+      "col_0": "Business Confidence",
+      "last": "126",
+      "previous": "126",
+      "unit": "139",
+      "date": "96.4",
+      "raw_columns": [
+        "Business Confidence",
+        "126",
+        "126",
+        "139",
+        "96.4",
+        "points",
+        "Dec/25"
+      ]
+    },
+    {
+      "indicator": "Manufacturing PMI",
+      "indicator_link": "https://tradingeconomics.com/india/manufacturing-pmi",
+      "col_0": "Manufacturing PMI",
+      "last": "56.6",
+      "previous": "59.2",
+      "unit": "59.3",
+      "date": "27.4",
+      "raw_columns": [
+        "Manufacturing PMI",
+        "56.6",
+        "59.2",
+        "59.3",
+        "27.4",
+        "points",
+        "Nov/25"
+      ]
+    },
+    {
+      "indicator": "Services PMI",
+      "indicator_link": "https://tradingeconomics.com/india/services-pmi",
+      "col_0": "Services PMI",
+      "last": "59.5",
+      "previous": "58.9",
+      "unit": "62.9",
+      "date": "5.4",
+      "raw_columns": [
+        "Services PMI",
+        "59.5",
+        "58.9",
+        "62.9",
+        "5.4",
+        "points",
+        "Nov/25"
+      ]
+    },
+    {
+      "indicator": "Industrial Production",
+      "indicator_link": "https://tradingeconomics.com/india/industrial-production",
+      "col_0": "Industrial Production",
+      "last": "0.4",
+      "previous": "4.6",
+      "unit": "134",
+      "date": "-57.3",
+      "raw_columns": [
+        "Industrial Production",
+        "0.4",
+        "4.6",
+        "134",
+        "-57.3",
+        "percent",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "Industrial Production Mom",
+      "indicator_link": "https://tradingeconomics.com/india/industrial-production-mom",
+      "col_0": "Industrial Production Mom",
+      "last": "-1.8",
+      "previous": "1.2",
+      "unit": "67",
+      "date": "-53.9",
+      "raw_columns": [
+        "Industrial Production Mom",
+        "-1.8",
+        "1.2",
+        "67",
+        "-53.9",
+        "percent",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "Manufacturing Production",
+      "indicator_link": "https://tradingeconomics.com/india/manufacturing-production",
+      "col_0": "Manufacturing Production",
+      "last": "1.8",
+      "previous": "5.6",
+      "unit": "196",
+      "date": "-66.6",
+      "raw_columns": [
+        "Manufacturing Production",
+        "1.8",
+        "5.6",
+        "196",
+        "-66.6",
+        "percent",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "Changes in Inventories",
+      "indicator_link": "https://tradingeconomics.com/india/changes-in-inventories",
+      "col_0": "Changes in Inventories",
+      "last": "809",
+      "previous": "897",
+      "unit": "897",
+      "date": "43.7",
+      "raw_columns": [
+        "Changes in Inventories",
+        "809",
+        "897",
+        "897",
+        "43.7",
+        "INR Billion",
+        "Jun/25"
+      ]
+    },
+    {
+      "indicator": "Car Production",
+      "indicator_link": "https://tradingeconomics.com/india/car-production",
+      "col_0": "Car Production",
+      "last": "2801412",
+      "previous": "3073654",
+      "unit": "3073654",
+      "date": "17329",
+      "raw_columns": [
+        "Car Production",
+        "2801412",
+        "3073654",
+        "3073654",
+        "17329",
+        "Units",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "Car Registrations",
+      "indicator_link": "https://tradingeconomics.com/india/car-registrations",
+      "col_0": "Car Registrations",
+      "last": "460739",
+      "previous": "372458",
+      "unit": "460739",
+      "date": "2753",
+      "raw_columns": [
+        "Car Registrations",
+        "460739",
+        "372458",
+        "460739",
+        "2753",
+        "Units",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "Composite Leading Indicator",
+      "indicator_link": "https://tradingeconomics.com/india/composite-leading-indicator",
+      "col_0": "Composite Leading Indicator",
+      "last": "101",
+      "previous": "101",
+      "unit": "104",
+      "date": "68.38",
+      "raw_columns": [
+        "Composite Leading Indicator",
+        "101",
+        "101",
+        "104",
+        "68.38",
+        "points",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "Capacity Utilization",
+      "indicator_link": "https://tradingeconomics.com/india/capacity-utilization",
+      "col_0": "Capacity Utilization",
+      "last": "75.8",
+      "previous": "75.5",
+      "unit": "83.2",
+      "date": "47.3",
+      "raw_columns": [
+        "Capacity Utilization",
+        "75.8",
+        "75.5",
+        "83.2",
+        "47.3",
+        "percent",
+        "Sep/25"
+      ]
+    },
+    {
+      "indicator": "Composite PMI",
+      "indicator_link": "https://tradingeconomics.com/india/composite-pmi",
+      "col_0": "Composite PMI",
+      "last": "59.9",
+      "previous": "60.4",
+      "unit": "63.2",
+      "date": "7.2",
+      "raw_columns": [
+        "Composite PMI",
+        "59.9",
+        "60.4",
+        "63.2",
+        "7.2",
+        "points",
+        "Nov/25"
+      ]
+    },
+    {
+      "indicator": "Deposit Growth",
+      "indicator_link": "https://tradingeconomics.com/india/deposit-growth",
+      "col_0": "Deposit Growth",
+      "last": "10.2",
+      "previous": "9.7",
+      "unit": "29.3",
+      "date": "2.7",
+      "raw_columns": [
+        "Deposit Growth",
+        "10.2",
+        "9.7",
+        "29.3",
+        "2.7",
+        "percent",
+        "Nov/25"
+      ]
+    },
+    {
+      "indicator": "Electricity Production",
+      "indicator_link": "https://tradingeconomics.com/india/electricity-production",
+      "col_0": "Electricity Production",
+      "last": "129783",
+      "previous": "133713",
+      "unit": "340579",
+      "date": "27666",
+      "raw_columns": [
+        "Electricity Production",
+        "129783",
+        "133713",
+        "340579",
+        "27666",
+        "Gigawatt-hour",
+        "Sep/25"
+      ]
+    },
+    {
+      "indicator": "Mining Production",
+      "indicator_link": "https://tradingeconomics.com/india/mining-production",
+      "col_0": "Mining Production",
+      "last": "-1.8",
+      "previous": "-0.4",
+      "unit": "36.5",
+      "date": "-26.9",
+      "raw_columns": [
+        "Mining Production",
+        "-1.8",
+        "-0.4",
+        "36.5",
+        "-26.9",
+        "percent",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "Steel Production",
+      "indicator_link": "https://tradingeconomics.com/india/steel-production",
+      "col_0": "Steel Production",
+      "last": "13600",
+      "previous": "13600",
+      "unit": "14100",
+      "date": "0",
+      "raw_columns": [
+        "Steel Production",
+        "13600",
+        "13600",
+        "14100",
+        "0",
+        "Thousand Tonnes",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "Total Vehicle Sales",
+      "indicator_link": "https://tradingeconomics.com/india/total-vehicle-sales",
+      "col_0": "Total Vehicle Sales",
+      "last": "399605",
+      "previous": "312791",
+      "unit": "399605",
+      "date": "44163",
+      "raw_columns": [
+        "Total Vehicle Sales",
+        "399605",
+        "312791",
+        "399605",
+        "44163",
+        "Units",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "Consumer Confidence",
+      "indicator_link": "https://tradingeconomics.com/india/consumer-confidence",
+      "col_0": "Consumer Confidence",
+      "last": "96.9",
+      "previous": "96.5",
+      "unit": "117",
+      "date": "48.5",
+      "raw_columns": [
+        "Consumer Confidence",
+        "96.9",
+        "96.5",
+        "117",
+        "48.5",
+        "points",
+        "Sep/25"
+      ]
+    },
+    {
+      "indicator": "Consumer Spending",
+      "indicator_link": "https://tradingeconomics.com/india/consumer-spending",
+      "col_0": "Consumer Spending",
+      "last": "27167",
+      "previous": "27200",
+      "unit": "28434",
+      "date": "11273",
+      "raw_columns": [
+        "Consumer Spending",
+        "27167",
+        "27200",
+        "28434",
+        "11273",
+        "INR Billion",
+        "Jun/25"
+      ]
+    },
+    {
+      "indicator": "Disposable Personal Income",
+      "indicator_link": "https://tradingeconomics.com/india/disposable-personal-income",
+      "col_0": "Disposable Personal Income",
+      "last": "296383300",
+      "previous": "273364819",
+      "unit": "296383300",
+      "date": "91540",
+      "raw_columns": [
+        "Disposable Personal Income",
+        "296383300",
+        "273364819",
+        "296383300",
+        "91540",
+        "INR Million",
+        "Dec/23"
+      ]
+    },
+    {
+      "indicator": "Bank Lending Rate",
+      "indicator_link": "https://tradingeconomics.com/india/bank-lending-rate",
+      "col_0": "Bank Lending Rate",
+      "last": "9.46",
+      "previous": "9.46",
+      "unit": "12.56",
+      "date": "8.74",
+      "raw_columns": [
+        "Bank Lending Rate",
+        "9.46",
+        "9.46",
+        "12.56",
+        "8.74",
+        "percent",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "Retail Sales YoY",
+      "indicator_link": "https://tradingeconomics.com/india/retail-sales-annual",
+      "col_0": "Retail Sales YoY",
+      "last": "8",
+      "previous": "8",
+      "unit": "60",
+      "date": "-88",
+      "raw_columns": [
+        "Retail Sales YoY",
+        "8",
+        "8",
+        "60",
+        "-88",
+        "percent",
+        "Jul/25"
+      ]
+    },
+    {
+      "indicator": "Gasoline Prices",
+      "indicator_link": "https://tradingeconomics.com/india/gasoline-prices",
+      "col_0": "Gasoline Prices",
+      "last": "1.06",
+      "previous": "1.07",
+      "unit": "1.41",
+      "date": "0.48",
+      "raw_columns": [
+        "Gasoline Prices",
+        "1.06",
+        "1.07",
+        "1.41",
+        "0.48",
+        "USD/Liter",
+        "Nov/25"
+      ]
+    },
+    {
+      "indicator": "Households Debt to GDP",
+      "indicator_link": "https://tradingeconomics.com/india/households-debt-to-gdp",
+      "col_0": "Households Debt to GDP",
+      "last": "42",
+      "previous": "41.9",
+      "unit": "43.2",
+      "date": "31.1",
+      "raw_columns": [
+        "Households Debt to GDP",
+        "42",
+        "41.9",
+        "43.2",
+        "31.1",
+        "percent of GDP",
+        "Mar/25"
+      ]
+    },
+    {
+      "indicator": "Housing Index",
+      "indicator_link": "https://tradingeconomics.com/india/housing-index",
+      "col_0": "Housing Index",
+      "last": "122",
+      "previous": "120",
+      "unit": "122",
+      "date": "73",
+      "raw_columns": [
+        "Housing Index",
+        "122",
+        "120",
+        "122",
+        "73",
+        "points",
+        "Mar/25"
+      ]
+    },
+    {
+      "indicator": "Construction Output",
+      "indicator_link": "https://tradingeconomics.com/india/construction-output",
+      "col_0": "Construction Output",
+      "last": "0",
+      "previous": "3",
+      "unit": "62.6",
+      "date": "-37.9",
+      "raw_columns": [
+        "Construction Output",
+        "0",
+        "3",
+        "62.6",
+        "-37.9",
+        "percent",
+        "Oct/25"
+      ]
+    },
+    {
+      "indicator": "Residential Property Prices",
+      "indicator_link": "https://tradingeconomics.com/india/residential-property-prices",
+      "col_0": "Residential Property Prices",
+      "last": "3.13",
+      "previous": "3.1",
+      "unit": "26.26",
+      "date": "1.1",
+      "raw_columns": [
+        "Residential Property Prices",
+        "3.13",
+        "3.1",
+        "26.26",
+        "1.1",
+        "Percent",
+        "Mar/25"
+      ]
+    },
+    {
+      "indicator": "Hospital Beds",
+      "indicator_link": "https://tradingeconomics.com/india/hospital-beds",
+      "col_0": "Hospital Beds",
+      "last": "0.52",
+      "previous": "0.47",
+      "unit": "0.73",
+      "date": "0.41",
+      "raw_columns": [
+        "Hospital Beds",
+        "0.52",
+        "0.47",
+        "0.73",
+        "0.41",
+        "per 1000 people",
+        "Dec/17"
+      ]
+    }
+  ]
+}
