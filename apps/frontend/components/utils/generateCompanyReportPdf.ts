@@ -37,7 +37,7 @@ export function generateCompanyReportPdf(report: CompanyReport) {
 
   const writeHeading = (text: string, size = 18) => {
     text = clean(text);
-    pdf.setFont("helvetica", "bold");
+    pdf.setFont("times", "bold");
     pdf.setFontSize(size);
 
     const lineHeight = size * 0.55;
@@ -53,7 +53,7 @@ export function generateCompanyReportPdf(report: CompanyReport) {
 
 	const writeSubheading = (text: string) => {
 		text = clean(text);
-		pdf.setFont("helvetica", "bold");
+		pdf.setFont("times", "bold");
 		pdf.setFontSize(15);
 
 		const lines = pdf.splitTextToSize(text, contentWidth);
@@ -73,7 +73,7 @@ export function generateCompanyReportPdf(report: CompanyReport) {
 
 	const writeParagraph = (text: string) => {
 		text = clean(text);
-		pdf.setFont("helvetica", "normal");
+		pdf.setFont("helvetica", "italic");
 		pdf.setFontSize(12);
 
 		const lines = pdf.splitTextToSize(text, contentWidth);
