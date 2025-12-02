@@ -1315,9 +1315,9 @@ class PipelineService:
         # Use DBManager for proper connection handling
         from dbManager import DBManager
         db_manager = DBManager.get_instance()
-        
-        async with db_manager.session() as client:
-            trade_service = TradeExecutionService(logger=self.logger)
+        await db_manager.connect()
+        client = db_manager.get_client()
+        trade_service = TradeExecutionService(logger=self.logger)
 
         # DIRECTLY query for active high_risk agents with auto_trade enabled
         # No need for user filtering bullshit

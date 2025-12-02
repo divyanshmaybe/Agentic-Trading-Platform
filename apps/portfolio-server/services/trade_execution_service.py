@@ -795,11 +795,14 @@ class TradeExecutionService:
         # record is the TradeExecutionLog, record.id is its ID
         execution_log_id = record.id
         
-        # Ensure agent_id is available from the record
-        # If not in the record, try to get it from metadata
-        agent_id = getattr(record, "agent_id", None)
+        # Get agent_id from the linked Trade record (NOT from TradeExecutionLog which doesn't have agent_id)
+        # The Trade model has agent_id, TradeExecutionLog only has a relation to Trade
+        agent_id = None
+        if hasattr(record, "trade") and record.trade:
+            agent_id = getattr(record.trade, "agent_id", None)
+        
+        # Fallback: try to get from TradeExecutionLog metadata (legacy support)
         if not agent_id:
-            # Try to get from metadata
             if hasattr(record, "metadata") and record.metadata:
                 import json
                 meta = record.metadata
@@ -811,6 +814,9 @@ class TradeExecutionService:
                         meta = {}
                 if isinstance(meta, dict) and "agent_id" in meta:
                     agent_id = meta["agent_id"]
+        
+        if not agent_id:
+            self.logger.warning("⚠️ No agent_id found for trade %s - position creation may fail", trade_id)
 
         simulate = simulate if simulate is not None else (
             os.getenv("ANGELONE_TRADING_ENABLED", "false").lower() not in {"1", "true", "yes"}
@@ -835,8 +841,9 @@ class TradeExecutionService:
             
             # PRE-EXECUTION CASH CHECK (validation only - reservation happens in transaction)
             # Uses SELECT FOR UPDATE to prevent race conditions at database level
+            # Applies to BOTH BUY and SHORT_SELL (both need cash reservation)
             trade_side = str(getattr(trade, "side", "")).upper()
-            if trade_side == "BUY" and agent_id:
+            if trade_side in ["BUY", "SHORT_SELL"] and agent_id:
                 agent = await client.tradingagent.find_unique(
                     where={"id": agent_id},
                     include={"allocation": True}
@@ -1040,11 +1047,12 @@ class TradeExecutionService:
             # Add trade to portfolio allocation and trigger portfolio update
             # This handles: cash reservation (transaction), position update, P&L calculation, metadata
             try:
+                # Pass auto_close_time - _update_portfolio_allocation will use side to determine field
                 rejection_result = await self._update_portfolio_allocation(
                     record,
                     executed_price=executed_price,
                     executed_quantity=executed_quantity,
-                    auto_sell_at=auto_sell_at,
+                    auto_close_time=auto_close_time,
                     allocation_id=allocation_id,
                     reserved_cash_amount=reserved_cash_amount,
                 )
@@ -1528,7 +1536,7 @@ class TradeExecutionService:
         *,
         executed_price: float,
         executed_quantity: int,
-        auto_sell_at: Optional[datetime] = None,
+        auto_close_time: Optional[datetime] = None,
         allocation_id: Optional[str] = None,
         reserved_cash_amount: Decimal = Decimal("0"),
     ) -> Optional[Dict[str, Any]]:
@@ -1536,7 +1544,7 @@ class TradeExecutionService:
         Update portfolio allocation and trigger value recalculation after trade execution.
         
         This method:
-        1. Reserves cash within a transaction (for BUY trades)
+        1. Reserves cash within a transaction (for BUY/SHORT_SELL trades)
         2. Updates position atomically
         3. Calculates P&L for SELL/COVER trades
         4. Adds the trade to the portfolio's allocation trades array
@@ -1546,9 +1554,9 @@ class TradeExecutionService:
             trade_record: The executed trade log record
             executed_price: Price at which the trade was executed
             executed_quantity: Quantity that was executed
-            auto_sell_at: Optional timestamp for auto-selling NSE pipeline trades
+            auto_close_time: Optional timestamp for auto-closing (auto_sell_at for BUY, auto_cover_at for SHORT_SELL)
             allocation_id: Optional allocation ID for cash reservation
-            reserved_cash_amount: Amount to reserve from allocation (for BUY trades)
+            reserved_cash_amount: Amount to reserve from allocation (for BUY/SHORT_SELL trades)
             
         Returns:
             None on success, or rejection dict if cash reservation fails
@@ -1655,22 +1663,12 @@ class TradeExecutionService:
             taxes = Decimal("0.0")
             net_amount = Decimal(str(executed_price * executed_quantity))
 
-            # Use auto_sell_at from parameter if provided, otherwise check record
-            if auto_sell_at is None:
-                if hasattr(trade_record, "auto_sell_at") and trade_record.auto_sell_at:
-                    auto_sell_at = trade_record.auto_sell_at
-                elif isinstance(metadata, dict) and "auto_sell_at" in metadata:
-                    try:
-                        auto_sell_at = datetime.fromisoformat(metadata["auto_sell_at"])
-                    except (ValueError, TypeError, AttributeError) as e:
-                        self.logger.warning(f"Invalid auto_sell_at in metadata: {e}")
-                        pass
-
-            if auto_sell_at:
+            # Log auto_close_time if set
+            if auto_close_time:
+                close_field = "auto_cover_at" if side.upper() == "SHORT_SELL" else "auto_sell_at"
                 self.logger.info(
-                    "⏰ Setting auto_sell_at for Trade record: %s (from %s)",
-                    auto_sell_at,
-                    "parameter" if auto_sell_at else "trade_record/metadata"
+                    "⏰ Setting %s for Trade record: %s",
+                    close_field, auto_close_time
                 )
 
             # Update Trade record with execution details
@@ -1684,8 +1682,12 @@ class TradeExecutionService:
                 "net_amount": net_amount,
             }
 
-            if auto_sell_at:
-                trade_update_data["auto_sell_at"] = auto_sell_at
+            # Set appropriate auto-close field based on trade side
+            if auto_close_time:
+                if side.upper() == "SHORT_SELL":
+                    trade_update_data["auto_cover_at"] = auto_close_time
+                else:
+                    trade_update_data["auto_sell_at"] = auto_close_time
 
             # Update metadata to include execution details
             existing_metadata = {}
@@ -1847,8 +1849,8 @@ class TradeExecutionService:
                 async with client.tx() as tx:
                     self.logger.debug("🔒 Started Prisma transaction for cash reservation + position update")
                     
-                    # STEP 1: Reserve cash WITHIN transaction (for BUY trades)
-                    if trade_side == "BUY" and transaction_allocation_id and transaction_reserved_cash > 0:
+                    # STEP 1: Reserve cash WITHIN transaction (for BUY and SHORT_SELL trades)
+                    if trade_side in ["BUY", "SHORT_SELL"] and transaction_allocation_id and transaction_reserved_cash > 0:
                         # Fetch allocation with lock (Prisma handles row-level locking)
                         allocation = await tx.portfolioallocation.find_unique(
                             where={"id": transaction_allocation_id}
