@@ -34,9 +34,10 @@ logging.getLogger("pathway.io.csv").setLevel(logging.ERROR)
 # Suppress Pathway publisher/sink verbose messages
 logging.getLogger("pathway.io.publisher").setLevel(logging.ERROR)
 logging.getLogger("pathway.io.sink").setLevel(logging.ERROR)
-# Suppress "Done writing" messages
-logging.getLogger("pathway.io.filesystem").setLevel(logging.ERROR)
-logging.getLogger("pathway.io.kafka").setLevel(logging.ERROR)
+# Suppress "Done writing" messages from pathway_engine
+logging.getLogger("pathway_engine").setLevel(logging.ERROR)
+logging.getLogger("pathway_engine.connectors").setLevel(logging.ERROR)
+logging.getLogger("pathway_engine.connectors.monitoring").setLevel(logging.ERROR)
 
 # Suppress verbose HTTP and network logging from Prisma/httpx
 logging.getLogger("httpx").setLevel(logging.ERROR)
@@ -147,10 +148,10 @@ celery_app = Celery(
 
 VISIBILITY_TIMEOUT = int(os.getenv("CELERY_VISIBILITY_TIMEOUT", "900"))
 RESULT_TTL = int(os.getenv("CELERY_RESULT_TTL", "86400"))
-# Reduce default timeouts - most tasks should complete in <60s
-# Tasks holding connections for 10 minutes (600s) cause connection exhaustion!
-SOFT_TIME_LIMIT = int(os.getenv("CELERY_TASK_SOFT_TIME_LIMIT", "120"))  # 2 minutes default
-HARD_TIME_LIMIT = int(os.getenv("CELERY_TASK_TIME_LIMIT", str(SOFT_TIME_LIMIT + 60)))  # +1 min for cleanup
+# Generous default timeouts - pipeline operations can take several minutes
+# Individual task categories override these with their own limits in task_annotations
+SOFT_TIME_LIMIT = int(os.getenv("CELERY_TASK_SOFT_TIME_LIMIT", "600"))  # 10 minutes default
+HARD_TIME_LIMIT = int(os.getenv("CELERY_TASK_TIME_LIMIT", str(SOFT_TIME_LIMIT + 120)))  # +2 min for cleanup
 
 # Worker concurrency settings
 # IMPORTANT: Reduced from 8 to 4 to prevent connection pool exhaustion
@@ -271,7 +272,6 @@ STANDARD_TASKS = [
 PIPELINE_TASKS = [
     "pipeline.risk_monitor.run",
     "pipeline.news_sentiment.run",
-    "pipeline.start",
     "pipeline.low_risk.run",  # Low-risk stock selection (25-30 min limit)
     "pipeline.low_risk.get_status",  # Status check for low-risk pipeline
     "alpha.generate_daily_signals",  # Daily alpha signal generation
@@ -293,8 +293,10 @@ TRADE_EXECUTION_TASKS = [
 ]
 
 # Tasks that should run indefinitely (no time limits) - isolated queue
+# These are continuous streaming pipelines that run 24/7
 LONG_RUNNING_TASKS = [
     "risk.streaming_monitor.start",
+    "pipeline.start",  # NSE pipeline - runs continuously 24/7, monitors trading_signals.jsonl
 ]
 
 # Quick tasks - should complete fast, higher rate limit
@@ -317,8 +319,8 @@ celery_app.conf.task_annotations = {
     # Standard tasks - reasonable limits for DB operations
     **{
         task_name: {
-            "soft_time_limit": 180,  # 3 min soft (allocation can take time for LLM calls)
-            "time_limit": 240,  # 4 min hard
+            "soft_time_limit": 300,  # 5 min soft (allocation can take time for LLM calls)
+            "time_limit": 360,  # 6 min hard
             "rate_limit": "30/m",  # Max 30 per minute (increased from 10)
         }
         for task_name in STANDARD_TASKS
@@ -327,8 +329,8 @@ celery_app.conf.task_annotations = {
     # These must execute immediately when signals come in
     **{
         task_name: {
-            "soft_time_limit": 120,  # 2 min soft limit (trade execution can take time)
-            "time_limit": 180,  # 3 min hard limit
+            "soft_time_limit": 300,  # 5 min soft limit (trade execution can take time)
+            "time_limit": 360,  # 6 min hard limit
             "rate_limit": None,  # NO RATE LIMIT - execute immediately!
             "priority": 9,  # HIGH PRIORITY (0-9, 9 is highest)
         }
@@ -337,8 +339,8 @@ celery_app.conf.task_annotations = {
     # Trade execution - CRITICAL: NO RATE LIMIT
     **{
         task_name: {
-            "soft_time_limit": 120,  # 2 min soft limit
-            "time_limit": 180,  # 3 min hard limit
+            "soft_time_limit": 300,  # 5 min soft limit
+            "time_limit": 360,  # 6 min hard limit
             "rate_limit": None,  # NO RATE LIMIT - execute immediately!
             "priority": 9,  # HIGH PRIORITY
         }
@@ -347,8 +349,8 @@ celery_app.conf.task_annotations = {
     # Pipeline tasks - longer limits, lower rate
     **{
         task_name: {
-            "soft_time_limit": SOFT_TIME_LIMIT + 300,  # 7 min for pipelines
-            "time_limit": HARD_TIME_LIMIT + 300,  # 8 min for pipelines
+            "soft_time_limit": 86400,  # 24 hours for pipelines (no interruption)
+            "time_limit": 86400,  # 24 hours for pipelines
             "rate_limit": "2/m",  # Max 2 per minute (pipelines are heavy)
         }
         for task_name in PIPELINE_TASKS
@@ -378,8 +380,8 @@ celery_app.conf.task_annotations = {
     # Quick tasks - short limits, high rate
     **{
         task_name: {
-            "soft_time_limit": 60,
-            "time_limit": 90,
+            "soft_time_limit": 120,
+            "time_limit": 180,
             "rate_limit": "120/m",  # 2 per second (increased from 1/s)
         }
         for task_name in QUICK_TASKS
@@ -387,8 +389,8 @@ celery_app.conf.task_annotations = {
     # Auto-sell tasks - reasonable limits (DB operations take time)
     **{
         task_name: {
-            "soft_time_limit": 60,  # 60 second soft limit (increased from 30)
-            "time_limit": 90,  # 90 second hard limit (increased from 45)
+            "soft_time_limit": 300,  # 5 minute soft limit (increased)
+            "time_limit": 360,  # 6 minute hard limit (increased)
             "rate_limit": "10/m",  # Max 10 per minute (increased from 4)
         }
         for task_name in AUTO_SELL_TASKS

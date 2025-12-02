@@ -38,9 +38,9 @@ async def _execute_trade_job_async(trade_id: str, simulate: Optional[bool]) -> d
     rate_limit=None,
     # High priority for trading tasks
     priority=9,
-    # Reasonable timeouts for trade execution
-    soft_time_limit=120,
-    time_limit=180,
+    # Extended timeouts for trade execution (can involve DB, position updates, TP/SL creation)
+    soft_time_limit=300,  # 5 minutes
+    time_limit=360,  # 6 minutes
 )
 def execute_trade_job(self, trade_id: str, simulate: Optional[bool] = None) -> dict[str, Any]:
     """Celery task that executes a persisted trade job."""

@@ -23,8 +23,8 @@ logger = logging.getLogger(__name__)
     bind=True,
     acks_late=True,
     reject_on_worker_lost=True,
-    soft_time_limit=60,  # 60 seconds - DB operations need time
-    time_limit=90,  # Hard kill at 90s
+    soft_time_limit=300,  # 5 minutes - DB operations need time
+    time_limit=360,  # Hard kill at 6 min
     max_retries=2,
 )
 def auto_sell_expired_trades(self):
@@ -144,8 +144,8 @@ async def _scan_and_dispatch():
     name="trades.execute_auto_close",
     bind=True,
     acks_late=True,
-    soft_time_limit=60,  # Match other trade execution timeouts
-    time_limit=90,
+    soft_time_limit=300,  # 5 minutes - trade execution can take time
+    time_limit=360,  # 6 min hard limit
     max_retries=3,
     autoretry_for=(Exception,),
     retry_backoff=True,

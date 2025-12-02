@@ -931,12 +931,19 @@ class TradeExecutionService:
             
             execution_time = datetime.utcnow()
             
-            # Pass the underlying Trade record so NSE detection uses trade metadata
-            auto_sell_at = _calculate_auto_sell_at(trade, execution_time, self.logger, trade_id)
+            # Get trade side to determine whether to use auto_sell_at or auto_cover_at
+            trade_side = str(getattr(trade, "side", "BUY")).upper()
+            
+            # Calculate auto-close timestamp for NSE high-risk trades
+            auto_close_time = _calculate_auto_sell_at(trade, execution_time, self.logger, trade_id)
             
             update_data = {"simulation": True}
-            if auto_sell_at:
-                update_data["auto_sell_at"] = auto_sell_at.isoformat()
+            if auto_close_time:
+                # SHORT_SELL uses auto_cover_at, BUY uses auto_sell_at
+                if trade_side == "SHORT_SELL":
+                    update_data["auto_cover_at"] = auto_close_time.isoformat()
+                else:
+                    update_data["auto_sell_at"] = auto_close_time.isoformat()
             
             await self.update_status(
                 execution_log_id,  # Use TradeExecutionLog ID, not Trade ID
@@ -949,15 +956,33 @@ class TradeExecutionService:
             # ATOMIC trade status update - prevent duplicate execution
             client = await self._ensure_client()
             trade_update_data = {"status": "executed"}
-            if auto_sell_at:
-                # Pass datetime object directly instead of string for Prisma
-                trade_update_data["auto_sell_at"] = auto_sell_at
+            if auto_close_time:
+                # SHORT_SELL: set auto_cover_at, BUY: set auto_sell_at
+                if trade_side == "SHORT_SELL":
+                    trade_update_data["auto_cover_at"] = auto_close_time
+                else:
+                    trade_update_data["auto_sell_at"] = auto_close_time
             
             # Only update if still pending (atomic check-and-set)
-            updated_count = await client.trade.update_many(
-                where={"id": trade_id, "status": "pending"},
-                data=trade_update_data,
-            )
+            # Handle UniqueViolation gracefully - may happen if there's already an executed trade for this symbol
+            try:
+                updated_count = await client.trade.update_many(
+                    where={"id": trade_id, "status": "pending"},
+                    data=trade_update_data,
+                )
+            except Exception as update_exc:
+                if "Unique constraint" in str(update_exc):
+                    # Already an executed trade for this symbol - mark this one as duplicate
+                    self.logger.warning(
+                        "⚠️ Trade %s unique constraint - already executed trade for same symbol, marking as duplicate",
+                        trade_id
+                    )
+                    await client.trade.update_many(
+                        where={"id": trade_id},
+                        data={"status": "duplicate"},
+                    )
+                    return {"status": "duplicate", "trade_id": trade_id, "reason": "already_executed_for_symbol"}
+                raise
             
             if updated_count == 0:
                 self.logger.warning(
@@ -1157,6 +1182,10 @@ class TradeExecutionService:
             # Get portfolio for organization/customer info
             portfolio = await client.portfolio.find_unique(where={"id": portfolio_id})
 
+            # FIRST: Cancel any existing pending TP/SL orders for this symbol
+            # This avoids the unique constraint violation (portfolio_id, symbol, status)
+            await self._cancel_pending_tp_sl_orders(portfolio_id, symbol, client)
+
             # Determine TP/SL sides based on original trade side
             if side == "BUY":
                 # For long positions, TP and SL are both SELL
@@ -1177,6 +1206,7 @@ class TradeExecutionService:
             }
 
             # Create TP Trade record
+            # Use "pending_tp" status to avoid unique constraint with regular "pending" trades
             tp_trade_data = {
                 "portfolio_id": portfolio_id,
                 "organization_id": getattr(portfolio, "organization_id", None) if portfolio else None,
@@ -1191,7 +1221,7 @@ class TradeExecutionService:
                 "limit_price": self._as_decimal(tp_price),
                 "price": self._as_decimal(tp_price),
                 "trigger_price": self._as_decimal(tp_price),
-                "status": "pending",
+                "status": "pending_tp",  # Use distinct status to avoid unique constraint
                 "source": "nse_pipeline_tp_sl",
                 "metadata": json.dumps(tp_metadata),
             }
@@ -1240,6 +1270,7 @@ class TradeExecutionService:
             }
 
             # Create SL Trade record
+            # Use "pending_sl" status to avoid unique constraint with regular "pending" trades
             sl_trade_data = {
                 "portfolio_id": portfolio_id,
                 "organization_id": getattr(portfolio, "organization_id", None) if portfolio else None,
@@ -1254,7 +1285,7 @@ class TradeExecutionService:
                 "limit_price": self._as_decimal(sl_price),
                 "price": self._as_decimal(sl_price),
                 "trigger_price": self._as_decimal(sl_price),
-                "status": "pending",
+                "status": "pending_sl",  # Use distinct status to avoid unique constraint
                 "source": "nse_pipeline_tp_sl",
                 "metadata": json.dumps(sl_metadata),
             }
@@ -1336,11 +1367,11 @@ class TradeExecutionService:
         side = str(getattr(parent_trade, "side", "")).upper()
         
         # DEBUG: Log trade side
-        self.logger.info("🔍 Trade side: %s (will calculate P&L only for SELL)", side)
+        self.logger.info("🔍 Trade side: %s (will calculate P&L for SELL or COVER)", side)
         
-        # Only calculate realized P&L for SELL trades
-        if side != "SELL":
-            self.logger.debug("Skipping P&L calculation for non-SELL trade")
+        # Calculate realized P&L for SELL (closing long) and COVER (closing short) trades
+        if side not in ["SELL", "COVER"]:
+            self.logger.debug("Skipping P&L calculation for non-closing trade (side=%s)", side)
             return
         
         portfolio_id = str(getattr(parent_trade, "portfolio_id", ""))
@@ -1399,16 +1430,24 @@ class TradeExecutionService:
             total_fees = entry_fees + exit_fees + entry_taxes + exit_taxes
             
             # Calculate realized P&L WITH fees deducted
-            realized_pnl = (executed_price - average_buy_price) * executed_quantity - float(total_fees)
+            # SELL (close long): P&L = (sell_price - buy_price) * qty
+            # COVER (close short): P&L = (short_entry_price - cover_price) * qty
+            if side == "SELL":
+                realized_pnl = (executed_price - average_buy_price) * executed_quantity - float(total_fees)
+                pnl_description = f"SELL @ ₹{executed_price:.2f} - avg_buy ₹{average_buy_price:.2f}"
+            else:  # COVER
+                # For shorts: profit when cover_price < short_entry_price
+                realized_pnl = (average_buy_price - executed_price) * executed_quantity - float(total_fees)
+                pnl_description = f"COVER @ ₹{executed_price:.2f} - short_entry ₹{average_buy_price:.2f}"
             realized_pnl_decimal = self._as_decimal(realized_pnl)
             
             self.logger.info(
-                "💰 Realized P&L for SELL trade %s: %s %d @ ₹%.2f (avg buy: ₹%.2f) = ₹%.2f (fees: ₹%.2f deducted)",
+                "💰 Realized P&L for %s trade %s: %s %d (%s) = ₹%.2f (fees: ₹%.2f deducted)",
+                side,
                 trade_id,
                 symbol,
                 executed_quantity,
-                executed_price,
-                average_buy_price,
+                pnl_description,
                 realized_pnl,
                 float(total_fees),
             )
@@ -1856,6 +1895,7 @@ class TradeExecutionService:
                         executed_price=executed_price,
                         trade_id=trade_id,
                         agent_id=agent_id,
+                        allocation_id=transaction_allocation_id,
                     )
                     
                     # STEP 3: Calculate P&L within same transaction (if SELL/COVER trade)
@@ -1990,11 +2030,12 @@ class TradeExecutionService:
         """
         try:
             # Find all pending TP/SL orders for this symbol
+            # Include both old "pending" status and new "pending_tp"/"pending_sl" statuses
             pending_orders = await client.trade.find_many(
                 where={
                     "portfolio_id": portfolio_id,
                     "symbol": {"equals": symbol, "mode": "insensitive"},
-                    "status": "pending",
+                    "status": {"in": ["pending", "pending_tp", "pending_sl"]},
                     "source": "nse_pipeline_tp_sl",
                 }
             )
@@ -2049,6 +2090,7 @@ class TradeExecutionService:
         executed_price: float,
         trade_id: str,
         agent_id: str = None,
+        allocation_id: str = None,
         exchange: str = "NSE",
         segment: str = "EQ",
     ) -> None:
@@ -2067,6 +2109,7 @@ class TradeExecutionService:
             executed_price: Execution price
             trade_id: Trade ID to link
             agent_id: Optional trading agent ID
+            allocation_id: Optional allocation ID (required for new positions)
             exchange: Exchange (default NSE)
             segment: Segment (default EQ)
         """
@@ -2104,7 +2147,12 @@ class TradeExecutionService:
                     symbol, old_quantity, new_quantity, old_avg_price, new_avg_price
                 )
             else:
-                # Create new position
+                # Create new position - allocation_id is REQUIRED
+                if not allocation_id:
+                    raise ValueError(f"allocation_id is required to create new position for BUY {symbol}")
+                if not agent_id:
+                    raise ValueError(f"agent_id is required to create new position for BUY {symbol}")
+                    
                 await tx.position.create(
                     data={
                         "portfolio_id": portfolio_id,
@@ -2116,6 +2164,7 @@ class TradeExecutionService:
                         "position_type": "long",
                         "status": "open",
                         "agent_id": agent_id,
+                        "allocation_id": allocation_id,
                     }
                 )
                 
@@ -2175,7 +2224,12 @@ class TradeExecutionService:
                     symbol, old_quantity, new_quantity
                 )
             else:
-                # Create new short position
+                # Create new short position - allocation_id is REQUIRED
+                if not allocation_id:
+                    raise ValueError(f"allocation_id is required to create new position for SHORT_SELL {symbol}")
+                if not agent_id:
+                    raise ValueError(f"agent_id is required to create new position for SHORT_SELL {symbol}")
+                    
                 await tx.position.create(
                     data={
                         "portfolio_id": portfolio_id,
@@ -2187,6 +2241,7 @@ class TradeExecutionService:
                         "position_type": "short",
                         "status": "open",
                         "agent_id": agent_id,
+                        "allocation_id": allocation_id,
                     }
                 )
                 
