@@ -1,7 +1,10 @@
 "use client"
 
+import { useState } from "react"
 import { Loader2, CheckCircle2, Info, Building2, TrendingUp, FileText, Brain } from "lucide-react"
 import type { EffectiveStatus } from "./useEventResolution"
+import { Button } from "@/components/ui/button"
+import { CompanyReportModal } from "./CompanyReportModal"
 
 interface Event {
 	id: string
@@ -18,7 +21,8 @@ interface EventMessageProps {
 
 export function EventMessage({ event, resolvedStatus }: EventMessageProps) {
 	const { kind, status, content } = event
-	
+	const [reportModalOpen, setReportModalOpen] = useState(false)
+		
 	const isCompleted = resolvedStatus === "completed"
 	const isInProgress = resolvedStatus === "in_progress"
 	const isError = resolvedStatus === "error"
@@ -245,13 +249,30 @@ export function EventMessage({ event, resolvedStatus }: EventMessageProps) {
 	if (kind === "report" && status === "generated") {
 		const ticker = content?.ticker || "Unknown"
 		return (
-			<div className="flex items-start gap-3 text-lg mr-4">
-				<FileText className="w-4 h-4 text-indigo-300 mt-0.5 shrink-0" />
-				<div className="flex-1 text-white/90">
-					<span className="text-white/70">Report generated for</span>{" "}
-					<span className="text-indigo-200 font-mono font-medium">{ticker}</span>
+			<>
+				<div className="flex items-start gap-3 text-lg mr-4">
+					<FileText className="w-4 h-4 text-indigo-300 mt-0.5 shrink-0" />
+					<div className="flex flex-col flex-1 text-white/90">
+						<div className="flex items-center gap-3 flex-wrap">
+							<span className="text-white/70">Report generated for</span>
+							<span className="text-indigo-200 font-mono font-medium">{ticker}</span>
+						</div>
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={() => setReportModalOpen(true)}
+							className="mt-2 h-auto px-2 py-1 text-xs text-indigo-300 hover:text-indigo-200 hover:bg-indigo-500/10 self-start"
+						>
+							View Report
+						</Button>
+					</div>
 				</div>
-			</div>
+				<CompanyReportModal
+					open={reportModalOpen}
+					onOpenChange={setReportModalOpen}
+					ticker={ticker}
+				/>
+			</>
 		)
 	}
 

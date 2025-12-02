@@ -51,6 +51,7 @@ class CompanyReportService:
         self.mongodb_provider = mongodb_provider or MongoDBProvider. get_instance()
         self. redis_manager = redis_manager or RedisManager()
         self.cache_ttl = cache_ttl
+        self._initialized = False
 
     @classmethod
     def get_instance(
@@ -83,6 +84,7 @@ class CompanyReportService:
             # Create indexes
             await self._create_indexes()
             
+            self._initialized = True
             self.logger.debug("✅ CompanyReportService initialized")
         except Exception as e:
             self.logger.error(f"❌ Failed to initialize: {e}", exc_info=True)
