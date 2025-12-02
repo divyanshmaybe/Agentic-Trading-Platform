@@ -103,6 +103,15 @@ def parse_json_response(
         response_text = extract_json_from_text(response_text)
         logger.debug(f"After JSON extraction: {response_text[:100]}...")
 
+    # Step 2.5: Check for empty response
+    if not response_text or not response_text.strip():
+        logger.error("Empty response text received from LLM")
+        raise json.JSONDecodeError(
+            "Invalid JSON in LLM response: Empty response",
+            response_text,
+            0
+        )
+
     # Step 3: Parse JSON
     try:
         parsed = json.loads(response_text)

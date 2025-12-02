@@ -1,0 +1,117 @@
+{
+  "scraper": "cpi",
+  "last_updated": "2025-12-02T12:19:35.829919Z",
+  "row_count": 11,
+  "data": [
+    {
+      "Year": "2024",
+      "Month": "December",
+      "State": "ALL India",
+      "Description": "General Index (All Groups)",
+      "Rural": 198.4,
+      "Urban": 192.0,
+      "Combined": 195.4,
+      "Status": "F"
+    },
+    {
+      "Year": "2025",
+      "Month": "January",
+      "State": "ALL India",
+      "Description": "General Index (All Groups)",
+      "Rural": 195.9,
+      "Urban": 190.6,
+      "Combined": 193.4,
+      "Status": "F"
+    },
+    {
+      "Year": "2025",
+      "Month": "February",
+      "State": "ALL India",
+      "Description": "General Index (All Groups)",
+      "Rural": 194.5,
+      "Urban": 190.1,
+      "Combined": 192.5,
+      "Status": "F"
+    },
+    {
+      "Year": "2025",
+      "Month": "March",
+      "State": "ALL India",
+      "Description": "General Index (All Groups)",
+      "Rural": 193.9,
+      "Urban": 189.9,
+      "Combined": 192.0,
+      "Status": "F"
+    },
+    {
+      "Year": "2025",
+      "Month": "April",
+      "State": "ALL India",
+      "Description": "General Index (All Groups)",
+      "Rural": 194.0,
+      "Urban": 190.9,
+      "Combined": 192.6,
+      "Status": "F"
+    },
+    {
+      "Year": "2025",
+      "Month": "May",
+      "State": "ALL India",
+      "Description": "General Index (All Groups)",
+      "Rural": 194.3,
+      "Urban": 191.5,
+      "Combined": 193.0,
+      "Status": "F"
+    },
+    {
+      "Year": "2025",
+      "Month": "June",
+      "State": "ALL India",
+      "Description": "General Index (All Groups)",
+      "Rural": 195.5,
+      "Urban": 192.6,
+      "Combined": 194.2,
+      "Status": "F"
+    },
+    {
+      "Year": "2025",
+      "Month": "July",
+      "State": "ALL India",
+      "Description": "General Index (All Groups)",
+      "Rural": 197.6,
+      "Urban": 194.3,
+      "Combined": 196.1,
+      "Status": "F"
+    },
+    {
+      "Year": "2025",
+      "Month": "August",
+      "State": "ALL India",
+      "Description": "General Index (All Groups)",
+      "Rural": 198.7,
+      "Urban": 195.0,
+      "Combined": 197.0,
+      "Status": "F"
+    },
+    {
+      "Year": "2025",
+      "Month": "September",
+      "State": "ALL India",
+      "Description": "General Index (All Groups)",
+      "Rural": 198.8,
+      "Urban": 194.9,
+      "Combined": 197.0,
+      "Status": "F"
+    },
+    {
+      "Year": "2025",
+      "Month": "October",
+      "State": "ALL India",
+      "Description": "General Index (All Groups)",
+      "Rural": 199.0,
+      "Urban": 195.4,
+      "Combined": 197.3,
+      "Status": "P"
+    }
+  ]
+}
