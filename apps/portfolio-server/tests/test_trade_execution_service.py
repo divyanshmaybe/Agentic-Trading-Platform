@@ -393,16 +393,16 @@ class MockPrismaClient:
             self._transaction_rolled_back = True
             return []
         
-        # Handle UPDATE Position queries - parse position id from WHERE clause params
-        if 'UPDATE "Position"' in query and "RETURNING id" in query:
+        # Handle UPDATE Position/positions queries - parse position id from params
+        if ('UPDATE "Position"' in query or 'UPDATE "positions"' in query) and "RETURNING id" in query:
             # Different queries have different param positions for id
             # For BUY: params = (quantity, price, metadata, agent_id, position_id, old_qty)
             # For SELL/COVER: params = (realized_pnl, metadata, position_id, old_qty) or similar
             position_id = None
             
-            # Find position id - it's usually a string that's not a JSON blob and not numeric
+            # Find position id - it's usually a non-JSON string at index 2, 3, 4 (after numerics and JSON)
             for i, p in enumerate(params):
-                if isinstance(p, str) and len(p) > 4 and not p.startswith('{') and not p.startswith('['):
+                if isinstance(p, str) and p and not p.startswith('{') and not p.startswith('['):
                     # Check if it's in our position rows
                     if p in self.position.rows:
                         position_id = p
@@ -418,14 +418,14 @@ class MockPrismaClient:
                     old_qty = self.position.rows[position_id].get("quantity", 0)
                     # First numeric param is usually the quantity to reduce
                     for p in params:
-                        if isinstance(p, (int, float)) and p > 0 and p < old_qty:
-                            self.position.rows[position_id]["quantity"] = max(0, old_qty - int(p))
+                        if isinstance(p, int) and p > 0 and p < old_qty:
+                            self.position.rows[position_id]["quantity"] = max(0, old_qty - p)
                             break
                 elif "quantity = quantity +" in query or "quantity + $1" in query:
                     # BUY - add to quantity
                     old_qty = self.position.rows[position_id].get("quantity", 0)
-                    if params and isinstance(params[0], (int, float)):
-                        self.position.rows[position_id]["quantity"] = old_qty + int(params[0])
+                    if params and isinstance(params[0], int):
+                        self.position.rows[position_id]["quantity"] = old_qty + params[0]
                 
                 # Update realized_pnl if present (first float param in SELL/COVER queries)
                 if "realized_pnl" in query:
@@ -4326,6 +4326,7 @@ async def test_create_or_update_position_sell_close(service_env):
         "average_buy_price": Decimal("150"),
         "status": "open",
         "allocation_id": "alloc-1",
+        "realized_pnl": 0.0,
     }
     
     service = TradeExecutionService()
@@ -4360,6 +4361,7 @@ async def test_create_or_update_position_sell_partial(service_env):
         "average_buy_price": Decimal("150"),
         "status": "open",
         "allocation_id": "alloc-1",
+        "realized_pnl": 0.0,
     }
     
     service = TradeExecutionService()
@@ -4611,7 +4613,7 @@ async def test_create_or_update_position_buy_without_agent(service_env):
 
 @pytest.mark.asyncio
 async def test_create_or_update_position_cover_no_short_position(service_env):
-    """Test _create_or_update_position COVER without SHORT position."""
+    """Test _create_or_update_position COVER without SHORT position fails."""
     from services.trade_execution_service import TradeExecutionService
     
     client = service_env["client"]
@@ -4620,17 +4622,20 @@ async def test_create_or_update_position_cover_no_short_position(service_env):
     
     service = TradeExecutionService()
     
-    # COVER without existing SHORT position
-    await service._create_or_update_position(
-        portfolio_id="pf-1",
-        symbol="NOSHORT",
-        side="COVER",
-        quantity=100,
-        executed_price=200.0,
-        trade_id="trade-cover-no-short",
-        client=client,
-        agent_id="agent-1",
-    )
+    # COVER without existing SHORT position should fail
+    with pytest.raises(ValueError) as exc_info:
+        await service._create_or_update_position(
+            portfolio_id="pf-1",
+            symbol="NOSHORT",
+            side="COVER",
+            quantity=100,
+            executed_price=200.0,
+            trade_id="trade-cover-no-short",
+            client=client,
+            agent_id="agent-1",
+        )
+    
+    assert "no open SHORT position" in str(exc_info.value)
 
 
 @pytest.mark.asyncio
