@@ -48,6 +48,13 @@ export function PipelineEventsCard({ events, isExpanded, onToggle }: PipelineEve
 			setAutoScroll(true)
 		}
 	}, [isExpanded])
+
+	// Cleanup: restore body scroll on unmount
+	useEffect(() => {
+		return () => {
+			document.body.style.overflow = "";
+		};
+	}, [])
 	
 	return (
 		<div className="w-full rounded-lg border border-white/10 bg-white/8 overflow-hidden backdrop-blur-sm">
@@ -73,6 +80,8 @@ export function PipelineEventsCard({ events, isExpanded, onToggle }: PipelineEve
 					<div
 						ref={scrollRef}
 						onScroll={onScroll}
+						onMouseEnter={() => document.body.style.overflow = "hidden"}
+						onMouseLeave={() => document.body.style.overflow = ""}
 						className="max-h-[600px] overflow-y-auto no-scrollbar"
 					>
 						<div className="space-y-4">

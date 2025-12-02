@@ -68,11 +68,20 @@ export function StreamingEventsView({ events }: StreamingEventsViewProps) {
 		setAutoScroll(atBottom)
 	}
 
+	// Cleanup: restore body scroll on unmount
+	useEffect(() => {
+		return () => {
+			document.body.style.overflow = "";
+		};
+	}, [])
+
 	return (
 		<div className="flex-1 overflow-hidden">
 			<div
 				ref={scrollRef}
 				onScroll={onScroll}
+				onMouseEnter={() => document.body.style.overflow = "hidden"}
+				onMouseLeave={() => document.body.style.overflow = ""}
 				className="max-h-[80vh] overflow-y-auto no-scrollbar"
 			>
 				<div className="space-y-3">
