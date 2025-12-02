@@ -1,6 +1,7 @@
 "use client"
 
-import { Loader2, CheckCircle2, Info, Building2, TrendingUp, FileText, Sparkles, Brain } from "lucide-react"
+import { Loader2, CheckCircle2, Info, Building2, TrendingUp, FileText, Brain } from "lucide-react"
+import type { EffectiveStatus } from "./useEventResolution"
 
 interface Event {
 	id: string
@@ -12,10 +13,17 @@ interface Event {
 
 interface EventMessageProps {
 	event: Event
+	resolvedStatus?: EffectiveStatus
 }
 
-export function EventMessage({ event }: EventMessageProps) {
+export function EventMessage({ event, resolvedStatus }: EventMessageProps) {
 	const { kind, status, content } = event
+	
+	const isCompleted = resolvedStatus === "completed"
+	const isInProgress = resolvedStatus === "in_progress"
+	const isError = resolvedStatus === "error"
+	const wasFetching = status === "fetching" || status === "generating"
+	const isDimmed = isCompleted && wasFetching
 
 	// INFO event
 	if (kind === "info") {
@@ -48,28 +56,31 @@ export function EventMessage({ event }: EventMessageProps) {
 		const stage = content?.stage || "unknown"
 		const isProgress = status === "progress"
 		const isStart = status === "start"
-		const isCompleted = status === "completed" || status === "done"
-		const isError = status === "error"
+		const localCompleted = status === "completed" || status === "done"
+		const localError = status === "error"
+		const finalCompleted = resolvedStatus === "completed" || localCompleted
+		const finalError = resolvedStatus === "error" || localError
+		const finalInProgress = resolvedStatus === "in_progress" || (isProgress || isStart)
 
 		return (
-			<div className="flex items-start gap-3 text-lg mr-4">
-				{isProgress || isStart ? (
+			<div className={`flex items-start gap-3 text-lg mr-4 ${isDimmed ? "opacity-60" : ""}`}>
+				{finalInProgress && !finalCompleted ? (
 					<Loader2 className="w-4 h-4 text-blue-400 mt-0.5 shrink-0 animate-spin" />
-				) : isCompleted ? (
+				) : finalCompleted ? (
 					<CheckCircle2 className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
-				) : isError ? (
+				) : finalError ? (
 					<Info className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
 				) : (
 					<Info className="w-4 h-4 text-blue-400 mt-0.5 shrink-0" />
 				)}
-				<div className="flex-1 text-white/90">
+				<div className={`flex-1 ${isDimmed ? "text-white/60" : "text-white/90"}`}>
 					<div className="mb-1">
 						<span className={
-							isError 
+							finalError 
 								? "text-red-300 font-bold" 
-								: isCompleted 
+								: finalCompleted 
 									? "text-emerald-300 font-bold" 
-									: isStart || isProgress
+									: finalInProgress
 										? "text-blue-300 font-bold"
 										: "text-cyan-300 font-bold"
 						}>{message}</span>
@@ -88,10 +99,17 @@ export function EventMessage({ event }: EventMessageProps) {
 	// INDUSTRY - FETCHING
 	if (kind === "industry" && status === "fetching") {
 		const industries = content?.industries || []
+		const showSpinner = isInProgress && !isCompleted
 		return (
-			<div className="flex items-start gap-3 text-lg mr-4">
-				<Loader2 className="w-4 h-4 text-cyan-400 mt-0.5 shrink-0 animate-spin" />
-				<div className="flex-1 text-white/90">
+			<div className={`flex items-start gap-3 text-lg mr-4 ${isDimmed ? "opacity-60" : ""}`}>
+				{showSpinner ? (
+					<Loader2 className="w-4 h-4 text-cyan-400 mt-0.5 shrink-0 animate-spin" />
+				) : isCompleted ? (
+					<CheckCircle2 className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
+				) : (
+					<Loader2 className="w-4 h-4 text-cyan-400 mt-0.5 shrink-0 animate-spin" />
+				)}
+				<div className={`flex-1 ${isDimmed ? "text-white/60" : "text-white/90"}`}>
 					<span className="text-white/70">Analyzing industries:</span>{" "}
 					<span className="text-cyan-300">{industries.join(", ") || "Loading..."}</span>
 				</div>
@@ -156,10 +174,17 @@ export function EventMessage({ event }: EventMessageProps) {
 	// STOCK - FETCHING
 	if (kind === "stock" && status === "fetching") {
 		const ticker = content?.content || "Unknown"
+		const showSpinner = isInProgress && !isCompleted
 		return (
-			<div className="flex items-start gap-3 text-lg mr-4">
-				<Loader2 className="w-4 h-4 text-cyan-400 mt-0.5 shrink-0 animate-spin" />
-				<div className="flex-1 text-white/90">
+			<div className={`flex items-start gap-3 text-lg mr-4 ${isDimmed ? "opacity-60" : ""}`}>
+				{showSpinner ? (
+					<Loader2 className="w-4 h-4 text-cyan-400 mt-0.5 shrink-0 animate-spin" />
+				) : isCompleted ? (
+					<CheckCircle2 className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
+				) : (
+					<Loader2 className="w-4 h-4 text-cyan-400 mt-0.5 shrink-0 animate-spin" />
+				)}
+				<div className={`flex-1 ${isDimmed ? "text-white/60" : "text-white/90"}`}>
 					<span className="text-white/70">Fetching data for</span>{" "}
 					<span className="text-cyan-300 font-mono font-medium">{ticker}</span>
 				</div>
@@ -198,10 +223,17 @@ export function EventMessage({ event }: EventMessageProps) {
 	// REPORT - GENERATING
 	if (kind === "report" && status === "generating") {
 		const ticker = content?.ticker || "Unknown"
+		const showSpinner = isInProgress && !isCompleted
 		return (
-			<div className="flex items-start gap-3 text-lg mr-4">
-				<Loader2 className="w-4 h-4 text-cyan-400 mt-0.5 shrink-0 animate-spin" />
-				<div className="flex-1 text-white/90">
+			<div className={`flex items-start gap-3 text-lg mr-4 ${isDimmed ? "opacity-60" : ""}`}>
+				{showSpinner ? (
+					<Loader2 className="w-4 h-4 text-cyan-400 mt-0.5 shrink-0 animate-spin" />
+				) : isCompleted ? (
+					<CheckCircle2 className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
+				) : (
+					<Loader2 className="w-4 h-4 text-cyan-400 mt-0.5 shrink-0 animate-spin" />
+				)}
+				<div className={`flex-1 ${isDimmed ? "text-white/60" : "text-white/90"}`}>
 					<span className="text-white/70">Generating analysis report for</span>{" "}
 					<span className="text-cyan-300 font-mono font-medium">{ticker}</span>
 				</div>
@@ -229,10 +261,15 @@ export function EventMessage({ event }: EventMessageProps) {
 		const industryList = content?.industry_list || []
 		const finalPortfolio = content?.final_portfolio || []
 		const tradeList = content?.trade_list || []
+		const summaryCompleted = resolvedStatus === "completed" || resolvedStatus === undefined
 
 		return (
 			<div className="flex items-start gap-3 text-lg mr-4">
-				<Sparkles className="w-4 h-4 text-purple-400 mt-0.5 shrink-0" />
+				{summaryCompleted ? (
+					<CheckCircle2 className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
+				) : (
+					<Loader2 className="w-4 h-4 text-purple-400 mt-0.5 shrink-0 animate-spin" />
+				)}
 				<div className="flex-1 text-white/90">
 					<div className="mb-2">
 						<span className="text-purple-300 font-semibold">Portfolio Analysis Complete</span>

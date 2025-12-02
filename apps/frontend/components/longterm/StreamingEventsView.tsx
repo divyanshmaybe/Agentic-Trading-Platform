@@ -2,15 +2,11 @@
 
 import { useEffect, useRef, useState } from "react"
 import { EventMessage } from "./EventMessage"
-
-interface Event {
-	id: string
-	kind?: string
-	[key: string]: any
-}
+import { useEventResolution } from "./useEventResolution"
+import type { LowRiskEvent } from "@/components/hooks/useLowRiskEvents"
 
 interface StreamingEventsViewProps {
-	events: Event[]
+	events: LowRiskEvent[]
 }
 
 const debug = false // set to true to see the raw events
@@ -18,6 +14,7 @@ const debug = false // set to true to see the raw events
 export function StreamingEventsView({ events }: StreamingEventsViewProps) {
 	const previousEventIdsRef = useRef<Set<string>>(new Set())
 	const [newEventIds, setNewEventIds] = useState<Set<string>>(new Set())
+	const { getResolvedStatus } = useEventResolution(events)
 
 	// Track which events are new (not seen before)
 	useEffect(() => {
@@ -68,7 +65,7 @@ export function StreamingEventsView({ events }: StreamingEventsViewProps) {
 							key={event.id}
 							className={newEventIds.has(event.id) ? "animate-event-enter no-scrollbar" : "no-scrollbar"}
 						>
-							<EventMessage event={event} />
+							<EventMessage event={event} resolvedStatus={getResolvedStatus(event)} />
 						</div>
 					))
 				 }
