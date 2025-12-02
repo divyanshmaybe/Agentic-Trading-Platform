@@ -80,60 +80,192 @@ export function CompanyReportModal({ open, onOpenChange, ticker }: CompanyReport
 	}
 
 	const shouldDisplayField = (key: string, value: any): boolean => {
-		if (key === "_id" || key === "id") return false
+		if (key === "_id" || key === "id" || key === "ticker") return false
 		if (!value || value === "") return false
 		return true
 	}
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto bg-[#0c0c0c] border-white/10 text-white/90">
-				<DialogHeader>
-					<DialogTitle className="text-xl font-semibold text-white">
-						Company Report: {ticker}
+			<DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto bg-white border-gray-200 p-0 [&>button]:text-gray-600 [&>button]:hover:text-gray-900 [&>button]:hover:bg-gray-100 [&>button]:rounded-md [&>button]:p-1 [&>button]:transition-colors">
+				<DialogHeader className="px-8 pt-8 pb-6 border-b border-gray-200">
+					<DialogTitle className="text-2xl font-bold text-gray-900">
+						{report?.company_name || `Company Report: ${ticker}`}
 					</DialogTitle>
+					{report?.ticker && (
+						<p className="text-sm text-gray-500 mt-1">Ticker: {report.ticker}</p>
+					)}
 				</DialogHeader>
 
 				{loading && (
-					<div className="flex items-center justify-center py-12">
-						<Loader2 className="w-6 h-6 animate-spin text-cyan-400" />
-						<span className="ml-3 text-white/70">Loading report...</span>
+					<div className="flex items-center justify-center py-12 px-8">
+						<Loader2 className="w-6 h-6 animate-spin text-gray-600" />
+						<span className="ml-3 text-gray-700">Loading report...</span>
 					</div>
 				)}
 
 				{error && (
-					<div className="rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-3 text-red-300">
+					<div className="mx-8 mt-6 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-red-700">
 						{error}
 					</div>
 				)}
 
 				{!loading && !error && report && (
-					<div className="space-y-4">
+					<div className="px-8 py-6 space-y-8 text-gray-900">
+						{report.company_description && (
+							<section>
+								<h2 className="text-xl font-semibold mb-3 text-gray-900">Company Description</h2>
+								<p className="text-base leading-relaxed text-gray-700 whitespace-pre-wrap">
+									{report.company_description}
+								</p>
+							</section>
+						)}
+
+						{report.business_model && (
+							<section>
+								<h2 className="text-xl font-semibold mb-3 text-gray-900">Business Model</h2>
+								<p className="text-base leading-relaxed text-gray-700 whitespace-pre-wrap">
+									{report.business_model}
+								</p>
+							</section>
+						)}
+
+						{(report.segment_exposure || report.geographic_exposure || report.market_cap) && (
+							<section>
+								<h2 className="text-xl font-semibold mb-3 text-gray-900">Business Overview</h2>
+								<div className="space-y-3">
+									{report.market_cap && (
+										<div>
+											<h3 className="text-base font-medium mb-1 text-gray-800">Market Capitalization</h3>
+											<p className="text-base leading-relaxed text-gray-700">{report.market_cap}</p>
+										</div>
+									)}
+									{report.segment_exposure && (
+										<div>
+											<h3 className="text-base font-medium mb-1 text-gray-800">Segment Exposure</h3>
+											<p className="text-base leading-relaxed text-gray-700 whitespace-pre-wrap">
+												{report.segment_exposure}
+											</p>
+										</div>
+									)}
+									{report.geographic_exposure && (
+										<div>
+											<h3 className="text-base font-medium mb-1 text-gray-800">Geographic Exposure</h3>
+											<p className="text-base leading-relaxed text-gray-700 whitespace-pre-wrap">
+												{report.geographic_exposure}
+											</p>
+										</div>
+									)}
+								</div>
+							</section>
+						)}
+
+						{report.leadership_governance && (
+							<section>
+								<h2 className="text-xl font-semibold mb-3 text-gray-900">Leadership & Governance</h2>
+								<p className="text-base leading-relaxed text-gray-700 whitespace-pre-wrap">
+									{report.leadership_governance}
+								</p>
+							</section>
+						)}
+
+						{(report.major_clients || report.major_partnerships) && (
+							<section>
+								<h2 className="text-xl font-semibold mb-3 text-gray-900">Clients & Partnerships</h2>
+								<div className="space-y-3">
+									{report.major_clients && (
+										<div>
+											<h3 className="text-base font-medium mb-1 text-gray-800">Major Clients</h3>
+											<p className="text-base leading-relaxed text-gray-700 whitespace-pre-wrap">
+												{report.major_clients}
+											</p>
+										</div>
+									)}
+									{report.major_partnerships && (
+										<div>
+											<h3 className="text-base font-medium mb-1 text-gray-800">Major Partnerships</h3>
+											<p className="text-base leading-relaxed text-gray-700 whitespace-pre-wrap">
+												{report.major_partnerships}
+											</p>
+										</div>
+									)}
+								</div>
+							</section>
+						)}
+
+						{(report.recent_strategic_actions || report.rnd_intensity || report.brand_value_drivers) && (
+							<section>
+								<h2 className="text-xl font-semibold mb-3 text-gray-900">Strategic Information</h2>
+								<div className="space-y-3">
+									{report.recent_strategic_actions && (
+										<div>
+											<h3 className="text-base font-medium mb-1 text-gray-800">Recent Strategic Actions</h3>
+											<p className="text-base leading-relaxed text-gray-700 whitespace-pre-wrap">
+												{report.recent_strategic_actions}
+											</p>
+										</div>
+									)}
+									{report.brand_value_drivers && (
+										<div>
+											<h3 className="text-base font-medium mb-1 text-gray-800">Brand Value Drivers</h3>
+											<p className="text-base leading-relaxed text-gray-700 whitespace-pre-wrap">
+												{report.brand_value_drivers}
+											</p>
+										</div>
+									)}
+									{report.rnd_intensity && (
+										<div>
+											<h3 className="text-base font-medium mb-1 text-gray-800">R&D Intensity</h3>
+											<p className="text-base leading-relaxed text-gray-700 whitespace-pre-wrap">
+												{report.rnd_intensity}
+											</p>
+										</div>
+									)}
+								</div>
+							</section>
+						)}
+
+						{report.negatives_risks && (
+							<section>
+								<h2 className="text-xl font-semibold mb-3 text-gray-900">Risks & Challenges</h2>
+								<p className="text-base leading-relaxed text-gray-700 whitespace-pre-wrap">
+									{report.negatives_risks}
+								</p>
+							</section>
+						)}
+
 						{Object.entries(report).map(([key, value]) => {
 							if (!shouldDisplayField(key, value)) return null
+							if ([
+								"company_name", "company_description", "business_model",
+								"market_cap", "segment_exposure", "geographic_exposure",
+								"leadership_governance", "major_clients", "major_partnerships",
+								"recent_strategic_actions", "rnd_intensity", "brand_value_drivers",
+								"negatives_risks", "created_at", "updated_at"
+							].includes(key)) return null
 
 							return (
-								<div
-									key={key}
-									className="rounded-lg border border-white/10 bg-white/5 p-4"
-								>
-									<div className="mb-1 text-xs font-medium uppercase tracking-wide text-white/50">
-										{formatFieldName(key)}
-									</div>
-									<div className="text-sm text-white/90 leading-relaxed">
-										{typeof value === "string" ? (
-											value
-										) : typeof value === "object" ? (
-											<pre className="whitespace-pre-wrap text-xs">
-												{JSON.stringify(value, null, 2)}
-											</pre>
-										) : (
-											String(value)
-										)}
-									</div>
-								</div>
+								<section key={key}>
+									<h2 className="text-xl font-semibold mb-3 text-gray-900">{formatFieldName(key)}</h2>
+									<p className="text-base leading-relaxed text-gray-700 whitespace-pre-wrap">
+										{typeof value === "string" ? value : typeof value === "object" ? JSON.stringify(value, null, 2) : String(value)}
+									</p>
+								</section>
 							)
 						})}
+
+						{(report.created_at || report.updated_at) && (
+							<section className="pt-4 border-t border-gray-200">
+								<div className="text-sm text-gray-500 space-y-1">
+									{report.created_at && (
+										<p>Created: {new Date(report.created_at).toLocaleString()}</p>
+									)}
+									{report.updated_at && (
+										<p>Last Updated: {new Date(report.updated_at).toLocaleString()}</p>
+									)}
+								</div>
+							</section>
+						)}
 					</div>
 				)}
 			</DialogContent>
