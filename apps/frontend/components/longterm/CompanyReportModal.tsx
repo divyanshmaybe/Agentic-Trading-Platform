@@ -9,7 +9,7 @@ import {
 	DialogTitle,
 } from "@/components/ui/dialog"
 import { apiClient } from "@/lib/api"
-import { downloadCompanyReportPdf } from "@/components/utils/downloadModalPdf"
+import { generateCompanyReportPdf } from "@/components/utils/generateCompanyReportPdf"
 
 interface CompanyReport {
 	ticker: string
@@ -102,7 +102,7 @@ export function CompanyReportModal({ open, onOpenChange, ticker }: CompanyReport
 					{!loading && !error && report && (
 						<div className="pt-4">
 							<button
-								onClick={downloadCompanyReportPdf}
+								onClick={() => generateCompanyReportPdf(report)}
 								className="px-4 py-2 bg-black text-white rounded hover:bg-gray-800"
 							>
 								Download PDF
