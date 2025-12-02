@@ -444,7 +444,7 @@ function parseLowRiskKafkaMessage(payload: EachMessagePayload): LowRiskNormalize
 
 	// Extract userId: message.key || valueEnvelope.key || innerPayload.user_id
 	// Fail ONLY if all three are missing
-	const userId = (message.key?.toString() || valueEnvelope.key || innerPayload.user_id) as string | undefined;
+	const userId = (innerPayload.user_id) as string | undefined;
 	if (!userId || typeof userId !== "string" || userId.trim() === "") {
 		console.warn(`[Kafka][LowRisk] Dropped: userId missing (topic=${topic}, partition=${partition}, offset=${offset})`);
 		return null;

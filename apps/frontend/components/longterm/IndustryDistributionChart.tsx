@@ -21,7 +21,7 @@ export function IndustryDistributionChart({ industryList, chartData }: IndustryD
 			<DonutChartCard
 				title="Industry Distribution"
 				centerTitle="Industry Mix"
-				centerSubtitle="6 Sectors"
+				centerSubtitle={`${industryList.length} sectors`}
 				chartData={chartData}
 			/>
 
