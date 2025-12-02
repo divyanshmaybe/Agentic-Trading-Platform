@@ -533,21 +533,12 @@ class FundamentalAnalyzer:
         if not self._fetch_financials():
             return {}
 
-        current_price = self._info.get("currentPrice", self._info.get("regularMarketPrice", pd.NA))
 
         return {
-            "current_price": current_price,
             "fifty_two_week_change": self._info.get("52WeekChange", pd.NA),
         }
 
-    def get_volume_metrics(self):
-        """Extract volume and share metrics from ticker.info"""
-        if not self._fetch_financials():
-            return {}
 
-        return {
-            "volume": self._info.get("volume", pd.NA),
-        }
 
     def compute_all_indicators(self) -> Dict[str, Any]:
         """Compute all fundamental, quality, market, and technical indicators"""
@@ -556,15 +547,13 @@ class FundamentalAnalyzer:
             "piotroski_fscore": self.compute_piotroski_fscore(),
             "sloan_ratio": self.compute_sloan_ratio(),
             "ccc": self.compute_ccc(),
-            "beneish_mscore": self.compute_beneish_mscore(),
             "shareholder_yield": self.compute_shareholder_yield(),
             "roic": self.compute_roic(),
-            "rs_ratio": self.compute_rs_ratio(),
             "momentum_6_1": self.compute_momentum_6_1(),
             "rsi_14": self.compute_rsi_14(),
-            "ema50": self.compute_ema50(),
-            "ema200": self.compute_ema200(),
             'gross_profit_growth': self.compute_gross_profit_growth(),
+            "price_to_ema50": self.compute_price_to_ema50(),
+            "price_to_ema200": self.compute_price_to_ema200(),
         }
 
         # Add all info-based metrics
@@ -572,7 +561,6 @@ class FundamentalAnalyzer:
         result.update(self.get_growth_metrics())
         result.update(self.get_financial_health_metrics())
         result.update(self.get_price_metrics())
-        result.update(self.get_volume_metrics())
         result.update(self.get_profitability_metrics())
 
         return result
