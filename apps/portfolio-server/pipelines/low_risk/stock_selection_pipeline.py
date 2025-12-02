@@ -148,7 +148,7 @@ class StockSelectionPipeline:
 
             msg = f"🔍 Generating company report for {ticker}..."
             logger.info(msg)
-            publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
+            # publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
 
             response = model_with_search.invoke(messages)
             report_text = response.content
@@ -479,7 +479,7 @@ class StockSelectionPipeline:
             # Invoke agent
             msg = f"Invoking stock selection agent for {industry}..."
             logger.info(msg)
-            publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
+            publish_to_kafka({"content": msg, "stage": f"{industry}", "status": "start"}, user_id=self.user_id, task_id=self.task_id, message_type="stage")
 
             # Stream agent responses
             messages = []
@@ -526,9 +526,9 @@ class StockSelectionPipeline:
                 absolute_percentage = (relative_percentage / 100.0) * industry_allocation
                 item["percentage"] = absolute_percentage
 
-            msg = f"✅ Stock selection complete for {industry}: {len(ind_portfolio)} stocks selected"
+            msg = f"Stock selection complete for {industry}: {len(ind_portfolio)} stocks selected"
             logger.info(msg)
-            publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
+            publish_to_kafka({"content": msg,"stage": f"{industry}", "status": "done"}, user_id=self.user_id, task_id=self.task_id,message_type="stage")
 
             return ind_portfolio
 

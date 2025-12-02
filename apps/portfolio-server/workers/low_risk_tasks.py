@@ -14,12 +14,15 @@ import json
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any
-
+import time
 from celery.utils.log import get_task_logger
 from redis import Redis
 
 # Add project paths
-PROJECT_ROOT = Path(__file__).resolve().parents[3] 
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 SHARED_PY_PATH = PROJECT_ROOT / "shared" / "py"
 if str(SHARED_PY_PATH) not in sys.path:
     sys.path.insert(0, str(SHARED_PY_PATH))

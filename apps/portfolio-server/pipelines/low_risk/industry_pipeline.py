@@ -452,7 +452,7 @@ def industry_selector(
         tolerance=1.0
     )
 
-    msg = f"✅ Industry selection complete: {len(industry_list)} industries"
+    msg = f"Industry selection complete: {len(industry_list)} industries"
     to_send = {
         "status": "done",
         "content": {
@@ -522,7 +522,7 @@ class IndustrySelectionPipeline:
             List of industry allocation dictionaries:
             [{"name": str, "percentage": float, "reasoning": str}, ...]
         """
-        msg = "🚀 Starting industry selection pipeline..."
+        msg = "Starting industry selection pipeline..."
         logger.info(msg)
 
         # Get PMI
@@ -576,7 +576,7 @@ class IndustrySelectionPipeline:
                 self.publisher,
                 task_id=self.task_id,
             )
-            msg = f"✅ Industry selection complete: {len(industry_list)} industries"
+            msg = f"Industry selection complete: {len(industry_list)} industries"
             logger.info(msg)
             publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
             return industry_list
