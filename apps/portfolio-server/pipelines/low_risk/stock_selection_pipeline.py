@@ -224,9 +224,12 @@ class StockSelectionPipeline:
                     res_json = self.pipeline.get_metrics(ticker)
                     if res_json is None:
                         logger.warning(f"No metrics found for {ticker}")
-                    ticker_result = {}
-                    for m in metrics:
-                        ticker_result[m] = res_json.get(m, None)
+                        # Set all metrics to None if res_json is None
+                        ticker_result = {m: None for m in metrics}
+                    else:
+                        ticker_result = {}
+                        for m in metrics:
+                            ticker_result[m] = res_json.get(m, None)
                     result[ticker] = ticker_result
 
                 metrics_list = ", ".join(metrics)
@@ -382,7 +385,7 @@ class StockSelectionPipeline:
             else:
                 reasoning = ""
                 new_reasoning_message = AIMessage("")
-            msg = reasoning
+            msg = reasoning[0].text
             to_send = {
                 "status": "thinking",
                 "content": {
@@ -399,7 +402,7 @@ class StockSelectionPipeline:
             )
         return reasoning_tool
 
-    def get_company_prompt(self, industry: str, company_df: pd.DataFrame, pipeline) -> str:
+    def get_company_prompt(self, industry: str, company_df: pd.DataFrame) -> str:
         """Generate a prompt containing company descriptions for an industry."""
         company_prompt = ""
 

@@ -58,6 +58,13 @@ export function generateCompanyReportPdf(report: CompanyReport) {
 		return out.trim();
 	};
 
+	const ensureSpace = (needed: number) => {
+		if (cursorY + needed > pageHeight - margin) {
+			pdf.addPage();
+			cursorY = margin;
+		}
+	};
+
   const writeHeading = (text: string, size = 18) => {
     text = clean(text);
     pdf.setFont("times", "bold");
