@@ -60,18 +60,21 @@ from pathway.xpacks.llm import llms
 
 # Load environment variables ONLY from portfolio-server .env file
 # The pipeline service loads it before importing, but we ensure it's loaded here too
-env_path = os.getenv("PORTFOLIO_SERVER_ENV_PATH")
-if env_path and os.path.exists(env_path):
-    load_dotenv(env_path, override=False)  # override=False to respect already loaded vars
-else:
-    # Calculate portfolio-server directory path and load .env from there
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    server_dir = os.path.dirname(os.path.dirname(current_dir))
-    env_file = os.path.join(server_dir, ".env")
-    if os.path.exists(env_file):
-        load_dotenv(env_file, override=False)
+# Skip .env loading if SKIP_DOTENV is set (e.g., in Docker where env vars are set via compose)
+skip_dotenv = os.getenv("SKIP_DOTENV", "false").lower() in ("true", "1", "yes")
+if not skip_dotenv:
+    env_path = os.getenv("PORTFOLIO_SERVER_ENV_PATH")
+    if env_path and os.path.exists(env_path):
+        load_dotenv(env_path, override=False)  # override=False to respect already loaded vars
     else:
-        raise FileNotFoundError(f".env file not found in portfolio-server directory: {env_file}")
+        # Calculate portfolio-server directory path and load .env from there
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        server_dir = os.path.dirname(os.path.dirname(current_dir))
+        env_file = os.path.join(server_dir, ".env")
+        if os.path.exists(env_file):
+            load_dotenv(env_file, override=False)
+        else:
+            raise FileNotFoundError(f".env file not found in portfolio-server directory: {env_file}")
 
 # Configuration
 MAX_TOKENS = 1024
