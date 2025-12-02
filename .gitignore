@@ -15,6 +15,7 @@ agent_venv
 
 # Testing
 coverage
+tests/
 
 # Turbo
 .turbo
