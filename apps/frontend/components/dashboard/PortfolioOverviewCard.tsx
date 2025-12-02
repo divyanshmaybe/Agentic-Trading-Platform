@@ -25,7 +25,7 @@ export function PortfolioOverviewCard({ summary, loading = false }: PortfolioOve
       totalValue: formatCurrency(summary.totalValue),
       investmentAmount: formatCurrency(summary.investmentAmount),
       availableCash: formatCurrency(summary.availableCash),
-      changeValue: Math.abs(summary.changeValue).toLocaleString("en-US"),
+      changeValue: Math.abs(summary.changeValue).toLocaleString("en-IN"),
       changePrefix: changePositive ? "+" : "-",
       changePctPrefix: summary.changePct > 0 ? "+" : summary.changePct < 0 ? "-" : "",
       riskTolerance: summary.riskTolerance.charAt(0).toUpperCase() + summary.riskTolerance.slice(1),
@@ -72,7 +72,7 @@ export function PortfolioOverviewCard({ summary, loading = false }: PortfolioOve
                   )}
                 >
                   {formatted.changePctPrefix}
-                  {Math.abs(summary.changePct).toFixed(2)}% ({formatted.changePrefix}$
+                  {Math.abs(summary.changePct).toFixed(2)}% ({formatted.changePrefix}₹
                   {formatted.changeValue})
                 </p>
               )}
