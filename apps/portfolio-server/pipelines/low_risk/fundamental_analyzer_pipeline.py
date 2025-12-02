@@ -194,6 +194,25 @@ class FundamentalAnalyzer:
 
         return int(score)
 
+    def compute_volatility(self):
+        """Compute Volatility as the standard deviation of daily returns over the past year."""
+        try:
+            if self.raw is None or self.raw.empty:
+                return pd.NA
+
+            stock_data = self.raw[self.raw["Ticker"] == self.ticker_symbol].sort_values("Date")
+
+            if len(stock_data) < 252:
+                return pd.NA
+
+            stock_data = stock_data.tail(90)
+            stock_data['Return'] = stock_data['Close'].pct_change()
+            volatility = stock_data['Return'].std() * np.sqrt(252)
+
+            return float(volatility)
+        except:
+            return pd.NA
+
     def compute_sloan_ratio(self):
         if not self._fetch_financials():
             return pd.NA
@@ -601,6 +620,7 @@ class FundamentalAnalyzer:
             "price_to_ema200": self.compute_price_to_ema200(),
             "sma50": self.compute_sma50(),
             "sma200": self.compute_sma200(),
+            "volatility": self.compute_volatility(),
         }
 
         # Add all info-based metrics
