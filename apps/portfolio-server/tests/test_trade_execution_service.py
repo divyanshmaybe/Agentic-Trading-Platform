@@ -76,7 +76,7 @@ class MockTradeModel:
         row = self.rows.get(trade_id)
         return MockRecord(row) if row else None
     
-    async def find_many(self, where: Optional[Dict] = None, take: Optional[int] = None) -> List[MockRecord]:
+    async def find_many(self, where: Optional[Dict] = None, take: Optional[int] = None, order: Optional[Dict] = None) -> List[MockRecord]:
         results = []
         if not where:
             return [MockRecord(r) for r in self.rows.values()][:take or 100]
@@ -133,7 +133,19 @@ class MockTradeModel:
     async def update_many(self, where: Dict[str, Any], data: Dict[str, Any]) -> int:
         count = 0
         for trade_id, row in self.rows.items():
-            match = all(row.get(k) == v for k, v in where.items())
+            match = True
+            for k, v in where.items():
+                if k == "status":
+                    if isinstance(v, dict) and "in" in v:
+                        if row.get(k) not in v["in"]:
+                            match = False
+                            break
+                    elif row.get(k) != v:
+                        match = False
+                        break
+                elif row.get(k) != v:
+                    match = False
+                    break
             if match:
                 row.update(data)
                 row["updated_at"] = datetime.utcnow()
@@ -1948,7 +1960,7 @@ async def test_execute_trade_missing_linked_trade(service_env):
 
 @pytest.mark.asyncio
 async def test_execute_trade_without_agent(service_env):
-    """Test execute_trade for trade without an agent (no cash reservation needed)."""
+    """Test execute_trade for trade without an agent - should fail when creating new position."""
     from services.trade_execution_service import TradeExecutionService
     
     client = service_env["client"]
@@ -1963,8 +1975,9 @@ async def test_execute_trade_without_agent(service_env):
     
     result = await service.execute_trade(trade_id, simulate=True)
     
-    # Should execute without cash reservation
-    assert result["status"] == "executed"
+    # Without agent_id and allocation_id, creating new positions should fail
+    # This is expected behavior as trades need proper allocation tracking
+    assert result["status"] == "failed"
 
 
 @pytest.mark.asyncio
@@ -4007,6 +4020,7 @@ async def test_position_tx_buy_new_position(service_env):
             executed_price=150.0,
             trade_id="test-trade-1",
             agent_id="agent-1",
+            allocation_id="alloc-1",
         )
 
 
@@ -4065,6 +4079,7 @@ async def test_position_tx_short_sell_new_position(service_env):
             executed_price=200.0,
             trade_id="test-trade-3",
             agent_id="agent-1",
+            allocation_id="alloc-1",
         )
 
 

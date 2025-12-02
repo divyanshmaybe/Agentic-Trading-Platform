@@ -242,7 +242,15 @@ class FakeTrade:
         for trade_id, row in self.rows.items():
             matches = True
             for key, value in where.items():
-                if row.get(key) != value:
+                if key == "status":
+                    if isinstance(value, dict) and "in" in value:
+                        if row.get(key) not in value["in"]:
+                            matches = False
+                            break
+                    elif row.get(key) != value:
+                        matches = False
+                        break
+                elif row.get(key) != value:
                     matches = False
                     break
             if matches:
@@ -262,7 +270,7 @@ class FakeTrade:
                 return result
         return SimpleNamespace(**row) if row else None
 
-    async def find_many(self, where: Optional[Dict[str, Any]] = None, take: Optional[int] = None, include: Optional[Dict[str, Any]] = None) -> List[Any]:
+    async def find_many(self, where: Optional[Dict[str, Any]] = None, take: Optional[int] = None, include: Optional[Dict[str, Any]] = None, order: Optional[Dict[str, Any]] = None) -> List[Any]:
         """Find multiple trades matching the where clause."""
         results = []
         for row in self.rows.values():
@@ -824,9 +832,16 @@ async def test_pipeline_service_process_trade_signals(monkeypatch: pytest.Monkey
     monkeypatch.setattr("services.pipeline_service.TradeExecutionService", FakeTradeService, raising=False)
 
     dispatched: List[str] = []
+    
+    def fake_apply_async(args=None, kwargs=None, **extra):
+        """Mock apply_async to capture dispatched trade IDs."""
+        if args and len(args) > 0:
+            dispatched.append(args[0])
+        return None
+    
     monkeypatch.setattr(
-        "workers.trade_execution_tasks.execute_trade_job.delay",
-        lambda trade_id: dispatched.append(trade_id),
+        "workers.trade_execution_tasks.execute_trade_job.apply_async",
+        fake_apply_async,
         raising=False,
     )
     
@@ -838,7 +853,7 @@ async def test_pipeline_service_process_trade_signals(monkeypatch: pytest.Monkey
     service = PipelineService(str(PORTFOLIO_SERVER_ROOT), logger=None)
 
     summary = await service._process_nse_trade_signals_async(
-        signals=[{"symbol": "RELIANCE", "signal": 1, "confidence": 0.85}],
+        signals=[{"symbol": "RELIANCE", "signal": 1, "confidence": 0.85, "reference_price": 200.0}],
         publish_kafka=True,
     )
 
