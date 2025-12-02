@@ -14,7 +14,7 @@ export function generateCompanyReportPdf(report: CompanyReport) {
   const pageWidth = pdf.internal.pageSize.getWidth();
   const pageHeight = pdf.internal.pageSize.getHeight();
 
-  const margin = 20;
+  const margin = 10;
   const contentWidth = pageWidth - margin * 2;
 
   let cursorY = margin;
@@ -51,37 +51,47 @@ export function generateCompanyReportPdf(report: CompanyReport) {
     cursorY += 4;
   };
 
-  const writeSubheading = (text: string) => {
-    text = clean(text);
-    pdf.setFont("helvetica", "bold");
-    pdf.setFontSize(15);
+	const writeSubheading = (text: string) => {
+		text = clean(text);
+		pdf.setFont("helvetica", "bold");
+		pdf.setFontSize(15);
 
-    const lines = pdf.splitTextToSize(text, contentWidth);
-    const lineHeight = 8;
+		const lines = pdf.splitTextToSize(text, contentWidth);
+		const lineHeight = 8;
 
-    ensureSpace(lines.length * lineHeight);
-    lines.forEach((line) => {
-      pdf.text(line, margin, cursorY);
-      cursorY += lineHeight;
-    });
-    cursorY += 3;
-  };
+		for (const line of lines) {
+			if (cursorY + lineHeight > pageHeight - margin) {
+				pdf.addPage();
+				cursorY = margin;
+			}
+			pdf.text(line, margin, cursorY);
+			cursorY += lineHeight;
+		}
 
-  const writeParagraph = (text: string) => {
-    text = clean(text);
-    pdf.setFont("helvetica", "normal");
-    pdf.setFontSize(12);
+		cursorY += 1; // reduced padding
+	};
 
-    const lines = pdf.splitTextToSize(text, contentWidth);
-    const lineHeight = 6;
+	const writeParagraph = (text: string) => {
+		text = clean(text);
+		pdf.setFont("helvetica", "normal");
+		pdf.setFontSize(12);
 
-    ensureSpace(lines.length * lineHeight);
-    lines.forEach((line) => {
-      pdf.text(line, margin, cursorY);
-      cursorY += lineHeight;
-    });
-    cursorY += 3;
-  };
+		const lines = pdf.splitTextToSize(text, contentWidth);
+		const lineHeight = 6;
+
+		for (const line of lines) {
+			if (cursorY + lineHeight > pageHeight - margin) {
+				pdf.addPage();
+				cursorY = margin;
+			}
+			pdf.text(line, margin, cursorY);
+			cursorY += lineHeight;
+		}
+
+		cursorY += 2; // Small padding after paragraph
+	};
+
+
 
   writeHeading(report.company_name || report.ticker);
 
@@ -104,6 +114,7 @@ export function generateCompanyReportPdf(report: CompanyReport) {
     if (report[key]) {
       writeSubheading(title);
       writeParagraph(report[key]);
+	  cursorY += 5;
     }
   });
 
