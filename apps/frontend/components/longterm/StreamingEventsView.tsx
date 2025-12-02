@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, useMemo } from "react"
 import { EventMessage } from "./EventMessage"
 import { useEventResolution } from "./useEventResolution"
 import type { LowRiskEvent } from "@/components/hooks/useLowRiskEvents"
@@ -14,7 +14,14 @@ const debug = false // set to true to see the raw events
 export function StreamingEventsView({ events }: StreamingEventsViewProps) {
 	const previousEventIdsRef = useRef<Set<string>>(new Set())
 	const [newEventIds, setNewEventIds] = useState<Set<string>>(new Set())
+	const scrollRef = useRef<HTMLDivElement>(null)
+	const [autoScroll, setAutoScroll] = useState(true)
 	const { getResolvedStatus } = useEventResolution(events)
+
+	// Sort events chronologically (oldest → newest)
+	const sortedEvents = useMemo(() => {
+		return events.slice().sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+	}, [events])
 
 	// Track which events are new (not seen before)
 	useEffect(() => {
@@ -44,13 +51,34 @@ export function StreamingEventsView({ events }: StreamingEventsViewProps) {
 		return () => clearTimeout(timeout)
 	}, [events])
 
+	// Auto-scroll to bottom when new events arrive
+	useEffect(() => {
+		if (autoScroll && scrollRef.current) {
+			const el = scrollRef.current
+			el.scrollTop = el.scrollHeight
+		}
+	}, [sortedEvents, autoScroll])
+
+	// Detect user scrolling up/down
+	const onScroll = () => {
+		const el = scrollRef.current
+		if (!el) return
+
+		const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 5
+		setAutoScroll(atBottom)
+	}
+
 	return (
 		<div className="flex-1 overflow-hidden">
-			<div className="max-h-[80vh] overflow-y-auto no-scrollbar">
+			<div
+				ref={scrollRef}
+				onScroll={onScroll}
+				className="max-h-[80vh] overflow-y-auto no-scrollbar"
+			>
 				<div className="space-y-3">
 				 {
 					debug ? (
-						events.map((event) => (
+						sortedEvents.map((event) => (
 							<div
 								key={event.id}
 								className="rounded-lg border border-white/10 bg-white/8 p-4 backdrop-blur-sm"
@@ -60,7 +88,7 @@ export function StreamingEventsView({ events }: StreamingEventsViewProps) {
 								</pre>
 							</div>
 						))
-					) : events.map((event) => (
+					) : sortedEvents.map((event) => (
 						<div
 							key={event.id}
 							className={newEventIds.has(event.id) ? "animate-event-enter no-scrollbar" : "no-scrollbar"}
