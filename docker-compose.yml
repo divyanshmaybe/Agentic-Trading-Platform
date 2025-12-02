@@ -92,7 +92,6 @@ services:
       dockerfile: apps/auth_server/Dockerfile
     env_file:
       - .env
-      - apps/auth_server/.env
     environment:
       NODE_ENV: production
       PORT: 4000
@@ -136,7 +135,7 @@ services:
       dockerfile: apps/notification_server/Dockerfile
     env_file:
       - .env
-      - apps/notification_server/.env
+      - apps/portfolio-server/.env
     environment:
       NODE_ENV: production
       DATABASE_URL: postgresql://auth_user:auth_password@postgres:5432/auth_db
@@ -178,7 +177,7 @@ services:
       dockerfile: apps/portfolio-server/Dockerfile
     env_file:
       - .env
-      - apps/portfolio-server/docker.env
+      - apps/portfolio-server/.env
     environment:
       PORT: 8000
       SKIP_DOTENV: "true"
@@ -199,7 +198,7 @@ services:
       KAFKA_ENABLED: "true"
     working_dir: /app/apps/portfolio-server
     command: >
-      bash -c "rm -f /app/apps/portfolio-server/.env && python -m prisma generate &&
+      bash -c "python -m prisma generate &&
                until python -m prisma db push --accept-data-loss; do
                  echo 'Waiting for Postgres...';
                  sleep 2;
@@ -209,6 +208,7 @@ services:
       - ./apps/portfolio-server:/app/apps/portfolio-server
       - ./shared:/app/shared
       - ./middleware:/app/middleware
+      - ./scripts:/app/scripts
     ports:
       - "8000:8000"
     depends_on:
@@ -226,7 +226,7 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-      - apps/portfolio-server/docker.env
+      - apps/portfolio-server/.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
       SKIP_DOTENV: "true"
@@ -249,7 +249,7 @@ services:
       KAFKA_ENABLED: "true"
     working_dir: /app/apps/portfolio-server
     command: >
-      bash -c "rm -f /app/apps/portfolio-server/.env && python -m prisma generate &&
+      bash -c "python -m prisma generate &&
                until python -m prisma db push --accept-data-loss; do
                  echo 'Waiting for Postgres...';
                  sleep 2;
@@ -261,6 +261,7 @@ services:
       - ./apps/portfolio-server:/app/apps/portfolio-server
       - ./shared:/app/shared
       - ./middleware:/app/middleware
+      - ./scripts:/app/scripts
     depends_on:
       portfolio_postgres:
         condition: service_healthy
@@ -269,14 +270,14 @@ services:
     networks:
       - agentInvest
 
-  # Celery Worker - Pipeline Queue (NSE filings sentiment)
-  portfolio_celery_pipeline:
+  # Celery Worker - NSE Pipeline Queue (NSE filings - dedicated, 1 worker)
+  portfolio_celery_nse_pipeline:
     image: portfolio_server:latest
-    container_name: portfolio_celery_pipeline
+    container_name: portfolio_celery_nse_pipeline
     restart: unless-stopped
     env_file:
       - .env
-      - apps/portfolio-server/docker.env
+      - apps/portfolio-server/.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
       SKIP_DOTENV: "true"
@@ -292,24 +293,75 @@ services:
       INTERNAL_SERVICE_SECRET: agentinvest-secret
       PROMETHEUS_ENABLED: "true"
       PROMETHEUS_PORT: "9102"
-      WORKER_NAME: pipeline@docker
+      WORKER_NAME: nse_pipeline@docker
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      KAFKA_CLIENT_ID: portfolio-celery-pipeline
+      KAFKA_CLIENT_ID: portfolio-celery-nse-pipeline
       KAFKA_ENABLED: "true"
     working_dir: /app/apps/portfolio-server
     command: >
-      bash -c "rm -f /app/apps/portfolio-server/.env && python -m prisma generate &&
+      bash -c "python -m prisma generate &&
                until python -m prisma db push --accept-data-loss; do
                  echo 'Waiting for Postgres...';
                  sleep 2;
                done &&
-               celery -A celery_app:celery_app worker --loglevel=info -Q pipelines --concurrency=2 --hostname=pipeline@%h --max-tasks-per-child=50 --prefetch-multiplier=1"
+               celery -A celery_app:celery_app worker --loglevel=info -Q nse_pipeline,pipelines --concurrency=1 --hostname=nse_pipeline@%h --max-tasks-per-child=10 --prefetch-multiplier=1"
     ports:
       - "9102:9102"
     volumes:
       - ./apps/portfolio-server:/app/apps/portfolio-server
       - ./shared:/app/shared
       - ./middleware:/app/middleware
+      - ./scripts:/app/scripts
+    depends_on:
+      portfolio_postgres:
+        condition: service_healthy
+      portfolio_redis:
+        condition: service_healthy
+    networks:
+      - agentInvest
+
+  # Celery Worker - Low Risk Pipeline Queue (Low-risk stock selection - dedicated, 1 worker, long-running)
+  portfolio_celery_low_risk:
+    image: portfolio_server:latest
+    container_name: portfolio_celery_low_risk
+    restart: unless-stopped
+    env_file:
+      - .env
+      - apps/portfolio-server/.env
+    environment:
+      PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
+      SKIP_DOTENV: "true"
+      CELERY_WORKER_RUNNING: "1"
+      DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
+      SHADOW_DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
+      AUTH_SERVER_URL: http://auth_server:4000
+      PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
+      REDIS_HOST: portfolio_redis
+      REDIS_PORT: 6379
+      CELERY_BROKER_URL: redis://portfolio_redis:6379/0
+      CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/1
+      INTERNAL_SERVICE_SECRET: agentinvest-secret
+      PROMETHEUS_ENABLED: "true"
+      PROMETHEUS_PORT: "9107"
+      WORKER_NAME: low_risk@docker
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_CLIENT_ID: portfolio-celery-low-risk
+      KAFKA_ENABLED: "true"
+    working_dir: /app/apps/portfolio-server
+    command: >
+      bash -c "python -m prisma generate &&
+               until python -m prisma db push --accept-data-loss; do
+                 echo 'Waiting for Postgres...';
+                 sleep 2;
+               done &&
+               celery -A celery_app:celery_app worker --loglevel=info -Q low_risk_pipeline --concurrency=1 --hostname=low_risk@%h --max-tasks-per-child=5 --prefetch-multiplier=1"
+    ports:
+      - "9107:9107"
+    volumes:
+      - ./apps/portfolio-server:/app/apps/portfolio-server
+      - ./shared:/app/shared
+      - ./middleware:/app/middleware
+      - ./scripts:/app/scripts
     depends_on:
       portfolio_postgres:
         condition: service_healthy
@@ -325,7 +377,7 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-      - apps/portfolio-server/docker.env
+      - apps/portfolio-server/.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
       SKIP_DOTENV: "true"
@@ -347,7 +399,7 @@ services:
       KAFKA_ENABLED: "true"
     working_dir: /app/apps/portfolio-server
     command: >
-      bash -c "rm -f /app/apps/portfolio-server/.env && python -m prisma generate &&
+      bash -c "python -m prisma generate &&
                until python -m prisma db push --accept-data-loss; do
                  echo 'Waiting for Postgres...';
                  sleep 2;
@@ -359,6 +411,7 @@ services:
       - ./apps/portfolio-server:/app/apps/portfolio-server
       - ./shared:/app/shared
       - ./middleware:/app/middleware
+      - ./scripts:/app/scripts
     depends_on:
       portfolio_postgres:
         condition: service_healthy
@@ -374,7 +427,7 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-      - apps/portfolio-server/docker.env
+      - apps/portfolio-server/.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
       SKIP_DOTENV: "true"
@@ -396,7 +449,7 @@ services:
       KAFKA_ENABLED: "true"
     working_dir: /app/apps/portfolio-server
     command: >
-      bash -c "rm -f /app/apps/portfolio-server/.env && python -m prisma generate &&
+      bash -c "python -m prisma generate &&
                until python -m prisma db push --accept-data-loss; do
                  echo 'Waiting for Postgres...';
                  sleep 2;
@@ -408,6 +461,7 @@ services:
       - ./apps/portfolio-server:/app/apps/portfolio-server
       - ./shared:/app/shared
       - ./middleware:/app/middleware
+      - ./scripts:/app/scripts
     depends_on:
       portfolio_postgres:
         condition: service_healthy
@@ -423,7 +477,7 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-      - apps/portfolio-server/docker.env
+      - apps/portfolio-server/.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
       SKIP_DOTENV: "true"
@@ -445,7 +499,7 @@ services:
       KAFKA_ENABLED: "true"
     working_dir: /app/apps/portfolio-server
     command: >
-      bash -c "rm -f /app/apps/portfolio-server/.env && python -m prisma generate &&
+      bash -c "python -m prisma generate &&
                until python -m prisma db push --accept-data-loss; do
                  echo 'Waiting for Postgres...';
                  sleep 2;
@@ -457,6 +511,7 @@ services:
       - ./apps/portfolio-server:/app/apps/portfolio-server
       - ./shared:/app/shared
       - ./middleware:/app/middleware
+      - ./scripts:/app/scripts
     depends_on:
       portfolio_postgres:
         condition: service_healthy
@@ -472,7 +527,7 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-      - apps/portfolio-server/docker.env
+      - apps/portfolio-server/.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
       SKIP_DOTENV: "true"
@@ -494,7 +549,7 @@ services:
       KAFKA_ENABLED: "true"
     working_dir: /app/apps/portfolio-server
     command: >
-      bash -c "rm -f /app/apps/portfolio-server/.env && python -m prisma generate &&
+      bash -c "python -m prisma generate &&
                until python -m prisma db push --accept-data-loss; do
                  echo 'Waiting for Postgres...';
                  sleep 2;
@@ -506,6 +561,7 @@ services:
       - ./apps/portfolio-server:/app/apps/portfolio-server
       - ./shared:/app/shared
       - ./middleware:/app/middleware
+      - ./scripts:/app/scripts
     depends_on:
       portfolio_postgres:
         condition: service_healthy
@@ -521,7 +577,7 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-      - apps/portfolio-server/docker.env
+      - apps/portfolio-server/.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
       SKIP_DOTENV: "true"
@@ -533,6 +589,7 @@ services:
       REDIS_PORT: 6379
       CELERY_BROKER_URL: redis://portfolio_redis:6379/0
       CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/1
+      REDBEAT_REDIS_URL: redis://portfolio_redis:6379/0
       INTERNAL_SERVICE_SECRET: agentinvest-secret
       PROMETHEUS_ENABLED: "false"
       # Override Kafka config for Docker networking
@@ -541,16 +598,17 @@ services:
       KAFKA_ENABLED: "true"
     working_dir: /app/apps/portfolio-server
     command: >
-      bash -c "rm -f /app/apps/portfolio-server/.env && python -m prisma generate &&
+      bash -c "python -m prisma generate &&
                until python -m prisma db push --accept-data-loss; do
                  echo 'Waiting for Postgres...';
                  sleep 2;
                done &&
-               celery -A celery_app:celery_app beat --loglevel=info"
+               celery -A celery_app:celery_app beat --loglevel=info -S redbeat.RedBeatScheduler"
     volumes:
       - ./apps/portfolio-server:/app/apps/portfolio-server
       - ./shared:/app/shared
       - ./middleware:/app/middleware
+      - ./scripts:/app/scripts
     depends_on:
       portfolio_postgres:
         condition: service_healthy
@@ -558,7 +616,9 @@ services:
         condition: service_healthy
       portfolio_celery_trading:
         condition: service_started
-      portfolio_celery_pipeline:
+      portfolio_celery_nse_pipeline:
+        condition: service_started
+      portfolio_celery_low_risk:
         condition: service_started
       portfolio_celery_allocation:
         condition: service_started
@@ -578,7 +638,7 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-      - apps/portfolio-server/docker.env
+      - apps/portfolio-server/.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
       SKIP_DOTENV: "true"
@@ -589,13 +649,14 @@ services:
       REDIS_PORT: 6379
     working_dir: /app/apps/portfolio-server
     command: >
-      bash -c "rm -f /app/apps/portfolio-server/.env && python -m prisma generate &&
+      bash -c "python -m prisma generate &&
                pip install flower &&
                celery -A celery_app:celery_app flower --port=5555 --basic_auth=admin:admin123 --broker_api=redis://portfolio_redis:6379/0"
     volumes:
       - ./apps/portfolio-server:/app/apps/portfolio-server
       - ./shared:/app/shared
       - ./middleware:/app/middleware
+      - ./scripts:/app/scripts
     ports:
       - "5555:5555"
     depends_on:
@@ -620,19 +681,17 @@ services:
       dockerfile: apps/frontend/Dockerfile
     env_file:
       - .env
+      - apps/portfolio-server/.env
     environment:
       PORT: 3000
       NEXT_TELEMETRY_DISABLED: "1"
+      NODE_ENV: production
       AUTH_SERVER_URL: http://auth_server:4000
       INTERNAL_SERVICE_SECRET: agentinvest-secret
     working_dir: /app/apps/frontend
     command: >
       sh -c "pnpm --filter frontend exec next start -H 0.0.0.0 -p ${PORT:-3000}"
-    volumes:
-      - ./apps/frontend:/app/apps/frontend
-      - ./packages:/app/packages
-      - ./shared:/app/shared
-      - ./types:/app/types
+    # NOTE: No volumes mounted for production - use the built .next from the image
     ports:
       - "3000:3000"
     depends_on:

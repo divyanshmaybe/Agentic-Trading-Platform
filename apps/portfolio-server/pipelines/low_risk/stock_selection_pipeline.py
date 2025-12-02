@@ -52,7 +52,6 @@ from utils.low_risk_utils import (
     parse_json_response,
     clean_and_parse_agent_json_response,
     publish_to_kafka,
-    LowRiskKafkaPublisher
 )
 from . industry_pipeline import IndustrySelectionPipeline
 
@@ -86,9 +85,7 @@ class StockSelectionPipeline:
         self.company_df = company_df
         self.industry_list = industry_list
 
-        # Kafka publisher
-        self.kafka = LowRiskKafkaPublisher()
-        self.publisher = self.kafka.get_publisher()
+        # Store user context for Kafka publishing (uses singleton via publish_to_kafka helper)
         self.user_id = user_id
         self.task_id = task_id
         self.pipeline = pipeline
@@ -109,7 +106,7 @@ class StockSelectionPipeline:
         self._loop_ready = threading.Event()
         self._start_background_loop()
 
-        logger.info(f"✓ Stock selection pipeline initialized with {len(company_df)} companies")
+        logger.info(f"Stock selection pipeline initialized with {len(company_df)} companies")
 
     async def generate_company_report(self, ticker: str) -> Dict[str, Any]:
         """
@@ -148,7 +145,7 @@ class StockSelectionPipeline:
 
             msg = f"🔍 Generating company report for {ticker}..."
             logger.info(msg)
-            publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
+            # publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
 
             response = model_with_search.invoke(messages)
             report_text = response.content
@@ -170,10 +167,14 @@ class StockSelectionPipeline:
             await self.report_service.upsert_report(report)
             logger.info(f"✅ Report stored to MongoDB for {ticker}")
 
-            msg = f"✅ Company report generated for {ticker}"
+            msg = f"Company report generated for {ticker}"
             logger.info(msg)
             publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
-
+            to_send = {
+                                "status": "fetched",
+                                "content": {"content": ticker}
+                        }
+            publish_to_kafka(to_send, user_id=self.user_id, message_type="stock", task_id=self.task_id)
             return report
 
         except Exception as e:
@@ -224,9 +225,12 @@ class StockSelectionPipeline:
                     res_json = self.pipeline.get_metrics(ticker)
                     if res_json is None:
                         logger.warning(f"No metrics found for {ticker}")
-                    ticker_result = {}
-                    for m in metrics:
-                        ticker_result[m] = res_json.get(m, None)
+                        # Set all metrics to None if res_json is None
+                        ticker_result = {m: None for m in metrics}
+                    else:
+                        ticker_result = {}
+                        for m in metrics:
+                            ticker_result[m] = res_json.get(m, None)
                     result[ticker] = ticker_result
 
                 metrics_list = ", ".join(metrics)
@@ -269,7 +273,7 @@ class StockSelectionPipeline:
                     "status": "cached",
                     "content": {"ticker": ticker}
                 }
-                logger.info(f"📋 Using cached report for {ticker}")
+                logger.info(f"Using cached report for {ticker}")
                 publish_to_kafka(to_send, user_id=self.user_id, message_type="report", task_id=self.task_id)
                 return company_report_db[ticker]
 
@@ -357,7 +361,7 @@ class StockSelectionPipeline:
             Output:
             - A string of reasoning tokens with proper analysis, interpretation, and possible next steps.
             """
-            reasoning_llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro")
+            reasoning_llm = ChatGoogleGenerativeAI(model="gemini-3-pro-preview", thinking_budget=2000)
             messages = runtime.state["messages"]
             reasoning_messages = runtime.state["reasoning_messages"]
             if len(reasoning_messages) == 0:
@@ -382,7 +386,7 @@ class StockSelectionPipeline:
             else:
                 reasoning = ""
                 new_reasoning_message = AIMessage("")
-            msg = reasoning
+            msg = reasoning[0].text
             to_send = {
                 "status": "thinking",
                 "content": {
@@ -399,8 +403,66 @@ class StockSelectionPipeline:
             )
         return reasoning_tool
 
-    def get_company_prompt(self, industry: str, company_df: pd.DataFrame, pipeline) -> str:
+    def check_low_risk_guardrails(self, data):
+        report = {
+            "passed": True,
+            "failed_guardrails": []
+        }
+
+        def fail(message):
+            report["passed"] = False
+            report["failed_guardrails"].append(message)
+
+        def is_valid(val):
+            if val is None or pd.NA:
+                return False
+            return True
+
+        try:
+            price =      data['current_price']
+            sma200 =     data['sma200']
+            sma50 =      data['sma50']
+            ocf =        data['operating_cashflow']
+            net_income = data['net_income']
+            rsi =        data['rsi']
+            volatility = 0
+
+            # Guardrail 1
+            if is_valid(price) and is_valid(sma200):
+                if price <= sma200:
+                    fail(f"Guardrail 1 Violation: Current Price({price}) is not greater than SMA200({sma200})")
+
+            # Guardrail 2
+            if is_valid(sma50) and is_valid(sma200):
+                if sma50 <= sma200:
+                    fail(f"Guardrail 2 Violation: SMA50 ({sma50}) is not greater than SMA200 ({sma200})")
+
+            # Guardrail 3
+            if is_valid(ocf) and is_valid(net_income):
+                if ocf <= net_income:
+                    fail(f"Guardrail 3 Violation: Operating Cashflow ({ocf}) is not greater than Net Income ({net_income})")
+
+            # Guardrail 4
+            if is_valid(rsi):
+                if rsi >= 70:
+                    fail(f"Guardrail 4 Violation: RSI ({rsi}) is >= 70 (Overbought)")
+
+            # Guardrail 5
+            if is_valid(volatility):
+                if volatility >= 0.6:
+                    fail(f"Guardrail 5 Violation: Volatility ({volatility}) is >= 0.6")
+
+        except Exception as e:
+            return {
+                "passed": False,
+                "failed_guardrails": [f"error: {str(e)}"]
+            }
+
+        return report
+
+    def get_company_prompt(self, industry: str, company_df: pd.DataFrame) -> str:
         """Generate a prompt containing company descriptions for an industry."""
+        pipeline = self.pipeline
         company_prompt = ""
 
         # Filter companies by industry
@@ -410,15 +472,44 @@ class StockSelectionPipeline:
             logger.warning(f"No companies found for industry: {industry}")
             return f"No companies available for {industry}"
 
+        # failed companies
+        failed_companies = []
+
         # Build company prompt
         for _, row in industry_companies.iterrows():
             company_name = row.get("Company Name", "")
             company_brief = row.get("company_brief", "")
-            if company_name:
-                company_prompt += f"{company_name}"
-                if company_brief:
-                    company_prompt += f" - {company_brief}"
-                company_prompt += "\n"
+
+            # CHECKING GUARDRAILS
+            ticker = row.get("Symbol", "")
+            res_json = pipeline.get_metrics(ticker)
+            metrics = ["current_price", 'sma200', 'sma50','operating_cashflow', 'net_income', 'rsi']
+            if res_json is None:
+                logger.warning(f"No metrics found for {ticker}")
+                # Set all metrics to None if res_json is None
+                ticker_result = {m: None for m in metrics}
+            else:
+                ticker_result = {}
+                for m in metrics:
+                    ticker_result[m] = res_json.get(m, None)
+
+            guardrail_report = self.check_low_risk_guardrails(ticker_result)
+
+            if guardrail_report["passed"]:
+                if company_name:
+                    company_prompt += f"{company_name}"
+                    if company_brief:
+                        company_prompt += f" - {company_brief}"
+                    company_prompt += "\n"
+            else:
+                failed_companies.append({
+                    "name": company_name,
+                    "failed_guardrails": guardrail_report["failed_guardrails"]
+                })
+
+        if len(failed_companies) > 0:
+            logger.info("Rejecting companies due to failed guardrails")
+            publish_to_kafka({"content": f"Rejecting companies due to failed guardrails\n{', '.join(c["name"] for c in failed_companies)}"}, user_id=self.user_id, task_id=self.task_id)
 
         return company_prompt.strip()
 
@@ -476,7 +567,7 @@ class StockSelectionPipeline:
             # Invoke agent
             msg = f"Invoking stock selection agent for {industry}..."
             logger.info(msg)
-            publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
+            publish_to_kafka({"content": msg, "stage": f"{industry}", "status": "start"}, user_id=self.user_id, task_id=self.task_id, message_type="stage")
 
             # Stream agent responses
             messages = []
@@ -523,9 +614,9 @@ class StockSelectionPipeline:
                 absolute_percentage = (relative_percentage / 100.0) * industry_allocation
                 item["percentage"] = absolute_percentage
 
-            msg = f"✅ Stock selection complete for {industry}: {len(ind_portfolio)} stocks selected"
+            msg = f"Stock selection complete for {industry}: {len(ind_portfolio)} stocks selected"
             logger.info(msg)
-            publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
+            publish_to_kafka({"content": msg,"stage": f"{industry}", "status": "done"}, user_id=self.user_id, task_id=self.task_id,message_type="stage")
 
             return ind_portfolio
 
@@ -575,7 +666,7 @@ class StockSelectionPipeline:
             raise ValueError("No stocks selected in final portfolio")
 
         total_allocation = sum(item["percentage"] for item in final_portfolio)
-        msg = f"✅ Stock portfolio complete: {len(final_portfolio)} stocks, total allocation: {total_allocation:.1f}%"
+        msg = f"Stock portfolio complete: {len(final_portfolio)} stocks, total allocation: {total_allocation:.1f}%"
         logger.info(msg)
         publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
 
@@ -589,7 +680,7 @@ class StockSelectionPipeline:
 
     def run(self, fund_allocated: float) -> Dict[str, Any]:
         """Run the complete stock selection and trade generation pipeline."""
-        msg = "🚀 Starting stock selection pipeline..."
+        msg = "Starting stock selection pipeline..."
         logger.info(msg)
         publish_to_kafka({"content": msg}, user_id=self.user_id, message_type="info", task_id=self.task_id)
 
@@ -603,7 +694,7 @@ class StockSelectionPipeline:
             logger.info(msg)
             publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
             industry_list = self.industry_list
-            msg = f"✅ Using {len(industry_list)} industries"
+            msg = f"Using {len(industry_list)} industries"
             logger.info(msg)
             publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
         except Exception as e:
@@ -623,13 +714,13 @@ class StockSelectionPipeline:
 
         # Convert portfolio to trade list
         try:
-            msg = f"💰 Converting portfolio to trades (fund: ₹{fund_allocated:,.2f})..."
+            msg = f"Converting portfolio to trades (fund: ₹{fund_allocated:,.2f})..."
             logger.info(msg)
             publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
 
             trade_list = trade_converter(final_portfolio, fund_allocated)
 
-            msg = f"✅ Trade list generated: {len(trade_list)} trades"
+            msg = f"Trade list generated: {len(trade_list)} trades"
             logger.info(msg)
             publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
         except Exception as e:
@@ -641,7 +732,7 @@ class StockSelectionPipeline:
         total_shares = sum(trade["no_of_shares_bought"] for trade in trade_list)
 
         logger.info(
-            f"📈 Portfolio summary: {len(trade_list)} trades, "
+            f"Portfolio summary: {len(trade_list)} trades, "
             f"₹{total_invested:,.2f} invested, {total_shares:,.0f} shares"
         )
 

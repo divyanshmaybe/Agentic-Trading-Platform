@@ -1835,6 +1835,12 @@ class PipelineService:
         if self._env_loaded:
             return
 
+        # Skip loading .env files if SKIP_DOTENV is set (Docker environment)
+        if os.environ.get("SKIP_DOTENV", "").lower() == "true":
+            self.logger.debug("SKIP_DOTENV=true, using Docker environment variables")
+            self._env_loaded = True
+            return
+
         server_env = Path(self.server_dir) / ".env"
         project_root = Path(self.server_dir).resolve().parents[1]
         root_env = project_root / ".env"
@@ -1848,8 +1854,10 @@ class PipelineService:
             os.environ.setdefault("PORTFOLIO_SERVER_ENV_PATH", str(server_env))
             self.logger.debug("Loaded server .env: %s", server_env)
         else:
-            raise FileNotFoundError(
-                f".env file not found in portfolio-server directory: {server_env}"
+            # Only raise error in development mode, not in Docker
+            self.logger.warning(
+                f".env file not found in portfolio-server directory: {server_env}. "
+                "Using environment variables from Docker/system."
             )
 
         self._env_loaded = True

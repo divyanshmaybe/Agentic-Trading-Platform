@@ -1,5 +1,6 @@
 "use client"
 
+import { useEffect } from "react"
 import { EventMessage } from "./EventMessage"
 
 interface Event {
@@ -15,13 +16,24 @@ interface PipelineEventsListProps {
 const debug = false // set to true to see the raw events
 
 export function PipelineEventsList({ events }: PipelineEventsListProps) {
+	// Cleanup: restore body scroll on unmount
+	useEffect(() => {
+		return () => {
+			document.body.style.overflow = "";
+		};
+	}, [])
+
 	return (
 		<div className="w-full mt-6">
 			<div className="rounded-lg border border-white/10 bg-white/8 p-4 backdrop-blur-sm">
 				<div className="mb-3 text-sm text-white/60">
 					Showing {events.length} event{events.length !== 1 ? 's' : ''} (including summary)
 				</div>
-				<div className="max-h-[600px] overflow-y-auto">
+				<div
+					onMouseEnter={() => document.body.style.overflow = "hidden"}
+					onMouseLeave={() => document.body.style.overflow = ""}
+					className="max-h-[600px] overflow-y-auto"
+				>
 					<div className="space-y-4">
 						{events.length === 0 ? (
 							<div className="text-white/60 text-sm text-center py-4">No events to display</div>

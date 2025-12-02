@@ -26,7 +26,6 @@ from utils.low_risk_utils import (
     render_prompt_template,
     clean_and_parse_agent_json_response,
     validate_percentage_list,
-    LowRiskKafkaPublisher,
     publish_to_kafka,
 )
 from .industry_indicators_pipeline import IndustryIndicatorsPipeline
@@ -38,17 +37,6 @@ if not langsmith_api_key:
 os.environ["LANGSMITH_API_KEY"] = langsmith_api_key
 os.environ["LANGSMITH_TRACING_V2"] = "true"
 os.environ["LANGSMITH_PROJECT"] = "portfolio_prod"
-
-
-# Import KafkaPublisher type for type hints
-from typing import TYPE_CHECKING
-if TYPE_CHECKING:
-    import sys
-    from pathlib import Path as _TmpPath
-    _shared_dir = _TmpPath(__file__).resolve().parent.parent.parent.parent / "shared" / "py"
-    if str(_shared_dir) not in sys.path:
-        sys.path.insert(0, str(_shared_dir))
-    from kafka_service import KafkaPublisher
 
 logger = logging.getLogger(__name__)
 
@@ -381,7 +369,7 @@ def industry_selector(
     pmi_val: float,
     gemini_api_key: str,
     user_id: str,
-    publisher: Optional["KafkaPublisher"] = None,
+    task_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Select industries using LLM agent based on economic regime.
@@ -393,7 +381,7 @@ def industry_selector(
         pmi_val: Current PMI value
         gemini_api_key: Gemini API key
         user_id: User identifier for Kafka messages
-        publisher: Optional KafkaPublisher for sending agent logs
+        task_id: Celery task ID for Kafka message routing
 
     Returns:
         List of dictionaries with industry allocations:
@@ -407,7 +395,7 @@ def industry_selector(
     # Invoke agent
     msg = "Invoking industry selection agent..."
     logger.info(msg)
-    publish_to_kafka({"content": msg}, user_id=user_id,message_type="start")
+    publish_to_kafka({"content": msg}, user_id=user_id, message_type="start", task_id=task_id)
     messages = []
     for chunk in agent.stream(
             {"messages": [HumanMessage("suggest industries")]},
@@ -425,7 +413,7 @@ def industry_selector(
                 }
             }
             # Publish to_send to Kafka
-            publish_to_kafka(to_send, user_id=user_id, message_type="industry")
+            publish_to_kafka(to_send, user_id=user_id, message_type="industry", task_id=task_id)
         elif isinstance(new_message[0], ToolMessage):
             metrics = json.loads(new_message[0].content)
             to_send = {
@@ -436,7 +424,7 @@ def industry_selector(
                 }
             }
             # Publish to_send to Kafka
-            publish_to_kafka(to_send, user_id=user_id, message_type="industry")
+            publish_to_kafka(to_send, user_id=user_id, message_type="industry", task_id=task_id)
 
     # Parse and validate response using common utility
     result = {"messages": messages}
@@ -450,7 +438,7 @@ def industry_selector(
         tolerance=1.0
     )
 
-    msg = f"✅ Industry selection complete: {len(industry_list)} industries"
+    msg = f"Industry selection complete: {len(industry_list)} industries"
     to_send = {
         "status": "done",
         "content": {
@@ -459,7 +447,7 @@ def industry_selector(
         }
     }
     logger.info(msg + f", total allocation: {sum(item['percentage'] for item in industry_list):.1f}%")
-    publish_to_kafka(to_send, user_id=user_id, message_type="industry")
+    publish_to_kafka(to_send, user_id=user_id, message_type="industry", task_id=task_id)
 
     return industry_list
 
@@ -475,6 +463,7 @@ class IndustrySelectionPipeline:
         user_id: str,
         gemini_api_key: Optional[str] = None,
         storage: Optional[EconomicIndicatorsStorage] = None,
+        task_id: Optional[str] = None,
     ):
         """
         Initialize the industry selection pipeline.
@@ -484,6 +473,7 @@ class IndustrySelectionPipeline:
             user_id: User identifier for logging and partitioning
             gemini_api_key: Gemini API key (if None, will try to get from env)
             storage: EconomicIndicatorsStorage instance (if None, will use get_storage())
+            task_id: Celery task ID for Kafka message routing
         """
         self.industry_pipeline = industry_pipeline
         self.user_id = user_id
@@ -498,10 +488,9 @@ class IndustrySelectionPipeline:
                 )
         self.gemini_api_key = gemini_api_key
 
-        # Get singleton Kafka publisher instance
-        self.kafka = LowRiskKafkaPublisher()
-        self.publisher = self.kafka.get_publisher()
+        # Store user context for Kafka publishing (uses singleton via publish_to_kafka helper)
         self.user_id = user_id  # Store user_id for publish calls
+        self.task_id = task_id  # Store task_id for Kafka message routing
 
         # Verify industry pipeline has computed data
         if not industry_pipeline._is_computed:
@@ -517,7 +506,7 @@ class IndustrySelectionPipeline:
             List of industry allocation dictionaries:
             [{"name": str, "percentage": float, "reasoning": str}, ...]
         """
-        msg = "🚀 Starting industry selection pipeline..."
+        msg = "Starting industry selection pipeline..."
         logger.info(msg)
 
         # Get PMI
@@ -525,7 +514,7 @@ class IndustrySelectionPipeline:
             pmi_val = get_pmi(self.storage)
             msg = f"✓ PMI value: {pmi_val}"
             logger.info(msg)
-            publish_to_kafka({"content": msg}, user_id=self.user_id)
+            publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
         except Exception as e:
             logger.error(f"Failed to get PMI: {e}", exc_info=True)
             raise
@@ -535,7 +524,7 @@ class IndustrySelectionPipeline:
             cpi_list = get_cpi_list(self.storage)
             msg = f"✓ CPI data: {len(cpi_list)} values"
             logger.info(msg)
-            publish_to_kafka({"content": msg}, user_id=self.user_id)
+            publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
         except Exception as e:
             logger.error(f"Failed to get CPI data: {e}", exc_info=True)
             raise
@@ -545,7 +534,7 @@ class IndustrySelectionPipeline:
             economic_regime = classify_macro_regime(pmi_val, cpi_list)
             msg = f"✓ Economic regime: {economic_regime}"
             logger.info(msg)
-            publish_to_kafka({"content": msg}, user_id=self.user_id)
+            publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
         except Exception as e:
             logger.error(f"Failed to classify regime: {e}", exc_info=True)
             raise
@@ -554,11 +543,11 @@ class IndustrySelectionPipeline:
         cpi_val = cpi_list[-1]
         msg = f"✓ Latest CPI value: {cpi_val}"
         logger.info(msg)
-        publish_to_kafka({"content": msg}, user_id=self.user_id)
+        publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
 
         msg = f"✓ Latest PMI value: {pmi_val}"
         logger.info(msg)
-        publish_to_kafka({"content": msg}, user_id=self.user_id)
+        publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
         # Select industries using LLM agent
         try:
             industry_list = industry_selector(
@@ -568,11 +557,11 @@ class IndustrySelectionPipeline:
                 pmi_val,
                 self.gemini_api_key,
                 self.user_id,
-                self.publisher,
+                task_id=self.task_id,
             )
-            msg = f"✅ Industry selection complete: {len(industry_list)} industries"
+            msg = f"Industry selection complete: {len(industry_list)} industries"
             logger.info(msg)
-            publish_to_kafka({"content": msg}, user_id=self.user_id)
+            publish_to_kafka({"content": msg}, user_id=self.user_id, task_id=self.task_id)
             return industry_list
         except Exception as e:
             logger.error(f"Failed to select industries: {e}", exc_info=True)

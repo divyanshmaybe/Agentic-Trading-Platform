@@ -1,0 +1,12 @@
+{
+  "trading_economics": {
+    "last_updated": "2025-12-02T12:19:34.665844Z",
+    "row_count": 131,
+    "data_file": "data/economic_indicators/trading_economics.json"
+  },
+  "cpi": {
+    "last_updated": "2025-12-02T12:19:35.829919Z",
+    "row_count": 11,
+    "data_file": "data/economic_indicators/cpi_data.json"
+  }
+}

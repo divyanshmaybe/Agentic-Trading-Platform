@@ -468,7 +468,9 @@ if t == "HINDALCO":
 # -------------------------------------------------------
 # REPORT PHASE
 # -------------------------------------------------------
-report_tickers = ["IGL", "HINDALCO", "NATIONALUM", "PETRONET", "GSPL"]
+
+report_tickers = ["RELIANCE", "HDFCBANK", "PETRONET", "HINDNKOPAR"]
+
 for i, t in enumerate(report_tickers):
     # Simulate cached report for first ticker
     if i == 0:
