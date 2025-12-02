@@ -226,6 +226,7 @@ def run_low_risk_pipeline(
         from pipelines.low_risk.stock_selection_pipeline import StockSelectionPipeline
         from pipelines.low_risk.industry_pipeline import IndustrySelectionPipeline
         from pipelines.low_risk.industry_indicators_pipeline import IndustryIndicatorsPipeline
+        from pipelines.low_risk.fundamental_analyzer_pipeline import FundamentalAnalyzerPipeline
         from utils.economic_indicators_storage import get_storage
         from market_data import get_market_data_service
         from pipelines.low_risk.angelone_batch_fetcher import create_fetcher_from_market_service
@@ -326,7 +327,26 @@ def run_low_risk_pipeline(
         )
         task_logger.info(f"✅ Selected {len(industry_list)} industries")
         
-        # === STAGE 5: Stock Selection ===
+        # === STAGE 5: Fundamental Analyzer ===
+        publish_to_kafka(
+            {"content": "Running fundamental analyzer...", "stage": "fundamental", "status": "start"},
+            user_id=user_id,
+            message_type="stage"
+        )
+        task_logger.info("📊 Running fundamental analyzer pipeline...")
+        fundamental_pipeline = FundamentalAnalyzerPipeline()
+        fundamental_result = fundamental_pipeline.run()
+        publish_to_kafka(
+            {
+                "content": f"Fundamental metrics ready for {len(getattr(fundamental_result, 'dataframe', []))} tickers",
+                "stage": "fundamental",
+                "status": "done"
+            },
+            user_id=user_id,
+            message_type="stage"
+        )
+
+        # === STAGE 6: Stock Selection ===
         publish_to_kafka(
             {"content": f"Running stock selection for {len(industry_list)} industries...", "stage": "stock_selection", "status": "start"},
             user_id=user_id,
@@ -334,6 +354,7 @@ def run_low_risk_pipeline(
         )
         task_logger.info("📈 Running stock selection pipeline...")
         stock_pipeline = StockSelectionPipeline(
+            pipeline=fundamental_pipeline,
             company_df=company_df,
             industry_list=industry_list,
             gemini_api_key=gemini_api_key,
@@ -362,7 +383,7 @@ def run_low_risk_pipeline(
             f"({summary['utilization_rate']:.2f}% utilization)"
         )
         
-        # === STAGE 6: Completion ===
+        # === STAGE 7: Completion ===
         completion_msg = (
             f"Pipeline completed: {summary['total_stocks']} stocks, "
             f"{summary['total_trades']} trades, "

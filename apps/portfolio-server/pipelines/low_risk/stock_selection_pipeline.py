@@ -226,7 +226,14 @@ class StockSelectionPipeline:
                     for m in metrics:
                         ticker_result[m] = res_json.get(m, None)
                     result[ticker] = ticker_result
-                    publish_to_kafka({"content": f"Fetching metrics {", ".join(metrics)} for {", ".join(tickers)}"}, user_id=self.user_id, message_type="info")
+
+                metrics_list = ", ".join(metrics)
+                tickers_list = ", ".join(tickers)
+                publish_to_kafka(
+                    {"content": f"Fetching metrics {metrics_list} for {tickers_list}"},
+                    user_id=self.user_id,
+                    message_type="info",
+                )
 
                 return result
             except Exception as e:
