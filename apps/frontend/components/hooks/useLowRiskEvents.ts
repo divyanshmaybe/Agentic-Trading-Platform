@@ -10,7 +10,7 @@ type ConnectionStatus = "connecting" | "open" | "closed" | "error";
 export interface LowRiskEvent {
   id: string;
   userId: string;
-  kind: "info" | "industry" | "stock" | "report" | "reasoning" | "summary";
+  kind: "info" | "industry" | "stock" | "report" | "reasoning" | "summary" | "stage";
   eventType: string | null;
   status: string | null;
   content: any | null;
