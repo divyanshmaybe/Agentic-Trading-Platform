@@ -19,21 +19,44 @@ export function generateCompanyReportPdf(report: CompanyReport) {
 
   let cursorY = margin;
 
-  const clean = (str: string): string =>
-    str
-      .normalize("NFKC")
-      .replace(/[\u200B-\u200D\u2060\uFEFF]/g, "")
-      .replace(/[\u00A0]/g, " ")
-      .replace(/\s+/g, " ")
-	.replace(/₹/g, "INR ")
-      .trim();
+	const currencyMap: Record<string, string> = {
+		"₹": "INR ",
+		"$": "USD ",
+		"€": "EUR ",
+		"£": "GBP ",
+		"¥": "JPY ",    // could be CNY or JPY but JPY is more common for symbol parsing
+		"₩": "KRW ",
+		"₽": "RUB ",
+		"₺": "TRY ",
+		"A$": "AUD ",
+		"C$": "CAD ",
+		"₫": "VND ",
+		"R$": "BRL ",
+		"₪": "ILS ",
+		"₱": "PHP ",
+		"₣": "CHF ",
+		"HK$": "HKD ",
+		"S$": "SGD ",
+		"AED": "AED ", // some currencies are text only
+	};
 
-  const ensureSpace = (needed: number) => {
-    if (cursorY + needed > pageHeight - margin) {
-      pdf.addPage();
-      cursorY = margin;
-    }
-  };
+	const clean = (str: string): string => {
+		if (!str) return str;
+
+		let out = str
+			.normalize("NFKC")
+			.replace(/[\u200B-\u200D\u2060\uFEFF]/g, "")
+			.replace(/[\u00A0]/g, " ")
+			.replace(/\s+/g, " ");
+
+		// Replace currency symbols
+		for (const [symbol, code] of Object.entries(currencyMap)) {
+			const escaped = symbol.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&");
+			out = out.replace(new RegExp(escaped, "g"), code);
+		}
+
+		return out.trim();
+	};
 
   const writeHeading = (text: string, size = 18) => {
     text = clean(text);
