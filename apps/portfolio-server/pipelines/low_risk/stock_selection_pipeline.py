@@ -357,7 +357,7 @@ class StockSelectionPipeline:
             Output:
             - A string of reasoning tokens with proper analysis, interpretation, and possible next steps.
             """
-            reasoning_llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro")
+            reasoning_llm = ChatGoogleGenerativeAI(model="gemini-3-pro-preview", thinking_budget=2000)
             messages = runtime.state["messages"]
             reasoning_messages = runtime.state["reasoning_messages"]
             if len(reasoning_messages) == 0:
