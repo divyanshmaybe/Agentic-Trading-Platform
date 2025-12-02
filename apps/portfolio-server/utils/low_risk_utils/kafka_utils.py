@@ -7,6 +7,8 @@ publishing agent logs and events to Kafka topics.
 
 import logging
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import Optional, Dict, Any
 from datetime import datetime
@@ -30,17 +32,21 @@ class LowRiskKafkaPublisher:
     - Thread-safe initialization
     - User context passed per-message (not stored in singleton)
     - Suitable for multi-user concurrent environments
+    - Monotonic sequence numbers for message ordering
     """
     
     _instance: Optional['LowRiskKafkaPublisher'] = None
     _publisher: Optional[KafkaPublisher] = None
     _lock = None  # Will be initialized as threading.Lock
+    _sequence_counter: int = 0
+    _sequence_lock: Optional[threading.Lock] = None
     
     def __new__(cls):
         """Thread-safe singleton pattern."""
         if cls._lock is None:
-            import threading
             cls._lock = threading.Lock()
+        if cls._sequence_lock is None:
+            cls._sequence_lock = threading.Lock()
         
         with cls._lock:
             if cls._instance is None:
@@ -94,6 +100,17 @@ class LowRiskKafkaPublisher:
         """
         return self._publisher
     
+    def _get_next_sequence(self) -> int:
+        """
+        Get the next sequence number in a thread-safe manner.
+        
+        Returns:
+            Monotonically increasing sequence number
+        """
+        with self._sequence_lock:
+            LowRiskKafkaPublisher._sequence_counter += 1
+            return LowRiskKafkaPublisher._sequence_counter
+    
     def publish(
         self,
         data: Dict[str, Any],
@@ -131,14 +148,21 @@ class LowRiskKafkaPublisher:
             logger.warning("user_id not provided for Kafka message - message will be published without user context")
         
         try:
-            # Build message with consistent structure (task_id only in key, not value)
+            # Get sequence number for ordering
+            seq = self._get_next_sequence()
+            timestamp_ms = int(time.time() * 1000)
+            
+            # Build message with consistent structure including sequence for ordering
             message = {
                 "user_id": user_id,
                 "type": message_type,
+                "seq": seq,  # Sequence number for frontend ordering
+                "ts": timestamp_ms,  # Timestamp in milliseconds
                 **data
             }
             # Pass task_id as Kafka message key for frontend filtering/routing
-            self._publisher.publish(message, key=task_id, block=False)
+            # Use block=True to ensure sequential message ordering
+            self._publisher.publish(message, key=task_id, block=True)
         except Exception as e:
             logger.warning(f"Failed to publish to Kafka: {e}")
 

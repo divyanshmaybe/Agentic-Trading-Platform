@@ -26,7 +26,6 @@ from utils.low_risk_utils import (
     render_prompt_template,
     clean_and_parse_agent_json_response,
     validate_percentage_list,
-    LowRiskKafkaPublisher,
     publish_to_kafka,
 )
 from .industry_indicators_pipeline import IndustryIndicatorsPipeline
@@ -38,17 +37,6 @@ if not langsmith_api_key:
 os.environ["LANGSMITH_API_KEY"] = langsmith_api_key
 os.environ["LANGSMITH_TRACING_V2"] = "true"
 os.environ["LANGSMITH_PROJECT"] = "portfolio_prod"
-
-
-# Import KafkaPublisher type for type hints
-from typing import TYPE_CHECKING
-if TYPE_CHECKING:
-    import sys
-    from pathlib import Path as _TmpPath
-    _shared_dir = _TmpPath(__file__).resolve().parent.parent.parent.parent / "shared" / "py"
-    if str(_shared_dir) not in sys.path:
-        sys.path.insert(0, str(_shared_dir))
-    from kafka_service import KafkaPublisher
 
 logger = logging.getLogger(__name__)
 
@@ -381,7 +369,6 @@ def industry_selector(
     pmi_val: float,
     gemini_api_key: str,
     user_id: str,
-    publisher: Optional["KafkaPublisher"] = None,
     task_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
@@ -394,7 +381,6 @@ def industry_selector(
         pmi_val: Current PMI value
         gemini_api_key: Gemini API key
         user_id: User identifier for Kafka messages
-        publisher: Optional KafkaPublisher for sending agent logs
         task_id: Celery task ID for Kafka message routing
 
     Returns:
@@ -502,9 +488,7 @@ class IndustrySelectionPipeline:
                 )
         self.gemini_api_key = gemini_api_key
 
-        # Get singleton Kafka publisher instance
-        self.kafka = LowRiskKafkaPublisher()
-        self.publisher = self.kafka.get_publisher()
+        # Store user context for Kafka publishing (uses singleton via publish_to_kafka helper)
         self.user_id = user_id  # Store user_id for publish calls
         self.task_id = task_id  # Store task_id for Kafka message routing
 
@@ -573,7 +557,6 @@ class IndustrySelectionPipeline:
                 pmi_val,
                 self.gemini_api_key,
                 self.user_id,
-                self.publisher,
                 task_id=self.task_id,
             )
             msg = f"Industry selection complete: {len(industry_list)} industries"

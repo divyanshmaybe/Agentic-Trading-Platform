@@ -52,7 +52,6 @@ from utils.low_risk_utils import (
     parse_json_response,
     clean_and_parse_agent_json_response,
     publish_to_kafka,
-    LowRiskKafkaPublisher
 )
 from . industry_pipeline import IndustrySelectionPipeline
 
@@ -86,9 +85,7 @@ class StockSelectionPipeline:
         self.company_df = company_df
         self.industry_list = industry_list
 
-        # Kafka publisher
-        self.kafka = LowRiskKafkaPublisher()
-        self.publisher = self.kafka.get_publisher()
+        # Store user context for Kafka publishing (uses singleton via publish_to_kafka helper)
         self.user_id = user_id
         self.task_id = task_id
         self.pipeline = pipeline
