@@ -1270,6 +1270,19 @@ class PipelineService:
                 metadata = {"raw_metadata": metadata}
         if not isinstance(metadata, Mapping):
             metadata = {}
+        
+        # Ensure metadata is a mutable dict
+        metadata = dict(metadata)
+        
+        # Copy reference_price to metadata if present in payload
+        if "reference_price" in payload:
+            if "reference_price" not in metadata:
+                metadata["reference_price"] = payload["reference_price"]
+                self.logger.info("✅ Copied reference_price %.2f from payload to metadata", float(payload["reference_price"]))
+            else:
+                self.logger.info("ℹ️ reference_price already in metadata: %s", metadata["reference_price"])
+        else:
+            self.logger.warning("⚠️ reference_price NOT found in payload keys: %s", list(payload.keys()))
 
         signal_id = (
             str(payload.get("signal_id"))

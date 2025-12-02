@@ -205,7 +205,6 @@ model Trade {
   portfolio         Portfolio           @relation(fields: [portfolio_id], references: [id], onDelete: Cascade)
   alpha_signals     AlphaSignal[]
 
-  @@unique([portfolio_id, symbol, status], map: "unique_active_trade_per_symbol")
   @@index([organization_id])
   @@index([portfolio_id])
   @@index([customer_id])

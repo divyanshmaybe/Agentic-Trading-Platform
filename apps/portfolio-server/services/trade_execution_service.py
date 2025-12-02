@@ -492,30 +492,50 @@ class TradeExecutionService:
                 "created_at": {"gte": cutoff_time},
             },
             take=1,
+            order={"created_at": "desc"},  # Ensure we get the most recent one
         )
         
         if recent_trades:
             recent_trade = recent_trades[0]
-            self.logger.warning(
-                "⚠️ DUPLICATE TRADE PREVENTED: Recent trade %s for %s created at %s (within %d min window) in portfolio %s. Skipping new %s trade.",
-                recent_trade.id,
-                symbol,
-                recent_trade.created_at,
-                dedup_window_minutes,
-                portfolio_id,
-                trade_side,
+            
+            # Check if side is different - allow if flipping position
+            recent_side = str(getattr(recent_trade, "side", "")).upper()
+            current_side = trade_side.upper()
+            
+            # Allow if sides are opposite (BUY vs SELL/SHORT_SELL/COVER)
+            # Note: SHORT_SELL is opening a short, SELL is closing a long
+            is_opposite = (
+                (recent_side == "BUY" and current_side in ["SELL", "SHORT_SELL"]) or
+                (recent_side in ["SELL", "SHORT_SELL"] and current_side in ["BUY", "COVER"]) or
+                (recent_side == "COVER" and current_side in ["SELL", "SHORT_SELL"])
             )
-            # Return existing log
-            existing_log = await client.tradeexecutionlog.find_first(
-                where={"trade_id": recent_trade.id},
-            )
-            if existing_log:
-                return TradeExecutionRecord(
-                    id=existing_log.id,
-                    request_id=existing_log.request_id,
-                    status=existing_log.status,
-                    broker_order_id=getattr(existing_log, "broker_order_id", None),
+            
+            if is_opposite:
+                self.logger.info(
+                    "ℹ️ Allowing trade %s (%s) despite recent trade %s (%s) - Position flip/close detected",
+                    symbol, current_side, recent_trade.id, recent_side
                 )
+            else:
+                self.logger.warning(
+                    "⚠️ DUPLICATE TRADE PREVENTED: Recent trade %s for %s created at %s (within %d min window) in portfolio %s. Skipping new %s trade.",
+                    recent_trade.id,
+                    symbol,
+                    recent_trade.created_at,
+                    dedup_window_minutes,
+                    portfolio_id,
+                    trade_side,
+                )
+                # Return existing log
+                existing_log = await client.tradeexecutionlog.find_first(
+                    where={"trade_id": recent_trade.id},
+                )
+                if existing_log:
+                    return TradeExecutionRecord(
+                        id=existing_log.id,
+                        request_id=existing_log.request_id,
+                        status=existing_log.status,
+                        broker_order_id=getattr(existing_log, "broker_order_id", None),
+                    )
         
         # ============================================================
         # All deduplication checks passed - create the trade

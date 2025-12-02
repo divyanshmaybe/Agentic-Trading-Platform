@@ -267,6 +267,8 @@ def prepare_trade_execution_payloads(
                     logger.info("Using reference_price from signal metadata: %.2f", reference_price)
                 except:
                     pass
+            else:
+                logger.warning("⚠️ reference_price NOT found in signal metadata. Keys: %s", list(signal_meta.keys()))
             
             # If still no price, use a reasonable default for testing
             if reference_price <= 0:
