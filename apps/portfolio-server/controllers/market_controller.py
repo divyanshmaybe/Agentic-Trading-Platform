@@ -58,8 +58,11 @@ class MarketController:
         missing: List[str] = []
         candles: Dict[str, List[Dict[str, Decimal]]] = {}
 
+        # Build list of provider symbols
+        provider_symbols = {symbol: self._provider_symbol(symbol) for symbol in unique_symbols}
+
         for symbol in unique_symbols:
-            provider_symbol = self._provider_symbol(symbol)
+            provider_symbol = provider_symbols[symbol]
             price, source, provider = await self._get_price(provider_symbol)
 
             if price is not None:
@@ -74,10 +77,14 @@ class MarketController:
             else:
                 missing.append(symbol)
 
-            if candle:
-                candle_data = await self._fetch_candles(provider_symbol, candle, start=start, end=end)
-                if candle_data:
-                    candles[symbol] = candle_data
+        # Batch fetch candles if requested
+        if candle:
+            candles = await self._fetch_candles_batch(
+                list(unique_symbols), 
+                candle, 
+                start=start, 
+                end=end
+            )
 
         if missing:
             # Fail fast - no fallback pricing allowed
@@ -207,7 +214,124 @@ class MarketController:
         except Exception:
             return None
 
-    async def _fetch_candles(
+    async def _fetch_candles_batch(
+        self,
+        symbols: List[str],
+        resolution: str,
+        *,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+    ) -> Dict[str, List[Dict[str, Decimal]]]:
+        """
+        Batch fetch historical candles for multiple symbols using yahooquery (default).
+        Falls back to Angel One API for symbols that fail.
+        
+        Returns a dict mapping symbol -> list of candles.
+        """
+        from yahooquery import Ticker
+        
+        result: Dict[str, List[Dict[str, Decimal]]] = {}
+        failed_symbols: List[str] = []
+        
+        if not symbols:
+            return result
+        
+        # Map resolution to yahooquery interval and period
+        yq_interval_map = {
+            "1h": "1m",   # 1-minute data for 1 hour
+            "1d": "5m",   # 5-minute data for 1 day
+            "5d": "15m",  # 15-minute data for 5 days
+            "7d": "15m",  # 15-minute data for 7 days
+            "30d": "1h",  # 1-hour data for 30 days
+            "1y": "1d",   # Daily data for 1 year
+        }
+        period_map = {
+            "1h": "1d",
+            "1d": "5d", 
+            "5d": "1mo",
+            "7d": "1mo",
+            "30d": "3mo",
+            "1y": "2y",
+        }
+        
+        yq_interval = yq_interval_map.get(resolution, "1d")
+        period = period_map.get(resolution, "1y")
+        
+        # Build ticker string for batch fetch (NSE format with .NS suffix)
+        ticker_symbols = [f"{s}.NS" for s in symbols]
+        ticker_str = " ".join(ticker_symbols)
+        
+        logger.info(f"📊 Batch fetching candles for {len(symbols)} symbols via yahooquery: {ticker_str}")
+        
+        try:
+            ticker = Ticker(ticker_str, asynchronous=True)
+            hist = ticker.history(period=period, interval=yq_interval)
+            
+            if isinstance(hist, dict):
+                # Error response for all symbols
+                logger.warning(f"yahooquery batch error: {hist}")
+                failed_symbols = list(symbols)
+            elif not hist.empty:
+                # DataFrame with multi-index (symbol, date)
+                # Group by symbol level
+                for yq_symbol in hist.index.get_level_values(0).unique():
+                    # Extract original symbol from .NS format
+                    original_symbol = yq_symbol.replace('.NS', '').replace('.BO', '')
+                    
+                    try:
+                        symbol_data = hist.loc[yq_symbol]
+                        candles: List[Dict[str, Decimal]] = []
+                        
+                        for timestamp, row in symbol_data.iterrows():
+                            # Convert to datetime if needed
+                            if hasattr(timestamp, 'to_pydatetime'):
+                                timestamp = timestamp.to_pydatetime()
+                            
+                            candles.append({
+                                "timestamp": timestamp,
+                                "open": Decimal(str(row["open"])),
+                                "high": Decimal(str(row["high"])),
+                                "low": Decimal(str(row["low"])),
+                                "close": Decimal(str(row["close"])),
+                                "volume": Decimal(str(row["volume"])),
+                            })
+                        
+                        if candles:
+                            result[original_symbol] = candles
+                            logger.info(f"✅ yahooquery: {len(candles)} candles for {original_symbol}")
+                        else:
+                            failed_symbols.append(original_symbol)
+                    except Exception as e:
+                        logger.warning(f"Failed to parse yahooquery data for {original_symbol}: {e}")
+                        failed_symbols.append(original_symbol)
+                
+                # Check for symbols that weren't in the result
+                for s in symbols:
+                    if s not in result and s not in failed_symbols:
+                        failed_symbols.append(s)
+            else:
+                logger.warning("yahooquery returned empty DataFrame")
+                failed_symbols = list(symbols)
+                
+        except Exception as e:
+            logger.error(f"yahooquery batch fetch failed: {e}")
+            failed_symbols = list(symbols)
+        
+        # Fallback to Angel One for failed symbols
+        if failed_symbols:
+            logger.info(f"📡 Falling back to Angel One for {len(failed_symbols)} symbols: {failed_symbols}")
+            for symbol in failed_symbols:
+                try:
+                    candles = await self._fetch_candles_angelone(symbol, resolution, start=start, end=end)
+                    if candles:
+                        result[symbol] = candles
+                except Exception as e:
+                    logger.warning(f"Angel One fallback failed for {symbol}: {e}")
+        
+        logger.info(f"📊 Batch fetch complete: {len(result)}/{len(symbols)} symbols with candle data")
+        return result
+
+    async def _fetch_candles_angelone(
         self,
         provider_symbol: str,
         resolution: str,
@@ -216,62 +340,47 @@ class MarketController:
         end: Optional[datetime] = None,
     ) -> Optional[List[Dict[str, Decimal]]]:
         """
-        Fetch historical candles from Angel One and yfinance sources.
-        
-        Supports predefined periods: 1h, 1d, 5d, 7d, 30d, 1y
-        Or custom date ranges via start/end parameters.
+        Fetch historical candles from Angel One API.
         """
         # Map user-friendly resolution to Angel One intervals
         resolution_map = {
-            "1h": ("ONE_MINUTE", timedelta(hours=1)),      # 1-min candles for 1 hour
-            "1d": ("FIVE_MINUTE", timedelta(days=1)),      # 5-min candles for 1 day
-            "5d": ("FIFTEEN_MINUTE", timedelta(days=5)),   # 15-min candles for 5 days
-            "7d": ("FIFTEEN_MINUTE", timedelta(days=7)),   # 15-min candles for 7 days
-            "30d": ("ONE_HOUR", timedelta(days=30)),       # 1-hour candles for 30 days
-            "1y": ("ONE_DAY", timedelta(days=365)),        # Daily candles for 1 year
+            "1h": ("ONE_MINUTE", timedelta(hours=1)),
+            "1d": ("FIVE_MINUTE", timedelta(days=1)),
+            "5d": ("FIFTEEN_MINUTE", timedelta(days=5)),
+            "7d": ("FIFTEEN_MINUTE", timedelta(days=7)),
+            "30d": ("ONE_HOUR", timedelta(days=30)),
+            "1y": ("ONE_DAY", timedelta(days=365)),
         }
 
         if resolution not in resolution_map:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid candle interval. Supported: {', '.join(resolution_map.keys())}",
-            )
+            return None
 
-        angelone_interval, default_range = resolution_map[resolution]
+        angelone_interval, _ = resolution_map[resolution]
         time_from, time_to = self._resolve_time_range(resolution, start, end)
 
-        # Adjust time range to respect market hours (9:15 AM to 3:30 PM IST)
-        # If requested time is after market close, use previous trading day
-        from datetime import timezone, time as dt_time
+        # Adjust time range to respect market hours
+        from datetime import time as dt_time
         import pytz
         
         ist = pytz.timezone('Asia/Kolkata')
         market_open = dt_time(9, 15)
         market_close = dt_time(15, 30)
         
-        # Convert to IST for market hour check
         time_from_ist = time_from.astimezone(ist) if time_from.tzinfo else ist.localize(time_from)
         time_to_ist = time_to.astimezone(ist) if time_to.tzinfo else ist.localize(time_to)
         
-        # If end time is after market close, adjust to market close
         if time_to_ist.time() > market_close:
             time_to_ist = time_to_ist.replace(hour=15, minute=30, second=0, microsecond=0)
-        
-        # If start time is before market open, adjust to market open
         if time_from_ist.time() < market_open:
             time_from_ist = time_from_ist.replace(hour=9, minute=15, second=0, microsecond=0)
         
-        # Convert back to UTC/naive for API
         time_from = time_from_ist.replace(tzinfo=None)
         time_to = time_to_ist.replace(tzinfo=None)
 
-        # Format dates for Angel One API (YYYY-MM-DD HH:MM)
         fromdate = time_from.strftime("%Y-%m-%d %H:%M")
         todate = time_to.strftime("%Y-%m-%d %H:%M")
 
-        # Try Angel One first
         try:
-            logger.info(f"Trying Angel One historical API for {provider_symbol}")
             candles_raw = self.service.get_historical_candles(
                 symbol=provider_symbol,
                 interval=angelone_interval,
@@ -281,7 +390,6 @@ class MarketController:
             )
 
             if candles_raw:
-                # Convert to response format with Decimal types
                 candles: List[Dict[str, Decimal]] = []
                 for candle in candles_raw:
                     candles.append({
@@ -292,80 +400,101 @@ class MarketController:
                         "close": Decimal(str(candle["close"])),
                         "volume": Decimal(str(candle["volume"])),
                     })
-
-                logger.info(f"✅ Fetched {len(candles)} candles from Angel One for {provider_symbol} ({resolution})")
+                logger.info(f"✅ Angel One: {len(candles)} candles for {provider_symbol}")
                 return candles
-            else:
-                logger.warning(f"Angel One returned empty candles for {provider_symbol}")
         except Exception as e:
-            logger.warning(f"Angel One historical API failed for {provider_symbol}: {e}")
-
-        # Try yfinance as alternative source
-        try:
-            import yfinance as yf
-            
-            # Map resolution to yfinance interval
-            yf_interval_map = {
-                "1h": "1m",   # yfinance doesn't have 1h, use 1m
-                "1d": "5m",
-                "5d": "15m", 
-                "7d": "15m",
-                "30d": "1h",
-                "1y": "1d",
-            }
-            yf_interval = yf_interval_map.get(resolution, "1d")
-            
-            # Try different ticker formats for NSE
-            ticker_candidates = [
-                f"{provider_symbol}.NS",  # Standard NSE format
-                f"{provider_symbol}.BO",  # BSE format
-                provider_symbol,          # Raw symbol
-            ]
-            
-            for ticker_symbol in ticker_candidates:
-                try:
-                    logger.info(f"Trying yfinance with {ticker_symbol}")
-                    ticker = yf.Ticker(ticker_symbol)
-                    
-                    # Adjust period based on resolution
-                    period_map = {
-                        "1h": "1d",
-                        "1d": "5d", 
-                        "5d": "1mo",
-                        "7d": "1mo",
-                        "30d": "3mo",
-                        "1y": "2y",
-                    }
-                    period = period_map.get(resolution, "1y")
-                    
-                    hist = ticker.history(period=period, interval=yf_interval)
-                    if not hist.empty:
-                        # Convert to our format
-                        candles: List[Dict[str, Decimal]] = []
-                        for idx, row in hist.iterrows():
-                            candles.append({
-                                "timestamp": idx.to_pydatetime(),
-                                "open": Decimal(str(row["Open"])),
-                                "high": Decimal(str(row["High"])),
-                                "low": Decimal(str(row["Low"])),
-                                "close": Decimal(str(row["Close"])),
-                                "volume": Decimal(str(row["Volume"])),
-                            })
-                        
-                        logger.info(f"✅ Fetched {len(candles)} candles from yfinance for {provider_symbol} using {ticker_symbol}")
-                        return candles
-                    else:
-                        logger.warning(f"yfinance returned empty data for {ticker_symbol}")
-                except Exception as e:
-                    logger.warning(f"yfinance failed for {ticker_symbol}: {e}")
-                    continue
-            
-            logger.warning(f"yfinance failed for all ticker candidates for {provider_symbol}")
-        except Exception as e:
-            logger.error(f"yfinance data fetch failed for {provider_symbol}: {e}")
-
-        logger.error(f"No candle data available for {provider_symbol} from any source")
+            logger.warning(f"Angel One failed for {provider_symbol}: {e}")
+        
         return None
+
+    async def _fetch_candles(
+        self,
+        provider_symbol: str,
+        resolution: str,
+        *,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+    ) -> Optional[List[Dict[str, Decimal]]]:
+        """
+        Fetch historical candles for a single symbol.
+        Uses yahooquery as default, falls back to Angel One.
+        
+        Supports predefined periods: 1h, 1d, 5d, 7d, 30d, 1y
+        Or custom date ranges via start/end parameters.
+        """
+        from yahooquery import Ticker
+        
+        valid_resolutions = {"1h", "1d", "5d", "7d", "30d", "1y"}
+        if resolution not in valid_resolutions:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid candle interval. Supported: {', '.join(valid_resolutions)}",
+            )
+
+        # Map resolution to yahooquery interval and period
+        yq_interval_map = {
+            "1h": "1m",
+            "1d": "5m",
+            "5d": "15m",
+            "7d": "15m",
+            "30d": "1h",
+            "1y": "1d",
+        }
+        period_map = {
+            "1h": "1d",
+            "1d": "5d",
+            "5d": "1mo",
+            "7d": "1mo",
+            "30d": "3mo",
+            "1y": "2y",
+        }
+        
+        yq_interval = yq_interval_map[resolution]
+        period = period_map[resolution]
+
+        # Try yahooquery first (default)
+        ticker_candidates = [
+            f"{provider_symbol}.NS",  # Standard NSE format
+            f"{provider_symbol}.BO",  # BSE format
+        ]
+        
+        for ticker_symbol in ticker_candidates:
+            try:
+                logger.info(f"📊 Trying yahooquery for {ticker_symbol}")
+                ticker = Ticker(ticker_symbol, asynchronous=True)
+                hist = ticker.history(period=period, interval=yq_interval)
+                
+                if isinstance(hist, dict):
+                    logger.warning(f"yahooquery error for {ticker_symbol}: {hist}")
+                    continue
+                
+                if not hist.empty:
+                    candles: List[Dict[str, Decimal]] = []
+                    for idx, row in hist.iterrows():
+                        timestamp = idx[1] if isinstance(idx, tuple) else idx
+                        if hasattr(timestamp, 'to_pydatetime'):
+                            timestamp = timestamp.to_pydatetime()
+                        
+                        candles.append({
+                            "timestamp": timestamp,
+                            "open": Decimal(str(row["open"])),
+                            "high": Decimal(str(row["high"])),
+                            "low": Decimal(str(row["low"])),
+                            "close": Decimal(str(row["close"])),
+                            "volume": Decimal(str(row["volume"])),
+                        })
+                    
+                    logger.info(f"✅ yahooquery: {len(candles)} candles for {provider_symbol}")
+                    return candles
+                else:
+                    logger.warning(f"yahooquery returned empty data for {ticker_symbol}")
+            except Exception as e:
+                logger.warning(f"yahooquery failed for {ticker_symbol}: {e}")
+                continue
+        
+        # Fallback to Angel One
+        logger.info(f"📡 Falling back to Angel One for {provider_symbol}")
+        return await self._fetch_candles_angelone(provider_symbol, resolution, start=start, end=end)
 
     def _resolve_time_range(
         self,

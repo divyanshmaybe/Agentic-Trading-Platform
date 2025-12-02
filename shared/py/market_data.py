@@ -238,9 +238,10 @@ class MarketDataService:
             upper = upper[:-3]
         # Apply alias mapping before checking the token map
         upper = SYMBOL_ALIASES.get(upper, upper)
-        # Try to find in token map
+        # Try to find in token map (exact match first)
         if upper in self._token_map:
             return upper
+        # Try with -EQ suffix (Angel One NSE equity symbols require this)
         eq_symbol = f"{upper}-EQ"
         eq_symbol = SYMBOL_ALIASES.get(eq_symbol, eq_symbol)
         if eq_symbol in self._token_map:
@@ -251,14 +252,44 @@ class MarketDataService:
         return upper
     
     def _get_token_info(self, symbol: str) -> Optional[Dict]:
-        """Get token info for symbol"""
+        """
+        Get token info for symbol with automatic fallback.
+        
+        For equities, tries the symbol as-is, then EQ → BE → BL → N1 → N2 variants.
+        Angel One API requires -EQ suffix for NSE equity symbols.
+        
+        Returns the token info dict with an added '_matched_key' field containing
+        the actual key that was matched in the token map.
+        """
+        # First try to normalize the symbol (handles .NS suffix, aliases, etc.)
         normalized = self._normalize_symbol(symbol)
-        return self._token_map.get(normalized)
+        if normalized in self._token_map:
+            result = self._token_map[normalized].copy()
+            result['_matched_key'] = normalized
+            return result
+        
+        # If not found and symbol doesn't already have a segment suffix, try variants
+        upper = symbol.upper()
+        if upper.endswith(".NS"):
+            upper = upper[:-3]
+        
+        # Try equity variants: EQ → BE → BL → N1 → N2
+        variants = ['EQ', 'BE', 'BL', 'N1', 'N2']
+        for variant in variants:
+            symbol_key = f"{upper}-{variant}"
+            if symbol_key in self._token_map:
+                if variant != 'EQ':
+                    logger.debug(f"Symbol {symbol}: Using {variant} variant (EQ not found)")
+                result = self._token_map[symbol_key].copy()
+                result['_matched_key'] = symbol_key
+                return result
+        
+        # Return None if no variant found
+        return None
     
     def has_symbol(self, symbol: str) -> bool:
         """Check if symbol exists in Angel One token map"""
-        normalized = self._normalize_symbol(symbol)
-        return normalized in self._token_map
+        return self._get_token_info(symbol) is not None
     
     def search_similar_symbols(self, symbol: str, limit: int = 5) -> List[str]:
         """Find similar symbols in token map (for debugging invalid symbols)"""
@@ -652,16 +683,8 @@ class MarketDataService:
             logger.warning(f"No token available for {symbol}")
             return []
         
-        # Use the token map key as the symbol for API
-        api_symbol = None
-        for key, info in self._token_map.items():
-            if info.get("token") == symbol_token and info.get("exchangeType") == 1:  # NSE
-                api_symbol = key
-                break
-        
-        if not api_symbol:
-            logger.warning(f"Could not find API symbol for token {symbol_token}")
-            return []
+        # Use the matched key from _get_token_info (no need for reverse lookup)
+        api_symbol = token_info.get("_matched_key") or token_info.get("symbol") or symbol
         
         logger.info(f"Fetching historical candles for {symbol} (API symbol: {api_symbol}, token: {symbol_token}) ({interval}) from {fromdate} to {todate}")
         
@@ -690,12 +713,18 @@ class MarketDataService:
             "todate": todate
         }
         
+        logger.info(f"Angel One API request: symbol={symbol}, matched_key={api_symbol}, token={symbol_token}, exchange={exchange}, interval={interval}, from={fromdate}, to={todate}")
+        
         try:
             with httpx.Client(timeout=30.0) as client:
                 response = client.post(url, json=payload, headers=headers)
                 
                 if response.status_code == 200:
                     data = response.json()
+                    
+                    # Log the full response for debugging
+                    if not data.get("data"):
+                        logger.warning(f"Angel One API response for {symbol}: status={data.get('status')}, message={data.get('message')}, errorcode={data.get('errorcode')}")
                     
                     # Check if response has data field and it's not empty
                     if data.get("status") and data.get("data") and len(data.get("data", [])) > 0:

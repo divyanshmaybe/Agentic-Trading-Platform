@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 
 import { apiClient } from "@/lib/api"
 
@@ -36,6 +36,26 @@ export type CreateLiveAlphaRequest = {
   portfolio_id: string
   model_type?: string
   strategy_type?: string
+}
+
+export type SignalGenerationTaskResponse = {
+  task_id: string
+  status: string
+  alpha_id: string | null
+  message: string
+}
+
+export type TaskStatusResponse = {
+  task_id: string
+  status: "PENDING" | "STARTED" | "PROGRESS" | "SUCCESS" | "FAILURE" | "RETRY" | "REVOKED"
+  result: Record<string, unknown> | null
+  error: string | null
+  started_at: string | null
+  completed_at: string | null
+  // Progress info (when status is PROGRESS)
+  step: string | null  // loading_data, computing_factors, loading_model, running_model, generating_signals, saving_signals
+  progress: number | null  // 0-100
+  message: string | null  // Human-readable progress message
 }
 
 export type AlphaCopilotRun = {
@@ -106,6 +126,30 @@ export function useAlphas(portfolioId?: string) {
     await fetchAlphas()
   }
 
+  // Trigger signal generation for a specific alpha
+  const triggerSignals = async (alphaId: string): Promise<SignalGenerationTaskResponse> => {
+    const response = await apiClient.post<SignalGenerationTaskResponse>(
+      `/api/alphas/live/${alphaId}/trigger-signals`
+    )
+    return response
+  }
+
+  // Trigger signal generation for all running alphas
+  const triggerAllSignals = async (): Promise<SignalGenerationTaskResponse> => {
+    const response = await apiClient.post<SignalGenerationTaskResponse>(
+      `/api/alphas/trigger-all-signals`
+    )
+    return response
+  }
+
+  // Get task status
+  const getTaskStatus = async (taskId: string): Promise<TaskStatusResponse> => {
+    const response = await apiClient.get<TaskStatusResponse>(
+      `/api/alphas/tasks/${taskId}/status`
+    )
+    return response
+  }
+
   return {
     alphas,
     loading,
@@ -115,6 +159,9 @@ export function useAlphas(portfolioId?: string) {
     startAlpha,
     stopAlpha,
     deleteAlpha,
+    triggerSignals,
+    triggerAllSignals,
+    getTaskStatus,
   }
 }
 
@@ -208,6 +255,68 @@ export function alphaToTopAlpha(alpha: LiveAlpha) {
     totalSignals: alpha.total_signals,
     allocatedAmount: alpha.allocated_amount,
     strategyType: alpha.strategy_type,
+  }
+}
+
+// Hook to poll task status until completion
+export function useTaskStatus(
+  taskId: string | null,
+  onComplete?: (result: TaskStatusResponse) => void,
+  pollInterval = 2000
+) {
+  const [status, setStatus] = useState<TaskStatusResponse | null>(null)
+  const [isPolling, setIsPolling] = useState(false)
+  const intervalRef = useRef<NodeJS.Timeout | null>(null)
+
+  const stopPolling = useCallback(() => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current)
+      intervalRef.current = null
+    }
+    setIsPolling(false)
+  }, [])
+
+  const checkStatus = useCallback(async () => {
+    if (!taskId) return
+
+    try {
+      const response = await apiClient.get<TaskStatusResponse>(
+        `/api/alphas/tasks/${taskId}/status`
+      )
+      setStatus(response)
+
+      // Stop polling if task is complete
+      if (["SUCCESS", "FAILURE", "REVOKED"].includes(response.status)) {
+        stopPolling()
+        onComplete?.(response)
+      }
+    } catch (err) {
+      console.error("Failed to fetch task status:", err)
+      stopPolling()
+    }
+  }, [taskId, stopPolling, onComplete])
+
+  useEffect(() => {
+    if (!taskId) {
+      setStatus(null)
+      return
+    }
+
+    // Start polling
+    setIsPolling(true)
+    checkStatus() // Check immediately
+
+    intervalRef.current = setInterval(checkStatus, pollInterval)
+
+    return () => {
+      stopPolling()
+    }
+  }, [taskId, checkStatus, pollInterval, stopPolling])
+
+  return {
+    status,
+    isPolling,
+    stopPolling,
   }
 }
 

@@ -41,6 +41,7 @@ transformers==4.57.1
 typing-extensions==4.15.0
 unstructured==0.14.9
 uvicorn==0.38.0
+yahooquery==2.4.1
 yfinance==0.2.66
 websockets==15.0.1
 brotli==1.2.0

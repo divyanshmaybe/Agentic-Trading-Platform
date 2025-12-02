@@ -5,6 +5,7 @@ import { createPortal } from "react-dom"
 import { AnimatePresence, motion, type Variants } from "framer-motion"
 import {
   ArrowDownRight,
+  ArrowRight,
   ArrowUpRight,
   Beaker,
   Check,
@@ -22,6 +23,7 @@ import {
   Zap,
 } from "lucide-react"
 import { useParams } from "next/navigation"
+import Link from "next/link"
 
 import { AlphaChat, AlphaGraph } from "@/components/alpha"
 import { AgentOverview } from "@/components/agent/AgentOverview"
@@ -956,12 +958,14 @@ function LiveAlphasList({
   onStart,
   onStop,
   onDelete,
+  username,
 }: {
   alphas: LiveAlpha[]
   loading: boolean
   onStart: (id: string) => Promise<LiveAlpha | void>
   onStop: (id: string) => Promise<LiveAlpha | void>
   onDelete: (id: string) => Promise<void>
+  username: string
 }) {
   if (loading) {
     return (
@@ -1056,6 +1060,16 @@ function LiveAlphasList({
                   Start
                 </Button>
               )}
+              <Link href={`/dashboard/${username}/alphas/live/${alpha.id}`}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/10"
+                >
+                  <ArrowRight className="mr-1 size-3" />
+                  Details
+                </Button>
+              </Link>
               <Button
                 size="sm"
                 variant="outline"
@@ -1179,13 +1193,24 @@ export default function AlphasPage() {
             tagline="Research hypotheses, generate factors, and deploy winning alphas."
             title="Alpha Command Center"
             action={
-              <Button
-                onClick={() => setHypothesisModalOpen(true)}
-                className="border border-violet-500/40 bg-violet-500/20 text-violet-100 hover:bg-violet-500/30"
-              >
-                <Plus className="mr-2 size-4" />
-                New Research
-              </Button>
+              <div className="flex gap-2">
+                <Link href={`/dashboard/${username}/alphas/live`}>
+                  <Button
+                    variant="outline"
+                    className="border-cyan-500/40 bg-cyan-500/20 text-cyan-100 hover:bg-cyan-500/30"
+                  >
+                    <Zap className="mr-2 size-4" />
+                    Live Signals
+                  </Button>
+                </Link>
+                <Button
+                  onClick={() => setHypothesisModalOpen(true)}
+                  className="border border-violet-500/40 bg-violet-500/20 text-violet-100 hover:bg-violet-500/30"
+                >
+                  <Plus className="mr-2 size-4" />
+                  New Research
+                </Button>
+              </div>
             }
           />
 
@@ -1270,6 +1295,7 @@ export default function AlphasPage() {
                       onStart={startAlpha}
                       onStop={stopAlpha}
                       onDelete={deleteAlpha}
+                      username={username}
                     />
                   )}
                 </CardContent>

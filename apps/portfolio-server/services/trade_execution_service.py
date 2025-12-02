@@ -1130,6 +1130,27 @@ class TradeExecutionService:
         
         parent_trade = trade_record.trade
         
+        # Skip TP/SL orders for alpha signals - they manage their own exit strategy
+        metadata = {}
+        if hasattr(parent_trade, "metadata") and parent_trade.metadata:
+            meta_raw = parent_trade.metadata
+            if isinstance(meta_raw, str):
+                try:
+                    metadata = json.loads(meta_raw)
+                except:
+                    metadata = {}
+            elif isinstance(meta_raw, dict):
+                metadata = meta_raw
+        
+        triggered_by = metadata.get("triggered_by", "")
+        if triggered_by.startswith("alpha_signal:"):
+            self.logger.info(
+                "⏭️ Skipping TP/SL orders for alpha signal trade %s (triggered_by=%s)",
+                getattr(parent_trade, "id", ""),
+                triggered_by,
+            )
+            return
+        
         # Extract fields from parent trade
         portfolio_id = str(getattr(parent_trade, "portfolio_id", ""))
         symbol = str(getattr(parent_trade, "symbol", ""))
@@ -2225,7 +2246,7 @@ class TradeExecutionService:
                             if existing_position:
                                 position_id = str(existing_position.id)
                                 await client.execute_raw(
-                                    '''UPDATE "Position" SET 
+                                    '''UPDATE "positions" SET 
                                         quantity = quantity + $1,
                                         average_buy_price = ((quantity * average_buy_price) + ($1 * $2)) / (quantity + $1),
                                         updated_at = NOW(),
@@ -2257,7 +2278,7 @@ class TradeExecutionService:
                     
                     # Atomic decrement prevents race conditions
                     await client.execute_raw(
-                        'UPDATE "Portfolio" SET available_cash = available_cash - $1 WHERE id = $2',
+                        'UPDATE "portfolios" SET available_cash = available_cash - $1 WHERE id = $2',
                         float(total_cost),
                         portfolio_id
                     )
@@ -2308,7 +2329,7 @@ class TradeExecutionService:
                         # ATOMIC close position with raw SQL
                         # Use optimistic locking: only close if current quantity matches expected
                         result = await client.execute_raw(
-                            '''UPDATE "Position" SET 
+                            '''UPDATE "positions" SET 
                                 quantity = 0,
                                 status = 'closed',
                                 realized_pnl = $1,
@@ -2361,7 +2382,7 @@ class TradeExecutionService:
                     else:
                         # ATOMIC reduce quantity with raw SQL using optimistic locking
                         result = await client.execute_raw(
-                            '''UPDATE "Position" SET 
+                            '''UPDATE "positions" SET 
                                 quantity = GREATEST(0, quantity - $1),
                                 realized_pnl = $2,
                                 updated_at = NOW(),
@@ -2424,7 +2445,7 @@ class TradeExecutionService:
                                 
                                 # Atomic increment
                                 await client.execute_raw(
-                                    'UPDATE "PortfolioAllocation" SET available_cash = available_cash + $1 WHERE id = $2',
+                                    'UPDATE "portfolio_allocations" SET available_cash = available_cash + $1 WHERE id = $2',
                                     float(sale_proceeds),
                                     allocation_id
                                 )
@@ -2444,7 +2465,7 @@ class TradeExecutionService:
                         portfolio_cash = Decimal(str(getattr(portfolio, "available_cash", 0)))
                         
                         await client.execute_raw(
-                            'UPDATE "Portfolio" SET available_cash = available_cash + $1 WHERE id = $2',
+                            'UPDATE "portfolios" SET available_cash = available_cash + $1 WHERE id = $2',
                             float(sale_proceeds),
                             portfolio_id
                         )
@@ -2506,7 +2527,7 @@ class TradeExecutionService:
                     # ATOMIC SHORT position update using raw SQL
                     short_id = str(existing_short.id)
                     await client.execute_raw(
-                        '''UPDATE "Position" SET 
+                        '''UPDATE "positions" SET 
                             quantity = quantity + $1,
                             average_buy_price = ((quantity * average_buy_price) + ($1 * $2)) / (quantity + $1),
                             updated_at = NOW(),
@@ -2590,7 +2611,7 @@ class TradeExecutionService:
                             if existing_short:
                                 short_id = str(existing_short.id)
                                 await client.execute_raw(
-                                    '''UPDATE "Position" SET 
+                                    '''UPDATE "positions" SET 
                                         quantity = quantity + $1,
                                         average_buy_price = ((quantity * average_buy_price) + ($1 * $2)) / (quantity + $1),
                                         updated_at = NOW(),
@@ -2628,7 +2649,7 @@ class TradeExecutionService:
                             
                             # Atomic increment
                             await client.execute_raw(
-                                'UPDATE "PortfolioAllocation" SET available_cash = available_cash + $1 WHERE id = $2',
+                                'UPDATE "portfolio_allocations" SET available_cash = available_cash + $1 WHERE id = $2',
                                 float(sale_proceeds),
                                 allocation_id
                             )
@@ -2648,7 +2669,7 @@ class TradeExecutionService:
                     portfolio_cash = Decimal(str(getattr(portfolio, "available_cash", 0)))
                     
                     await client.execute_raw(
-                        'UPDATE "Portfolio" SET available_cash = available_cash + $1 WHERE id = $2',
+                        'UPDATE "portfolios" SET available_cash = available_cash + $1 WHERE id = $2',
                         float(sale_proceeds),
                         portfolio_id
                     )
@@ -2709,7 +2730,7 @@ class TradeExecutionService:
                     if new_quantity <= 0:
                         # ATOMIC close short position with raw SQL using optimistic locking
                         result = await client.execute_raw(
-                            '''UPDATE "Position" SET 
+                            '''UPDATE "positions" SET 
                                 quantity = 0,
                                 status = 'closed',
                                 realized_pnl = $1,
@@ -2761,7 +2782,7 @@ class TradeExecutionService:
                     else:
                         # ATOMIC reduce short position quantity with raw SQL using optimistic locking
                         result = await client.execute_raw(
-                            '''UPDATE "Position" SET 
+                            '''UPDATE "positions" SET 
                                 quantity = GREATEST(0, quantity - $1),
                                 realized_pnl = $2,
                                 updated_at = NOW(),
@@ -2822,7 +2843,7 @@ class TradeExecutionService:
                                 
                                 # Atomic decrement
                                 await client.execute_raw(
-                                    'UPDATE "PortfolioAllocation" SET available_cash = available_cash - $1 WHERE id = $2',
+                                    'UPDATE "portfolio_allocations" SET available_cash = available_cash - $1 WHERE id = $2',
                                     float(cover_cost),
                                     allocation_id
                                 )
@@ -2842,7 +2863,7 @@ class TradeExecutionService:
                         portfolio_cash = Decimal(str(getattr(portfolio, "available_cash", 0)))
                         
                         await client.execute_raw(
-                            'UPDATE "Portfolio" SET available_cash = available_cash - $1 WHERE id = $2',
+                            'UPDATE "portfolios" SET available_cash = available_cash - $1 WHERE id = $2',
                             float(cover_cost),
                             portfolio_id
                         )

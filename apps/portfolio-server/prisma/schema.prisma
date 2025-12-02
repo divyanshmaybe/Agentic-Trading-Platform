@@ -203,6 +203,7 @@ model Trade {
   executions        TradeExecutionLog[]
   agent             TradingAgent?       @relation(fields: [agent_id], references: [id])
   portfolio         Portfolio           @relation(fields: [portfolio_id], references: [id], onDelete: Cascade)
+  alpha_signals     AlphaSignal[]
 
   @@unique([portfolio_id, symbol, status], map: "unique_active_trade_per_symbol")
   @@index([organization_id])
@@ -499,9 +500,50 @@ model LiveAlpha {
   run               AlphaCopilotRun?  @relation(fields: [run_id], references: [id], onDelete: SetNull)
   portfolio         Portfolio         @relation(fields: [portfolio_id], references: [id], onDelete: Cascade)
   agent             TradingAgent?     @relation(fields: [agent_id], references: [id], onDelete: SetNull)
+  signals           AlphaSignal[]
 
   @@index([portfolio_id])
   @@index([status])
   @@index([run_id])
   @@map("live_alphas")
+}
+
+/// --------------------
+/// Alpha Signal (Generated trading signals from Live Alpha)
+/// --------------------
+model AlphaSignal {
+  id                String      @id @default(uuid())
+  live_alpha_id     String
+  batch_id          String      // UUID to group signals from the same generation run
+  
+  // Signal details
+  symbol            String
+  signal_type       String      // "buy", "sell", "hold"
+  quantity          Int
+  predicted_return  Float
+  confidence        Float
+  price             Float       // Price at signal generation time
+  allocated_amount  Float       // Amount allocated for this signal
+  rank              Int?        // Ranking within the batch
+  
+  // Execution tracking
+  status            String      @default("pending") // pending, executed, expired, cancelled
+  generated_at      DateTime    @default(now())
+  executed_at       DateTime?
+  expires_at        DateTime?   // Auto-expire time (default: end of trading day)
+  
+  // Link to executed trade
+  trade_id          String?
+  
+  // Metadata
+  metadata          Json?       @default("{}")
+  
+  live_alpha        LiveAlpha   @relation(fields: [live_alpha_id], references: [id], onDelete: Cascade)
+  trade             Trade?      @relation(fields: [trade_id], references: [id], onDelete: SetNull)
+
+  @@index([live_alpha_id])
+  @@index([batch_id])
+  @@index([status])
+  @@index([generated_at])
+  @@map("alpha_signals")
 }

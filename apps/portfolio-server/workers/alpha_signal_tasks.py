@@ -4,23 +4,32 @@ This module provides scheduled and on-demand tasks for generating trading signal
 from live alphas using their workflow configurations. The main task runs daily
 before market open to:
 1. Load all active LiveAlphas (status='running')
-2. For each alpha, generate signals using AlphaSignalService
-3. Dispatch signals to trade execution pipeline
+2. For each alpha, generate signals using the same logic as the manual workflow
+3. Persist signals to database with batch_id for tracking
+
+The signal generation logic is shared with the manual /generate-signals endpoint
+to ensure consistency between scheduled and on-demand signal generation.
 """
 
 from __future__ import annotations
 
 import os
 import sys
+import json
+import uuid
 from pathlib import Path
-from datetime import datetime
-from typing import Dict, Any, List
+from datetime import datetime, timedelta, timezone
+from typing import Dict, Any, List, Optional
 
+import pandas as pd
 from celery.utils.log import get_task_logger
 
 from celery_app import celery_app
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+# parents[2] = apps/portfolio-server -> apps
+# parents[3] = apps -> project root (Agentic-Trading-Platform-Pathway)
+PORTFOLIO_SERVER_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 SHARED_PY_PATH = PROJECT_ROOT / "shared" / "py"
 QUANT_STREAM_PATH = PROJECT_ROOT / "quant-stream"
 
@@ -30,6 +39,230 @@ if str(QUANT_STREAM_PATH) not in sys.path:
     sys.path.insert(0, str(QUANT_STREAM_PATH))
 
 task_logger = get_task_logger(__name__)
+
+
+async def generate_signals_for_alpha_core(
+    client,
+    alpha,
+    logger=None,
+    progress_callback=None,
+) -> Dict[str, Any]:
+    """
+    Core signal generation logic shared between Celery task and API endpoint.
+    
+    This function:
+    1. Loads market data from quant-stream
+    2. Computes factor expressions
+    3. Loads trained ML model from MLflow (if available)
+    4. Generates predictions and ranks symbols
+    5. Persists signals to database with batch_id
+    
+    Args:
+        client: Prisma client
+        alpha: LiveAlpha model instance
+        logger: Optional logger (defaults to task_logger)
+        progress_callback: Optional callback(step, progress, message) for progress updates
+        
+    Returns:
+        Dict with status, signals count, batch_id, etc.
+    """
+    logger = logger or task_logger
+    
+    def update_progress(step: str, progress: int, message: str):
+        if progress_callback:
+            progress_callback(step, progress, message)
+        logger.info("[%s] %d%% - %s", step, progress, message)
+    
+    workflow_config = alpha.workflow_config
+    if isinstance(workflow_config, str):
+        workflow_config = json.loads(workflow_config)
+    
+    if not workflow_config:
+        return {"status": "skipped", "reason": "No workflow config"}
+    
+    strategy_config = workflow_config.get("strategy", {})
+    strategy_type = alpha.strategy_type or strategy_config.get("type", "TopkDropout")
+    params = strategy_config.get("params", {})
+    topk = params.get("topk", 30)
+    allocated_amount = float(alpha.allocated_amount)
+    
+    try:
+        # Import quant-stream
+        from quant_stream.backtest.runner import load_market_data, calculate_factors
+        
+        features_config = workflow_config.get("features", [])
+        
+        if not features_config:
+            return {"status": "skipped", "reason": "No features configured"}
+        
+        # Step 1: Load market data
+        update_progress("loading_data", 10, "Loading market data...")
+        
+        data_path = str(QUANT_STREAM_PATH / ".data" / "indian_stock_market_nifty500.csv")
+        end_date = datetime.now().strftime("%Y-%m-%d")
+        start_date = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d")
+        date_ranges = [(start_date, end_date)]
+        
+        logger.info("Loading market data for alpha %s from %s to %s", alpha.name, start_date, end_date)
+        
+        table = load_market_data(data_path=data_path, date_ranges=date_ranges)
+        
+        # Step 2: Compute factors
+        update_progress("computing_factors", 30, f"Computing {len(features_config)} factor expressions...")
+        
+        _, features_df, _ = calculate_factors(table, features_config)
+        
+        # Get latest values per symbol
+        features_df['timestamp'] = pd.to_datetime(features_df['timestamp'])
+        latest_df = features_df.sort_values('timestamp').groupby('symbol').last().reset_index()
+        
+        # Get feature columns and compute predictions
+        factor_names = [f["name"] for f in features_config]
+        available_factors = [f for f in factor_names if f in latest_df.columns]
+        
+        if not available_factors:
+            return {"status": "skipped", "reason": "No available factors in data"}
+        
+        X = latest_df[available_factors].fillna(0)
+        
+        # Step 3: Load model
+        update_progress("loading_model", 50, "Loading ML model...")
+        
+        mlflow_run_id = workflow_config.get("experiment", {}).get("run_id")
+        if not mlflow_run_id:
+            mlflow_run_id = workflow_config.get("experiment", {}).get("mlflow_run_id")
+        
+        model = None
+        
+        if mlflow_run_id:
+            try:
+                from quant_stream.recorder.utils import load_mlflow_run_artifacts
+                tracking_uri = f"sqlite:///{QUANT_STREAM_PATH / 'mlruns.db'}"
+                artifacts = load_mlflow_run_artifacts(
+                    run_id=mlflow_run_id,
+                    artifact_names=["model", "trained_model", "lgb_model", "xgb_model"],
+                    tracking_uri=tracking_uri,
+                )
+                for name in ["model", "trained_model", "lgb_model", "xgb_model"]:
+                    if name in artifacts and artifacts[name] is not None:
+                        model = artifacts[name]
+                        logger.info("Loaded model '%s' from MLflow run %s", name, mlflow_run_id)
+                        break
+            except Exception as e:
+                logger.warning("Failed to load model from MLflow: %s", e)
+        
+        # Step 4: Generate predictions
+        update_progress("running_model", 65, "Generating return predictions...")
+        
+        if model is not None and hasattr(model, 'predict'):
+            # Use frozen model from backtesting
+            predicted_returns = model.predict(X)
+        else:
+            # Fallback: use factor signals directly
+            logger.info("No ML model available, using factor signals directly")
+            if len(available_factors) == 1:
+                predicted_returns = X[available_factors[0]].values
+            else:
+                normalized = (X - X.mean()) / (X.std() + 1e-8)
+                predicted_returns = normalized.mean(axis=1).values
+            # Normalize
+            pred_std = predicted_returns.std()
+            if pred_std > 0:
+                predicted_returns = predicted_returns / pred_std * 0.02
+        
+        # Add predictions to dataframe
+        latest_df['predicted_return'] = predicted_returns
+        
+        # Step 5: Apply strategy
+        update_progress("generating_signals", 80, f"Applying {strategy_type} strategy...")
+        
+        # Sort by predicted return (descending) and select top-k
+        ranked_df = latest_df.sort_values('predicted_return', ascending=False)
+        buy_candidates = ranked_df.head(topk)
+        
+        # Calculate allocations (equal weight)
+        allocation_per_stock = allocated_amount / topk
+        
+        signals = []
+        batch_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc)
+        # Signals expire at end of trading day (3:30 PM IST = 10:00 AM UTC)
+        expires_at = now.replace(hour=10, minute=0, second=0, microsecond=0)
+        if now.hour >= 10:
+            expires_at = expires_at + timedelta(days=1)
+        
+        for rank, (_, row) in enumerate(buy_candidates.iterrows(), 1):
+            close_price = float(row.get('close', 100))
+            if close_price <= 0:
+                continue
+            
+            quantity = int(allocation_per_stock / close_price)
+            if quantity <= 0:
+                continue
+            
+            pred_return = float(row['predicted_return'])
+            confidence = min(1.0, max(0.0, abs(pred_return) * 10))
+            
+            signals.append({
+                "symbol": row['symbol'],
+                "signal_type": "buy",
+                "quantity": quantity,
+                "predicted_return": pred_return,
+                "confidence": confidence,
+                "price": close_price,
+                "allocated_amount": quantity * close_price,
+                "rank": rank,
+            })
+        
+        # Persist signals to database
+        if signals:
+            update_progress("saving_signals", 90, f"Saving {len(signals)} signals to database...")
+            
+            logger.info("Persisting %d signals for alpha %s with batch_id %s", len(signals), alpha.id, batch_id)
+            
+            for sig in signals:
+                await client.alphasignal.create(
+                    data={
+                        "live_alpha_id": alpha.id,
+                        "batch_id": batch_id,
+                        "symbol": sig["symbol"],
+                        "signal_type": sig["signal_type"],
+                        "quantity": sig["quantity"],
+                        "predicted_return": sig["predicted_return"],
+                        "confidence": sig["confidence"],
+                        "price": sig["price"],
+                        "allocated_amount": sig["allocated_amount"],
+                        "rank": sig["rank"],
+                        "status": "pending",
+                        "generated_at": now,
+                        "expires_at": expires_at,
+                    }
+                )
+            
+            # Update alpha's last_signal_at and total_signals
+            await client.livealpha.update(
+                where={"id": alpha.id},
+                data={
+                    "last_signal_at": now,
+                    "total_signals": alpha.total_signals + len(signals),
+                }
+            )
+            
+            logger.info("✅ Successfully persisted %d signals for alpha %s", len(signals), alpha.name)
+        
+        return {
+            "status": "success",
+            "alpha_id": alpha.id,
+            "alpha_name": alpha.name,
+            "signals_generated": len(signals),
+            "batch_id": batch_id,
+            "strategy_type": strategy_type,
+            "topk": topk,
+        }
+        
+    except Exception as e:
+        logger.error("Failed to generate signals for alpha %s: %s", alpha.id, e, exc_info=True)
+        return {"status": "error", "alpha_id": alpha.id, "error": str(e)}
 
 
 @celery_app.task(
@@ -49,12 +282,10 @@ def generate_daily_alpha_signals(self) -> Dict[str, Any]:
     
     Process:
     1. Load all active LiveAlpha configurations (status='running')
-    2. For each alpha:
-       a. Fetch latest market data for configured symbols
-       b. Evaluate factor expressions using quant-stream's AlphaEvaluator
-       c. Run ML model inference (if configured)
-       d. Generate buy/sell signals based on strategy
-    3. Publish signals to trade execution pipeline
+    2. For each alpha, use the shared generate_signals_for_alpha_core function
+    3. Persist signals to database with batch_id for tracking
+    
+    Uses the same logic as the manual /generate-signals endpoint.
     """
     import asyncio
     from redis import Redis
@@ -90,11 +321,9 @@ def generate_daily_alpha_signals(self) -> Dict[str, Any]:
 
 
 async def _generate_signals_async() -> Dict[str, Any]:
-    """Async implementation of signal generation."""
+    """Async implementation of signal generation for all running alphas."""
     from dbManager import DBManager  # type: ignore
-    from services.alpha_signal_service import AlphaSignalService
     
-    # Use session context manager for proper connection lifecycle
     db_manager = DBManager.get_instance()
     
     async with db_manager.session() as client:
@@ -110,36 +339,40 @@ async def _generate_signals_async() -> Dict[str, Any]:
         
         task_logger.info("Found %d active live alphas to process", len(live_alphas))
         
-        # Initialize signal service
-        signal_service = AlphaSignalService(client, task_logger)
-        
         total_signals = 0
         processed = 0
         errors = []
+        results = []
         
         for alpha in live_alphas:
             try:
                 task_logger.info("Processing alpha: %s (%s)", alpha.name, alpha.id)
                 
-                signals = await signal_service.generate_signals_for_alpha(alpha)
-                signal_count = len(signals) if signals else 0
-                total_signals += signal_count
-                processed += 1
+                # Use the shared core function
+                result = await generate_signals_for_alpha_core(client, alpha, task_logger)
                 
-                # Update last_signal_at
-                if signal_count > 0:
+                if result.get("status") == "success":
+                    signal_count = result.get("signals_generated", 0)
+                    total_signals += signal_count
+                    processed += 1
+                    results.append(result)
+                    
+                    task_logger.info(
+                        "Alpha %s generated %d signals (batch_id: %s)",
+                        alpha.name, signal_count, result.get("batch_id")
+                    )
+                elif result.get("status") == "skipped":
+                    task_logger.warning(
+                        "Alpha %s skipped: %s",
+                        alpha.name, result.get("reason")
+                    )
+                else:
+                    errors.append({"alpha_id": alpha.id, "error": result.get("error")})
+                    # Update alpha status to error
                     await client.livealpha.update(
                         where={"id": alpha.id},
-                        data={
-                            "last_signal_at": datetime.utcnow(),
-                            "total_signals": alpha.total_signals + signal_count,
-                        }
+                        data={"status": "error"}
                     )
-                
-                task_logger.info(
-                    "Alpha %s generated %d signals",
-                    alpha.name, signal_count
-                )
                 
             except Exception as exc:
                 task_logger.error(
@@ -158,6 +391,7 @@ async def _generate_signals_async() -> Dict[str, Any]:
             "status": "success",
             "alphas_processed": processed,
             "signals_generated": total_signals,
+            "results": results,
             "errors": errors if errors else None,
         }
 
@@ -173,22 +407,35 @@ def generate_signals_for_single_alpha(self, alpha_id: str) -> Dict[str, Any]:
     """
     Generate signals for a specific live alpha.
     
-    This can be triggered manually or on-demand.
+    This can be triggered manually or on-demand via API.
+    Uses the same logic as the manual /generate-signals endpoint.
+    Reports progress via Celery task state updates.
     """
     import asyncio
     
+    def progress_callback(step: str, progress: int, message: str):
+        """Update Celery task state with progress information."""
+        self.update_state(
+            state="PROGRESS",
+            meta={
+                "step": step,
+                "progress": progress,
+                "message": message,
+                "alpha_id": alpha_id,
+            }
+        )
+    
     try:
-        result = asyncio.run(_generate_signals_for_alpha_async(alpha_id))
+        result = asyncio.run(_generate_signals_for_alpha_async(alpha_id, progress_callback))
         return result
     except Exception as exc:
         task_logger.error("Failed to generate signals for alpha %s: %s", alpha_id, exc, exc_info=True)
         raise
 
 
-async def _generate_signals_for_alpha_async(alpha_id: str) -> Dict[str, Any]:
+async def _generate_signals_for_alpha_async(alpha_id: str, progress_callback=None) -> Dict[str, Any]:
     """Async implementation for single alpha signal generation."""
     from dbManager import DBManager  # type: ignore
-    from services.alpha_signal_service import AlphaSignalService
     
     db_manager = DBManager.get_instance()
     
@@ -200,25 +447,9 @@ async def _generate_signals_for_alpha_async(alpha_id: str) -> Dict[str, Any]:
         if alpha.status != "running":
             return {"status": "skipped", "reason": f"Alpha status is {alpha.status}"}
         
-        signal_service = AlphaSignalService(client, task_logger)
-        signals = await signal_service.generate_signals_for_alpha(alpha)
-        signal_count = len(signals) if signals else 0
-        
-        # Update tracking
-        if signal_count > 0:
-            await client.livealpha.update(
-                where={"id": alpha.id},
-                data={
-                    "last_signal_at": datetime.utcnow(),
-                    "total_signals": alpha.total_signals + signal_count,
-                }
-            )
-        
-        return {
-            "status": "success",
-            "alpha_id": alpha_id,
-            "signals_generated": signal_count,
-        }
+        # Use the shared core function with progress callback
+        result = await generate_signals_for_alpha_core(client, alpha, task_logger, progress_callback)
+        return result
 
 
 @celery_app.task(

@@ -46,6 +46,49 @@ class TradingAgentSnapshotService:
             self.logger.debug("Failed to fetch live price for %s: %s", symbol, e)
             return fallback
 
+    async def _fetch_live_price(
+        self, 
+        symbol: str, 
+        exchange: str = "NSE", 
+        segment: str = "EQUITY"
+    ) -> Optional[Decimal]:
+        """
+        Fetch live price from market data service asynchronously.
+        
+        Args:
+            symbol: Stock symbol
+            exchange: Exchange (NSE, BSE)
+            segment: Market segment (EQUITY, FO, etc.)
+            
+        Returns:
+            Current market price or None if unavailable
+        """
+        try:
+            from market_data import get_market_data_service
+            
+            service = get_market_data_service()
+            
+            # Try to get from cache first (instant)
+            price = service.get_latest_price(symbol)
+            if price is not None:
+                return price
+            
+            # Try to await price from WebSocket (with timeout)
+            try:
+                service.register_symbol(symbol)
+                price = await service.await_price(symbol, timeout=5.0)
+                if price is not None:
+                    return price
+            except Exception as ws_err:
+                self.logger.debug("WebSocket price fetch failed for %s: %s", symbol, ws_err)
+            
+            # Return None if no price available
+            return None
+            
+        except Exception as e:
+            self.logger.warning("Failed to fetch live price for %s: %s", symbol, e)
+            return None
+
     async def capture_agent_snapshot(self, agent_id: str) -> Optional[Dict[str, Any]]:
         """
         Capture minimal snapshot for trading agent.
