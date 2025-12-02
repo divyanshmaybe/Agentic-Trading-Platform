@@ -200,24 +200,38 @@ class StockSelectionPipeline:
         future = asyncio.run_coroutine_threadsafe(coro, self._background_loop)
         return future.result(timeout=timeout)
 
-    def create_company_metrics_tool(pipeline: FundamentalAnalyzerPipeline) -> Any:
+    def create_company_metrics_tool(self, pipeline: FundamentalAnalyzerPipeline) -> Any:
         """
-        Create the company_report_tool function that can be used by the LLM agent.
+        Create the company_metrics_tool function that can be used by the LLM agent.
         """
         @tool
-        def company_metrics(ticker: str, metrics: list[str]) -> Dict[str, Dict[str, Any]]:
+        def company_metrics_tool(tickers: list[str], metrics: list[str]) -> Dict[str, Dict[str, Any]]:
+            """
+            Generate company metrics for all the given tickers.
+            Input:
+            - tickers: List of NIFTY tickers symbol of the company.
+            - metrics: List of metrics to generate.
+            Output:
+            - A dictionary of dictionary containing the company metrics.
+            """
+
             try:
-                res_json = pipeline.get_ticker_metric(ticker)
                 result = {}
-                if res_json is None:
-                    logger.warning(f"No metrics found for {ticker}")
-                result["ticker"] = res_json
+                for ticker in tickers:
+                    res_json = pipeline.get_ticker_metric(ticker)
+                    if res_json is None:
+                        logger.warning(f"No metrics found for {ticker}")
+                    ticker_result = {}
+                    for m in metrics:
+                        ticker_result[m] = res_json.get(m, None)
+                    result[ticker] = ticker_result
+                    publish_to_kafka({"content": f"Fetching metrics {", ".join(metrics)} for {", ".join(tickers)}"}, user_id=self.user_id, message_type="info")
 
                 return result
             except Exception as e:
                 logger.error(f"Error in company_metrics tool: {e}", exc_info=True)
 
-        return company_metrics
+        return company_metrics_tool
 
 
     def create_company_report_tool(self, gemini_api_key: str) -> Any:
@@ -320,6 +334,7 @@ class StockSelectionPipeline:
         """
         strategy_prompt = load_prompt_from_template("strategy_handbook")
         reasoning_prompt = load_prompt_from_template("reasoning_prompt")
+        company_metrics_prompt = load_prompt_from_template("company_metrics_prompt")
         # Get company prompt for this industry
         company_prompt = self.get_company_prompt(industry, company_df)
         @tool
@@ -338,7 +353,8 @@ class StockSelectionPipeline:
                 reasoning_messages.append(render_prompt_template(
                     reasoning_prompt,
                     company_prompt=company_prompt,
-                    strategy_prompt=strategy_prompt
+                    strategy_prompt=strategy_prompt,
+                    company_metrics_prompt=company_metrics_prompt,
                 ))
 
             if len(messages) >= 2 and isinstance(messages[-2], ToolMessage):
@@ -412,6 +428,7 @@ class StockSelectionPipeline:
             # Load prompts
             stock_selection_prompt = load_prompt_from_template("stock_selection_system_prompt")
             strategy_prompt = load_prompt_from_template("strategy_handbook")
+            company_metrics_prompt = load_prompt_from_template("company_metrics_prompt")
 
             # Get company prompt for this industry
             company_prompt = self.get_company_prompt(industry, company_df)
@@ -420,7 +437,8 @@ class StockSelectionPipeline:
             rendered_prompt = render_prompt_template(
                 stock_selection_prompt,
                 company_prompt=company_prompt,
-                strategy_prompt=strategy_prompt
+                strategy_prompt=strategy_prompt,
+                company_metrics_prompt=company_metrics_prompt,
             )
 
             # Create LLM
@@ -431,7 +449,7 @@ class StockSelectionPipeline:
 
             # Create company report tool
             company_report_tool = self.create_company_report_tool(self.gemini_api_key)
-            company_metric_tool = self.create_company_metrics_tool(pipeline)
+            company_metrics_tool = self.create_company_metrics_tool(pipeline)
             reasoning_tool = self.create_reasoning_tool(self.gemini_api_key, industry, company_df)
 
             class StockWithReasonState(AgentState):
@@ -440,7 +458,7 @@ class StockSelectionPipeline:
             # Create agent
             stock_selection_agent = create_agent(
                 model=llm,
-                tools=[company_report_tool, company_metric_tool, reasoning_tool],
+                tools=[company_report_tool, company_metrics_tool, reasoning_tool],
                 system_prompt=rendered_prompt,
                 state_schema=StockWithReasonState
             )

@@ -1,0 +1,85 @@
+prompt: |
+  Dimension 1: The Shield (Forensic Integrity & Risk)
+  - piotroski_fscore:
+    - Significance: A composite score that aggregates nine signals regarding a company's improving or deteriorating financial health, efficiency, and leverage.
+    - Interpretation: A high score indicates the company is actively strengthening its fundamentals, while a low score signals deterioration. When comparing two companies, favor the one with the higher score, as it suggests the management is improving operations rather than just maintaining the status quo.
+
+  - sloan_ratio:
+    - Significance: A forensic metric measuring the percentage of Net Income derived from non-cash accounting adjustments (accruals) rather than actual cash flow.
+    - Interpretation: High values serve as a warning that earnings are manufactured and likely to reverse; low values indicate high-quality, cash-backed profits. Choose the company with the lower ratio, as its reported earnings are a truer reflection of its bank balance.
+
+  - debt_to_equity:
+    - Significance: A solvency gauge measuring the degree of financial leverage and the risk borne by shareholders versus creditors.
+    - Interpretation: High values indicate aggressive growth powered by debt which is risky in high-interest environments, while low values indicate a conservative balance sheet. Unless you are analyzing banks, favor the company with the lower ratio to ensure resilience against economic downturns.
+
+  Dimension 2: Valuation (Pricing)
+  - ev_to_ebitda:
+    - Significance: A neutral valuation multiple that measures the price of the operating business relative to its cash flow, stripping out debt and tax structures.
+    - Interpretation: Low values imply the business is cheap relative to its core operations; high values suggest a premium for quality or growth. Use this over P/E when comparing companies with different debt levels to find the true bargain.
+
+  - price_to_book:
+    - Significance: A ratio comparing the market's valuation of the company to the accounting liquidation value of its assets.
+    - Interpretation: Low values can signal deep value or distress, while high values imply the market expects high future returns on those assets. Use this primarily for Financials like Banks; the company with the lower P/B offers a better safety margin provided asset quality is good.
+
+  - shareholder_yield:
+    - Significance: A holistic return metric capturing the total cash returned to investors via dividends, share buybacks, and debt reduction.
+    - Interpretation: High yield signifies a management team focused on returning capital to owners; low yield suggests capital is retained for growth or wasted. If two mature companies have similar growth rates, the one with the higher Shareholder Yield is the superior investment.
+
+  - pe_ratio:
+    - Significance: A sentiment gauge indicating the premium the market is willing to pay today for 1 unit of the company's current earnings.
+    - Interpretation: High values imply high growth expectations or optimism; low values imply skepticism or a value opportunity. Compare this against the company's own historical average or its peers; a lower P/E is only better if the growth outlook remains intact.
+
+  - forward_pe:
+    - Significance: A forward-looking valuation measure comparing the current stock price to estimated future earnings over the next 12 months to gauge value based on potential rather than history.
+    - Interpretation: Low values relative to Trailing P/E indicate expected growth (earnings are rising); high values indicate expected contraction. Use this to filter out value traps; if a stock looks cheap on historical P/E but expensive on Forward P/E, it means analysts expect earnings to collapse, so avoid it in favor of the company with a lower Forward P/E.
+
+  Dimension 3: Efficiency (The Engine)
+  - roic:
+    - Significance: Return On Invested Capital is The ultimate efficiency metric measuring how effectively a company turns every dollar of debt and equity into operating profit.
+    - Interpretation: High values indicate a strong competitive moat and value creation; low values suggest the company costs more to run than it earns. Always choose the company with higher ROIC, as it requires less capital to grow at the same rate as its peers.
+
+  - roe:
+    - Significance: Return on Equity is A profitability ratio measuring the net income generated specifically for shareholders' equity.
+    - Interpretation: High values indicate efficient use of shareholder funds; low values suggest bloated equity or poor margins. Use this cautiously; if Company A has a higher ROE than Company B, check if it is simply because Company A has taken on dangerous amounts of debt.
+
+  - ccc:
+    - Significance: Cash conversion cycle is a timeline metric calculating how many days it takes for invested cash (inventory and receivables) to return to the bank.
+    - Interpretation: Lower or negative cycles indicate immense bargaining power and liquidity efficiency; high cycles indicate cash is trapped in operations. Favor the company with the falling CCC, as it is becoming more efficient at funding its own growth.
+
+  Dimension 4: Growth Dynamics (The Driver)
+  - revenue_growth:
+    - Significance: A top-line metric indicating the raw demand for a company’s products or services over a specific period.
+    - Interpretation: High growth signals market share expansion; low growth signals saturation. Use this to validate earnings; if Company A has high earnings growth but low revenue growth, it is cutting costs, whereas Company B with high revenue growth is actually selling more. Favor Company B.
+
+  - earnings_quarterly_growth:
+    - Significance: A short-term momentum indicator showing the acceleration or deceleration of profit in the most recent reporting period.
+    - Interpretation: High growth indicates immediate operational leverage; low growth suggests headwinds. Use this to tie-break; if two stocks look good long-term, buy the one with the accelerating quarterly earnings for faster price appreciation.
+
+  - earnings_growth:
+    - Significance: The compound annual growth rate of net income, representing the long-term trajectory of the company's profitability.
+    - Interpretation: Consistent high growth justifies high valuations; volatile growth warrants a discount. Compare this against the P/E ratio (PEG Ratio); the company where Earnings Growth is higher than its P/E ratio is often the better bargain.
+
+  - gross_profit_growth:
+    - Significance: A scalability metric measuring the expansion rate of core business profits before operating expenses, filtering out the noise of overhead costs to reveal true product demand.
+    - Interpretation: High growth signals a powerful combination of rising sales volume and stable or improving unit economics; low growth warns of commoditization or rising input costs. Prioritize this over simple revenue growth; if Company A grows revenue by 20% but Gross Profit by 30% due to margin expansion, it is a far superior business than Company B growing revenue by 20% but Gross Profit by only 10% due to margin compression.
+
+  Dimension 5: Technical Structure (Timing)
+  - price_to_ema200:
+    - Significance: Price relative to 200 EMA is a long-term trend filter that determines if the stock is structurally in a bull market or a bear market.
+    - Interpretation: Above signifies a healthy uptrend; below signifies overhead resistance. Avoid cheap stocks below the 200 EMA; favor the company trading above it, as the path of least resistance is up.
+
+  - price_to_ema50:
+    - Significance: Price relative to 50 EMA is an intermediate trend indicator serving as the institutional support zone for pullbacks in an uptrend.
+    - Interpretation: Trading near or above suggests a low-risk entry point; trading far below suggests weakness. Use this for timing: buy the company that bounces off the 50 EMA rather than the one crashing through it.
+
+  - rsi14:
+    - Significance: Relative Strength Index is a momentum oscillator measuring the speed and magnitude of price changes to identify overextended conditions.
+    - Interpretation: High implies overbought with risk of correction; low implies oversold with potential bounce. Use this to avoid FOMO; if Company A has an RSI of 80 and Company B is at 50, Company B offers a safer entry point with more room to run.
+
+  - fifty_two_week_change:
+    - Significance: 52-week change is a measure of relative strength showing how well the stock has performed compared to the rest of the market over a year.
+    - Interpretation: High change signals leadership and smart money backing; low change signals a laggard. Adhere to the rule winners keep winning; choose the stock near its highs over the one languishing near its lows.
+
+  - momentum_6_1:
+    - Significance: A classic academic momentum factor measuring the percentage change in price from six months ago to one month ago, explicitly excluding the most recent month to filter out short-term reversals.
+    - Interpretation: High positive values indicate a strong intermediate uptrend that is likely to persist; negative values indicate structural weakness. Use this to find true trend runners; if Stock A has higher 6-1 momentum than Stock B, Stock A is statistically more likely to outperform, as its trend relies on established strength rather than recent volatility or noise.

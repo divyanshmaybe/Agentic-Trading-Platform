@@ -11,6 +11,10 @@ prompt: |
   This is the strategy handbook you can use for selection of stocks
   {{ strategy_prompt }}
 
+  Company metrics knowledge:
+  This is the knowledge for each company metric:
+  {{ company_metrics_prompt }}
+
   Role:
   You are the reasoning agent in this team. Your sole purpose is to understand the given data and generate reasoning tokens.
 
