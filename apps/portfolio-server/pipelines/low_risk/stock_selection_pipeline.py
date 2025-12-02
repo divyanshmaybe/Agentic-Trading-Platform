@@ -403,8 +403,66 @@ class StockSelectionPipeline:
             )
         return reasoning_tool
 
+    def check_low_risk_guardrails(self, data):
+        report = {
+            "passed": True,
+            "failed_guardrails": []
+        }
+
+        def fail(message):
+            report["passed"] = False
+            report["failed_guardrails"].append(message)
+
+        def is_valid(val):
+            if val is None or pd.NA:
+                return False
+            return True
+
+        try:
+            price =      data['current_price']
+            sma200 =     data['sma200']
+            sma50 =      data['sma50']
+            ocf =        data['operating_cashflow']
+            net_income = data['net_income']
+            rsi =        data['rsi']
+            volatility = 0
+
+            # Guardrail 1
+            if is_valid(price) and is_valid(sma200):
+                if price <= sma200:
+                    fail(f"Guardrail 1 Violation: Current Price({price}) is not greater than SMA200({sma200})")
+
+            # Guardrail 2
+            if is_valid(sma50) and is_valid(sma200):
+                if sma50 <= sma200:
+                    fail(f"Guardrail 2 Violation: SMA50 ({sma50}) is not greater than SMA200 ({sma200})")
+
+            # Guardrail 3
+            if is_valid(ocf) and is_valid(net_income):
+                if ocf <= net_income:
+                    fail(f"Guardrail 3 Violation: Operating Cashflow ({ocf}) is not greater than Net Income ({net_income})")
+
+            # Guardrail 4
+            if is_valid(rsi):
+                if rsi >= 70:
+                    fail(f"Guardrail 4 Violation: RSI ({rsi}) is >= 70 (Overbought)")
+
+            # Guardrail 5
+            if is_valid(volatility):
+                if volatility >= 0.6:
+                    fail(f"Guardrail 5 Violation: Volatility ({volatility}) is >= 0.6")
+
+        except Exception as e:
+            return {
+                "passed": False,
+                "failed_guardrails": [f"error: {str(e)}"]
+            }
+
+        return report
+
     def get_company_prompt(self, industry: str, company_df: pd.DataFrame) -> str:
         """Generate a prompt containing company descriptions for an industry."""
+        pipeline = self.pipeline
         company_prompt = ""
 
         # Filter companies by industry
@@ -414,15 +472,44 @@ class StockSelectionPipeline:
             logger.warning(f"No companies found for industry: {industry}")
             return f"No companies available for {industry}"
 
+        # failed companies
+        failed_companies = []
+
         # Build company prompt
         for _, row in industry_companies.iterrows():
             company_name = row.get("Company Name", "")
             company_brief = row.get("company_brief", "")
-            if company_name:
-                company_prompt += f"{company_name}"
-                if company_brief:
-                    company_prompt += f" - {company_brief}"
-                company_prompt += "\n"
+
+            # CHECKING GUARDRAILS
+            ticker = row.get("Symbol", "")
+            res_json = pipeline.get_metrics(ticker)
+            metrics = ["current_price", 'sma200', 'sma50','operating_cashflow', 'net_income', 'rsi']
+            if res_json is None:
+                logger.warning(f"No metrics found for {ticker}")
+                # Set all metrics to None if res_json is None
+                ticker_result = {m: None for m in metrics}
+            else:
+                ticker_result = {}
+                for m in metrics:
+                    ticker_result[m] = res_json.get(m, None)
+
+            guardrail_report = self.check_low_risk_guardrails(ticker_result)
+
+            if guardrail_report["passed"]:
+                if company_name:
+                    company_prompt += f"{company_name}"
+                    if company_brief:
+                        company_prompt += f" - {company_brief}"
+                    company_prompt += "\n"
+            else:
+                failed_companies.append({
+                    "name": company_name,
+                    "failed_guardrails": guardrail_report["failed_guardrails"]
+                })
+
+        if len(failed_companies) > 0:
+            logger.info("Rejecting companies due to failed guardrails")
+            publish_to_kafka({"content": f"Rejecting companies due to failed guardrails\n{', '.join(c["name"] for c in failed_companies)}"}, user_id=self.user_id, task_id=self.task_id)
 
         return company_prompt.strip()
 
