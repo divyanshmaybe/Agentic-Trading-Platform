@@ -323,6 +323,14 @@ class FakeClient:
         # Wire up the trade model to execution log for proper includes
         self.tradeexecutionlog.set_trade_model(self.trade)
 
+    @asynccontextmanager
+    async def tx(self, max_wait=None, timeout=None):
+        """Transaction context manager using Prisma's native tx() method."""
+        try:
+            yield self  # Return self as transaction client
+        except Exception:
+            raise
+
     async def query_raw(self, query: str, *params) -> List[Dict[str, Any]]:
         """Simulate raw SQL queries for SELECT FOR UPDATE and other operations."""
         # For allocation cash check (SELECT FOR UPDATE)
@@ -512,6 +520,12 @@ class FakeDBManager:
 async def test_trade_execution_service_persist_and_execute(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_manager = FakeDBManager()
     monkeypatch.setattr(trade_execution_service, "get_db_manager", lambda: fake_manager)
+
+    # Mock market hours enforcement to allow tests to run outside market hours
+    def mock_enforce_market_hours(*args, **kwargs):
+        pass  # Skip market hours check in tests
+    
+    monkeypatch.setattr("services.trade_execution_service.enforce_market_hours", mock_enforce_market_hours)
 
     published_events: List[trade_pipeline.TradeExecutionEvent] = []
 

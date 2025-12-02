@@ -104,6 +104,7 @@ services:
       CLIENT_URL: http://localhost:3000
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
+      INTERNAL_SERVICE_SECRET: agentinvest-secret
     working_dir: /app/apps/auth_server
     command: >
       sh -c "pnpm prisma generate --schema ../../shared/prisma/schema.prisma &&
@@ -145,6 +146,7 @@ services:
       KAFKA_CLIENT_ID: notification-server
       KAFKA_GROUP_ID: notifications-consumer
       KAFKA_ENABLED: "true"
+      INTERNAL_SERVICE_SECRET: agentinvest-secret
     working_dir: /app
     command: >
       sh -c "cd apps/notification_server && pnpm prisma generate --schema /app/shared/prisma/schema.prisma &&
@@ -197,7 +199,7 @@ services:
       KAFKA_ENABLED: "true"
     working_dir: /app/apps/portfolio-server
     command: >
-      bash -c "python -m prisma generate &&
+      bash -c "rm -f /app/apps/portfolio-server/.env && python -m prisma generate &&
                until python -m prisma db push --accept-data-loss; do
                  echo 'Waiting for Postgres...';
                  sleep 2;
@@ -247,7 +249,7 @@ services:
       KAFKA_ENABLED: "true"
     working_dir: /app/apps/portfolio-server
     command: >
-      bash -c "python -m prisma generate &&
+      bash -c "rm -f /app/apps/portfolio-server/.env && python -m prisma generate &&
                until python -m prisma db push --accept-data-loss; do
                  echo 'Waiting for Postgres...';
                  sleep 2;
@@ -296,7 +298,7 @@ services:
       KAFKA_ENABLED: "true"
     working_dir: /app/apps/portfolio-server
     command: >
-      bash -c "python -m prisma generate &&
+      bash -c "rm -f /app/apps/portfolio-server/.env && python -m prisma generate &&
                until python -m prisma db push --accept-data-loss; do
                  echo 'Waiting for Postgres...';
                  sleep 2;
@@ -345,7 +347,7 @@ services:
       KAFKA_ENABLED: "true"
     working_dir: /app/apps/portfolio-server
     command: >
-      bash -c "python -m prisma generate &&
+      bash -c "rm -f /app/apps/portfolio-server/.env && python -m prisma generate &&
                until python -m prisma db push --accept-data-loss; do
                  echo 'Waiting for Postgres...';
                  sleep 2;
@@ -394,7 +396,7 @@ services:
       KAFKA_ENABLED: "true"
     working_dir: /app/apps/portfolio-server
     command: >
-      bash -c "python -m prisma generate &&
+      bash -c "rm -f /app/apps/portfolio-server/.env && python -m prisma generate &&
                until python -m prisma db push --accept-data-loss; do
                  echo 'Waiting for Postgres...';
                  sleep 2;
@@ -443,7 +445,7 @@ services:
       KAFKA_ENABLED: "true"
     working_dir: /app/apps/portfolio-server
     command: >
-      bash -c "python -m prisma generate &&
+      bash -c "rm -f /app/apps/portfolio-server/.env && python -m prisma generate &&
                until python -m prisma db push --accept-data-loss; do
                  echo 'Waiting for Postgres...';
                  sleep 2;
@@ -492,7 +494,7 @@ services:
       KAFKA_ENABLED: "true"
     working_dir: /app/apps/portfolio-server
     command: >
-      bash -c "python -m prisma generate &&
+      bash -c "rm -f /app/apps/portfolio-server/.env && python -m prisma generate &&
                until python -m prisma db push --accept-data-loss; do
                  echo 'Waiting for Postgres...';
                  sleep 2;
@@ -539,7 +541,7 @@ services:
       KAFKA_ENABLED: "true"
     working_dir: /app/apps/portfolio-server
     command: >
-      bash -c "python -m prisma generate &&
+      bash -c "rm -f /app/apps/portfolio-server/.env && python -m prisma generate &&
                until python -m prisma db push --accept-data-loss; do
                  echo 'Waiting for Postgres...';
                  sleep 2;
@@ -581,7 +583,7 @@ services:
       CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/1
     working_dir: /app/apps/portfolio-server
     command: >
-      bash -c "python -m prisma generate &&
+      bash -c "rm -f /app/apps/portfolio-server/.env && python -m prisma generate &&
                pip install flower &&
                celery -A celery_app:celery_app flower --port=5555 --basic_auth=admin:admin123"
     ports:
@@ -609,6 +611,8 @@ services:
     environment:
       PORT: 3000
       NEXT_TELEMETRY_DISABLED: "1"
+      AUTH_SERVER_URL: http://auth_server:4000
+      INTERNAL_SERVICE_SECRET: agentinvest-secret
     working_dir: /app/apps/frontend
     command: >
       sh -c "pnpm --filter frontend exec next start -H 0.0.0.0 -p ${PORT:-3000}"
