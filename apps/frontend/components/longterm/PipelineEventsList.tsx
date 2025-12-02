@@ -41,7 +41,7 @@ export function PipelineEventsList({ events }: PipelineEventsListProps) {
 									</div>
 								))
 							) : (
-								<div className="space-y-3">
+								<div className="space-y-3 no-scrollbar">
 									{events.map((event) => (
 										<EventMessage key={event.id} event={event} />
 									))}

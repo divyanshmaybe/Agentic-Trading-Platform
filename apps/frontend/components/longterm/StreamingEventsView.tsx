@@ -49,7 +49,7 @@ export function StreamingEventsView({ events }: StreamingEventsViewProps) {
 
 	return (
 		<div className="flex-1 overflow-hidden">
-			<div className="max-h-[600px] overflow-y-auto">
+			<div className="max-h-[80vh] overflow-y-auto no-scrollbar">
 				<div className="space-y-3">
 				 {
 					debug ? (
