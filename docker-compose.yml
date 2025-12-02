@@ -576,19 +576,31 @@ services:
     image: portfolio_server:latest
     container_name: flower
     restart: unless-stopped
+    env_file:
+      - .env
+      - apps/portfolio-server/docker.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
       SKIP_DOTENV: "true"
+      DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
       CELERY_BROKER_URL: redis://portfolio_redis:6379/0
       CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/1
+      REDIS_HOST: portfolio_redis
+      REDIS_PORT: 6379
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "rm -f /app/apps/portfolio-server/.env && python -m prisma generate &&
                pip install flower &&
-               celery -A celery_app:celery_app flower --port=5555 --basic_auth=admin:admin123"
+               celery -A celery_app:celery_app flower --port=5555 --basic_auth=admin:admin123 --broker_api=redis://portfolio_redis:6379/0"
+    volumes:
+      - ./apps/portfolio-server:/app/apps/portfolio-server
+      - ./shared:/app/shared
+      - ./middleware:/app/middleware
     ports:
       - "5555:5555"
     depends_on:
+      portfolio_postgres:
+        condition: service_healthy
       portfolio_redis:
         condition: service_healthy
       portfolio_celery_trading:
@@ -664,11 +676,12 @@ services:
     container_name: redis_commander
     restart: unless-stopped
     environment:
-      REDIS_HOSTS: local:redis:6379
+      REDIS_HOSTS: auth:redis:6379,portfolio:portfolio_redis:6379
     ports:
       - "8081:8081"
     depends_on:
       - redis
+      - portfolio_redis
     networks:
       - agentInvest
     profiles:
@@ -689,6 +702,7 @@ services:
       - pgadmin_data:/var/lib/pgadmin
     depends_on:
       - postgres
+      - portfolio_postgres
     networks:
       - agentInvest
     profiles:

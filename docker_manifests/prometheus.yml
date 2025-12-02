@@ -10,38 +10,38 @@ rule_files:
   - 'alert-rules.yml'
 
 scrape_configs:
-  # Celery Workers (Local Development)
-  - job_name: 'celery-trading'
+  # Celery Workers (Local Development - use host.docker.internal from Docker)
+  - job_name: 'celery-local-trading'
     static_configs:
-      - targets: ['localhost:9101']
+      - targets: ['host.docker.internal:9101']
         labels:
           worker_pool: 'trading'
           environment: 'local'
           
-  - job_name: 'celery-pipeline'
+  - job_name: 'celery-local-pipeline'
     static_configs:
-      - targets: ['localhost:9102']
+      - targets: ['host.docker.internal:9102']
         labels:
           worker_pool: 'pipeline'
           environment: 'local'
           
-  - job_name: 'celery-allocation'
+  - job_name: 'celery-local-allocation'
     static_configs:
-      - targets: ['localhost:9103']
+      - targets: ['host.docker.internal:9103']
         labels:
           worker_pool: 'allocation'
           environment: 'local'
           
-  - job_name: 'celery-market'
+  - job_name: 'celery-local-market'
     static_configs:
-      - targets: ['localhost:9104']
+      - targets: ['host.docker.internal:9104']
         labels:
           worker_pool: 'market'
           environment: 'local'
           
-  - job_name: 'celery-general'
+  - job_name: 'celery-local-general'
     static_configs:
-      - targets: ['localhost:9105']
+      - targets: ['host.docker.internal:9105']
         labels:
           worker_pool: 'general'
           environment: 'local'
