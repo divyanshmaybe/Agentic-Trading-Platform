@@ -208,6 +208,7 @@ class FundamentalAnalyzer:
             return pd.NA
 
         return float((NI - CFO) / avg_assets)
+    
 
     def compute_ccc(self):
         if not self._fetch_financials():
@@ -426,7 +427,28 @@ class FundamentalAnalyzer:
         except:
             return pd.NA
     
-    
+    def _compute_sma(self, length: int):
+        """Helper to compute Simple Moving Average"""
+        try:
+            if self.raw is None or self.raw.empty:
+                return pd.NA
+
+            stock_data = self.raw[self.raw["Ticker"] == self.ticker_symbol].sort_values("Date")
+
+            if len(stock_data) < length:
+                return pd.NA
+
+            sma_series = stock_data["Close"].rolling(window=length).mean()
+            return float(sma_series.iloc[-1])
+        except:
+            return pd.NA
+        
+    def compute_sma50(self):
+        """Compute 50-day Simple Moving Average"""
+        return self._compute_sma(50)
+    def compute_sma200(self):
+        """Compute 200-day Simple Moving Average"""
+        return self._compute_sma(200)
 
 
     def _compute_ema(self, length: int):
@@ -497,6 +519,26 @@ class FundamentalAnalyzer:
             "ev_to_ebitda": self._info.get("enterpriseToEbitda", pd.NA),
             'pe_ratio': self._info.get('trailingPE', pd.NA),
         }
+    
+    def get_cash_flow_metrics(self):
+        """Extract cash flow metrics from ticker.info"""
+        if not self._fetch_financials():
+            return {}
+        
+        return {
+            'operating_cash_flow': self._info.get('operatingCashflow', pd.NA),
+        }
+    
+    def get_net_income_metrics(self):
+        """Extract net income metrics from ticker.info"""
+        if not self._fetch_financials():
+            return {}
+        
+        return {
+            'net_income': self._get(self._financials, "Net Income", default=pd.NA),
+        }
+    
+
 
     def get_growth_metrics(self):
         """Extract growth metrics from ticker.info"""
@@ -554,6 +596,8 @@ class FundamentalAnalyzer:
             'gross_profit_growth': self.compute_gross_profit_growth(),
             "price_to_ema50": self.compute_price_to_ema50(),
             "price_to_ema200": self.compute_price_to_ema200(),
+            "sma50": self.compute_sma50(),
+            "sma200": self.compute_sma200(),
         }
 
         # Add all info-based metrics
@@ -562,6 +606,8 @@ class FundamentalAnalyzer:
         result.update(self.get_financial_health_metrics())
         result.update(self.get_price_metrics())
         result.update(self.get_profitability_metrics())
+        result.update(self.get_cash_flow_metrics())
+        result.update(self.get_net_income_metrics())
 
         return result
 
