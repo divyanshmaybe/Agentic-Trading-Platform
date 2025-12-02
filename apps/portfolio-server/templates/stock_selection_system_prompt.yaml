@@ -5,6 +5,8 @@ prompt: |
   You are given the following list of companies with their short description
   {{ company_prompt }}
 
+  ONLY AND ONLY USE THE LIST OF TICKERS GIVEN TO YOU. YOU MUST NEVER REFERENCE COMPANIES BY THEIR NAMES. ALWAYS REFER TO COMPANIES BY THEIR TICKERS ONLY. NOT FOLLOWING THIS WILL RESULT IN PENALTY.
+
   Investment Strategy:
   This is the strategy handbook you can use for selection of stocks
   {{ strategy_prompt }}
