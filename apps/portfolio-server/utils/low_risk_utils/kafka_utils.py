@@ -131,10 +131,9 @@ class LowRiskKafkaPublisher:
             logger.warning("user_id not provided for Kafka message - message will be published without user context")
         
         try:
-            # Build message with consistent structure
+            # Build message with consistent structure (task_id only in key, not value)
             message = {
                 "user_id": user_id,
-                "task_id": task_id,
                 "type": message_type,
                 **data
             }

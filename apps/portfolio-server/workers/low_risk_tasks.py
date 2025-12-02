@@ -323,7 +323,8 @@ def run_low_risk_pipeline(
             industry_pipeline=industry_indicators,
             user_id=user_id,
             gemini_api_key=gemini_api_key,
-            storage=storage
+            storage=storage,
+            task_id=task_id,
         )
         industry_list = industry_pipeline.run()
         publish_to_kafka(
