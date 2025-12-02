@@ -1,4 +1,4 @@
-# Auth Server specific .dockerignore
+# Notification Server specific .dockerignore
 
 # Node modules
 node_modules
@@ -19,9 +19,6 @@ coverage
 .env
 .env.*
 .env.local
-.env.development
-.env.production
-.env.test
 
 # Logs
 logs
