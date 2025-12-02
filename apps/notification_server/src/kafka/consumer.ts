@@ -11,10 +11,12 @@ import {
 	isLowRiskIndustryEventDone,
 	isLowRiskStockEventFetching,
 	isLowRiskStockEventFetched,
+	isLowRiskReportEventCached,
 	isLowRiskReportEventGenerating,
 	isLowRiskReportEventGenerated,
 	isLowRiskReasoningEvent,
 	isLowRiskSummaryEvent,
+	isLowRiskStageEvent,
 	isLowRiskValueEnvelope,
 } from "./validators";
 import { LowRiskNormalized, LowRiskEvent, LowRiskValueEnvelope } from "./types/lowRisk";
@@ -498,6 +500,10 @@ function parseLowRiskKafkaMessage(payload: EachMessagePayload): LowRiskNormalize
 		eventType = "stock";
 		status = "fetched";
 		content = event.content;
+	} else if (isLowRiskReportEventCached(event)) {
+		eventType = "report";
+		status = "cached";
+		content = event.content;
 	} else if (isLowRiskReportEventGenerating(event)) {
 		eventType = "report";
 		status = "generating";
@@ -514,6 +520,15 @@ function parseLowRiskKafkaMessage(payload: EachMessagePayload): LowRiskNormalize
 		eventType = null;
 		status = null;
 		content = event.content;
+	} else if (isLowRiskStageEvent(event)) {
+		eventType = null;
+		status = event.status;
+		const result = (normalizedPayload as any).result;
+		content = {
+			message: event.content,
+			stage: event.stage,
+			...(result && { result }),
+		};
 	}
 
 	return {

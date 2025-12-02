@@ -234,6 +234,11 @@ class LowRiskReportGeneratingEvent(LowRiskBase):
     status: Literal["generating"]
     content: dict
 
+class LowRiskReportCachedEvent(LowRiskBase):
+    type: Literal["report"]
+    status: Literal["cached"]
+    content: dict
+
 class LowRiskReportGeneratedEvent(LowRiskBase):
     type: Literal["report"]
     status: Literal["generated"]
@@ -253,6 +258,12 @@ class LowRiskIndustryDoneEvent(LowRiskBase):
     status: Literal["done"]
     content: dict
 
+class LowRiskStageEvent(LowRiskBase):
+    type: Literal["stage"]
+    status: str
+    content: str
+    stage: str
+
 # -------------------------------------------------------------------
 # TOPICS
 # -------------------------------------------------------------------
@@ -267,6 +278,28 @@ user_id = "1bbda6f5-ccd4-48f5-b80c-0bd74e43ba58"
 # -------------------------------------------------------------------
 print("\n=== 🚀 Starting Low-Risk 2-Minute AI Agent Simulation ===\n")
 time.sleep(1)
+
+# -------------------------------------------------------
+# STAGE: INIT (start, progress, done)
+# -------------------------------------------------------
+publish("stage_init_start", LowRiskStageEvent(
+    user_id=user_id, type="stage", status="start",
+    content=f"Starting low-risk pipeline with fund: ₹100,000.00", stage="init"
+).model_dump())
+
+sleep_phase(1)
+
+publish("stage_init_progress", LowRiskStageEvent(
+    user_id=user_id, type="stage", status="progress",
+    content="Loading company data...", stage="init"
+).model_dump())
+
+sleep_phase(2)
+
+publish("stage_init_done", LowRiskStageEvent(
+    user_id=user_id, type="stage", status="done",
+    content="Initialization complete. Loaded 500 companies.", stage="init"
+).model_dump())
 
 # -------------------------------------------------------
 # INFO EVENTS
@@ -291,7 +324,51 @@ publish("reasoning_1", LowRiskReasoningEvent(
     content={"message": "Analyzing macro indicators suggests we're in an overheating regime. Commodity sectors may outperform."}
 ).model_dump())
 
+sleep_phase(2)
+
+# -------------------------------------------------------
+# STAGE: MARKET_DATA (start, done)
+# -------------------------------------------------------
+publish("stage_market_data_start", LowRiskStageEvent(
+    user_id=user_id, type="stage", status="start",
+    content="Initializing market data service...", stage="market_data"
+).model_dump())
+
+sleep_phase(2)
+
+publish("stage_market_data_done", LowRiskStageEvent(
+    user_id=user_id, type="stage", status="done",
+    content="Market service initialized", stage="market_data"
+).model_dump())
+
+sleep_phase(1)
+
+# -------------------------------------------------------
+# STAGE: INDUSTRY_INDICATORS (start, done)
+# -------------------------------------------------------
+publish("stage_industry_indicators_start", LowRiskStageEvent(
+    user_id=user_id, type="stage", status="start",
+    content="Computing industry indicators (fetching ~500 stocks)...", stage="industry_indicators"
+).model_dump())
+
 sleep_phase(3)
+
+publish("stage_industry_indicators_done", LowRiskStageEvent(
+    user_id=user_id, type="stage", status="done",
+    content="Industry indicators computed successfully", stage="industry_indicators"
+).model_dump())
+
+sleep_phase(1)
+
+# -------------------------------------------------------
+# STAGE: INDUSTRY_SELECTION (start)
+# -------------------------------------------------------
+publish("stage_industry_selection_start", LowRiskStageEvent(
+    user_id=user_id, type="stage", status="start",
+    content="Running LLM-based industry selection...", stage="industry_selection"
+).model_dump())
+
+sleep_phase(1)
 
 # -------------------------------------------------------
 # INDUSTRY PHASE
@@ -339,11 +416,31 @@ publish("industry_done", LowRiskIndustryDoneEvent(
     }
 ).model_dump())
 
+# -------------------------------------------------------
+# STAGE: INDUSTRY_SELECTION (done)
+# -------------------------------------------------------
+publish("stage_industry_selection_done", LowRiskStageEvent(
+    user_id=user_id, type="stage", status="done",
+    content=f"Selected {len(summary_content['industry_list'])} industries", stage="industry_selection"
+).model_dump())
+
 # Reasoning event after industry analysis
 publish("reasoning_3", LowRiskReasoningEvent(
     user_id=user_id, type="reasoning", status="thinking",
     content={"message": "Metals & Mining shows strong technical setup. Evaluating individual stocks with best risk-reward ratios."}
 ).model_dump())
+
+sleep_phase(1)
+
+# -------------------------------------------------------
+# STAGE: STOCK_SELECTION (start)
+# -------------------------------------------------------
+publish("stage_stock_selection_start", LowRiskStageEvent(
+    user_id=user_id, type="stage", status="start",
+    content=f"Running stock selection for {len(summary_content['industry_list'])} industries...", stage="stock_selection"
+).model_dump())
+
+sleep_phase(1)
 
 # -------------------------------------------------------
 # STOCK PHASE
@@ -371,19 +468,53 @@ if t == "HINDALCO":
 # -------------------------------------------------------
 # REPORT PHASE
 # -------------------------------------------------------
-for t in ["IGL", "HINDALCO", "NATIONALUM"]:
-    publish(f"report_generating_{t}", LowRiskReportGeneratingEvent(
-        user_id=user_id, type="report", status="generating", content={"ticker": t}
-    ).model_dump())
-    sleep_phase(1)
-    publish(f"report_generated_{t}", LowRiskReportGeneratedEvent(
-        user_id=user_id, type="report", status="generated", content={"ticker": t}
-    ).model_dump())
+report_tickers = ["IGL", "HINDALCO", "NATIONALUM", "PETRONET", "GSPL"]
+for i, t in enumerate(report_tickers):
+    # Simulate cached report for first ticker
+    if i == 0:
+        publish(f"report_cached_{t}", LowRiskReportCachedEvent(
+            user_id=user_id, type="report", status="cached", content={"ticker": t}
+        ).model_dump())
+        sleep_phase(1)
+    else:
+        publish(f"report_generating_{t}", LowRiskReportGeneratingEvent(
+            user_id=user_id, type="report", status="generating", content={"ticker": t}
+        ).model_dump())
+        sleep_phase(1)
+        publish(f"report_generated_{t}", LowRiskReportGeneratedEvent(
+            user_id=user_id, type="report", status="generated", content={"ticker": t}
+        ).model_dump())
 
 # Reasoning event before final summary
 publish("reasoning_5", LowRiskReasoningEvent(
     user_id=user_id, type="reasoning", status="thinking",
     content={"message": "Portfolio construction complete. Optimizing allocation weights based on risk-adjusted returns and diversification principles."}
+).model_dump())
+
+sleep_phase(1)
+
+# -------------------------------------------------------
+# STAGE: STOCK_SELECTION (done)
+# -------------------------------------------------------
+publish("stage_stock_selection_done", LowRiskStageEvent(
+    user_id=user_id, type="stage", status="done",
+    content=f"Stock selection complete: {summary_content['summary']['total_stocks']} stocks selected", stage="stock_selection"
+).model_dump())
+
+sleep_phase(1)
+
+# -------------------------------------------------------
+# STAGE: COMPLETION (done)
+# -------------------------------------------------------
+completion_msg = (
+    f"Pipeline completed: {summary_content['summary']['total_stocks']} stocks, "
+    f"{summary_content['summary']['total_trades']} trades, "
+    f"₹{summary_content['summary']['total_invested']:,.2f} invested "
+    f"({summary_content['summary']['utilization_rate']:.2f}% utilization)"
+)
+publish("stage_completion_done", LowRiskStageEvent(
+    user_id=user_id, type="stage", status="done",
+    content=completion_msg, stage="completion"
 ).model_dump())
 
 summary_event = LowRiskSummaryEvent(

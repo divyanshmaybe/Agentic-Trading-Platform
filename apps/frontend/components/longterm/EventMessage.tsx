@@ -42,6 +42,49 @@ export function EventMessage({ event }: EventMessageProps) {
 		)
 	}
 
+	// STAGE event
+	if (kind === "stage") {
+		const message = content?.message || "Processing..."
+		const stage = content?.stage || "unknown"
+		const isProgress = status === "progress"
+		const isStart = status === "start"
+		const isCompleted = status === "completed" || status === "done"
+		const isError = status === "error"
+
+		return (
+			<div className="flex items-start gap-3 text-lg mr-4">
+				{isProgress || isStart ? (
+					<Loader2 className="w-4 h-4 text-blue-400 mt-0.5 shrink-0 animate-spin" />
+				) : isCompleted ? (
+					<CheckCircle2 className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
+				) : isError ? (
+					<Info className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
+				) : (
+					<Info className="w-4 h-4 text-blue-400 mt-0.5 shrink-0" />
+				)}
+				<div className="flex-1 text-white/90">
+					<div className="mb-1">
+						<span className={
+							isError 
+								? "text-red-300 font-bold" 
+								: isCompleted 
+									? "text-emerald-300 font-bold" 
+									: isStart || isProgress
+										? "text-blue-300 font-bold"
+										: "text-cyan-300 font-bold"
+						}>{message}</span>
+					</div>
+					{stage && (
+						<div className="text-sm text-white/60">
+							<span className="text-white/50">Stage:</span>{" "}
+							<span className="text-blue-300">{stage}</span>
+						</div>
+					)}
+				</div>
+			</div>
+		)
+	}
+
 	// INDUSTRY - FETCHING
 	if (kind === "industry" && status === "fetching") {
 		const industries = content?.industries || []
@@ -133,6 +176,20 @@ export function EventMessage({ event }: EventMessageProps) {
 				<div className="flex-1 text-white/90">
 					<span className="text-white/70">Data retrieved for</span>{" "}
 					<span className="text-emerald-200 font-mono font-medium">{ticker}</span>
+				</div>
+			</div>
+		)
+	}
+
+	// REPORT - CACHED
+	if (kind === "report" && status === "cached") {
+		const ticker = content?.ticker || "Unknown"
+		return (
+			<div className="flex items-start gap-3 text-lg mr-4">
+				<FileText className="w-4 h-4 text-amber-300 mt-0.5 shrink-0" />
+				<div className="flex-1 text-white/90">
+					<span className="text-white/70">Using cached report for</span>{" "}
+					<span className="text-amber-200 font-mono font-medium">{ticker}</span>
 				</div>
 			</div>
 		)

@@ -131,6 +131,18 @@ export interface LowRiskReportEventGenerating {
 }
 
 /**
+ * REPORT - CACHED event
+ */
+export interface LowRiskReportEventCached {
+	userId: string;
+	kind: "report";
+	status: "cached";
+	content: {
+		ticker: string;
+	};
+}
+
+/**
  * REPORT - GENERATED event
  */
 export interface LowRiskReportEventGenerated {
@@ -191,6 +203,17 @@ export interface LowRiskSummaryEvent {
 }
 
 /**
+ * STAGE event - Pipeline stage progress messages
+ */
+export interface LowRiskStageEvent {
+	userId: string;
+	kind: "stage";
+	status: string;
+	content: string;
+	stage: string;
+}
+
+/**
  * Strict union type for all low-risk events
  */
 export type LowRiskEvent =
@@ -200,10 +223,12 @@ export type LowRiskEvent =
 	| LowRiskIndustryEventDone
 	| LowRiskStockEventFetching
 	| LowRiskStockEventFetched
+	| LowRiskReportEventCached
 	| LowRiskReportEventGenerating
 	| LowRiskReportEventGenerated
 	| LowRiskReasoningEvent
-	| LowRiskSummaryEvent;
+	| LowRiskSummaryEvent
+	| LowRiskStageEvent;
 
 /**
  * Normalized low-risk event (server-side representation)
@@ -212,9 +237,9 @@ export type LowRiskEvent =
  */
 export type LowRiskNormalized = {
 	userId: string;
-	kind: "info" | "industry" | "stock" | "report" | "reasoning" | "summary";
-	eventType: string | null;   // null for info/reasoning/summary, "industry"/"stock"/"report" for others
-	status: string | null;      // "fetching" | "fetched" | "done" | "generating" | "generated" | "thinking" | null
+	kind: "info" | "industry" | "stock" | "report" | "reasoning" | "summary" | "stage";
+	eventType: string | null;   // null for info/reasoning/summary/stage, "industry"/"stock"/"report" for others
+	status: string | null;      // "fetching" | "fetched" | "done" | "cached" | "generating" | "generated" | "thinking" | "start" | "progress" | "done" | "error" | null
 	content: any | null;
 	rawPayload: any;            // full inner payload JSON
 	eventTime: Date;            // Required - strictly from Kafka message timestamp

@@ -26,17 +26,17 @@ export async function GET(request: NextRequest) {
     });
 
     // Convert Date objects to ISO strings
-    const eventDTOs: LowRiskEventDTO[] = events.map((event) => ({
-      id: event.id,
-      userId: event.userId,
-      kind: event.kind as "info" | "industry" | "stock" | "report" | "reasoning" | "summary",
-      eventType: event.eventType,
-      status: event.status,
-      content: event.content,
-      rawPayload: event.rawPayload,
-      createdAt: event.createdAt.toISOString(),
-      eventTime: event.eventTime ? event.eventTime.toISOString() : null,
-    }));
+        const eventDTOs: LowRiskEventDTO[] = events.map((event) => ({
+          id: event.id,
+          userId: event.userId,
+          kind: event.kind as "info" | "industry" | "stock" | "report" | "reasoning" | "summary" | "stage",
+          eventType: event.eventType,
+          status: event.status,
+          content: event.content,
+          rawPayload: event.rawPayload,
+          createdAt: event.createdAt.toISOString(),
+          eventTime: event.eventTime ? event.eventTime.toISOString() : null,
+        }));
 
     console.log(
       `[LowRisk GET] Fetched ${eventDTOs.length} events for user ${userId}`

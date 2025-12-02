@@ -12,10 +12,12 @@ import {
 	LowRiskIndustryEventDone,
 	LowRiskStockEventFetching,
 	LowRiskStockEventFetched,
+	LowRiskReportEventCached,
 	LowRiskReportEventGenerating,
 	LowRiskReportEventGenerated,
 	LowRiskReasoningEvent,
 	LowRiskSummaryEvent,
+	LowRiskStageEvent,
 	LowRiskValueEnvelope,
 } from "./types/lowRisk";
 
@@ -234,6 +236,33 @@ export function isLowRiskStockEventFetched(obj: any): obj is LowRiskStockEventFe
 }
 
 /**
+ * Type guard for LowRiskReportEventCached
+ */
+export function isLowRiskReportEventCached(obj: any): obj is LowRiskReportEventCached {
+	if (!isObject(obj)) {
+		return false;
+	}
+
+	if (!hasStringField(obj, "userId")) {
+		return false;
+	}
+
+	if (obj.kind !== "report") {
+		return false;
+	}
+
+	if (obj.status !== "cached") {
+		return false;
+	}
+
+	if (!isObject(obj.content) || typeof obj.content.ticker !== "string") {
+		return false;
+	}
+
+	return true;
+}
+
+/**
  * Type guard for LowRiskReportEventGenerating
  */
 export function isLowRiskReportEventGenerating(obj: any): obj is LowRiskReportEventGenerating {
@@ -355,6 +384,37 @@ export function isLowRiskSummaryEvent(obj: any): obj is LowRiskSummaryEvent {
 }
 
 /**
+ * Type guard for LowRiskStageEvent
+ */
+export function isLowRiskStageEvent(obj: any): obj is LowRiskStageEvent {
+	if (!isObject(obj)) {
+		return false;
+	}
+
+	if (!hasStringField(obj, "userId")) {
+		return false;
+	}
+
+	if (obj.kind !== "stage") {
+		return false;
+	}
+
+	if (typeof obj.status !== "string") {
+		return false;
+	}
+
+	if (typeof obj.content !== "string") {
+		return false;
+	}
+
+	if (typeof obj.stage !== "string") {
+		return false;
+	}
+
+	return true;
+}
+
+/**
  * Type guard for any LowRiskEvent (union type)
  */
 export function isLowRiskEvent(obj: any): obj is LowRiskEvent {
@@ -365,9 +425,11 @@ export function isLowRiskEvent(obj: any): obj is LowRiskEvent {
 		isLowRiskIndustryEventDone(obj) ||
 		isLowRiskStockEventFetching(obj) ||
 		isLowRiskStockEventFetched(obj) ||
+		isLowRiskReportEventCached(obj) ||
 		isLowRiskReportEventGenerating(obj) ||
 		isLowRiskReportEventGenerated(obj) ||
 		isLowRiskReasoningEvent(obj) ||
-		isLowRiskSummaryEvent(obj)
+		isLowRiskSummaryEvent(obj) ||
+		isLowRiskStageEvent(obj)
 	);
 }
