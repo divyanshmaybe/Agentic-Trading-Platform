@@ -112,6 +112,7 @@ QUEUE_NAMES: Dict[str, str] = {
     "market": os.getenv("CELERY_QUEUE_MARKET", "market"),
     "tokens": os.getenv("CELERY_QUEUE_TOKENS", "tokens"),
     "streaming": os.getenv("CELERY_QUEUE_STREAMING", "streaming"),  # Dedicated queue for long-running streaming tasks
+    "auto_sell": os.getenv("CELERY_QUEUE_AUTO_SELL", "general"),  # Auto-sell uses general queue to not block trading
 }
 
 
@@ -253,9 +254,10 @@ celery_app.conf.task_routes = {
     "risk.alerts.send_email": {"queue": QUEUE_NAMES["risk"], "routing_key": "risk"},
     # Streaming monitor gets its own dedicated queue to not block other tasks
     "risk.streaming_monitor.start": {"queue": QUEUE_NAMES["streaming"], "routing_key": "streaming"},
-    # Auto-sell worker
-    "trades.auto_sell_expired_trades": {"queue": QUEUE_NAMES["trading"], "routing_key": "trading"},
-    "pipeline.sell_high_risk_before_close": {"queue": QUEUE_NAMES["trading"], "routing_key": "trading"},
+    # Auto-sell worker - MUST NOT block trading queue! Routes to general queue
+    "trades.auto_sell_expired_trades": {"queue": QUEUE_NAMES["auto_sell"], "routing_key": "general"},
+    "trades.execute_auto_close": {"queue": QUEUE_NAMES["auto_sell"], "routing_key": "general"},
+    "pipeline.sell_high_risk_before_close": {"queue": QUEUE_NAMES["auto_sell"], "routing_key": "general"},
     # Alpha signal tasks - trading queue for signal execution
     "alpha.generate_daily_signals": {"queue": QUEUE_NAMES["pipelines"], "routing_key": "pipelines"},
     "alpha.generate_signals_for_alpha": {"queue": QUEUE_NAMES["trading"], "routing_key": "trading"},
@@ -386,14 +388,18 @@ celery_app.conf.task_annotations = {
         }
         for task_name in QUICK_TASKS
     },
-    # Auto-sell tasks - reasonable limits (DB operations take time)
-    **{
-        task_name: {
-            "soft_time_limit": 300,  # 5 minute soft limit (increased)
-            "time_limit": 360,  # 6 minute hard limit (increased)
-            "rate_limit": "10/m",  # Max 10 per minute (increased from 4)
-        }
-        for task_name in AUTO_SELL_TASKS
+    # Auto-sell scanner - MUST BE FAST, singleton behavior
+    "trades.auto_sell_expired_trades": {
+        "soft_time_limit": 30,  # 30 seconds - scanner should be fast
+        "time_limit": 45,  # 45 seconds hard limit
+        "rate_limit": "1/m",  # Max 1 per minute (singleton)
+        "acks_late": False,  # Acknowledge immediately
+    },
+    # Market close sell - can take longer
+    "pipeline.sell_high_risk_before_close": {
+        "soft_time_limit": 300,  # 5 minutes
+        "time_limit": 360,  # 6 minutes
+        "rate_limit": "1/h",  # Once per hour max
     },
 }
 
@@ -489,8 +495,9 @@ if SNAPSHOT_ENABLED:
     }
 
 # Auto-sell worker - runs every minute to sell trades past their 15-minute window
+# CRITICAL: Uses general queue to NOT block trading queue
 AUTO_SELL_ENABLED = os.getenv("AUTO_SELL_ENABLED", "true").lower() in {"1", "true", "yes"}
-AUTO_SELL_QUEUE = os.getenv("AUTO_SELL_QUEUE", QUEUE_NAMES["trading"])
+AUTO_SELL_QUEUE = os.getenv("AUTO_SELL_QUEUE", QUEUE_NAMES["auto_sell"])  # Uses general queue
 
 if AUTO_SELL_ENABLED:
     celery_app.conf.beat_schedule["auto-sell-expired-trades"] = {
@@ -505,7 +512,7 @@ if AUTO_SELL_ENABLED:
 # Market closing task - sells all high_risk positions at 3:15 PM IST (9:45 AM UTC)
 # IST is UTC+5:30, so 3:15 PM IST = 9:45 AM UTC
 MARKET_CLOSE_SELL_ENABLED = os.getenv("MARKET_CLOSE_SELL_ENABLED", "true").lower() in {"1", "true", "yes"}
-MARKET_CLOSE_SELL_QUEUE = os.getenv("MARKET_CLOSE_SELL_QUEUE", QUEUE_NAMES["trading"])
+MARKET_CLOSE_SELL_QUEUE = os.getenv("MARKET_CLOSE_SELL_QUEUE", QUEUE_NAMES["auto_sell"])  # Uses general queue
 
 if MARKET_CLOSE_SELL_ENABLED:
     celery_app.conf.beat_schedule["sell-high-risk-before-close"] = {

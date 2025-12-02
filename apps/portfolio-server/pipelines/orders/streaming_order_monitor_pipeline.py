@@ -264,9 +264,10 @@ class PathwayOrderMonitor:
         """
         try:
             # Fetch from Trade model (limit, stop, stop_loss, take_profit)
+            # Include pending_tp and pending_sl statuses for TP/SL orders
             trade_orders = await self.db.trade.find_many(
                 where={
-                    "status": "pending",
+                    "status": {"in": ["pending", "pending_tp", "pending_sl"]},
                     "order_type": {"in": ["limit", "stop", "stop_loss", "take_profit"]}
                 },
                 order={"created_at": "asc"},
@@ -355,7 +356,8 @@ class PathwayOrderMonitor:
                 logger.warning(f"⚠️ Order {signal.order_id} not found in database, skipping")
                 return
             
-            if trade_check.status != "pending":
+            # Include pending_tp and pending_sl statuses for TP/SL order execution
+            if trade_check.status not in ["pending", "pending_tp", "pending_sl"]:
                 logger.info(
                     f"⚠️ Order {signal.order_id} already {trade_check.status}, skipping execution"
                 )

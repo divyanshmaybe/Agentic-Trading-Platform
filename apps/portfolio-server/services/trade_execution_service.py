@@ -972,9 +972,10 @@ class TradeExecutionService:
             
             # Only update if still pending (atomic check-and-set)
             # Handle UniqueViolation gracefully - may happen if there's already an executed trade for this symbol
+            # Include pending_tp and pending_sl statuses for TP/SL order execution
             try:
                 updated_count = await client.trade.update_many(
-                    where={"id": trade_id, "status": "pending"},
+                    where={"id": trade_id, "status": {"in": ["pending", "pending_tp", "pending_sl"]}},
                     data=trade_update_data,
                 )
             except Exception as update_exc:

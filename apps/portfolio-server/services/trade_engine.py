@@ -75,7 +75,8 @@ class TradeEngine:
         start_time = time.time()
         
         trade = await self.prisma.trade.find_unique(where={"id": trade_id})
-        if not trade or trade.status != "pending":
+        # Include pending_tp and pending_sl statuses for TP/SL order execution
+        if not trade or trade.status not in ["pending", "pending_tp", "pending_sl"]:
             return False
 
         # Use shorter timeout for TP/SL orders (should have cached price from WebSocket)

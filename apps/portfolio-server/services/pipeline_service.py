@@ -29,7 +29,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from db import get_db_manager  # type: ignore  # noqa: E402
 from market_data import get_market_data_service  # type: ignore  # noqa: E402
-from prisma import fields  # type: ignore  # noqa: E402
+from prisma import fields, Json  # type: ignore  # noqa: E402
 from pipelines.portfolio.portfolio_manager import DEFAULT_SEGMENTS  # type: ignore  # noqa: E402
 from pipelines.risk import (  # type: ignore  # noqa: E402
     prepare_risk_alerts,
@@ -1527,48 +1527,58 @@ class PipelineService:
         if not events:
             self.logger.warning("⚠️ persist_and_publish returned no events (expected %d)", len(job_rows))
         else:
-            # Check if we should use Celery or execute directly
-            use_celery = os.getenv("USE_CELERY_FOR_TRADES", "false").lower() in {"1", "true", "yes"}
-            self.logger.info("🚀 Executing %d trade(s) using %s mode...", len(events), "Celery" if use_celery else "direct simulation")
+            import time
             
-            if use_celery:
-                # Use Celery for async execution
-                try:
-                    from workers.trade_execution_tasks import execute_trade_job  # type: ignore
-
-                    for event in events:
-                        execute_trade_job.delay(event.trade_id)
-                        dispatched += 1
-                        self.logger.info(
-                            "✅ Enqueued trade execution to Celery: Trade %s | Agent %s (%s) | %s %s x %d | Portfolio %s",
-                        event.trade_id,
-                        event.agent_id or "unknown",
-                        event.agent_type or "unknown",
+            # Record signal timestamp for trade_delay calculation
+            signal_timestamp = time.time()
+            
+            # Dispatch trades via Celery with HIGH PRIORITY for immediate execution
+            # This is production-ready - Celery handles load balancing across workers
+            self.logger.info("🚀 Dispatching %d trade(s) to Celery with HIGH PRIORITY...", len(events))
+            
+            try:
+                from workers.trade_execution_tasks import execute_trade_job
+                
+                for event in events:
+                    # Store signal timestamp in trade for delay calculation
+                    try:
+                        await client.trade.update(
+                            where={"id": event.trade_id},
+                            data={"metadata": Json({
+                                **(event.metadata if isinstance(event.metadata, dict) else {}),
+                                "signal_timestamp": signal_timestamp,
+                                "signal_id": str(event.signal_id) if hasattr(event, 'signal_id') else None,
+                            })}
+                        )
+                    except Exception:
+                        pass  # Non-critical
+                    
+                    # Dispatch with HIGH PRIORITY (9) for immediate execution
+                    execute_trade_job.apply_async(
+                        args=[event.trade_id],
+                        kwargs={"simulate": True, "signal_timestamp": signal_timestamp},
+                        priority=9,  # Highest priority (0-9, 9 is highest)
+                        queue="trading",
+                        expires=60,  # Expire after 60 seconds if not picked up
+                    )
+                    dispatched += 1
+                    self.logger.info(
+                        "✅ Dispatched trade to Celery (priority=9): Trade %s | %s %s x %d",
+                        event.trade_id[:8],
                         event.side,
                         event.symbol,
                         event.quantity,
-                        event.portfolio_id,
                     )
-                except Exception as exc:  # pragma: no cover - defensive
-                    self.logger.error("Failed to enqueue trade execution workers: %s", exc)
-            else:
-                # Execute trades immediately in simulation mode (paper trading)
+            except Exception as exc:
+                self.logger.error("Failed to dispatch trades to Celery: %s", exc, exc_info=True)
+                # Fallback: Execute directly if Celery dispatch fails
+                self.logger.warning("⚠️ Falling back to direct execution...")
                 for event in events:
                     try:
                         result = await trade_service.execute_trade(event.trade_id, simulate=True)
                         executed += 1
-                        self.logger.info(
-                            "✅ Executed trade immediately (simulation): Trade %s | Agent %s (%s) | %s %s x %d | Status: %s",
-                            event.trade_id,
-                            event.agent_id or "unknown",
-                            event.agent_type or "unknown",
-                            event.side,
-                            event.symbol,
-                            event.quantity,
-                            result.get("status", "unknown"),
-                        )
-                    except Exception as exc:
-                        self.logger.error("Failed to execute trade %s: %s", event.trade_id, exc, exc_info=True)
+                    except Exception as e:
+                        self.logger.error("Direct execution failed for %s: %s", event.trade_id, e)
 
         # Disconnect Prisma client
         try:

@@ -82,9 +82,9 @@ class NSEPipelineTester:
         positions_count = await client.position.count()
         logger.info(f"Total Positions: {positions_count}")
         
-        # Count TP/SL orders
+        # Count TP/SL orders (include pending_tp and pending_sl statuses)
         tp_sl_orders = await client.trade.find_many(
-            where={"source": "nse_pipeline_tp_sl", "status": {"in": ["pending", "executed", "cancelled"]}},
+            where={"source": "nse_pipeline_tp_sl", "status": {"in": ["pending", "pending_tp", "pending_sl", "executed", "cancelled"]}},
             take=10
         )
         logger.info(f"TP/SL Orders: {len(tp_sl_orders)}")
@@ -587,12 +587,12 @@ class NSEPipelineTester:
         
         client = self.prisma
         
-        # Find pending TP/SL orders for test symbol
+        # Find pending TP/SL orders for test symbol (include pending_tp/pending_sl statuses)
         pending_tp_sl = await client.trade.find_many(
             where={
                 "symbol": {"equals": self.test_symbol, "mode": "insensitive"},
                 "source": "nse_pipeline_tp_sl",
-                "status": {"in": ["pending", "cancelled"]}
+                "status": {"in": ["pending", "pending_tp", "pending_sl", "cancelled"]}
             }
         )
         
@@ -600,7 +600,7 @@ class NSEPipelineTester:
             logger.info(f"📊 Found {len(pending_tp_sl)} TP/SL order(s) for {self.test_symbol}")
             
             cancelled_count = sum(1 for o in pending_tp_sl if o.status == "cancelled")
-            pending_count = sum(1 for o in pending_tp_sl if o.status == "pending")
+            pending_count = sum(1 for o in pending_tp_sl if o.status in ["pending", "pending_tp", "pending_sl"])
             
             logger.info(f"  - Cancelled: {cancelled_count}")
             logger.info(f"  - Pending: {pending_count}")
