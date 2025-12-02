@@ -86,7 +86,9 @@ def trade_converter(final_portfolio: List[Dict[str, Any]], fund_allocated: float
                 # Fetch price from market service
                 current_price = await _fetch_price_from_market_service(ticker)
                 
-                amount_to_invest = Decimal(str(fund_allocated)) * Decimal(str(ticker_dict['percentage']))
+                # percentage is like 30.0 meaning 30%, so divide by 100 to get ratio
+                percentage_ratio = Decimal(str(ticker_dict['percentage'])) / Decimal('100')
+                amount_to_invest = Decimal(str(fund_allocated)) * percentage_ratio
                 n_shares = int(amount_to_invest // current_price)
                 
                 if n_shares > 0:
