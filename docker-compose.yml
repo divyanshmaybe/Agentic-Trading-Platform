@@ -750,6 +750,7 @@ services:
       NODE_ENV: production
       AUTH_SERVER_URL: http://auth_server:4000
       INTERNAL_SERVICE_SECRET: agentinvest-secret
+      DATABASE_URL: postgresql://auth_user:auth_password@postgres:5432/auth_db
     working_dir: /app/apps/frontend
     command: >
       sh -c "pnpm --filter frontend exec next start -H 0.0.0.0 -p ${PORT:-3000}"

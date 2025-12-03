@@ -290,6 +290,8 @@ importers:
 
   apps/portfolio-server: {}
 
+  packages/docker-logs: {}
+
   packages/eslint-config:
     devDependencies:
       '@eslint/js':

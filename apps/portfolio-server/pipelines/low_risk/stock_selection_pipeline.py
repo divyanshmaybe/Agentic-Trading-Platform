@@ -659,12 +659,17 @@ class StockSelectionPipeline:
                 final_portfolio.extend(ind_portfolio)
 
             except Exception as e:
+                error_msg = str(e).lower()
+                # Re-raise if it's a quota or rate limit error - no point continuing
+                if any(x in error_msg for x in ['quota', 'rate limit', 'resource exhausted', '429', 'too many requests']):
+                    logger.error(f"Gemini API quota/rate limit error for {industry_name}: {e}")
+                    raise ValueError(f"Gemini API quota exceeded: {e}")
                 logger.error(f"Failed to select stocks for {industry_name}: {e}")
                 continue
 
         # Validate final portfolio
         if not final_portfolio:
-            raise ValueError("No stocks selected in final portfolio")
+            raise ValueError("No stocks selected in final portfolio. Check Gemini API quota and industry list.")
 
         total_allocation = sum(item["percentage"] for item in final_portfolio)
         msg = f"Stock portfolio complete: {len(final_portfolio)} stocks, total allocation: {total_allocation:.1f}%"
