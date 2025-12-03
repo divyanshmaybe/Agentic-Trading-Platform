@@ -43,15 +43,26 @@ const notificationRenderers: Record<string, NotificationRenderer> = {
           : "text-white/80"
 
     // Extract new fields from rawPayload (available via data object)
-    const attachmentUrl = data.attachment_url || data.url
-    const subjectOfAnnouncement = data.subject_of_announcement
+    const attachmentUrlRaw = data.attachment_url || data.url
+    const attachmentUrl = typeof attachmentUrlRaw === "string" ? attachmentUrlRaw : null
+    const subjectOfAnnouncementRaw = data.subject_of_announcement
+    const subjectOfAnnouncement =
+      typeof subjectOfAnnouncementRaw === "string" ? subjectOfAnnouncementRaw : null
     const filingTime = data.filing_time || data.date_time_of_submission || data.generated_at
+
+    // Determine link color based on signal: green for 1 (bullish), red for others
+    const linkColorClassName =
+      signal === 1
+        ? "text-emerald-400 hover:text-emerald-300"
+        : signal != null && signal !== 1
+          ? "text-red-400 hover:text-red-300"
+          : "text-emerald-400 hover:text-emerald-300"
 
     return (
       <NotificationBodySection>
         {renderIfPresent(data.explanation)}
         {subjectOfAnnouncement && (
-          <DetailRow label="Subject" value={String(subjectOfAnnouncement)} />
+          <DetailRow label="Subject" value={subjectOfAnnouncement} />
         )}
         <DetailRow
           label="Signal Strength"
@@ -66,10 +77,10 @@ const notificationRenderers: Record<string, NotificationRenderer> = {
             label="Attachment"
             value={
               <a
-                href={String(attachmentUrl)}
+                href={attachmentUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="text-emerald-400 hover:text-emerald-300 underline"
+                className={`${linkColorClassName} underline`}
               >
                 View Filing
               </a>
