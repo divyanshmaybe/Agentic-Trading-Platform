@@ -28,6 +28,7 @@ import Link from "next/link"
 import { AlphaChat, AlphaGraph } from "@/components/alpha"
 import { AgentOverview } from "@/components/agent/AgentOverview"
 import { AgentTradesTable } from "@/components/agent/AgentTradesTable"
+import { PortfolioSnapshots } from "@/components/portfolio/PortfolioSnapshots"
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader"
 import { Container } from "@/components/shared/Container"
 import { PageHeading } from "@/components/shared/PageHeading"
@@ -1408,6 +1409,9 @@ export default function AlphasPage() {
 
             {/* Performance Graph */}
             <AlphaGraph />
+
+            {/* Portfolio Snapshots */}
+            <PortfolioSnapshots agentType="alpha" title="Alpha Portfolio Snapshot History" />
 
             {/* Trades Table */}
             <AgentTradesTable trades={alphaData?.recent_trades || []} loading={alphaLoading} />

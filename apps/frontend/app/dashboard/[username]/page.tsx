@@ -7,6 +7,7 @@ import { NotificationCard } from "@/components/dashboard/NotificationCard"
 import { ErrorMessage } from "@/components/dashboard/ErrorMessage"
 import { AllocationWarning } from "@/components/dashboard/AllocationWarning"
 import { DashboardContent } from "@/components/dashboard/DashboardContent"
+import { PortfolioSnapshots } from "@/components/portfolio/PortfolioSnapshots"
 import { Container } from "@/components/shared/Container"
 import { useAuth } from "@/hooks/useAuth"
 import { useDashboardNotifications } from "@/components/hooks/useDashboardNotifications"
@@ -87,6 +88,7 @@ export default function DashboardPage() {
               loading={loading}
               username={username}
             />
+            <PortfolioSnapshots title="Portfolio Snapshot History" />
           </div>
 
           <div className="flex flex-col max-h-screen h-screen overflow-hidden">

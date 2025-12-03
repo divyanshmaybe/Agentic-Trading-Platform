@@ -871,10 +871,9 @@ class PortfolioController:
             snapshots.append(
                 SnapshotResponse(
                     snapshot_at=snapshot_at,
-                    portfolio_value=Decimal(str(item["portfolio_value"])),
+                    current_value=Decimal(str(item["current_value"])),
                     realized_pnl=Decimal(str(item["realized_pnl"])),
-                    positions_count=item["positions_count"],
-                    agents_count=item.get("agents_count"),
+                    unrealized_pnl=Decimal(str(item["unrealized_pnl"])),
                 )
             )
         
@@ -882,7 +881,7 @@ class PortfolioController:
 
     async def get_allocation_snapshots(
         self,
-        request_user: dict,
+        request_user: dict,	
         *,
         allocation_id: str,
         limit: int = 100,

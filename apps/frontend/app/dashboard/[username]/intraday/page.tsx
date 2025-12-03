@@ -3,6 +3,7 @@
 import { useParams } from "next/navigation"
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader"
 import { IntradayNotifications } from "@/components/intraday"
+import { PortfolioSnapshots } from "@/components/portfolio/PortfolioSnapshots"
 import { Container } from "@/components/shared/Container"
 import { PageHeading } from "@/components/shared/PageHeading"
 import { useAuth } from "@/hooks/useAuth"
@@ -39,6 +40,10 @@ export default function IntradayCommandCenterPage() {
         <section className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <AgentOverview data={agentData} loading={agentLoading} isAllocating={isAllocating} />
           <AgentTradesTable trades={agentData?.recent_trades ?? []} loading={agentLoading} />
+        </section>
+
+        <section>
+          <PortfolioSnapshots agentType="high_risk" title="Intraday Strategy Snapshot History" />
         </section>
 
         <section>
