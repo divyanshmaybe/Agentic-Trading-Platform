@@ -989,10 +989,17 @@ def allocate_for_objective_task(
                 # Get investable amount from portfolio or initial_value
                 portfolio_record = await db.portfolio.find_unique(where={"id": portfolio_id})
                 if not portfolio_record:
-                    raise ValueError(
-                        f"Portfolio {portfolio_id} not found in database. "
-                        f"Cannot create allocations for non-existent portfolio."
+                    logger.warning(
+                        f"⚠️ Portfolio {portfolio_id} not found in database. "
+                        f"Skipping allocation creation. This may be a test/demo portfolio ID."
                     )
+                    return {
+                        "status": "skipped",
+                        "reason": "portfolio_not_found",
+                        "portfolio_id": portfolio_id,
+                        "objective_id": objective_id,
+                        "message": f"Portfolio {portfolio_id} not found in database",
+                    }
                 
                 investable_amount = float(
                     portfolio_record.investment_amount or 
