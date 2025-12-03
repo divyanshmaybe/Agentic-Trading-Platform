@@ -9,7 +9,7 @@
 		"prisma:studio": "prisma studio",
 		"dev": "PYTHONPATH=../..:../../shared/py:../../middleware:../../middleware/py:../../quant-stream python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000",
 		"celery": "echo '⚠️  Run from root: pnpm celery' to see all worker pools in separate panels",
-		"celery:all": "pnpm run --parallel celery:trading celery:nse celery:news celery:lowrisk celery:allocation celery:market celery:general celery:streaming celery:beat",
+		"celery:all": "pnpm run --parallel celery:trading celery:nse celery:news celery:lowrisk celery:allocation celery:market celery:general celery:streaming celery:beat streaming:orders",
 		"celery:trading": "CELERY_WORKER_RUNNING=1 PROMETHEUS_ENABLED=true PROMETHEUS_PORT=9101 WORKER_NAME=trading@localhost PYTHONPATH=../..:../../shared/py:../../middleware:../../middleware/py:../../quant-stream celery -A celery_app:celery_app worker --loglevel=info -Q trading --concurrency=4 --hostname=trading@%h --max-tasks-per-child=100 --prefetch-multiplier=1",
 		"celery:nse": "CELERY_WORKER_RUNNING=1 PROMETHEUS_ENABLED=true PROMETHEUS_PORT=9102 WORKER_NAME=nse@localhost PYTHONPATH=../..:../../shared/py:../../middleware:../../middleware/py:../../quant-stream celery -A celery_app:celery_app worker --loglevel=info -Q nse_pipeline --concurrency=1 --hostname=nse@%h --max-tasks-per-child=10 --prefetch-multiplier=1",
 		"celery:news": "CELERY_WORKER_RUNNING=1 PROMETHEUS_ENABLED=true PROMETHEUS_PORT=9107 WORKER_NAME=news@localhost PYTHONPATH=../..:../../shared/py:../../middleware:../../middleware/py:../../quant-stream celery -A celery_app:celery_app worker --loglevel=info -Q news_pipeline --concurrency=1 --hostname=news@%h --max-tasks-per-child=50 --prefetch-multiplier=1",

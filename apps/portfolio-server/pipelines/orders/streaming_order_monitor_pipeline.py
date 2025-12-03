@@ -68,6 +68,54 @@ class PendingOrder:
 
 
 @dataclass
+class AutoSellTrade:
+    """
+    Auto-sell trade data structure.
+    
+    Represents a BUY trade that needs to be auto-sold at a specific time.
+    """
+    id: str
+    symbol: str
+    side: str  # Original side (BUY or SHORT_SELL)
+    quantity: int
+    original_price: float
+    auto_sell_at: datetime  # When to auto-sell
+    auto_cover_at: Optional[datetime]  # When to auto-cover (for shorts)
+    portfolio_id: Optional[str]
+    
+    def __hash__(self):
+        return hash(self.id)
+    
+    def __eq__(self, other):
+        if not isinstance(other, AutoSellTrade):
+            return False
+        return self.id == other.id
+
+
+@dataclass
+class AutoSellSignal:
+    """
+    Signal to execute an auto-sell.
+    
+    Generated when a trade's auto_sell_at time has passed.
+    """
+    trade_id: str
+    symbol: str
+    close_type: str  # "sell" or "cover"
+    quantity: int
+    original_price: float
+    portfolio_id: str
+    auto_sell_at: datetime
+    triggered_at: datetime
+    
+    def __str__(self):
+        return (
+            f"AutoSellSignal(trade={self.trade_id}, symbol={self.symbol}, "
+            f"type={self.close_type}, scheduled={self.auto_sell_at})"
+        )
+
+
+@dataclass
 class OrderExecutionSignal:
     """
     Signal to execute an order.
@@ -243,12 +291,17 @@ class PathwayOrderMonitor:
         self._running = False
         self._monitor_task: Optional[asyncio.Task] = None
         self._refresh_task: Optional[asyncio.Task] = None
+        self._auto_sell_task: Optional[asyncio.Task] = None  # Auto-sell monitor task
         
-        # Caches
+        # Caches for price-based orders (TP/SL/limit/stop)
         self._pending_orders: Dict[str, PendingOrder] = {}  # order_id -> PendingOrder
         self._orders_by_symbol: Dict[str, Set[str]] = {}  # symbol -> set of order_ids
         self._subscribed_symbols: Set[str] = set()
         self._executing: Set[str] = set()  # order_ids currently being executed
+        
+        # Caches for time-based auto-sell
+        self._auto_sell_trades: Dict[str, AutoSellTrade] = {}  # trade_id -> AutoSellTrade
+        self._auto_selling: Set[str] = set()  # trade_ids currently being auto-sold
         
         logger.info(
             f"Initialized PathwayOrderMonitor "
@@ -500,12 +553,323 @@ class PathwayOrderMonitor:
                 logger.exception(f"Monitor loop error: {exc}")
                 await asyncio.sleep(2)  # Back off on error
     
+    # ==================== AUTO-SELL MONITORING ====================
+    
+    async def _fetch_auto_sell_trades(self) -> List[AutoSellTrade]:
+        """
+        Fetch all trades that need auto-sell monitoring.
+        
+        Returns:
+            List of AutoSellTrade objects
+        """
+        try:
+            now = datetime.now(timezone.utc)
+            
+            # Fetch BUY trades with auto_sell_at set (not yet expired to avoid re-processing)
+            # We'll check expiry in the monitor loop
+            long_trades = await self.db.trade.find_many(
+                where={
+                    "status": {"in": ["executed", "pending"]},
+                    "side": "BUY",
+                    "auto_sell_at": {"not": None},
+                },
+                order={"auto_sell_at": "asc"},
+                take=500,  # Limit batch size
+            )
+            
+            # Fetch SHORT_SELL trades with auto_cover_at set
+            short_trades = await self.db.trade.find_many(
+                where={
+                    "status": {"in": ["executed", "pending"]},
+                    "side": "SHORT_SELL",
+                    "auto_cover_at": {"not": None},
+                },
+                order={"auto_cover_at": "asc"},
+                take=500,
+            )
+            
+            trades = []
+            
+            for trade in long_trades or []:
+                try:
+                    trades.append(AutoSellTrade(
+                        id=trade.id,
+                        symbol=trade.symbol,
+                        side=trade.side,
+                        quantity=trade.quantity,
+                        original_price=float(trade.price) if trade.price else 0,
+                        auto_sell_at=trade.auto_sell_at,
+                        auto_cover_at=None,
+                        portfolio_id=trade.portfolio_id,
+                    ))
+                except Exception as exc:
+                    logger.warning(f"Failed to parse auto-sell trade {trade.id}: {exc}")
+                    continue
+            
+            for trade in short_trades or []:
+                try:
+                    trades.append(AutoSellTrade(
+                        id=trade.id,
+                        symbol=trade.symbol,
+                        side=trade.side,
+                        quantity=trade.quantity,
+                        original_price=float(trade.price) if trade.price else 0,
+                        auto_sell_at=None,
+                        auto_cover_at=trade.auto_cover_at,
+                        portfolio_id=trade.portfolio_id,
+                    ))
+                except Exception as exc:
+                    logger.warning(f"Failed to parse auto-cover trade {trade.id}: {exc}")
+                    continue
+            
+            if trades:
+                logger.debug(f"📦 Fetched {len(trades)} auto-sell/cover trades")
+            
+            return trades
+            
+        except Exception as exc:
+            logger.exception(f"Failed to fetch auto-sell trades: {exc}")
+            return []
+    
+    async def _execute_auto_sell(self, signal: AutoSellSignal):
+        """
+        Execute an auto-sell when time expires.
+        
+        Args:
+            signal: AutoSellSignal with execution details
+        """
+        if signal.trade_id in self._auto_selling:
+            logger.debug(f"Trade {signal.trade_id} already auto-selling, skipping")
+            return
+        
+        self._auto_selling.add(signal.trade_id)
+        
+        import time
+        exec_start = time.time()
+        
+        try:
+            # Double-check trade status
+            trade = await self.db.trade.find_unique(where={"id": signal.trade_id})
+            
+            if not trade:
+                logger.warning(f"⚠️ Trade {signal.trade_id} not found, skipping auto-sell")
+                return
+            
+            if trade.status not in ["executed", "pending"]:
+                logger.info(f"⏭️ Trade {signal.trade_id} already {trade.status}, skipping")
+                # Remove from cache
+                self._auto_sell_trades.pop(signal.trade_id, None)
+                return
+            
+            # Check metadata for already auto-sold flag
+            meta = trade.metadata if isinstance(trade.metadata, dict) else {}
+            if meta.get("auto_sold"):
+                logger.info(f"⏭️ Trade {signal.trade_id} already auto-sold, skipping")
+                self._auto_sell_trades.pop(signal.trade_id, None)
+                return
+            
+            logger.info(
+                f"🎯 Auto-{signal.close_type} triggered: {signal.trade_id[:8]} "
+                f"{signal.symbol} x {signal.quantity} (scheduled: {signal.auto_sell_at})"
+            )
+            
+            # Clear auto_sell_at to prevent duplicate processing
+            if signal.close_type == "sell":
+                await self.db.trade.update(
+                    where={"id": signal.trade_id},
+                    data={"auto_sell_at": None}
+                )
+            else:
+                await self.db.trade.update(
+                    where={"id": signal.trade_id},
+                    data={"auto_cover_at": None}
+                )
+            
+            # Get current price
+            current_price = signal.original_price
+            try:
+                fetched_price = await asyncio.wait_for(
+                    self.market_service.await_price(signal.symbol, timeout=2.0),
+                    timeout=3.0
+                )
+                if fetched_price and float(fetched_price) > 0:
+                    current_price = float(fetched_price)
+            except Exception as e:
+                logger.warning(f"Price fetch failed for {signal.symbol}, using original: {e}")
+            
+            # Determine close side
+            close_side = "SELL" if signal.close_type == "sell" else "BUY"  # COVER = BUY
+            
+            # Create close trade
+            import json
+            from decimal import Decimal
+            
+            close_trade = await self.db.trade.create(
+                data={
+                    "portfolio_id": signal.portfolio_id,
+                    "organization_id": getattr(trade, "organization_id", None),
+                    "customer_id": str(getattr(trade, "customer_id", "") or ""),
+                    "trade_type": "auto",
+                    "symbol": signal.symbol,
+                    "exchange": str(trade.exchange) if trade.exchange else "NSE",
+                    "segment": str(trade.segment) if trade.segment else "EQUITY",
+                    "side": close_side,
+                    "order_type": "market",
+                    "quantity": signal.quantity,
+                    "price": Decimal(str(current_price)),
+                    "status": "pending",
+                    "source": "streaming_order_monitor",
+                    "agent_id": getattr(trade, "agent_id", None),
+                    "allocation_id": getattr(trade, "allocation_id", None),
+                    "position_id": getattr(trade, "position_id", None),
+                    "metadata": json.dumps({
+                        "order_type": f"auto_{signal.close_type}",
+                        "parent_trade_id": signal.trade_id,
+                        "triggered_by": "streaming_order_monitor",
+                        "original_price": signal.original_price,
+                        "execution_price": current_price,
+                        "sell_reason": "auto_sell_at_expired",
+                        "auto_sell_at": signal.auto_sell_at.isoformat() if signal.auto_sell_at else None,
+                        "triggered_at": signal.triggered_at.isoformat(),
+                    }),
+                }
+            )
+            
+            # Execute the close trade
+            from services.trade_execution_service import TradeExecutionService
+            trade_service = TradeExecutionService(logger=logger)
+            result = await trade_service.execute_trade(close_trade.id, simulate=True)
+            
+            exec_time_ms = int((time.time() - exec_start) * 1000)
+            
+            if result and result.get("status") == "executed":
+                # Mark original trade as auto-sold
+                if not isinstance(meta, dict):
+                    meta = {}
+                meta.update({
+                    "auto_sold": True,
+                    "auto_sold_at": datetime.now(timezone.utc).isoformat(),
+                    "auto_close_trade_id": close_trade.id,
+                    "closing_price": current_price,
+                    "pnl_at_close": (current_price - signal.original_price) * signal.quantity 
+                        if signal.close_type == "sell" 
+                        else (signal.original_price - current_price) * signal.quantity,
+                })
+                
+                await self.db.trade.update(
+                    where={"id": signal.trade_id},
+                    data={"metadata": json.dumps(meta)},
+                )
+                
+                logger.info(
+                    f"✅ Auto-{signal.close_type} completed in {exec_time_ms}ms: "
+                    f"{signal.trade_id[:8]} {signal.symbol} x {signal.quantity} @ ₹{current_price:.2f}"
+                )
+                
+                # Remove from cache
+                self._auto_sell_trades.pop(signal.trade_id, None)
+            else:
+                error_msg = result.get("error", "Unknown error") if result else "No result"
+                logger.error(f"❌ Auto-{signal.close_type} failed for {signal.trade_id[:8]}: {error_msg}")
+                
+        except Exception as exc:
+            logger.exception(f"❌ Failed to auto-{signal.close_type} {signal.trade_id}: {exc}")
+        finally:
+            self._auto_selling.discard(signal.trade_id)
+    
+    async def _auto_sell_refresh_loop(self):
+        """Background task to refresh auto-sell trades from database."""
+        while self._running:
+            try:
+                trades = await self._fetch_auto_sell_trades()
+                
+                # Update cache
+                old_ids = set(self._auto_sell_trades.keys())
+                new_ids = {t.id for t in trades}
+                
+                # Remove completed/cancelled trades
+                for trade_id in old_ids - new_ids:
+                    self._auto_sell_trades.pop(trade_id, None)
+                
+                # Add/update trades
+                self._auto_sell_trades = {t.id: t for t in trades}
+                
+                if trades:
+                    now = datetime.now(timezone.utc)
+                    expired = sum(1 for t in trades 
+                        if (t.auto_sell_at and t.auto_sell_at <= now) or 
+                           (t.auto_cover_at and t.auto_cover_at <= now))
+                    logger.info(
+                        f"⏰ Monitoring {len(trades)} auto-sell trades "
+                        f"({expired} expired, ready to execute)"
+                    )
+                
+                await asyncio.sleep(self.refresh_interval)
+                
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.exception(f"Auto-sell refresh loop error: {exc}")
+                await asyncio.sleep(5)
+    
+    async def _auto_sell_monitor_loop(self):
+        """
+        Monitor auto-sell trades and execute when time expires.
+        
+        Runs continuously, checking if current time >= auto_sell_at.
+        """
+        while self._running:
+            try:
+                now = datetime.now(timezone.utc)
+                
+                for trade_id, trade in list(self._auto_sell_trades.items()):
+                    # Skip if already executing
+                    if trade_id in self._auto_selling:
+                        continue
+                    
+                    # Check if auto-sell time has passed
+                    should_sell = False
+                    close_type = None
+                    auto_time = None
+                    
+                    if trade.auto_sell_at and trade.auto_sell_at <= now:
+                        should_sell = True
+                        close_type = "sell"
+                        auto_time = trade.auto_sell_at
+                    elif trade.auto_cover_at and trade.auto_cover_at <= now:
+                        should_sell = True
+                        close_type = "cover"
+                        auto_time = trade.auto_cover_at
+                    
+                    if should_sell and close_type and auto_time:
+                        signal = AutoSellSignal(
+                            trade_id=trade.id,
+                            symbol=trade.symbol,
+                            close_type=close_type,
+                            quantity=trade.quantity,
+                            original_price=trade.original_price,
+                            portfolio_id=trade.portfolio_id or "",
+                            auto_sell_at=auto_time,
+                            triggered_at=now,
+                        )
+                        # Execute async (don't block loop)
+                        asyncio.create_task(self._execute_auto_sell(signal))
+                
+                # Check every 1 second for auto-sells (time-based, not price-based)
+                await asyncio.sleep(1.0)
+                
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.exception(f"Auto-sell monitor loop error: {exc}")
+                await asyncio.sleep(2)
+    
     def start(self):
         """
         Start the streaming order monitor.
         
         Starts both the order refresh loop (fetches from DB) and the monitoring
-        loop (checks conditions and executes orders).
+        loop (checks conditions and executes orders), plus auto-sell monitoring.
         """
         if self._running:
             logger.warning("Order monitor already running")
@@ -513,13 +877,17 @@ class PathwayOrderMonitor:
         
         self._running = True
         
-        logger.info("🚀 Starting streaming order monitor...")
+        logger.info("🚀 Starting streaming order monitor (TP/SL + Auto-Sell)...")
         
-        # Start background tasks
+        # Start background tasks for price-based orders (TP/SL/limit/stop)
         self._refresh_task = asyncio.create_task(self._refresh_orders_loop())
         self._monitor_task = asyncio.create_task(self._monitor_loop())
         
-        logger.info("✅ Streaming order monitor started")
+        # Start background tasks for time-based auto-sell
+        self._auto_sell_refresh_task = asyncio.create_task(self._auto_sell_refresh_loop())
+        self._auto_sell_task = asyncio.create_task(self._auto_sell_monitor_loop())
+        
+        logger.info("✅ Streaming order monitor started (TP/SL + Auto-Sell)")
     
     def stop(self):
         """Stop the streaming order monitor."""
@@ -529,11 +897,17 @@ class PathwayOrderMonitor:
         logger.info("Stopping streaming order monitor...")
         self._running = False
         
-        # Cancel background tasks
+        # Cancel price-based order tasks
         if self._refresh_task:
             self._refresh_task.cancel()
         if self._monitor_task:
             self._monitor_task.cancel()
+        
+        # Cancel auto-sell tasks
+        if hasattr(self, '_auto_sell_refresh_task') and self._auto_sell_refresh_task:
+            self._auto_sell_refresh_task.cancel()
+        if self._auto_sell_task:
+            self._auto_sell_task.cancel()
         
         logger.info("Streaming order monitor stopped")
     
@@ -551,8 +925,12 @@ class PathwayOrderMonitor:
         """
         return {
             "running": self._running,
+            # Price-based orders (TP/SL/limit/stop)
             "pending_orders": len(self._pending_orders),
             "monitored_symbols": len(self._orders_by_symbol),
             "subscribed_symbols": len(self._subscribed_symbols),
             "currently_executing": len(self._executing),
+            # Time-based auto-sell
+            "auto_sell_trades": len(self._auto_sell_trades),
+            "currently_auto_selling": len(self._auto_selling),
         }

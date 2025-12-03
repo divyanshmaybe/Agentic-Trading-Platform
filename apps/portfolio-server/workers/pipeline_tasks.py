@@ -335,9 +335,6 @@ def run_risk_monitor(self) -> dict:
     rate_limit=None,
     # High priority for real-time signal processing
     priority=9,
-    # Extended timeouts for signal processing
-    soft_time_limit=600,  # 10 minutes
-    time_limit=720,  # 12 minutes
 )
 def process_trade_signal(self, signal_payload: dict) -> dict:
     """
@@ -378,9 +375,6 @@ def process_trade_signal(self, signal_payload: dict) -> dict:
     retry_kwargs={"max_retries": 3},
     # Higher priority for market close operations
     priority=8,
-    # Longer timeouts - closing multiple positions can take time
-    soft_time_limit=600,  # 10 minutes
-    time_limit=720,  # 12 minutes
 )
 def sell_high_risk_before_close(self) -> dict:
     """Sell all high_risk agent positions before market close (3:15 PM IST)."""

@@ -101,7 +101,7 @@ class TradeController:
             # Verify allocation exists and get agent info
             allocation = await self.prisma.portfolioallocation.find_unique(
                 where={"id": allocation_id},
-                include={"agent": True}
+                include={"tradingAgent": True}
             )
             if not allocation:
                 raise HTTPException(
@@ -233,8 +233,9 @@ class TradeController:
                 "triggered_by": "manual_api_trade",
                 "confidence": 1.0,  # Manual trades have 100% confidence
                 "allocated_capital": allocated_capital,  # Required for event
-                "take_profit_pct": 0.03,  # Default TP 3%
-                "stop_loss_pct": 0.01,  # Default SL 1%
+                # NO TP/SL for manual trades - user manages exits manually
+                "take_profit_pct": None,
+                "stop_loss_pct": None,
                 "explanation": f"Manual {payload.side} order via API",
                 "filing_time": "",
                 "generated_at": "",
@@ -266,6 +267,7 @@ class TradeController:
             )
             
             # Set auto_sell_at if requested (only for BUY orders)
+            # The streaming_order_monitor will handle execution when time expires
             if payload.auto_sell_after and payload.side == "BUY":
                 from datetime import datetime, timedelta
                 auto_sell_at = datetime.utcnow() + timedelta(seconds=payload.auto_sell_after)
@@ -276,16 +278,24 @@ class TradeController:
                 )
                 
                 logger.info(
-                    "🕒 Auto-sell scheduled for trade %s at %s (%d seconds from now)",
+                    "🕒 Auto-sell scheduled for trade %s at %s (%d seconds from now, streaming monitor will handle)",
                     trade_id,
                     auto_sell_at.isoformat(),
                     payload.auto_sell_after
                 )
             
-            # Fetch completed trade
-            trade = await self.prisma.trade.find_unique(where={"id": trade_id})
+            # Fetch completed trade with execution log
+            trade = await self.prisma.trade.find_unique(
+                where={"id": trade_id},
+                include={"executions": True}
+            )
             if not trade:
                 raise RuntimeError("Trade execution completed but trade record not found")
+            
+            # Get trade_delay from execution log if available
+            trade_delay_ms = None
+            if trade.executions and len(trade.executions) > 0:
+                trade_delay_ms = trade.executions[0].trade_delay
             
             summaries = [TradeSummary(
                 id=trade.id,
@@ -296,6 +306,7 @@ class TradeController:
                 quantity=trade.quantity,
                 price=trade.price,
                 execution_time=trade.execution_time,
+                trade_delay_ms=trade_delay_ms,
             )]
             
             # Build portfolio snapshot
@@ -427,6 +438,7 @@ class TradeController:
                 quantity=trade_dict["quantity"],
                 price=trade_dict.get("price"),
                 execution_time=trade_dict.get("execution_time"),
+                trade_delay_ms=trade_dict.get("trade_delay_ms"),
             )
             for trade_dict in trades
         ]

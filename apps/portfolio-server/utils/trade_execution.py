@@ -281,12 +281,11 @@ def prepare_trade_execution_payloads(
 
         for portfolio in eligible_portfolios:
             logger.info(
-                "🔍 Checking portfolio %s: agent_id=%s, agent_status=%s, capital_base=%.2f, auto_trade=%s",
+                "🔍 Checking portfolio %s: agent_id=%s, agent_status=%s, capital_base=%.2f",
                 portfolio.portfolio_id,
                 portfolio.agent_id,
                 portfolio.agent_status,
                 portfolio.capital_base,
-                dict(portfolio.agent_config or {}).get("auto_trade", True),
             )
             
             if not portfolio.agent_id:
@@ -296,19 +295,10 @@ def prepare_trade_execution_payloads(
                 )
                 continue
 
+            # status=active means auto-trade is enabled, no separate flag needed
             if portfolio.agent_status and str(portfolio.agent_status).lower() != "active":
                 logger.debug(
-                    "Skipping portfolio %s: trading agent %s inactive",
-                    portfolio.portfolio_id,
-                    portfolio.agent_id,
-                )
-                continue
-
-            agent_config = dict(portfolio.agent_config or {})
-            auto_trade_enabled = agent_config.get("auto_trade", True)
-            if not auto_trade_enabled:
-                logger.debug(
-                    "Skipping portfolio %s: trading agent %s auto-trade disabled",
+                    "Skipping portfolio %s: trading agent %s not active",
                     portfolio.portfolio_id,
                     portfolio.agent_id,
                 )
@@ -356,14 +346,14 @@ def prepare_trade_execution_payloads(
                             "id": portfolio.agent_id,
                             "type": portfolio.agent_type,
                             "status": portfolio.agent_status,
-                            "config": agent_config,
+                            "config": dict(portfolio.agent_config or {}),
                             "metadata": dict(portfolio.agent_metadata or {}),
                         },
                     },
                     agent_id=portfolio.agent_id,
                     agent_type=portfolio.agent_type,
                     agent_status=portfolio.agent_status,
-                    agent_config=agent_config,
+                    agent_config=dict(portfolio.agent_config or {}),
                     agent_metadata=portfolio.agent_metadata,
                 )
             )

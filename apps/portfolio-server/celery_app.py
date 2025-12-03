@@ -139,7 +139,6 @@ celery_app = Celery(
         "workers.trade_execution_tasks",
         "workers.pipeline_tasks",
         "workers.snapshot_tasks",
-        "workers.auto_sell_worker",
         "workers.streaming_risk_tasks",
         "workers.economic_indicators_tasks",
         "workers.low_risk_tasks",  # Low-risk pipeline worker
@@ -254,9 +253,7 @@ celery_app.conf.task_routes = {
     "risk.alerts.send_email": {"queue": QUEUE_NAMES["risk"], "routing_key": "risk"},
     # Streaming monitor gets its own dedicated queue to not block other tasks
     "risk.streaming_monitor.start": {"queue": QUEUE_NAMES["streaming"], "routing_key": "streaming"},
-    # Auto-sell worker - MUST NOT block trading queue! Routes to general queue
-    "trades.auto_sell_expired_trades": {"queue": QUEUE_NAMES["auto_sell"], "routing_key": "general"},
-    "trades.execute_auto_close": {"queue": QUEUE_NAMES["auto_sell"], "routing_key": "general"},
+    # Market close sell - uses general queue
     "pipeline.sell_high_risk_before_close": {"queue": QUEUE_NAMES["auto_sell"], "routing_key": "general"},
     # Alpha signal tasks - trading queue for signal execution
     "alpha.generate_daily_signals": {"queue": QUEUE_NAMES["pipelines"], "routing_key": "pipelines"},
@@ -291,7 +288,6 @@ SIGNAL_PROCESSING_TASKS = [
 TRADE_EXECUTION_TASKS = [
     "trading.execute_trade_job",
     "trading.process_pending_trade",
-    "trades.execute_auto_close",  # Auto-close individual trades
 ]
 
 # Tasks that should run indefinitely (no time limits) - isolated queue
@@ -311,9 +307,9 @@ QUICK_TASKS = [
     "snapshot.capture_portfolio_snapshots",
 ]
 
-# Auto-sell task - needs its own limits
+# Auto-sell is handled by streaming_order_monitor - no Celery tasks needed
+# Only market-close sell remains as a scheduled Celery task
 AUTO_SELL_TASKS = [
-    "trades.auto_sell_expired_trades",
     "pipeline.sell_high_risk_before_close",
 ]
 
@@ -388,17 +384,8 @@ celery_app.conf.task_annotations = {
         }
         for task_name in QUICK_TASKS
     },
-    # Auto-sell scanner - MUST BE FAST, singleton behavior
-    "trades.auto_sell_expired_trades": {
-        "soft_time_limit": 30,  # 30 seconds - scanner should be fast
-        "time_limit": 45,  # 45 seconds hard limit
-        "rate_limit": "1/m",  # Max 1 per minute (singleton)
-        "acks_late": False,  # Acknowledge immediately
-    },
-    # Market close sell - can take longer
+    # Market close sell - no limits
     "pipeline.sell_high_risk_before_close": {
-        "soft_time_limit": 300,  # 5 minutes
-        "time_limit": 360,  # 6 minutes
         "rate_limit": "1/h",  # Once per hour max
     },
 }
@@ -494,20 +481,12 @@ if SNAPSHOT_ENABLED:
         "options": {"queue": SNAPSHOT_QUEUE},
     }
 
-# Auto-sell worker - runs every minute to sell trades past their 15-minute window
-# CRITICAL: Uses general queue to NOT block trading queue
-AUTO_SELL_ENABLED = os.getenv("AUTO_SELL_ENABLED", "true").lower() in {"1", "true", "yes"}
-AUTO_SELL_QUEUE = os.getenv("AUTO_SELL_QUEUE", QUEUE_NAMES["auto_sell"])  # Uses general queue
-
-if AUTO_SELL_ENABLED:
-    celery_app.conf.beat_schedule["auto-sell-expired-trades"] = {
-        "task": "trades.auto_sell_expired_trades",
-        "schedule": timedelta(minutes=1),  # Every minute
-        "options": {
-            "queue": AUTO_SELL_QUEUE,
-            "expires": 50,  # Task expires after 50 seconds if not picked up
-        },
-    }
+# Auto-sell is now handled by the streaming_order_monitor (Pathway-based)
+# The PathwayOrderMonitor in pipelines/orders/streaming_order_monitor_pipeline.py handles:
+# 1. Price-based orders (TP/SL/limit/stop) - checks price conditions
+# 2. Time-based auto-sell - checks auto_sell_at/auto_cover_at timestamps
+# Run with: pnpm streaming:orders
+# No Celery beat schedule needed - streaming monitor runs continuously
 
 # Market closing task - sells all high_risk positions at 3:15 PM IST (9:45 AM UTC)
 # IST is UTC+5:30, so 3:15 PM IST = 9:45 AM UTC
@@ -616,7 +595,6 @@ def _import_tasks():
         pipeline_tasks,
         trade_tasks,
         trade_execution_tasks,
-        auto_sell_worker,
         market_data_tasks,
         risk_alert_tasks,
         snapshot_tasks,

@@ -344,6 +344,10 @@ class TradeExecutionService:
         # Prepare Trade record data (contains all trade details)
         from datetime import datetime, timedelta
         
+        # Check if this is a manual trade (no TP/SL for manual trades)
+        triggered_by = job_row.get("triggered_by", "")
+        is_manual_trade = triggered_by == "manual_api_trade"
+        
         # Default TP/SL percentages for NSE trades if not provided
         DEFAULT_TP_PCT = Decimal("0.02")  # 2% take profit
         DEFAULT_SL_PCT = Decimal("0.01")  # 1% stop loss
@@ -351,31 +355,37 @@ class TradeExecutionService:
         reference_price = self._as_decimal(job_row["reference_price"])
         side = job_row["side"]
         
-        # Calculate TP/SL percentages (use provided or defaults)
-        tp_pct = self._as_decimal(job_row.get("take_profit_pct"), "0.000001") if job_row.get("take_profit_pct") else DEFAULT_TP_PCT
-        sl_pct = self._as_decimal(job_row.get("stop_loss_pct"), "0.000001") if job_row.get("stop_loss_pct") else DEFAULT_SL_PCT
+        # Calculate TP/SL percentages (skip for manual trades)
+        if is_manual_trade:
+            tp_pct = None
+            sl_pct = None
+            tp_price = None
+            sl_price = None
+        else:
+            tp_pct = self._as_decimal(job_row.get("take_profit_pct"), "0.000001") if job_row.get("take_profit_pct") else DEFAULT_TP_PCT
+            sl_pct = self._as_decimal(job_row.get("stop_loss_pct"), "0.000001") if job_row.get("stop_loss_pct") else DEFAULT_SL_PCT
+            
+            # Calculate fixed TP/SL prices based on side
+            if side.upper() == "BUY":
+                # For BUY (LONG): TP above entry, SL below entry
+                tp_price = reference_price * (Decimal("1") + tp_pct)
+                sl_price = reference_price * (Decimal("1") - sl_pct)
+            elif side.upper() == "SHORT_SELL":
+                # For SHORT_SELL: TP below entry (profit when price drops), SL above entry
+                tp_price = reference_price * (Decimal("1") - tp_pct)
+                sl_price = reference_price * (Decimal("1") + sl_pct)
+            else:  # SELL or COVER
+                # For SELL/COVER: TP below entry, SL above entry
+                tp_price = reference_price * (Decimal("1") - tp_pct)
+                sl_price = reference_price * (Decimal("1") + sl_pct)
         
-        # Calculate fixed TP/SL prices based on side
-        if side.upper() == "BUY":
-            # For BUY (LONG): TP above entry, SL below entry
-            tp_price = reference_price * (Decimal("1") + tp_pct)
-            sl_price = reference_price * (Decimal("1") - sl_pct)
-        elif side.upper() == "SHORT_SELL":
-            # For SHORT_SELL: TP below entry (profit when price drops), SL above entry
-            tp_price = reference_price * (Decimal("1") - tp_pct)
-            sl_price = reference_price * (Decimal("1") + sl_pct)
-        else:  # SELL or COVER
-            # For SELL/COVER: TP below entry, SL above entry
-            tp_price = reference_price * (Decimal("1") - tp_pct)
-            sl_price = reference_price * (Decimal("1") + sl_pct)
-        
-        # Set 15-minute auto-close window based on trade side
-        auto_close_time = datetime.utcnow() + timedelta(minutes=15)
+        # Set 15-minute auto-close window based on trade side (only for non-manual trades)
+        auto_close_time = datetime.utcnow() + timedelta(minutes=15) if not is_manual_trade else None
         
         trade_data = {
             "organization_id": organization_id,  # From job_row or portfolio
             "customer_id": customer_id,  # From job_row or portfolio
-            "trade_type": "auto",  # NSE pipeline trades are auto-trades
+            "trade_type": "manual" if is_manual_trade else "auto",
             "symbol": job_row["symbol"],
             "exchange": "NSE",
             "segment": "EQUITY",
@@ -384,21 +394,25 @@ class TradeExecutionService:
             "quantity": int(job_row["quantity"]),
             "price": reference_price,
             "status": "pending",
-            "source": "nse_pipeline",
+            "source": "manual_api" if is_manual_trade else "nse_pipeline",
             "metadata": json.dumps(metadata),
-            "take_profit_pct": tp_pct,
-            "stop_loss_pct": sl_pct,
-            "take_profit_price": tp_price,
-            "stop_loss_price": sl_price,
         }
         
-        # Set appropriate auto-close timestamp based on trade side
-        if side.upper() == "SHORT_SELL":
-            # SHORT_SELL: Set auto_cover_at (buy to close after 15 min)
-            trade_data["auto_cover_at"] = auto_close_time.isoformat() + "Z"
-        elif side.upper() == "BUY":
-            # BUY (LONG): Set auto_sell_at (sell to close after 15 min)
-            trade_data["auto_sell_at"] = auto_close_time.isoformat() + "Z"
+        # Only add TP/SL for non-manual trades
+        if not is_manual_trade:
+            trade_data["take_profit_pct"] = tp_pct
+            trade_data["stop_loss_pct"] = sl_pct
+            trade_data["take_profit_price"] = tp_price
+            trade_data["stop_loss_price"] = sl_price
+        
+        # Set appropriate auto-close timestamp based on trade side (only for non-manual trades)
+        if auto_close_time:
+            if side.upper() == "SHORT_SELL":
+                # SHORT_SELL: Set auto_cover_at (buy to close after 15 min)
+                trade_data["auto_cover_at"] = auto_close_time.isoformat() + "Z"
+            elif side.upper() == "BUY":
+                # BUY (LONG): Set auto_sell_at (sell to close after 15 min)
+                trade_data["auto_sell_at"] = auto_close_time.isoformat() + "Z"
         # SELL and COVER don't need auto-close (they ARE closing trades)
 
         # Add NSE-specific fields to Trade record
@@ -659,8 +673,8 @@ class TradeExecutionService:
                     allocated_capital=float(row["allocated_capital"]),
                     confidence=float(row["confidence"]),
                     reference_price=float(row["reference_price"]),
-                    take_profit_pct=float(row["take_profit_pct"]),
-                    stop_loss_pct=float(row["stop_loss_pct"]),
+                    take_profit_pct=float(row.get("take_profit_pct") or 0),
+                    stop_loss_pct=float(row.get("stop_loss_pct") or 0),
                     explanation=row.get("explanation", ""),
                     filing_time=row.get("filing_time", ""),
                     generated_at=row.get("generated_at", ""),
@@ -1099,6 +1113,16 @@ class TradeExecutionService:
                     "trade_id": trade_id,
                     "error": str(portfolio_error),
                 }
+
+            # AUTO-SELL: The streaming_order_monitor will pick up trades with auto_sell_at set
+            # and execute the sell when the time expires. No Celery scheduling needed.
+            if auto_close_time and trade_side in ("BUY", "SHORT_SELL"):
+                self.logger.info(
+                    "🕒 Auto-%s set for trade %s at %s (streaming monitor will handle)",
+                    "sell" if trade_side == "BUY" else "cover",
+                    trade_id,
+                    auto_close_time
+                )
 
             return {
                 "status": "executed",
@@ -2037,6 +2061,52 @@ class TradeExecutionService:
             # Re-raise to ensure trade is marked as failed
             raise
     
+    async def _cancel_pending_tp_sl_orders_tx(
+        self,
+        tx: Any,
+        portfolio_id: str,
+        symbol: str,
+    ) -> None:
+        """
+        Cancel all pending TP/SL orders within a transaction.
+        Transaction-safe version for use inside tx context.
+        """
+        try:
+            pending_orders = await tx.trade.find_many(
+                where={
+                    "portfolio_id": portfolio_id,
+                    "symbol": {"equals": symbol, "mode": "insensitive"},
+                    "status": {"in": ["pending", "pending_tp", "pending_sl"]},
+                    "source": "nse_pipeline_tp_sl",
+                }
+            )
+            
+            for order in pending_orders:
+                metadata = {}
+                if hasattr(order, "metadata") and order.metadata:
+                    meta = getattr(order, "metadata")
+                    if isinstance(meta, str):
+                        try:
+                            metadata = json.loads(meta)
+                        except:
+                            metadata = {}
+                    elif isinstance(meta, dict):
+                        metadata = meta
+                
+                metadata["cancelled_at"] = datetime.utcnow().isoformat()
+                metadata["cancel_reason"] = "position_closed"
+                
+                await tx.trade.update(
+                    where={"id": order.id},
+                    data={
+                        "status": "cancelled",
+                        "metadata": json.dumps(metadata),
+                    }
+                )
+                self.logger.info("✅ [TX] Cancelled pending TP/SL order for %s", symbol)
+        except Exception as exc:
+            self.logger.warning("Failed to cancel TP/SL orders in TX: %s", exc)
+    
     async def _cancel_pending_tp_sl_orders(
         self,
         portfolio_id: str,
@@ -2207,13 +2277,37 @@ class TradeExecutionService:
             
             new_quantity = old_quantity - quantity
             
+            # Calculate sale proceeds to add back to available_cash
+            sale_proceeds = executed_price * quantity
+            
+            # Get allocation to update available_cash
+            position_allocation_id = getattr(existing_position, "allocation_id", None) or allocation_id
+            if position_allocation_id:
+                allocation = await tx.portfolioallocation.find_unique(
+                    where={"id": position_allocation_id}
+                )
+                if allocation:
+                    current_cash = float(getattr(allocation, "available_cash", 0) or 0)
+                    new_cash = current_cash + sale_proceeds
+                    await tx.portfolioallocation.update(
+                        where={"id": position_allocation_id},
+                        data={"available_cash": new_cash}
+                    )
+                    self.logger.info(
+                        "💰 [TX] Cash returned on SELL: ₹%.2f → ₹%.2f (+₹%.2f)",
+                        current_cash, new_cash, sale_proceeds
+                    )
+            
             if new_quantity == 0:
                 # Close position
                 await tx.position.update(
                     where={"id": existing_position.id},
-                    data={"quantity": 0, "status": "closed"}
+                    data={"quantity": 0, "status": "closed", "closed_at": datetime.utcnow()}
                 )
                 self.logger.info("✅ [TX] Closed SELL position: %s", symbol)
+                
+                # Cancel any pending TP/SL orders for this position
+                await self._cancel_pending_tp_sl_orders_tx(tx, portfolio_id, symbol)
             else:
                 # Reduce position
                 await tx.position.update(
@@ -2289,13 +2383,37 @@ class TradeExecutionService:
             # Reduce short position (add to negative quantity to bring closer to 0)
             new_quantity = old_quantity + quantity  # e.g., -100 + 100 = 0
             
+            # Calculate proceeds to add back to available_cash (for COVER, it's the cover cost)
+            cover_proceeds = executed_price * quantity
+            
+            # Get allocation to update available_cash
+            position_allocation_id = getattr(existing_position, "allocation_id", None) or allocation_id
+            if position_allocation_id:
+                allocation = await tx.portfolioallocation.find_unique(
+                    where={"id": position_allocation_id}
+                )
+                if allocation:
+                    current_cash = float(getattr(allocation, "available_cash", 0) or 0)
+                    new_cash = current_cash + cover_proceeds
+                    await tx.portfolioallocation.update(
+                        where={"id": position_allocation_id},
+                        data={"available_cash": new_cash}
+                    )
+                    self.logger.info(
+                        "💰 [TX] Cash returned on COVER: ₹%.2f → ₹%.2f (+₹%.2f)",
+                        current_cash, new_cash, cover_proceeds
+                    )
+            
             if new_quantity == 0:
                 # Close short position
                 await tx.position.update(
                     where={"id": existing_position.id},
-                    data={"quantity": 0, "status": "closed"}
+                    data={"quantity": 0, "status": "closed", "closed_at": datetime.utcnow()}
                 )
                 self.logger.info("✅ [TX] Closed COVER position: %s", symbol)
+                
+                # Cancel any pending TP/SL orders
+                await self._cancel_pending_tp_sl_orders_tx(tx, portfolio_id, symbol)
             else:
                 # Reduce short position
                 await tx.position.update(

@@ -1274,15 +1274,16 @@ class PipelineService:
         # Ensure metadata is a mutable dict
         metadata = dict(metadata)
         
-        # Copy reference_price to metadata if present in payload
-        if "reference_price" in payload:
+        # Copy reference_price to metadata if present in payload and not None
+        payload_ref_price = payload.get("reference_price")
+        if payload_ref_price is not None:
             if "reference_price" not in metadata:
-                metadata["reference_price"] = payload["reference_price"]
-                self.logger.info("✅ Copied reference_price %.2f from payload to metadata", float(payload["reference_price"]))
+                metadata["reference_price"] = payload_ref_price
+                self.logger.info("✅ Copied reference_price %.2f from payload to metadata", float(payload_ref_price))
             else:
                 self.logger.info("ℹ️ reference_price already in metadata: %s", metadata["reference_price"])
         else:
-            self.logger.warning("⚠️ reference_price NOT found in payload keys: %s", list(payload.keys()))
+            self.logger.warning("⚠️ reference_price is None or not found in payload keys: %s", list(payload.keys()))
 
         signal_id = (
             str(payload.get("signal_id"))
@@ -1332,8 +1333,8 @@ class PipelineService:
         client = db_manager.get_client()
         trade_service = TradeExecutionService(logger=self.logger)
 
-        # DIRECTLY query for active high_risk agents with auto_trade enabled
-        # No need for user filtering bullshit
+        # Query for active high_risk agents - status=active means auto-trade is enabled
+        # No separate auto_trade flag needed - active status IS the flag
         agents = await client.tradingagent.find_many(
                 where={
                     "agent_type": "high_risk",
@@ -1354,32 +1355,10 @@ class PipelineService:
                 "dispatched": 0,
             }
         
-        # Filter agents with auto_trade enabled
-        auto_trade_agents = []
-        for agent in agents:
-            config = self._clean_json(getattr(agent, "strategy_config", None)) or {}
-            auto_enabled = bool(config.get("auto_trade", True))
-            if auto_enabled:
-                auto_trade_agents.append(agent)
-            else:
-                self.logger.debug(
-                    "Skipping agent %s for auto-trade (auto_trade flag disabled)",
-                    getattr(agent, "id", "unknown"),
-                )
-        
-        if not auto_trade_agents:
-            self.logger.warning("⚠️ Found %d high_risk agents but NONE have auto_trade enabled", len(agents))
-            return {
-                "processed_signals": len(processed_signals),
-                "payloads": 0,
-                "jobs": 0,
-                "dispatched": 0,
-            }
-        
-        self.logger.info("✅ Found %d active high_risk agents with auto_trade enabled", len(auto_trade_agents))
+        self.logger.info("✅ Found %d active high_risk agents", len(agents))
         
         # Get unique portfolio IDs from these agents
-        portfolio_ids = list(set([str(agent.portfolio_id) for agent in auto_trade_agents if agent.portfolio_id]))
+        portfolio_ids = list(set([str(agent.portfolio_id) for agent in agents if agent.portfolio_id]))
         
         portfolios = await client.portfolio.find_many(
             where={
@@ -1405,18 +1384,17 @@ class PipelineService:
             active_metadata: Mapping[str, Any] = {}
 
             for agent in agent_rows:
-                status = str(getattr(agent, "status", "") or "active").lower()
-                config = self._clean_json(getattr(agent, "strategy_config", None)) or {}
-                auto_trade_enabled = bool(config.get("auto_trade", True))
+                status = str(getattr(agent, "status", "") or "").lower()
                 agent_id = str(getattr(agent, "id", "unknown"))
 
-                if status == "active" and auto_trade_enabled:
+                # status=active means auto-trade is enabled, no separate flag needed
+                if status == "active":
                     active_agent = agent
-                    active_config = config
+                    active_config = self._clean_json(getattr(agent, "strategy_config", None)) or {}
                     active_metadata = self._parse_metadata(getattr(agent, "metadata", None))
                     active_agents_count += 1
                     self.logger.info(
-                        "✅ Found active trading agent %s (%s) for portfolio %s (auto-trade enabled)",
+                        "✅ Found active trading agent %s (%s) for portfolio %s",
                         agent_id,
                         getattr(agent, "agent_type", "unknown"),
                         getattr(portfolio, "id", "unknown"),
@@ -1426,7 +1404,7 @@ class PipelineService:
             if not active_agent:
                 skipped_portfolios += 1
                 self.logger.debug(
-                    "Skipping portfolio %s: no active high-risk agent with auto-trade enabled",
+                    "Skipping portfolio %s: no active high-risk agent",
                     getattr(portfolio, "id", "unknown"),
                 )
                 continue
@@ -1545,14 +1523,13 @@ class PipelineService:
             # Record signal timestamp for trade_delay calculation
             signal_timestamp = time.time()
             
-            # Dispatch trades via Celery with HIGH PRIORITY for immediate execution
-            # This is production-ready - Celery handles load balancing across workers
-            self.logger.info("🚀 Dispatching %d trade(s) to Celery with HIGH PRIORITY...", len(events))
+            # IMMEDIATE EXECUTION: Execute trades directly within this Celery task
+            # No second hop to another queue - trades execute NOW
+            self.logger.info("🚀 IMMEDIATE EXECUTION: Executing %d trade(s) directly (no queue delay)...", len(events))
             
-            try:
-                from workers.trade_execution_tasks import execute_trade_job
-                
-                for event in events:
+            for event in events:
+                exec_start = time.time()
+                try:
                     # Store signal timestamp in trade for delay calculation
                     try:
                         await client.trade.update(
@@ -1566,32 +1543,35 @@ class PipelineService:
                     except Exception:
                         pass  # Non-critical
                     
-                    # Dispatch with HIGH PRIORITY (9) for immediate execution
-                    execute_trade_job.apply_async(
-                        args=[event.trade_id],
-                        kwargs={"simulate": True, "signal_timestamp": signal_timestamp},
-                        priority=9,  # Highest priority (0-9, 9 is highest)
-                        queue="trading",
-                        expires=60,  # Expire after 60 seconds if not picked up
-                    )
-                    dispatched += 1
+                    # Execute trade IMMEDIATELY - no queuing
+                    result = await trade_service.execute_trade(event.trade_id, simulate=True)
+                    exec_time_ms = int((time.time() - exec_start) * 1000)
+                    
+                    executed += 1
                     self.logger.info(
-                        "✅ Dispatched trade to Celery (priority=9): Trade %s | %s %s x %d",
+                        "✅ EXECUTED in %dms: Trade %s | %s %s x %d | Status: %s",
+                        exec_time_ms,
                         event.trade_id[:8],
                         event.side,
                         event.symbol,
                         event.quantity,
+                        result.get("status", "unknown"),
                     )
-            except Exception as exc:
-                self.logger.error("Failed to dispatch trades to Celery: %s", exc, exc_info=True)
-                # Fallback: Execute directly if Celery dispatch fails
-                self.logger.warning("⚠️ Falling back to direct execution...")
-                for event in events:
+                    
+                    # Update trade_delay in execution log
                     try:
-                        result = await trade_service.execute_trade(event.trade_id, simulate=True)
-                        executed += 1
-                    except Exception as e:
-                        self.logger.error("Direct execution failed for %s: %s", event.trade_id, e)
+                        trade_delay_ms = int((time.time() - signal_timestamp) * 1000)
+                        await client.tradeexecutionlog.update_many(
+                            where={"trade_id": event.trade_id},
+                            data={"trade_delay": trade_delay_ms}
+                        )
+                    except Exception:
+                        pass  # Non-critical
+                        
+                except Exception as e:
+                    self.logger.error("❌ Trade execution failed for %s: %s", event.trade_id[:8], e)
+            
+            dispatched = executed  # All dispatched trades were executed immediately
 
         # Disconnect Prisma client
         try:

@@ -86,8 +86,7 @@ async def verify_db_state(symbol: str = None, trade_id: str = None, show_all: bo
         
         # Positions
         positions = await client.position.find_many(
-            where={"symbol": {"equals": symbol, "mode": "insensitive"}},
-            include={"agent": True}
+            where={"symbol": {"equals": symbol, "mode": "insensitive"}}
         )
         
         print(f"\n  POSITIONS ({len(positions)}):")

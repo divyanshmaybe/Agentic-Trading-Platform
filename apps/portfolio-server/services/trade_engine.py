@@ -134,9 +134,15 @@ class TradeEngine:
             auto_sell_at = self._calculate_auto_sell_at(payload, execution_time)
             if auto_sell_at:
                 # Update the trade with the recalculated auto_sell_at
+                # The streaming_order_monitor will pick this up and auto-sell when time expires
                 await self.prisma.trade.update(
                     where={"id": trade.id},
                     data={"auto_sell_at": auto_sell_at}
+                )
+                import logging
+                logging.getLogger(__name__).info(
+                    "🕒 Auto-sell scheduled for trade %s at %s (streaming monitor will handle)",
+                    trade.id, auto_sell_at
                 )
         
         # Create payload for execution (will create/update TradeExecutionLog)
@@ -220,6 +226,14 @@ class TradeEngine:
                 trade_data["auto_sell_at"] = auto_sell_at
             
             trade = await self.prisma.trade.create(data=trade_data)
+            
+            # Log auto-sell scheduling (streaming_order_monitor will handle execution)
+            if auto_sell_at and payload.side == "BUY":
+                import logging
+                logging.getLogger(__name__).info(
+                    "🕒 Auto-sell scheduled for trade %s at %s (streaming monitor will handle)",
+                    trade.id, auto_sell_at
+                )
 
         if payload.side == "BUY":
             await self._apply_buy_execution(payload, execution_price)

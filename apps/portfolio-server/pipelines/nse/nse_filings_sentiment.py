@@ -308,7 +308,8 @@ def publish_signal_to_kafka(
                 queue="trading",  # Route to TRADING queue (NOT pipelines!)
                 priority=9,  # HIGH PRIORITY - execute immediately
             )
-            print(f"[CELERY] ✅ Queued HIGH-PRIORITY trade execution for {symbol} signal={signal_value} (price: ₹{reference_price:.2f})")
+            price_str = f"₹{reference_price:.2f}" if reference_price is not None else "N/A (will fetch)"
+            print(f"[CELERY] ✅ Queued HIGH-PRIORITY trade execution for {symbol} signal={signal_value} (price: {price_str})")
         else:
             print(f"[CELERY] ⏭️ Skipping signal=0 (HOLD) for {symbol} - no trade needed")
         
