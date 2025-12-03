@@ -71,10 +71,10 @@ export function generateCompanyReportPdf(report: CompanyReport) {
     pdf.setFontSize(size);
 
     const lineHeight = size * 0.55;
-    const lines = pdf.splitTextToSize(text, contentWidth);
+    const lines: string[] = pdf.splitTextToSize(text, contentWidth);
 
     ensureSpace(lines.length * lineHeight);
-    lines.forEach((line) => {
+    lines.forEach((line: string) => {
       pdf.text(line, margin, cursorY);
       cursorY += lineHeight;
     });
@@ -86,7 +86,7 @@ export function generateCompanyReportPdf(report: CompanyReport) {
 		pdf.setFont("times", "bold");
 		pdf.setFontSize(15);
 
-		const lines = pdf.splitTextToSize(text, contentWidth);
+		const lines: string[] = pdf.splitTextToSize(text, contentWidth);
 		const lineHeight = 8;
 
 		for (const line of lines) {
@@ -106,7 +106,7 @@ export function generateCompanyReportPdf(report: CompanyReport) {
 		pdf.setFont("helvetica", "italic");
 		pdf.setFontSize(12);
 
-		const lines = pdf.splitTextToSize(text, contentWidth);
+		const lines: string[] = pdf.splitTextToSize(text, contentWidth);
 		const lineHeight = 6;
 
 		for (const line of lines) {
