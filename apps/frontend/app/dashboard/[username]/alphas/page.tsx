@@ -76,8 +76,14 @@ type HypothesisForm = {
   nDrop: number
   trainStartDate: string
   trainEndDate: string
+  validationStartDate: string
+  validationEndDate: string
   testStartDate: string
   testEndDate: string
+  initialCapital: number
+  commission: number
+  slippage: number
+  rebalanceFrequency: number
 }
 
 const defaultHypothesisForm: HypothesisForm = {
@@ -89,9 +95,15 @@ const defaultHypothesisForm: HypothesisForm = {
   topk: 30,
   nDrop: 5,
   trainStartDate: "2023-01-01",
-  trainEndDate: "2023-09-30",
+  trainEndDate: "2023-06-30",
+  validationStartDate: "2023-07-01",
+  validationEndDate: "2023-09-30",
   testStartDate: "2023-10-01",
   testEndDate: "2023-12-31",
+  initialCapital: 1000000,
+  commission: 0.001,
+  slippage: 0.001,
+  rebalanceFrequency: 1,
 }
 
 function NewHypothesisModal({
@@ -137,8 +149,14 @@ function NewHypothesisModal({
         n_drop: form.nDrop,
         train_start_date: form.trainStartDate,
         train_end_date: form.trainEndDate,
+        validation_start_date: form.validationStartDate,
+        validation_end_date: form.validationEndDate,
         test_start_date: form.testStartDate,
         test_end_date: form.testEndDate,
+        initial_capital: form.initialCapital,
+        commission: form.commission,
+        slippage: form.slippage,
+        rebalance_frequency: form.rebalanceFrequency,
       })
       handleClose()
     } catch (err) {
@@ -322,52 +340,131 @@ function NewHypothesisModal({
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-1.5">
-                        <label className="text-xs uppercase tracking-wide text-white/50">
-                          Train Period
-                        </label>
-                        <div className="flex gap-2">
+                    {/* Date Periods */}
+                    <div className="space-y-3">
+                      <p className="text-xs font-medium uppercase tracking-wide text-white/40">
+                        Date Periods
+                      </p>
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-3">
+                          <span className="w-24 shrink-0 text-xs text-white/50">Train</span>
                           <input
                             type="date"
                             value={form.trainStartDate}
                             onChange={(e) =>
                               setForm((prev) => ({ ...prev, trainStartDate: e.target.value }))
                             }
-                            className="w-full rounded-xl border border-white/15 bg-black/40 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-violet-400/50"
+                            className="flex-1 rounded-lg border border-white/15 bg-black/40 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-violet-400/50"
                           />
+                          <span className="text-white/30">→</span>
                           <input
                             type="date"
                             value={form.trainEndDate}
                             onChange={(e) =>
                               setForm((prev) => ({ ...prev, trainEndDate: e.target.value }))
                             }
-                            className="w-full rounded-xl border border-white/15 bg-black/40 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-violet-400/50"
+                            className="flex-1 rounded-lg border border-white/15 bg-black/40 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-violet-400/50"
                           />
                         </div>
-                      </div>
-                      <div className="space-y-1.5">
-                        <label className="text-xs uppercase tracking-wide text-white/50">
-                          Test Period
-                        </label>
-                        <div className="flex gap-2">
+                        <div className="flex items-center gap-3">
+                          <span className="w-24 shrink-0 text-xs text-white/50">Validation</span>
+                          <input
+                            type="date"
+                            value={form.validationStartDate}
+                            onChange={(e) =>
+                              setForm((prev) => ({ ...prev, validationStartDate: e.target.value }))
+                            }
+                            className="flex-1 rounded-lg border border-white/15 bg-black/40 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-violet-400/50"
+                          />
+                          <span className="text-white/30">→</span>
+                          <input
+                            type="date"
+                            value={form.validationEndDate}
+                            onChange={(e) =>
+                              setForm((prev) => ({ ...prev, validationEndDate: e.target.value }))
+                            }
+                            className="flex-1 rounded-lg border border-white/15 bg-black/40 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-violet-400/50"
+                          />
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="w-24 shrink-0 text-xs text-white/50">Test</span>
                           <input
                             type="date"
                             value={form.testStartDate}
                             onChange={(e) =>
                               setForm((prev) => ({ ...prev, testStartDate: e.target.value }))
                             }
-                            className="w-full rounded-xl border border-white/15 bg-black/40 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-violet-400/50"
+                            className="flex-1 rounded-lg border border-white/15 bg-black/40 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-violet-400/50"
                           />
+                          <span className="text-white/30">→</span>
                           <input
                             type="date"
                             value={form.testEndDate}
                             onChange={(e) =>
                               setForm((prev) => ({ ...prev, testEndDate: e.target.value }))
                             }
-                            className="w-full rounded-xl border border-white/15 bg-black/40 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-violet-400/50"
+                            className="flex-1 rounded-lg border border-white/15 bg-black/40 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-violet-400/50"
                           />
                         </div>
+                      </div>
+                    </div>
+
+                    {/* Backtest Configuration */}
+                    <div className="grid grid-cols-4 gap-4">
+                      <div className="space-y-1.5">
+                        <label className="text-xs uppercase tracking-wide text-white/50">
+                          Initial Capital
+                        </label>
+                        <input
+                          type="number"
+                          value={form.initialCapital}
+                          onChange={(e) =>
+                            setForm((prev) => ({ ...prev, initialCapital: parseInt(e.target.value) || 1000000 }))
+                          }
+                          className="w-full rounded-xl border border-white/15 bg-black/40 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-violet-400/50"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-xs uppercase tracking-wide text-white/50">
+                          Commission
+                        </label>
+                        <input
+                          type="number"
+                          step="0.0001"
+                          value={form.commission}
+                          onChange={(e) =>
+                            setForm((prev) => ({ ...prev, commission: parseFloat(e.target.value) || 0.001 }))
+                          }
+                          className="w-full rounded-xl border border-white/15 bg-black/40 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-violet-400/50"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-xs uppercase tracking-wide text-white/50">
+                          Slippage
+                        </label>
+                        <input
+                          type="number"
+                          step="0.0001"
+                          value={form.slippage}
+                          onChange={(e) =>
+                            setForm((prev) => ({ ...prev, slippage: parseFloat(e.target.value) || 0.001 }))
+                          }
+                          className="w-full rounded-xl border border-white/15 bg-black/40 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-violet-400/50"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-xs uppercase tracking-wide text-white/50">
+                          Rebalance Freq
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          value={form.rebalanceFrequency}
+                          onChange={(e) =>
+                            setForm((prev) => ({ ...prev, rebalanceFrequency: parseInt(e.target.value) || 1 }))
+                          }
+                          className="w-full rounded-xl border border-white/15 bg-black/40 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-violet-400/50"
+                        />
                       </div>
                     </div>
                   </motion.div>
