@@ -83,14 +83,19 @@ export function useAlphas(portfolioId?: string) {
   const [alphas, setAlphas] = useState<LiveAlpha[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const hasInitialDataRef = useRef(false)
 
-  const fetchAlphas = useCallback(async () => {
+  const fetchAlphas = useCallback(async (isPolling = false) => {
     try {
-      setLoading(true)
+      // Only show loading on initial fetch, not on polls when data exists
+      if (!isPolling || !hasInitialDataRef.current) {
+        setLoading(true)
+      }
       const params = portfolioId ? `?portfolio_id=${portfolioId}` : ""
       const response = await apiClient.get<LiveAlphaListResponse>(`/api/alphas/live${params}`)
       setAlphas(response.alphas)
       setError(null)
+      hasInitialDataRef.current = true
     } catch (err) {
       console.error("Failed to fetch alphas:", err)
       setError(err instanceof Error ? err.message : "Failed to fetch alphas")
@@ -100,7 +105,16 @@ export function useAlphas(portfolioId?: string) {
   }, [portfolioId])
 
   useEffect(() => {
-    fetchAlphas()
+    fetchAlphas(false)
+
+    // Poll every 10 seconds
+    const pollInterval = setInterval(() => {
+      fetchAlphas(true)
+    }, 10000)
+
+    return () => {
+      clearInterval(pollInterval)
+    }
   }, [fetchAlphas])
 
   const createAlpha = async (data: CreateLiveAlphaRequest): Promise<LiveAlpha> => {
@@ -169,12 +183,16 @@ export function useAlphaCopilotRuns() {
   const [runs, setRuns] = useState<AlphaCopilotRun[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const hasInitialDataRef = useRef(false)
 
   const ALPHACOPILOT_URL = process.env.NEXT_PUBLIC_ALPHACOPILOT_URL || "http://localhost:8069"
 
-  const fetchRuns = useCallback(async () => {
+  const fetchRuns = useCallback(async (isPolling = false) => {
     try {
-      setLoading(true)
+      // Only show loading on initial fetch, not on polls when data exists
+      if (!isPolling || !hasInitialDataRef.current) {
+        setLoading(true)
+      }
       const response = await fetch(`${ALPHACOPILOT_URL}/runs`)
       if (!response.ok) {
         throw new Error("Failed to fetch runs")
@@ -182,6 +200,7 @@ export function useAlphaCopilotRuns() {
       const data = await response.json()
       setRuns(data.runs || [])
       setError(null)
+      hasInitialDataRef.current = true
     } catch (err) {
       console.error("Failed to fetch AlphaCopilot runs:", err)
       setError(err instanceof Error ? err.message : "Failed to fetch runs")
@@ -191,7 +210,16 @@ export function useAlphaCopilotRuns() {
   }, [ALPHACOPILOT_URL])
 
   useEffect(() => {
-    fetchRuns()
+    fetchRuns(false)
+
+    // Poll every 10 seconds
+    const pollInterval = setInterval(() => {
+      fetchRuns(true)
+    }, 10000)
+
+    return () => {
+      clearInterval(pollInterval)
+    }
   }, [fetchRuns])
 
   const createRun = async (hypothesis: string, config: Record<string, unknown> = {}): Promise<AlphaCopilotRun[]> => {

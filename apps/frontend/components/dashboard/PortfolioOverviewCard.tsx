@@ -1,4 +1,4 @@
-import { useMemo } from "react"
+import { useMemo, useRef, useEffect } from "react"
 import { Pie } from "react-chartjs-2"
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -17,6 +17,18 @@ type PortfolioOverviewCardProps = {
 
 export function PortfolioOverviewCard({ summary, loading = false }: PortfolioOverviewCardProps) {
   const hasAllocations = summary.allocation && summary.allocation.length > 0
+  const hasEverLoadedPortfolioRef = useRef(false)
+  
+  // Track if we've ever successfully loaded portfolio data - once true, never show "Balancing Portfolio" again
+  useEffect(() => {
+    // If we're not loading and we have portfolio data (even if allocations are empty), mark as loaded
+    if (!loading && summary.portfolioName !== "No Portfolio") {
+      hasEverLoadedPortfolioRef.current = true
+    }
+  }, [loading, summary.portfolioName])
+  
+  // Only show "Balancing Portfolio" if we've never loaded portfolio data and we're not currently loading
+  const shouldShowBalancing = !hasEverLoadedPortfolioRef.current && !loading && !hasAllocations
   const allocationChart = useMemo(() => createAllocationChartData(summary.allocation), [summary.allocation])
   const formatted = useMemo(() => {
     const changePositive = summary.changeValue >= 0
@@ -115,11 +127,7 @@ export function PortfolioOverviewCard({ summary, loading = false }: PortfolioOve
             <div className="w-full max-w-xs">
               <div className="h-64 w-64 animate-pulse rounded-full bg-white/10" />
             </div>
-          ) : hasAllocations ? (
-            <div className="w-full max-w-xs">
-              <Pie data={allocationChart} options={allocationChartOptions} plugins={[pieDepthPlugin]} />
-            </div>
-          ) : (
+          ) : shouldShowBalancing ? (
             <AllocationLoadingState
               title="Balancing Portfolio"
               description="We're currently balancing your investments between long-term, intraday, and algorithmic trading strategies."
@@ -130,6 +138,15 @@ export function PortfolioOverviewCard({ summary, loading = false }: PortfolioOve
               ]}
               className="w-full"
             />
+          ) : hasAllocations ? (
+            <div className="w-full max-w-xs">
+              <Pie data={allocationChart} options={allocationChartOptions} plugins={[pieDepthPlugin]} />
+            </div>
+          ) : (
+            // If we've had allocations before but they're empty now, show empty state instead of "Balancing Portfolio"
+            <div className="w-full max-w-xs flex items-center justify-center">
+              <div className="text-white/50 text-sm">No allocations available</div>
+            </div>
           )}
         </div>
       </CardContent>
