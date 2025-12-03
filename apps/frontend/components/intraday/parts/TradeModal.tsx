@@ -16,13 +16,16 @@ import { getPortfolio, submitTrade, type TradeRequest, type Portfolio } from "@/
 import type { KafkaNotification } from "../types"
 import { toRecord } from "../notification-utils"
 
+type TradeSide = "BUY" | "SELL"
+
 type TradeModalProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
   notification: KafkaNotification
+  side?: TradeSide
 }
 
-export function TradeModal({ open, onOpenChange, notification }: TradeModalProps) {
+export function TradeModal({ open, onOpenChange, notification, side = "BUY" }: TradeModalProps) {
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null)
   const [loading, setLoading] = useState(false)
   const [fetchingPortfolio, setFetchingPortfolio] = useState(false)
@@ -38,6 +41,7 @@ export function TradeModal({ open, onOpenChange, notification }: TradeModalProps
 
   const notificationData = toRecord(notification.data)
   const symbol = (notificationData?.symbol as string) || ""
+  const isBuy = side === "BUY"
 
   // Fetch portfolio when modal opens
   useEffect(() => {
@@ -93,7 +97,7 @@ export function TradeModal({ open, onOpenChange, notification }: TradeModalProps
       const tradeRequest: TradeRequest = {
         portfolio_id: formData.portfolio_id,
         symbol,
-        side: "BUY",
+        side,
         order_type: formData.order_type,
         quantity: formData.quantity,
         limit_price:
@@ -140,8 +144,10 @@ export function TradeModal({ open, onOpenChange, notification }: TradeModalProps
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
-          <DialogTitle>Place Buy Order</DialogTitle>
-          <DialogDescription>Submit a buy order for this trading signal</DialogDescription>
+          <DialogTitle>{isBuy ? "Place Buy Order" : "Place Sell Order"}</DialogTitle>
+          <DialogDescription>
+            Submit a {isBuy ? "buy" : "sell"} order for this trading signal
+          </DialogDescription>
         </DialogHeader>
 
         {fetchingPortfolio ? (

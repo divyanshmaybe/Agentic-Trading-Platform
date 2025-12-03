@@ -15,6 +15,7 @@ export function NotificationActions({
   notification: KafkaNotification
 }) {
   const [tradeModalOpen, setTradeModalOpen] = useState(false)
+  const [tradeSide, setTradeSide] = useState<"BUY" | "SELL">("BUY")
 
   // Filter out "review filing" button for nse-signal notifications
   const filteredActions = notification.type === "nse-signal"
@@ -27,13 +28,31 @@ export function NotificationActions({
         {signal === 1 && (
           <button
             type="button"
-            onClick={() => setTradeModalOpen(true)}
+            onClick={() => {
+              setTradeSide("BUY")
+              setTradeModalOpen(true)
+            }}
             className={cn(
               "inline-flex items-center justify-center rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-[0.25em] transition-all duration-200",
               "border border-emerald-400/30 bg-emerald-500/15 text-emerald-200 shadow-[0_10px_28px_-18px_rgba(16,185,129,0.35)] hover:-translate-y-0.5 hover:border-emerald-300/50 hover:bg-emerald-500/25 hover:text-emerald-100",
             )}
           >
             Buy
+          </button>
+        )}
+        {signal != null && signal !== 1 && (
+          <button
+            type="button"
+            onClick={() => {
+              setTradeSide("SELL")
+              setTradeModalOpen(true)
+            }}
+            className={cn(
+              "inline-flex items-center justify-center rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-[0.25em] transition-all duration-200",
+              "border border-red-400/30 bg-red-500/15 text-red-200 shadow-[0_10px_28px_-18px_rgba(248,113,113,0.35)] hover:-translate-y-0.5 hover:border-red-300/50 hover:bg-red-500/25 hover:text-red-100",
+            )}
+          >
+            Sell
           </button>
         )}
         {filteredActions?.map((action, index) => (
@@ -49,6 +68,7 @@ export function NotificationActions({
         open={tradeModalOpen}
         onOpenChange={setTradeModalOpen}
         notification={notification}
+        side={tradeSide}
       />
     </>
   )
