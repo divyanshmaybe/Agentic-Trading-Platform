@@ -286,17 +286,31 @@ def publish_signal_to_kafka(
         print(f"[TIMING] ⚠️ No llm_timing data for {symbol}")
     
     # Extract reference_price from stocktechdata
-    reference_price = None  # Use None instead of 0.0 to indicate missing price
-    try:
-        # stocktechdata format: "Current price: 3500.50, timestamp: 2024-01-15 10:30:00"
-        if stocktechdata and "Current price:" in stocktechdata:
-            price_str = stocktechdata.split("Current price:")[1].split(",")[0].strip()
-            reference_price = float(price_str)
-            print(f"[PRICE] ✅ Extracted reference_price={reference_price} for {symbol}")
-        else:
-            print(f"[PRICE] ⚠️ Could not extract price from stocktechdata (will be fetched later): {stocktechdata[:100] if stocktechdata else 'None'}")
-    except (ValueError, IndexError, AttributeError) as exc:
-        print(f"[PRICE] ⚠️ Failed to parse reference_price for {symbol}: {exc} (will be fetched later)")
+    # Format: "Current price: 3500.50, timestamp: 2024-01-15 10:30:00"
+    reference_price = None
+    if stocktechdata and isinstance(stocktechdata, str) and stocktechdata.strip():
+        try:
+            # Try to extract price from "Current price: XXX" format
+            if "Current price:" in stocktechdata:
+                # Split on "Current price:" and take what's after it
+                after_price = stocktechdata.split("Current price:")[1]
+                # Take the number part (before comma or end of string)
+                price_part = after_price.split(",")[0].strip()
+                # Remove any currency symbols or whitespace
+                price_part = price_part.replace("₹", "").replace("$", "").strip()
+                if price_part:
+                    reference_price = float(price_part)
+                    print(f"[PRICE] ✅ Extracted reference_price={reference_price} for {symbol}")
+            elif stocktechdata.replace(".", "").replace("-", "").isdigit():
+                # stocktechdata might just be a plain number
+                reference_price = float(stocktechdata)
+                print(f"[PRICE] ✅ Parsed reference_price={reference_price} (plain number) for {symbol}")
+            else:
+                print(f"[PRICE] ⚠️ stocktechdata format not recognized for {symbol}: '{stocktechdata[:100] if len(stocktechdata) > 100 else stocktechdata}'")
+        except (ValueError, IndexError, AttributeError) as exc:
+            print(f"[PRICE] ⚠️ Failed to parse reference_price for {symbol}: {exc}")
+    else:
+        print(f"[PRICE] ⚠️ Empty or invalid stocktechdata for {symbol}: {type(stocktechdata)}")
     
     event = NSESignalEvent(
         symbol=symbol,
