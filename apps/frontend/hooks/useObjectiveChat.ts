@@ -1,5 +1,5 @@
-import { useState } from "react"
-import { submitObjectiveIntake, formatFieldName, type ObjectiveIntakeResponse } from "@/lib/objectiveIntake"
+import { useState, useEffect, useCallback } from "react"
+import { submitObjectiveIntake, formatFieldName, getObjectiveByUserId, type ObjectiveIntakeResponse, type ObjectiveResponse } from "@/lib/objectiveIntake"
 import { buildStructuredPayload } from "@/lib/objectiveUtils"
 
 type Message = {
@@ -27,6 +27,8 @@ export function useObjectiveChat(fieldHelpers: UseObjectiveChatProps) {
   const [isProcessing, setIsProcessing] = useState(false)
   const [objectiveId, setObjectiveId] = useState<string | null>(null)
   const [lastResponse, setLastResponse] = useState<ObjectiveIntakeResponse | null>(null)
+  const [objective, setObjective] = useState<ObjectiveResponse | null>(null)
+  const [isFetchingObjective, setIsFetchingObjective] = useState(false)
 
   const addMessage = (content: string, isUser: boolean) => {
     setMessages((prev) => [
@@ -39,6 +41,24 @@ export function useObjectiveChat(fieldHelpers: UseObjectiveChatProps) {
       },
     ])
   }
+
+  const fetchObjective = useCallback(async () => {
+    setIsFetchingObjective(true)
+    try {
+      const fetchedObjective = await getObjectiveByUserId()
+      if (fetchedObjective) {
+        setObjective(fetchedObjective)
+        setObjectiveId(fetchedObjective.id)
+      } else {
+        setObjective(null)
+      }
+    } catch (error) {
+      console.error("Failed to fetch objective:", error)
+      setObjective(null)
+    } finally {
+      setIsFetchingObjective(false)
+    }
+  }, [])
 
   const handleApiCall = async (transcript?: string, structuredPayload?: Record<string, any>) => {
     setIsProcessing(true)
@@ -54,7 +74,9 @@ export function useObjectiveChat(fieldHelpers: UseObjectiveChatProps) {
       setObjectiveId(response.objective_id)
       setLastResponse(response)
       
+      // Fetch objective when status becomes complete
       if (response.status === "complete") {
+        await fetchObjective()
         addMessage(
           response.message ||
             "I got everything needed from the text, thank you. Your objective has been finalized and your portfolio has been rebalanced.",
@@ -163,10 +185,21 @@ export function useObjectiveChat(fieldHelpers: UseObjectiveChatProps) {
     await handleApiCall(undefined, structuredPayload)
   }
 
+  // Fetch objective on mount if not already loaded
+  useEffect(() => {
+    if (!objective && !isFetchingObjective) {
+      fetchObjective()
+    }
+  }, [objective, isFetchingObjective, fetchObjective])
+
   return {
     messages,
     isProcessing,
     lastResponse,
+    objectiveId,
+    objective,
+    isFetchingObjective,
+    fetchObjective,
     handleSend,
     handleFieldSubmit,
   }

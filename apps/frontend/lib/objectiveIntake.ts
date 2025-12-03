@@ -29,6 +29,32 @@ export type ObjectiveIntakeResponse = {
   allocation?: AllocationResultSummary | null
 }
 
+export type ObjectiveResponse = {
+  id: string
+  user_id: string
+  name?: string | null
+  raw?: Record<string, any> | null
+  source?: string | null
+  structured_payload?: Record<string, any> | null
+  investable_amount?: number | null
+  investment_horizon_years?: number | null
+  investment_horizon_label?: string | null
+  target_return?: number | null
+  risk_tolerance?: string | null
+  risk_aversion_lambda?: number | null
+  liquidity_needs?: string | null
+  rebalancing_frequency?: string | null
+  constraints?: Record<string, any> | null
+  target_returns?: any[] | null
+  preferences?: Record<string, any> | null
+  generic_notes?: any[] | null
+  missing_fields?: string[] | null
+  completion_status: string
+  status: string
+  created_at: string
+  updated_at: string
+}
+
 type ApiError = {
   detail?: string
   message?: string
@@ -113,6 +139,28 @@ export async function submitObjectiveIntake(
     },
     body: JSON.stringify(payload),
   })
+}
+
+export async function getObjectiveByUserId(
+  accessToken?: string,
+): Promise<ObjectiveResponse | null> {
+  const token = resolveAccessToken(accessToken)
+
+  try {
+    const objective = await request<ObjectiveResponse>("/api/objectives/user", {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    })
+    return objective
+  } catch (error: any) {
+    // Return null if objective not found (404), rethrow other errors
+    if (error.message?.includes("404") || error.message?.includes("not found")) {
+      return null
+    }
+    throw error
+  }
 }
 
 export type FieldType = "number" | "text" | "select"

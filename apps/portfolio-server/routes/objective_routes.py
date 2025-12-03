@@ -79,6 +79,41 @@ def create_objective_routes(pipeline_service: PipelineService) -> APIRouter:
         ]
 
     @router.get(
+        "/user",
+        response_model=ObjectiveResponse,
+        status_code=status.HTTP_200_OK,
+        summary="Get objective for authenticated user",
+    )
+    async def get_user_objective(
+        prisma: Prisma = Depends(prisma_client),
+        user: dict = Depends(get_authenticated_user),
+    ) -> ObjectiveResponse:
+        """
+        Retrieve the investment objective for the authenticated user.
+        There should be only one objective per user.
+        Returns 404 if no objective exists for the user.
+        """
+        user_id = user.get("id")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Authenticated user id is required.",
+            )
+
+        objective = await prisma.objective.find_first(
+            where={"user_id": user_id},
+            order={"created_at": "desc"},
+        )
+
+        if not objective:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No objective found for user {user_id}.",
+            )
+
+        return ObjectiveResponse.model_validate(objective.model_dump())
+
+    @router.get(
         "/{objective_id}",
         response_model=ObjectiveResponse,
         status_code=status.HTTP_200_OK,
