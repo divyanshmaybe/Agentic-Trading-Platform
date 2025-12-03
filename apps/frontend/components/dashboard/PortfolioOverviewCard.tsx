@@ -1,4 +1,4 @@
-import { useMemo, useRef, useEffect } from "react"
+import { useMemo, useRef, useEffect, useState } from "react"
 import { Pie } from "react-chartjs-2"
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -7,6 +7,7 @@ import type { PortfolioSummary } from "@/lib/dashboardTypes"
 import { formatCurrency } from "@/lib/dashboardData"
 import { cn } from "@/lib/utils"
 import { AllocationLoadingState } from "@/components/shared/AllocationLoadingState"
+import { getPositions, fetchQuotes } from "@/lib/portfolio"
 
 import { allocationChartOptions, createAllocationChartData, pieDepthPlugin } from "./chartConfig"
 
@@ -18,6 +19,9 @@ type PortfolioOverviewCardProps = {
 export function PortfolioOverviewCard({ summary, loading = false }: PortfolioOverviewCardProps) {
   const hasAllocations = summary.allocation && summary.allocation.length > 0
   const hasEverLoadedPortfolioRef = useRef(false)
+  const [currentPortfolioValue, setCurrentPortfolioValue] = useState<number | null>(null)
+  const [valueLoading, setValueLoading] = useState(false)
+  const [valueError, setValueError] = useState<string | null>(null)
   
   // Track if we've ever successfully loaded portfolio data - once true, never show "Balancing Portfolio" again
   useEffect(() => {
@@ -27,22 +31,238 @@ export function PortfolioOverviewCard({ summary, loading = false }: PortfolioOve
     }
   }, [loading, summary.portfolioName])
   
+  // Calculate current portfolio value by fetching positions and quotes
+  useEffect(() => {
+    // Reset state when summary changes
+    setCurrentPortfolioValue(null)
+    setValueError(null)
+    setValueLoading(false)
+
+    if (loading || summary.portfolioName === "No Portfolio") {
+      return
+    }
+
+    let isMounted = true
+    let isInitialFetch = true
+
+    const calculateCurrentValue = async () => {
+      if (!isMounted) return
+      
+      // Only show loading state on initial fetch, not on subsequent polls
+      if (isInitialFetch) {
+        setValueLoading(true)
+        isInitialFetch = false
+      }
+      setValueError(null)
+
+      try {
+        // Fetch all positions (API has max limit of 100, so we need to paginate)
+        let allPositions: any[] = []
+        let page = 1
+        const limit = 100 // Maximum allowed by API
+        let hasMore = true
+
+        try {
+          while (hasMore && isMounted) {
+            const positionsResponse = await getPositions(page, limit)
+            
+            if (!positionsResponse || !positionsResponse.items) {
+              hasMore = false
+              break
+            }
+
+            allPositions = [...allPositions, ...positionsResponse.items]
+
+            // Check if there are more pages
+            const totalPages = Math.ceil(positionsResponse.total / limit)
+            hasMore = page < totalPages && positionsResponse.items.length === limit
+            page++
+          }
+        } catch (positionsError) {
+          // Handle 404 or other errors gracefully - just use available cash
+          if (isMounted) {
+            const errorMessage = positionsError instanceof Error ? positionsError.message : String(positionsError)
+            // If it's a 404 or "not found" error, silently fall back to cash
+            if (errorMessage.includes("404") || errorMessage.includes("not found") || errorMessage.includes("Not Found")) {
+              setCurrentPortfolioValue(summary.availableCash)
+              setValueLoading(false)
+              return
+            }
+            // For other errors, log but still try to continue with available cash
+            console.warn("Error fetching positions, using available cash only:", errorMessage)
+            setCurrentPortfolioValue(summary.availableCash)
+            setValueLoading(false)
+            return
+          }
+          return
+        }
+        
+        if (!isMounted) return
+
+        if (allPositions.length === 0) {
+          // No positions, current value is just available cash
+          if (isMounted) {
+            setCurrentPortfolioValue(summary.availableCash)
+            setValueLoading(false)
+          }
+          return
+        }
+
+        // Extract unique symbols from all positions
+        const symbols = [...new Set(allPositions.map((pos) => pos.symbol).filter(Boolean))]
+        
+        // Skip if no valid symbols
+        if (symbols.length === 0) {
+          if (isMounted) {
+            setCurrentPortfolioValue(summary.availableCash)
+            setValueLoading(false)
+          }
+          return
+        }
+        
+        // Fetch quotes for all symbols
+        let quotesResponse
+        try {
+          quotesResponse = await fetchQuotes(symbols)
+        } catch (fetchError) {
+          // If quotes fail, we can still calculate with available cash
+          console.warn("Error fetching quotes, using available cash only:", fetchError)
+          if (isMounted) {
+            setCurrentPortfolioValue(summary.availableCash)
+            setValueLoading(false)
+          }
+          return
+        }
+        
+        if (!quotesResponse || !quotesResponse.data) {
+          // Invalid response, fall back to available cash
+          if (isMounted) {
+            setCurrentPortfolioValue(summary.availableCash)
+            setValueLoading(false)
+          }
+          return
+        }
+        
+        if (!isMounted) return
+        
+        // Check if we have missing quotes
+        if (quotesResponse.missing && quotesResponse.missing.length > 0) {
+          setValueError(`Missing quotes for: ${quotesResponse.missing.join(", ")}`)
+        }
+
+        // Create a map of symbol to price
+        const priceMap = new Map<string, number>()
+        if (quotesResponse.data) {
+          quotesResponse.data.forEach((quote) => {
+            if (quote && quote.symbol && quote.price) {
+              priceMap.set(quote.symbol, parseFloat(quote.price))
+            }
+          })
+        }
+
+        // Calculate current portfolio value: availableCash + sum(price * quantity)
+        let positionsValue = 0
+        let hasMissingPrices = false
+
+        for (const position of allPositions) {
+          if (!position || !position.symbol) continue
+          
+          const currentPrice = priceMap.get(position.symbol)
+          
+          if (currentPrice === undefined || isNaN(currentPrice)) {
+            hasMissingPrices = true
+            continue // Skip positions without quotes
+          }
+
+          const quantity = position.quantity || 0
+          
+          if (quantity === 0) {
+            continue
+          }
+
+          positionsValue += currentPrice * quantity
+        }
+
+        if (hasMissingPrices && (!quotesResponse.missing || quotesResponse.missing.length === 0)) {
+          setValueError("Some quotes are missing")
+        }
+
+        if (isMounted) {
+          const totalValue = summary.availableCash + positionsValue
+          setCurrentPortfolioValue(totalValue)
+        }
+      } catch (error) {
+        console.error("Error calculating current portfolio value:", error)
+        if (isMounted) {
+          // Extract error message properly
+          let errorMessage = "Failed to calculate portfolio value"
+          if (error instanceof Error) {
+            errorMessage = error.message
+          } else if (typeof error === "string") {
+            errorMessage = error
+          } else if (error && typeof error === "object") {
+            // Try to extract message from error object
+            const errObj = error as Record<string, unknown>
+            errorMessage = 
+              (errObj.message as string) ||
+              (errObj.error as string) ||
+              (errObj.detail as string) ||
+              JSON.stringify(error)
+          }
+          
+          // If it's a 404 or not found error, just use available cash without showing error
+          if (errorMessage.includes("404") || errorMessage.includes("not found") || errorMessage.includes("Not Found")) {
+            setCurrentPortfolioValue(summary.availableCash)
+            setValueError(null)
+          } else {
+            setValueError(errorMessage)
+            // Still show available cash as fallback
+            setCurrentPortfolioValue(summary.availableCash)
+          }
+        }
+      } finally {
+        if (isMounted) {
+          setValueLoading(false)
+        }
+      }
+    }
+
+    // Calculate immediately
+    calculateCurrentValue()
+
+    // Set up polling to recalculate every 10 seconds
+    const intervalId = setInterval(() => {
+      if (isMounted) {
+        calculateCurrentValue()
+      }
+    }, 10000) // 10 seconds
+
+    return () => {
+      isMounted = false
+      clearInterval(intervalId)
+    }
+  }, [summary.availableCash, summary.portfolioName, loading])
+  
   // Only show "Balancing Portfolio" if we've never loaded portfolio data and we're not currently loading
   const shouldShowBalancing = !hasEverLoadedPortfolioRef.current && !loading && !hasAllocations
   const allocationChart = useMemo(() => createAllocationChartData(summary.allocation), [summary.allocation])
   const formatted = useMemo(() => {
     const changePositive = summary.changeValue >= 0
 
+    // Use current portfolio value if available, otherwise fall back to availableCash
+    const displayValue = currentPortfolioValue !== null ? currentPortfolioValue : summary.availableCash
+
     return {
       totalValue: formatCurrency(summary.totalValue),
       investmentAmount: formatCurrency(summary.investmentAmount),
       availableCash: formatCurrency(summary.availableCash),
+      currentPortfolioValue: formatCurrency(displayValue),
       changeValue: Math.abs(summary.changeValue).toLocaleString("en-IN"),
       changePrefix: changePositive ? "+" : "-",
       changePctPrefix: summary.changePct > 0 ? "+" : summary.changePct < 0 ? "-" : "",
       riskTolerance: summary.riskTolerance.charAt(0).toUpperCase() + summary.riskTolerance.slice(1),
     }
-  }, [summary])
+  }, [summary, currentPortfolioValue])
 
   return (
     <Card className="card-glass rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_32px_70px_-45px_rgba(0,0,0,0.95)] backdrop-blur">
@@ -51,10 +271,14 @@ export function PortfolioOverviewCard({ summary, loading = false }: PortfolioOve
           Portfolio Overview
         </CardDescription>
         <CardTitle className="h-title text-2xl text-[#fafafa]">
-          {loading ? (
+          {loading || valueLoading ? (
             <div className="h-8 w-48 animate-pulse rounded bg-white/10" />
+          ) : valueError ? (
+            <span className="text-sm text-rose-300" title={valueError}>
+              {formatted.currentPortfolioValue} (Error)
+            </span>
           ) : (
-            formatted.availableCash
+            formatted.currentPortfolioValue
           )}
         </CardTitle>
 

@@ -221,12 +221,38 @@ async function request<T>(path: string, options: RequestInit): Promise<T> {
 
   if (!response.ok) {
     const error: ApiError = body ?? {}
-    const message =
+    let message =
       error.detail ||
       error.message ||
       error.error ||
       (typeof body === "string" ? body : undefined) ||
       response.statusText
+
+    // If message is still not found and body is an object, try to stringify it properly
+    if (!message && body && typeof body === "object") {
+      try {
+        // Try to extract any string property from the error object
+        const bodyObj = body as Record<string, unknown>
+        const possibleMessages = [
+          bodyObj.detail,
+          bodyObj.message,
+          bodyObj.error,
+          bodyObj.msg,
+          bodyObj.description,
+        ].filter((m): m is string => typeof m === "string")
+        
+        if (possibleMessages.length > 0) {
+          message = possibleMessages[0]
+        } else {
+          // Last resort: stringify the object, but limit length
+          const stringified = JSON.stringify(body)
+          message = stringified.length > 200 ? stringified.substring(0, 200) + "..." : stringified
+        }
+      } catch {
+        // If stringification fails, use status text
+        message = response.statusText
+      }
+    }
 
     // If unauthorized, clear token and redirect to login
     if (response.status === 401) {
