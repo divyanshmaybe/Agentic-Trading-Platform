@@ -1289,7 +1289,9 @@ class PipelineService:
         llm_delay_ms = payload.get("llm_delay_ms")
         if llm_delay_ms is not None:
             metadata["llm_delay_ms"] = llm_delay_ms
-            self.logger.info("⏱️ LLM delay: %dms", llm_delay_ms)
+            self.logger.info("⏱️ _build_trade_signal: Added llm_delay_ms=%dms to metadata", llm_delay_ms)
+        else:
+            self.logger.warning("⚠️ _build_trade_signal: llm_delay_ms NOT in payload. Payload keys: %s", list(payload.keys()))
         
         llm_start_time = payload.get("llm_start_time")
         if llm_start_time:

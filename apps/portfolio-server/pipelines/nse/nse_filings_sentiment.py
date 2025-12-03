@@ -280,8 +280,10 @@ def publish_signal_to_kafka(
             llm_timing_data = json.loads(llm_timing)
             llm_delay_ms = llm_timing_data.get("llm_delay_ms", 0)
             print(f"[TIMING] ⏱️ LLM delay for {symbol}: {llm_delay_ms}ms")
-        except (json.JSONDecodeError, TypeError):
-            pass
+        except (json.JSONDecodeError, TypeError) as e:
+            print(f"[TIMING] ⚠️ Failed to parse llm_timing for {symbol}: {e} | llm_timing={llm_timing[:100] if llm_timing else 'None'}")
+    else:
+        print(f"[TIMING] ⚠️ No llm_timing data for {symbol}")
     
     # Extract reference_price from stocktechdata
     reference_price = None  # Use None instead of 0.0 to indicate missing price
@@ -318,6 +320,9 @@ def publish_signal_to_kafka(
         signal_payload["llm_delay_ms"] = llm_timing_data.get("llm_delay_ms", 0)
         signal_payload["llm_start_time"] = llm_timing_data.get("llm_start_time", "")
         signal_payload["llm_end_time"] = llm_timing_data.get("llm_end_time", "")
+        print(f"[TIMING] ✅ Added llm_delay_ms={signal_payload['llm_delay_ms']}ms to signal_payload for {symbol}")
+    else:
+        print(f"[TIMING] ⚠️ No llm_timing_data to add to signal_payload for {symbol}")
 
     try:
         # STEP 1: Queue trade execution ONLY for actionable signals (1=BUY, -1=SELL)

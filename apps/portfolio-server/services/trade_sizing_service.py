@@ -233,7 +233,17 @@ def calculate_trade_execution_jobs(
         
         # Extract metadata
         metadata = payload.get("metadata", {})
-        metadata_json = json.dumps(metadata if isinstance(metadata, dict) else {}, default=str)
+        if not isinstance(metadata, dict):
+            metadata = {}
+        
+        # Debug: Log if llm_delay_ms is in metadata
+        if "llm_delay_ms" in metadata:
+            logger.info("⏱️ calculate_trade_execution_jobs: Found llm_delay_ms=%dms in metadata for %s", 
+                       metadata.get("llm_delay_ms"), symbol)
+        else:
+            logger.warning("⚠️ calculate_trade_execution_jobs: llm_delay_ms NOT in metadata. Keys: %s", list(metadata.keys()))
+        
+        metadata_json = json.dumps(metadata, default=str)
         
         # Filter non-actionable trades
         if side == "HOLD":

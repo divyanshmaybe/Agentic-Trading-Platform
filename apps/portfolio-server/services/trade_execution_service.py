@@ -19,6 +19,7 @@ import json
 import logging
 import uuid
 from contextlib import asynccontextmanager
+from prisma import Json
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -297,8 +298,15 @@ class TradeExecutionService:
         if isinstance(metadata_json, str) and metadata_json:
             try:
                 metadata = json.loads(metadata_json)
+                # Debug: Log if llm_delay_ms is in metadata
+                if "llm_delay_ms" in metadata:
+                    self.logger.info("⏱️ Found llm_delay_ms in metadata_json: %dms", metadata.get("llm_delay_ms"))
+                else:
+                    self.logger.warning("⚠️ llm_delay_ms NOT found in metadata_json. Keys: %s", list(metadata.keys()))
             except json.JSONDecodeError:
                 metadata = {"raw_metadata": metadata_json}
+        else:
+            self.logger.warning("⚠️ metadata_json is empty or not a string: %s", type(metadata_json))
 
         # Add triggering agent information to metadata
         if "triggered_by" not in metadata:
@@ -407,8 +415,14 @@ class TradeExecutionService:
             "price": reference_price,
             "status": "pending",
             "source": "manual_api" if is_manual_trade else "nse_pipeline",
-            "metadata": json.dumps(metadata),
+            "metadata": Json(metadata),  # Use Prisma Json wrapper for proper storage
         }
+        
+        # Debug: Log metadata being stored in Trade record
+        if "llm_delay_ms" in metadata:
+            self.logger.info("✅ Trade metadata INCLUDES llm_delay_ms=%dms for %s", metadata.get("llm_delay_ms"), job_row.get("symbol"))
+        else:
+            self.logger.warning("❌ Trade metadata MISSING llm_delay_ms for %s. Metadata keys: %s", job_row.get("symbol"), list(metadata.keys()))
         
         # Only add TP/SL for non-manual trades
         if not is_manual_trade:
@@ -597,7 +611,7 @@ class TradeExecutionService:
             "request_id": job_row["request_id"],
             "status": "pending",
             "order_type": order_type,
-            "metadata": json.dumps(execution_metadata),
+            "metadata": Json(execution_metadata),  # Use Prisma Json wrapper for proper storage
         }
 
         # Create TradeExecutionLog record
