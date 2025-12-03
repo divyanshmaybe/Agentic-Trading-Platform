@@ -43,6 +43,7 @@ from routes.low_risk_routes import router as low_risk_router
 from routes.admin_routes import router as admin_router
 from utils.pipeline_utils import get_pipeline_status
 from workers.pipeline_tasks import start_nse_pipeline, run_news_sentiment_pipeline
+from monitoring.http_metrics import PrometheusMiddleware, metrics_endpoint
 
 # Get server directory for pipelines
 server_dir = os.path.dirname(__file__)
@@ -192,6 +193,15 @@ base_app.app.router.lifespan_context = lifespan_func
 
 # Update pipeline service logger
 pipeline_service.logger = base_app.logger
+
+# Add Prometheus HTTP metrics middleware
+base_app.app.add_middleware(PrometheusMiddleware)
+
+# Add Prometheus metrics endpoint
+@base_app.app.get("/metrics")
+async def prometheus_metrics():
+    """Prometheus metrics endpoint"""
+    return metrics_endpoint()
 
 # Initialize error handling
 base_app.initialize_error_handling()

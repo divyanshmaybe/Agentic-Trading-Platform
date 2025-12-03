@@ -7,6 +7,8 @@ import { internalRoutes } from "./routes/internal.routes";
 import { userRoutes } from "./routes/user.routes";
 import { setupAuthQueues } from "./queue.setup";
 import { allowedOrigins } from "./config";
+import { prometheusMiddleware, metricsEndpoint } from "./utils/prometheusMetrics";
+import { Router } from "express";
 
 // Initialize queue manager
 const queueManager = QueueManager.getInstance();
@@ -30,6 +32,14 @@ const app = new BaseApp({
     allowedHeaders: ["Content-Type", "Authorization", "x-api-key"],
   },
 });
+
+// Add Prometheus metrics middleware (before routes)
+app.app.use(prometheusMiddleware);
+
+// Add Prometheus metrics endpoint
+const metricsRouter = Router();
+metricsRouter.get("/", metricsEndpoint);
+app.addRoutes("/metrics", metricsRouter);
 
 // Setup routes
 app.addRoutes("/api/auth", authRoutes);

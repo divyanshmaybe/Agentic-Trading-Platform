@@ -10,6 +10,40 @@ rule_files:
   - 'alert-rules.yml'
 
 scrape_configs:
+  # API Servers - HTTP Metrics
+  - job_name: 'auth-server'
+    static_configs:
+      - targets: ['host.docker.internal:4000']
+        labels:
+          service: 'auth-server'
+          environment: 'local'
+    metrics_path: /metrics
+    
+  - job_name: 'portfolio-server'
+    static_configs:
+      - targets: ['host.docker.internal:8000']
+        labels:
+          service: 'portfolio-server'
+          environment: 'local'
+    metrics_path: /metrics
+
+  # API Servers - Docker
+  - job_name: 'auth-server-docker'
+    static_configs:
+      - targets: ['auth_server:4000']
+        labels:
+          service: 'auth-server'
+          environment: 'docker'
+    metrics_path: /metrics
+    
+  - job_name: 'portfolio-server-docker'
+    static_configs:
+      - targets: ['portfolio_server:8000']
+        labels:
+          service: 'portfolio-server'
+          environment: 'docker'
+    metrics_path: /metrics
+
   # Celery Workers (Local Development - use host.docker.internal from Docker)
   - job_name: 'celery-local-trading'
     static_configs:
