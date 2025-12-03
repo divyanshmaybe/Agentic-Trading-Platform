@@ -2,13 +2,15 @@
 
 set -e
 
-echo "🐳 Docker Restart Script"
-echo "========================"
+echo "🐳 Docker Management Script"
+echo "==========================="
 
 # Parse arguments
 CLEAR_VOLUMES=false
 CLEAR_REDIS_ONLY=false
 REBUILD=false
+NO_CACHE=false
+STOP_ONLY=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -24,21 +26,33 @@ while [[ $# -gt 0 ]]; do
             REBUILD=true
             shift
             ;;
+        --no-cache)
+            NO_CACHE=true
+            shift
+            ;;
+        -s|--stop)
+            STOP_ONLY=true
+            shift
+            ;;
         -h|--help)
-            echo "Usage: ./docker-restart.sh [OPTIONS]"
+            echo "Usage: ./docker.sh [OPTIONS]"
             echo ""
             echo "Options:"
             echo "  -v, --volumes   Clear all volumes (databases + redis) - full reset"
             echo "  -r, --redis     Clear only Redis locks and timestamps"
             echo "  -b, --build     Rebuild images before starting"
+            echo "  --no-cache      Use with --build to rebuild without cache"
+            echo "  -s, --stop      Stop containers only (don't restart)"
             echo "  -h, --help      Show this help message"
             echo ""
             echo "Examples:"
-            echo "  ./docker-restart.sh           # Simple restart"
-            echo "  ./docker-restart.sh -r        # Restart + clear Redis locks"
-            echo "  ./docker-restart.sh -v        # Full reset (clears all data)"
-            echo "  ./docker-restart.sh -b        # Rebuild and restart"
-            echo "  ./docker-restart.sh -v -b     # Full reset with rebuild"
+            echo "  ./docker.sh               # Simple restart"
+            echo "  ./docker.sh -s            # Stop only"
+            echo "  ./docker.sh -r            # Restart + clear Redis locks"
+            echo "  ./docker.sh -v            # Full reset (clears all data)"
+            echo "  ./docker.sh -b            # Rebuild and restart"
+            echo "  ./docker.sh -b --no-cache # Rebuild without cache and restart"
+            echo "  ./docker.sh -v -b         # Full reset with rebuild"
             exit 0
             ;;
         *)
@@ -58,6 +72,13 @@ if [ "$CLEAR_VOLUMES" = true ]; then
 else
     docker compose down
     echo "   ✅ Containers stopped"
+fi
+
+# Exit early if stop-only mode
+if [ "$STOP_ONLY" = true ]; then
+    echo ""
+    echo "✅ Docker stop complete!"
+    exit 0
 fi
 
 # Clear Redis locks only (if requested and not doing full volume clear)
@@ -87,7 +108,12 @@ fi
 if [ "$REBUILD" = true ]; then
     echo ""
     echo "🔨 Rebuilding images..."
-    docker compose build
+    if [ "$NO_CACHE" = true ]; then
+        echo "   (using --no-cache)"
+        docker compose build --no-cache
+    else
+        docker compose build
+    fi
     echo "   ✅ Images rebuilt"
 fi
 
