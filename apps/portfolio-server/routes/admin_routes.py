@@ -9,7 +9,7 @@ from prisma import Prisma
 
 from controllers.admin_controller import AdminController
 from db import prisma_client
-from utils.auth import get_authenticated_user
+from auth_middleware import require_admin_or_staff  # type: ignore
 
 
 router = APIRouter(prefix="/admin", tags=["Admin Dashboard"])
@@ -19,29 +19,10 @@ def get_admin_controller(prisma: Prisma = Depends(prisma_client)) -> AdminContro
     return AdminController(prisma)
 
 
-def _require_admin(user: dict) -> str:
-    """Validate user is admin and return organization_id."""
-    role = (user.get("role") or "").lower()
-    if role != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required",
-        )
-    
-    org_id = user.get("organization_id")
-    if not org_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Organization ID not found in user context",
-        )
-    
-    return org_id
-
-
 @router.get("/dashboard")
 async def get_admin_dashboard(
     controller: AdminController = Depends(get_admin_controller),
-    user: dict = Depends(get_authenticated_user),
+    user: dict = Depends(require_admin_or_staff),
 ) -> Dict[str, Any]:
     """
     Get comprehensive admin dashboard data for the organization.
@@ -74,14 +55,14 @@ async def get_admin_dashboard(
     - Histogram: user_pnl_distribution (user performance spread)
     - Treemap: symbol_concentration (position risk analysis)
     """
-    org_id = _require_admin(user)
+    org_id = user["organization_id"]
     return await controller.get_dashboard(org_id)
 
 
 @router.get("/summary")
 async def get_admin_summary(
     controller: AdminController = Depends(get_admin_controller),
-    user: dict = Depends(get_authenticated_user),
+    user: dict = Depends(require_admin_or_staff),
 ) -> Dict[str, Any]:
     """
     Get lightweight dashboard summary for frequent polling.
@@ -93,7 +74,7 @@ async def get_admin_summary(
     
     Poll every 5-10 seconds for near real-time stats.
     """
-    org_id = _require_admin(user)
+    org_id = user["organization_id"]
     return await controller.get_summary(org_id)
 
 

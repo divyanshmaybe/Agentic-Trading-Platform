@@ -121,6 +121,39 @@ class AuthMiddleware(BaseHTTPMiddleware):
         return any(path.startswith(prefix) for prefix in prefixes)
 
 
+async def require_admin_or_staff(request: Request) -> dict:
+    """
+    Dependency function for protecting admin/staff-only routes.
+    Validates authentication and checks for admin or staff role.
+    Returns the authenticated user with organization_id.
+    
+    Usage:
+        @router.get("/admin-endpoint")
+        async def admin_endpoint(user: dict = Depends(require_admin_or_staff)):
+            org_id = user["organization_id"]
+            ...
+    """
+    user = await protect_route(request)
+    
+    role = (user.get("role") or "").lower()
+    if role not in ("admin", "staff"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin or Staff access required",
+        )
+    
+    org_id = user.get("organization_id") or user.get("organizationId")
+    if not org_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Organization ID not found in user context",
+        )
+    
+    # Normalize organization_id in user dict
+    user["organization_id"] = org_id
+    return user
+
+
 async def protect_route(request: Request) -> dict:
     """Dependency function for protecting routes"""
     # Allow CORS preflight requests
