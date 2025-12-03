@@ -271,7 +271,7 @@ TOPICS = {
     "low_risk_logs": os.getenv("LOW_RISK_AGENT_LOGS_TOPIC", "low_risk_agent_logs"),
 }
 
-user_id = "1bbda6f5-ccd4-48f5-b80c-0bd74e43ba58"
+user_id = "41173fe8-4a77-4ffe-a1d3-f371a794ad34"
 
 # -------------------------------------------------------------------
 # Pipeline Simulation

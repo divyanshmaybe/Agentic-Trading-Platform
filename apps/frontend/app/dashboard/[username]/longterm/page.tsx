@@ -16,7 +16,8 @@ import {
 	IndustryDistributionChart,
 	PortfolioAllocationChart,
 	EmptyStateMessage,
-	StreamingEventsView
+	StreamingEventsView,
+	BuyTradeModal
 } from "@/components/longterm"
 import "@/lib/chart"
 
@@ -32,6 +33,7 @@ export default function LongTermPage() {
 	const [showAllEvents, setShowAllEvents] = useState(false)
 	const [triggeringPipeline, setTriggeringPipeline] = useState(false)
 	const [pipelineError, setPipelineError] = useState<string | null>(null)
+	const [buyModalOpen, setBuyModalOpen] = useState(false)
 
 	// Extract summary event data
 	const summaryEvent = useMemo(() => {
@@ -53,6 +55,10 @@ export default function LongTermPage() {
 
 	const finalPortfolio = useMemo(() => {
 		return summaryEvent?.content?.final_portfolio || []
+	}, [summaryEvent])
+
+	const tradeList = useMemo(() => {
+		return summaryEvent?.content?.trade_list || []
 	}, [summaryEvent])
 
 	const summary = useMemo(() => {
@@ -269,6 +275,18 @@ export default function LongTermPage() {
 												</div>
 											)}
 
+											{/* Buy Stocks Button */}
+											{hasSummary && finalPortfolio.length > 0 && agentData?.portfolio_id && (
+												<div className="flex justify-center">
+													<button
+														onClick={() => setBuyModalOpen(true)}
+														className="rounded-lg bg-emerald-500 hover:bg-emerald-600 px-6 py-3 text-white font-semibold transition-colors shadow-lg hover:shadow-xl"
+													>
+														Buy Stocks
+													</button>
+												</div>
+											)}
+
 											{/* Both charts inside card when summary event exists */}
 											{hasSummary && (industryList.length > 0 || finalPortfolio.length > 0) && (
 												<div className="grid grid-cols-1 gap-6 md:grid-cols-2">
@@ -362,6 +380,18 @@ export default function LongTermPage() {
 					</div>
 				)}
 			</Container>
+
+			{/* Buy Trade Modal */}
+			{agentData?.portfolio_id && (
+				<BuyTradeModal
+					open={buyModalOpen}
+					onOpenChange={setBuyModalOpen}
+					finalPortfolio={finalPortfolio}
+					tradeList={tradeList}
+					portfolioId={agentData.portfolio_id}
+					allocationId={agentData.allocation?.id}
+				/>
+			)}
 		</div>
 	)
 }
