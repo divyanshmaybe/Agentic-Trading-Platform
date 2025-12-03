@@ -711,65 +711,66 @@ class PathwayOrderMonitor:
             # Determine close side
             close_side = "SELL" if signal.close_type == "sell" else "BUY"  # COVER = BUY
             
-            # Create close trade
+            # Use TradeEngine for proper execution (handles position updates, TradeExecutionLog)
             import json
+            from services.trade_engine import TradeEngine
+            from schemas import TradeCreate
             from decimal import Decimal
             
-            close_trade = await self.db.trade.create(
-                data={
-                    "portfolio_id": signal.portfolio_id,
-                    "organization_id": getattr(trade, "organization_id", None),
-                    "customer_id": str(getattr(trade, "customer_id", "") or ""),
-                    "trade_type": "auto",
-                    "symbol": signal.symbol,
-                    "exchange": str(trade.exchange) if trade.exchange else "NSE",
-                    "segment": str(trade.segment) if trade.segment else "EQUITY",
-                    "side": close_side,
-                    "order_type": "market",
-                    "quantity": signal.quantity,
-                    "price": Decimal(str(current_price)),
-                    "status": "pending",
-                    "source": "streaming_order_monitor",
-                    "agent_id": getattr(trade, "agent_id", None),
-                    "allocation_id": getattr(trade, "allocation_id", None),
-                    "position_id": getattr(trade, "position_id", None),
-                    "metadata": json.dumps({
-                        "order_type": f"auto_{signal.close_type}",
-                        "parent_trade_id": signal.trade_id,
-                        "triggered_by": "streaming_order_monitor",
-                        "original_price": signal.original_price,
-                        "execution_price": current_price,
-                        "sell_reason": "auto_sell_at_expired",
-                        "auto_sell_at": signal.auto_sell_at.isoformat() if signal.auto_sell_at else None,
-                        "triggered_at": signal.triggered_at.isoformat(),
-                    }),
-                }
+            engine = TradeEngine(self.db)
+            
+            # Create payload for TradeEngine
+            trade_payload = TradeCreate(
+                organization_id=trade.organization_id or "",
+                portfolio_id=signal.portfolio_id,
+                customer_id=str(trade.customer_id or ""),
+                trade_type="auto",
+                symbol=signal.symbol,
+                exchange=str(trade.exchange) if trade.exchange else "NSE",
+                segment=str(trade.segment) if trade.segment else "EQUITY",
+                side=close_side,
+                order_type="market",
+                quantity=signal.quantity,
+                source="streaming_order_monitor",
+                metadata={
+                    "order_type": f"auto_{signal.close_type}",
+                    "parent_trade_id": signal.trade_id,
+                    "triggered_by": "streaming_order_monitor",
+                    "original_price": signal.original_price,
+                    "execution_price": current_price,
+                    "sell_reason": "auto_sell_at_expired",
+                    "auto_sell_at": signal.auto_sell_at.isoformat() if signal.auto_sell_at else None,
+                    "triggered_at": signal.triggered_at.isoformat(),
+                },
             )
             
-            # Execute the close trade
-            from services.trade_execution_service import TradeExecutionService
-            trade_service = TradeExecutionService(logger=logger)
-            result = await trade_service.execute_trade(close_trade.id, simulate=True)
+            # Execute via TradeEngine (creates trade, updates position, logs execution)
+            close_trade_dict = await engine._execute_market_order(
+                trade_payload,
+                Decimal(str(current_price)),
+            )
             
             exec_time_ms = int((time.time() - exec_start) * 1000)
             
             # Update TradeExecutionLog with trade_delay for auto-sell
-            try:
-                await self.db.tradeexecutionlog.update_many(
-                    where={"trade_id": close_trade.id},
-                    data={"trade_delay": exec_time_ms}
-                )
-            except Exception as delay_exc:
-                logger.warning(f"Failed to update trade_delay for auto-sell: {delay_exc}")
+            close_trade_id = close_trade_dict.get("id")
+            if close_trade_id:
+                try:
+                    await self.db.tradeexecutionlog.update_many(
+                        where={"trade_id": close_trade_id},
+                        data={"trade_delay": exec_time_ms}
+                    )
+                except Exception as delay_exc:
+                    logger.warning(f"Failed to update trade_delay for auto-sell: {delay_exc}")
             
-            if result and result.get("status") == "executed":
+            if close_trade_dict.get("status") == "executed":
                 # Mark original trade as auto-sold
                 if not isinstance(meta, dict):
                     meta = {}
                 meta.update({
                     "auto_sold": True,
                     "auto_sold_at": datetime.now(timezone.utc).isoformat(),
-                    "auto_close_trade_id": close_trade.id,
+                    "auto_close_trade_id": close_trade_id,
                     "closing_price": current_price,
                     "pnl_at_close": (current_price - signal.original_price) * signal.quantity 
                         if signal.close_type == "sell" 
@@ -789,8 +790,7 @@ class PathwayOrderMonitor:
                 # Remove from cache
                 self._auto_sell_trades.pop(signal.trade_id, None)
             else:
-                error_msg = result.get("error", "Unknown error") if result else "No result"
-                logger.error(f"❌ Auto-{signal.close_type} failed for {signal.trade_id[:8]}: {error_msg}")
+                logger.error(f"❌ Auto-{signal.close_type} failed for {signal.trade_id[:8]}: status={close_trade_dict.get('status')}")
                 
         except Exception as exc:
             logger.exception(f"❌ Failed to auto-{signal.close_type} {signal.trade_id}: {exc}")
