@@ -130,7 +130,7 @@ export function AgentOverview({ data, loading, isAllocating = false }: AgentOver
             <p className="mt-2 text-2xl font-semibold text-[#fafafa]">{data.positions_count}</p>
           </motion.div>
 
-          <motion.div
+          {/* <motion.div
             variants={item}
             className="rounded-xl border border-white/10 bg-white/8 p-4 text-white/70 backdrop-blur-sm"
           >
@@ -148,7 +148,7 @@ export function AgentOverview({ data, loading, isAllocating = false }: AgentOver
             <p className="mt-2 text-2xl font-semibold text-[#fafafa]">
               {formatWeight(data.allocation.current_weight)}
             </p>
-          </motion.div>
+          </motion.div> */}
 
           <motion.div
             variants={item}
@@ -170,7 +170,7 @@ export function AgentOverview({ data, loading, isAllocating = false }: AgentOver
             </p>
           </motion.div>
 
-          <motion.div
+          {/* <motion.div
             variants={item}
             className="rounded-xl border border-white/10 bg-white/8 p-4 text-white/70 backdrop-blur-sm"
           >
@@ -178,9 +178,9 @@ export function AgentOverview({ data, loading, isAllocating = false }: AgentOver
             <p className="mt-2 text-2xl font-semibold text-[#fafafa]">
               {formatPercentage(data.allocation.expected_return)}
             </p>
-          </motion.div>
+          </motion.div> */}
 
-          <motion.div
+          {/* <motion.div
             variants={item}
             className="rounded-xl border border-white/10 bg-white/8 p-4 text-white/70 backdrop-blur-sm"
           >
@@ -188,7 +188,7 @@ export function AgentOverview({ data, loading, isAllocating = false }: AgentOver
             <p className="mt-2 text-2xl font-semibold text-[#fafafa]">
               {formatPercentage(data.allocation.expected_risk)}
             </p>
-          </motion.div>
+          </motion.div> */}
 
           <motion.div
             variants={item}
