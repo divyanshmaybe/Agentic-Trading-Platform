@@ -345,17 +345,64 @@ function normalizeFilingSignal(
 ): NormalizedNotification {
 	const kafkaKey = `${topic}-${partition}-${offset}`;
 
+	// Handle nested value.value structure (similar to low-risk events)
+	// The payload might be wrapped in {key, value} where value is a JSON string
+	// normalizePayload may have already unwrapped it, but we handle both cases
+	let unwrappedPayload: any = payload;
+
+	// First, try unwrapNestedValue to handle deeply nested structures
+	const unwrapped = unwrapNestedValue(payload);
+	if (unwrapped) {
+		unwrappedPayload = unwrapped;
+	}
+
+	// If unwrappedPayload still has a "value" field that's a string, parse it
+	// This handles the case where normalizePayload didn't fully unwrap it
+	if (unwrappedPayload && typeof unwrappedPayload === "object" && !Array.isArray(unwrappedPayload)) {
+		if ("value" in unwrappedPayload && typeof unwrappedPayload.value === "string") {
+			try {
+				const parsed = JSON.parse(unwrappedPayload.value);
+				if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+					unwrappedPayload = parsed;
+				}
+			} catch {
+				// If parsing fails, continue with unwrappedPayload as-is
+			}
+		}
+	}
+
+	// Extract fields from the unwrapped payload
+	const symbol = unwrappedPayload?.symbol || undefined;
+	const explanation = unwrappedPayload?.explanation || undefined;
+	const signal = unwrappedPayload?.signal !== undefined ? String(unwrappedPayload.signal) : undefined;
+	const confidence = typeof unwrappedPayload?.confidence === "number" ? unwrappedPayload.confidence : undefined;
+	const attachmentUrl = unwrappedPayload?.attachment_url || undefined;
+	const subjectOfAnnouncement = unwrappedPayload?.subject_of_announcement || undefined;
+	const dateTimeOfSubmission = unwrappedPayload?.date_time_of_submission || undefined;
+	const filingTime = unwrappedPayload?.filing_time || undefined;
+	const generatedAt = unwrappedPayload?.generated_at || undefined;
+
+	// Use attachment_url for url field if available
+	const url = attachmentUrl || unwrappedPayload?.url || undefined;
+
+	// Parse eventTime from filing_time, date_time_of_submission, or generated_at (in that order)
+	const eventTime = parseDateTimeStrict(filingTime) || 
+	                  parseDateTimeStrict(dateTimeOfSubmission) || 
+	                  parseDateTimeStrict(generatedAt) ||
+	                  undefined;
+
 	return {
 		kafkaKey,
 		topic,
 		category: "filing_signal",
-		title: payload.symbol ? `Filing Signal: ${payload.symbol}` : undefined,
-		summary: payload.explanation || undefined,
-		symbol: payload.symbol || undefined,
-		signal: payload.signal !== undefined ? String(payload.signal) : undefined,
-		confidence: typeof payload.confidence === "number" ? payload.confidence : undefined,
-		rawPayload: payload,
-		eventTime: parseDateTime(payload.filing_time || payload.generated_at),
+		title: symbol ? `Filing Signal: ${symbol}` : undefined,
+		summary: explanation || undefined,
+		symbol,
+		signal,
+		confidence,
+		url,
+		rawPayload: unwrappedPayload, // Preserve all fields including subject_of_announcement, attachment_url, date_time_of_submission
+		eventTime,
 	};
 }
 
