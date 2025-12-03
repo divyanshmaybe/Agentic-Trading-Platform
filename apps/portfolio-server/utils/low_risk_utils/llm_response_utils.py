@@ -287,3 +287,140 @@ def validate_percentage_list(
     )
 
     return items
+
+
+def extract_structured_field(
+    text: str, 
+    field_name: str, 
+    field_type: type = str,
+    patterns: List[str] = None
+) -> Any:
+    """
+    Extract a specific field from structured LLM response text.
+    
+    Handles common formats like:
+    - field_name: value
+    - field_name : value
+    - "field_name": value
+    
+    Args:
+        text: Response text to parse
+        field_name: Name of the field to extract (e.g., "trading_signal")
+        field_type: Expected type of the value (int, float, str)
+        patterns: Optional custom regex patterns (group 1 should capture the value)
+        
+    Returns:
+        Extracted value converted to field_type, or None if not found
+    """
+    if not isinstance(text, str) or not text.strip():
+        return None
+    
+    # Default patterns for common field formats
+    if patterns is None:
+        patterns = [
+            rf'{field_name}:\s*(-?\d+\.?\d*)',  # field: value (numbers)
+            rf'{field_name}\s*:\s*(-?\d+\.?\d*)',  # field : value
+            rf'"{field_name}":\s*(-?\d+\.?\d*)',  # "field": value (JSON-like)
+            rf'{field_name}:\s*"?([^"\n]+)"?',  # field: "value" or field: value (strings)
+        ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            value_str = match.group(1).strip()
+            try:
+                if field_type == int:
+                    return int(float(value_str))  # Handle "1.0" -> 1
+                elif field_type == float:
+                    return float(value_str)
+                else:
+                    return value_str
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Failed to convert '{value_str}' to {field_type}: {e}")
+                continue
+    
+    return None
+
+
+def extract_trading_signal_fields(text: str) -> Dict[str, Any]:
+    """
+    Extract trading signal fields from structured LLM response.
+    
+    Extracts:
+    - trading_signal: int (-1, 0, 1)
+    - confidence_score: float (0.0 to 1.0)
+    - explanation / concise_explanation: str
+    - final_signal: int (if present, from validation model)
+    
+    Args:
+        text: Structured response text from LLM
+        
+    Returns:
+        Dictionary with extracted fields, defaults for missing values
+    """
+    # Clean the response first
+    cleaned = clean_markdown_from_response(text)
+    
+    result = {
+        "trading_signal": 0,
+        "confidence_score": 0.5,
+        "explanation": "",
+        "final_signal": None,
+    }
+    
+    # Extract trading_signal (try multiple patterns)
+    signal_patterns = [
+        r"trading_signal:\s*(-?\d+)",
+        r"signal:\s*(-?\d+)",
+        r"final_signal:\s*(-?\d+)",
+    ]
+    for pattern in signal_patterns:
+        match = re.search(pattern, cleaned, re.IGNORECASE)
+        if match:
+            try:
+                signal = int(match.group(1))
+                if signal in [-1, 0, 1]:
+                    result["trading_signal"] = signal
+                    break
+            except ValueError:
+                continue
+    
+    # Extract final_signal specifically (may differ from trading_signal)
+    final_match = re.search(r"final_signal:\s*(-?\d+)", cleaned, re.IGNORECASE)
+    if final_match:
+        try:
+            result["final_signal"] = int(final_match.group(1))
+        except ValueError:
+            pass
+    
+    # Extract confidence_score
+    conf_patterns = [
+        r"confidence_score:\s*([0-9]*\.?[0-9]+)",
+        r"confidence:\s*([0-9]*\.?[0-9]+)",
+    ]
+    for pattern in conf_patterns:
+        match = re.search(pattern, cleaned, re.IGNORECASE)
+        if match:
+            try:
+                conf = float(match.group(1))
+                result["confidence_score"] = max(0.0, min(1.0, conf))  # Clamp to [0, 1]
+                break
+            except ValueError:
+                continue
+    
+    # Extract explanation
+    exp_patterns = [
+        r"concise_explanation:\s*(.*?)(?:\n__|$)",
+        r"explanation:\s*(.*?)(?:\n__|$)",
+    ]
+    for pattern in exp_patterns:
+        match = re.search(pattern, cleaned, re.DOTALL | re.IGNORECASE)
+        if match:
+            explanation = match.group(1).strip()
+            # Clean up any trailing markers
+            explanation = re.sub(r'\n__LLM_TIMING__.*$', '', explanation).strip()
+            if explanation:
+                result["explanation"] = explanation
+                break
+    
+    return result

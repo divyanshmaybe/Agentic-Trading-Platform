@@ -713,12 +713,27 @@ def generate_trading_signal(
     - Model 1 (gemini-2.5-flash): Generates trading_signal + explanation
     - Model 2 (gemini-2.5-pro): Validates logic and generates confidence_score
     
+    Prompts are loaded from YAML templates in the templates/ folder.
+    Uses llm_response_utils for response cleaning and parsing.
+    
     Includes LLM timing metrics in the response for latency tracking:
     - llm_start_time: ISO timestamp when LLM processing started
     - llm_end_time: ISO timestamp when LLM processing completed  
     - llm_delay_ms: Time in milliseconds for LLM to generate signal
     """
     import time
+    import yaml
+    
+    # Import LLM response utilities
+    try:
+        from utils.low_risk_utils.llm_response_utils import (
+            clean_markdown_from_response,
+            extract_json_from_text,
+        )
+        has_llm_utils = True
+    except ImportError:
+        has_llm_utils = False
+        print("[WARN] llm_response_utils not available, using inline cleaning")
     
     # Track LLM processing start time
     llm_start_time = datetime.utcnow()
@@ -735,54 +750,66 @@ def generate_trading_signal(
     
     print(f"[PIPELINE] Generating trading signal with two-model approach (text length: {len(text)} chars)...")
     
+    # Load prompt templates from YAML files
+    templates_dir = Path(__file__).resolve().parents[2] / "templates"
+    
+    try:
+        # Load signal generation prompt (Model 1)
+        gen_prompt_path = templates_dir / "nse_signal_generation_prompt.yaml"
+        with open(gen_prompt_path, 'r') as f:
+            gen_config = yaml.safe_load(f)
+        
+        # Load signal validation prompt (Model 2)
+        val_prompt_path = templates_dir / "nse_signal_validation_prompt.yaml"
+        with open(val_prompt_path, 'r') as f:
+            val_config = yaml.safe_load(f)
+        
+        print(f"[PIPELINE] Loaded prompt templates from {templates_dir}")
+    except Exception as e:
+        error_msg = f"Failed to load YAML templates from {templates_dir}: {e}"
+        print(f"[ERROR] {error_msg}")
+        return f"Error: {error_msg}"
+    
+    def clean_llm_response(response_text: str) -> str:
+        """Clean LLM response using utils or inline fallback."""
+        if has_llm_utils:
+            return clean_markdown_from_response(response_text)
+        # Inline fallback
+        cleaned = re.sub(r"```(?:python|json|yaml|xml|html)?\s*\n?", "", response_text)
+        cleaned = re.sub(r"```\s*$", "", cleaned)
+        return cleaned.strip()
+    
+    def extract_content_from_response(response) -> str:
+        """Extract content string from LLM response object."""
+        if hasattr(response, 'content'):
+            content = response.content
+        else:
+            content = str(response)
+        
+        # Handle content that is a list of content blocks (Gemini format)
+        if isinstance(content, list) and len(content) > 0:
+            text_parts = []
+            for block in content:
+                if isinstance(block, dict):
+                    if 'text' in block:
+                        text_parts.append(block['text'])
+                    elif 'content' in block:
+                        text_parts.append(block['content'])
+                else:
+                    text_parts.append(str(block))
+            content = '\n'.join(text_parts)
+        
+        return clean_llm_response(content)
+    
     # ============ MODEL 1: Generate signal + explanation ============
-    user_prompt = f"""
-You are a financial analysis model capable of making real-time trading decisions based on corporate filings, announcements, and financial news.
-
-Below is a company's filing report and related information. You must analyze it and decide whether the news is a strong BUY (1), strong SELL (-1), or HOLD (0) signal.
-
-Be cautious:
-- Also check if the news came in market hours; if it was during market hours, follow sentiment accordingly.
-- If it was filed out of market hours, and when the market opens the price has already risen by a significant amount (5–6%), consider taking a short position.
-- Only make a BUY or SELL recommendation if the event is highly impactful for the company's valuation or future prospects, and whether the price has already been impacted by more than 2–3%.
-- If the news is ordinary or has limited effect, choose HOLD (0).
-- Be aware of "Outcome of Board Meeting" filings — they often generate false or misleading signals.
-  Only give a signal 1 for such filings when it is **very impactful** (e.g., major earnings surprise, buyback, merger, or significant guidance update). Otherwise, default to HOLD (0) or (-1) if results are normal.
-
-Important:
-A company's stock can fall even after beating results because markets trade on expectations, not absolute numbers.
-If strong results are already priced in or only marginally above forecasts, investors often book profits.
-The market focuses on earnings quality — sustainable margin growth, healthy cash flow, and balance-sheet strength — not temporary gains from forex, one-offs, or accounting effects.
-When filings show QoQ slowdown, inventory buildup, weak cash generation, capital outflows, or cautious management tone, the results are seen as lacking momentum.
-Sector weakness or a soft future outlook can also outweigh a numerical beat.
-Therefore, even when revenue, profit, or EPS exceed estimates, if the underlying strength or forward visibility is weak, the market reaction tends to be neutral or negative.
-
-General reference for this filing type:
-- Technical data of past hour: {stocktechdata}
-- Positive impact scenarios: {pos_impact}
-- Negative impact scenarios: {neg_impact}
-
-Filings data:
-- NSE filings data: {text}
-
-Instructions:
-1. Read all information carefully.
-2. Consider the news sentiment, running summary, and stock/fiscal data together to assess the impact on the company's short-term stock price.
-3. If the news is highly positive or negative with respect to the company and can have a big short-term impact on the stock price, output 1 (BUY) or -1 (SELL) respectively.
-4. If the news weakens the company's fundamentals, output -1 (SELL).
-5. Otherwise, output 0 (HOLD).
-6. Along with the numeric signal, provide a detailed explanation (3-4 sentences) for your trading decision.
-
-Be extremely cautious with BUY (1) and SELL (-1) signals, especially in short-term or volatile markets.
-Be aware of "Outcome of Board Meeting" filings — only act when the event is highly impactful.
-If unsure whether a signal should be -1 or 1, it's safer to generate a 0 (HOLD) instead.
-If the meeting results were really outstanding then only give 1 else 0 or -1
-
-Strictly adhere to this output format:
-trading_signal: <1, 0, or -1>
-explanation: <detailed reasoning for the decision>
-RETURN EXACTLY THIS STRUCTURED OUTPUT AND NOTHING ELSE.
-"""
+    user_prompt = gen_config['prompt_template'].format(
+        stocktechdata=stocktechdata,
+        pos_impact=pos_impact,
+        neg_impact=neg_impact,
+        text=text
+    )
+    model1_name = gen_config.get('model', 'gemini-2.5-flash')
+    model1_temp = gen_config.get('temperature', 0.3)
     
     try:
         # Validate API key
@@ -801,14 +828,14 @@ RETURN EXACTLY THIS STRUCTURED OUTPUT AND NOTHING ELSE.
         try:
             # -------- MODEL 1: Generate signal + explanation --------
             trading_model = ChatGoogleGenerativeAI(
-                model="gemini-2.5-flash",
-                temperature=0.3,
+                model=model1_name,
+                temperature=model1_temp,
                 api_key=api_key
             )
             
-            print("[PIPELINE] Model 1 (gemini-2.5-flash): Generating signal + explanation...")
+            print(f"[PIPELINE] Model 1 ({model1_name}): Generating signal + explanation...")
             decision_raw = trading_model.invoke(user_prompt)
-            decision_text = decision_raw.content if hasattr(decision_raw, 'content') else str(decision_raw)
+            decision_text = extract_content_from_response(decision_raw)
             
             print(f"[PIPELINE] Model 1 Response: {decision_text[:200]}...")
             
@@ -826,47 +853,22 @@ RETURN EXACTLY THIS STRUCTURED OUTPUT AND NOTHING ELSE.
             print(f"[PIPELINE] Model 1 Result: signal={signal}, explanation={explanation[:100]}...")
             
             # -------- MODEL 2: Validate & generate confidence --------
-            validation_prompt = f"""
-You are a Trading Logic Validator.
-You receive a trading signal (-1, 0, 1) and an explanation generated by another model.
-You do NOT have access to the raw data, so you must assume the facts in the explanation are true.
-
-Your job is to evaluate the **Logical Coherence** and **Strength of Argument**.
-
-Input:
-signal: {signal}
-explanation: {explanation}
-
-YOUR TASKS:
-1. Detect Contradictions: Does the explanation describe a negative event (e.g., "profits fell") but the signal is Positive (1)? If so, output Low Confidence.
-2. Evaluate Conviction: Does the explanation use strong, definitive language ("surged," "plummeted," "record high") or weak language ("slightly," "flat," "marginal")?
-   - Strong language + High Impact Event = High Confidence.
-   - Weak language + Low Impact Event = Low Confidence.
-3. Assess Strategy Alignment:
-   - If the explanation mentions "Board Meeting" or "Quarterly Results" but describes the data as "mixed" or "in line with estimates," the signal should essentially be 0 (Hold). If the input signal is 1 or -1 in this case, penalize the confidence heavily.
-
-SCORING RUBRIC (Confidence Ratio 0.0 - 1.0):
-- < 0.5: Logical inconsistency (Signal says Buy, Text says Bad News) or extremely weak impact.
-- 0.5 - 0.7: Rational logic, but the event described is standard/low impact.
-- > 0.8: Strong logic AND the event described is a major valuation driver (Merger, Huge Earnings Beat, Regulatory Win).
-
-OUTPUT FORMAT:
-Return a structured output:
-
-final_signal: <Integer -1, 0, or 1>
-confidence_score: <Float 0.00 to 1.00>
-RETURN EXACTLY THIS STRUCTURED OUTPUT AND NOTHING ELSE.
-"""
+            validation_prompt = val_config['prompt_template'].format(
+                signal=signal,
+                explanation=explanation
+            )
+            model2_name = val_config.get('model', 'gemini-2.5-pro')
+            model2_temp = val_config.get('temperature', 0.4)
             
             validator_model = ChatGoogleGenerativeAI(
-                model="gemini-2.5-pro",
-                temperature=0.4,
+                model=model2_name,
+                temperature=model2_temp,
                 api_key=api_key
             )
             
-            print("[PIPELINE] Model 2 (gemini-2.5-pro): Validating signal + generating confidence...")
+            print(f"[PIPELINE] Model 2 ({model2_name}): Validating signal + generating confidence...")
             validation_raw = validator_model.invoke(validation_prompt)
-            validation_text = validation_raw.content if hasattr(validation_raw, 'content') else str(validation_raw)
+            validation_text = extract_content_from_response(validation_raw)
             
             print(f"[PIPELINE] Model 2 Response: {validation_text[:200]}...")
             
@@ -917,14 +919,24 @@ concise_explanation: {explanation}"""
 
 @pw.udf
 def parse_trading_signal_value(response: str) -> int:
-    """Parse trading signal value (1, 0, or -1) from LLM response"""
+    """Parse trading signal value (1, 0, or -1) from LLM response using utils."""
     try:
         # Check if response is an error message
         if not response or "error" in response.lower() or "429" in response or "quota" in response.lower():
             print(f"[WARN] Invalid LLM response (error detected): {response[:200]}")
             return 0
         
-        # Try multiple patterns to match various response formats
+        # Try to use llm_response_utils
+        try:
+            from utils.low_risk_utils.llm_response_utils import extract_trading_signal_fields
+            fields = extract_trading_signal_fields(response)
+            signal = fields.get("final_signal") or fields.get("trading_signal", 0)
+            print(f"[PIPELINE] Parsed signal using utils: {signal}")
+            return signal
+        except ImportError:
+            pass  # Fall back to inline parsing
+        
+        # Fallback: Try multiple patterns to match various response formats
         patterns = [
             r"trading_signal:\s*(-?\d+)",  # Original format
             r"trading_signal\s*:\s*(-?\d+)",  # With optional spaces
@@ -957,9 +969,20 @@ def parse_trading_signal_value(response: str) -> int:
 
 @pw.udf
 def parse_trading_signal_explanation(response: str) -> str:
-    """Parse trading signal explanation from LLM response"""
+    """Parse trading signal explanation from LLM response using utils."""
     try:
-        # Try multiple patterns
+        # Try to use llm_response_utils
+        try:
+            from utils.low_risk_utils.llm_response_utils import extract_trading_signal_fields
+            fields = extract_trading_signal_fields(response)
+            explanation = fields.get("explanation", "")
+            if explanation:
+                print(f"[PIPELINE] Parsed explanation using utils: {explanation[:100]}...")
+                return explanation
+        except ImportError:
+            pass  # Fall back to inline parsing
+        
+        # Fallback: Try multiple patterns
         patterns = [
             r"concise_explanation:\s*(.+?)(?:\n\n|\n[A-Z]|$)",  # Original format with lookahead
             r"concise_explanation\s*:\s*(.+?)(?:\n\n|\n[A-Z]|$)",  # With spaces
@@ -992,12 +1015,22 @@ def parse_trading_signal_explanation(response: str) -> str:
 
 @pw.udf
 def parse_trading_signal_confidence(response: str) -> float:
-    """Parse confidence score (0-1) from LLM response."""
+    """Parse confidence score (0-1) from LLM response using utils."""
     try:
         if not response:
             return 0.0
         if "error" in response.lower() or "rate limit" in response.lower():
             return 0.0
+        
+        # Try to use llm_response_utils
+        try:
+            from utils.low_risk_utils.llm_response_utils import extract_trading_signal_fields
+            fields = extract_trading_signal_fields(response)
+            confidence = fields.get("confidence_score", 0.5)
+            print(f"[PIPELINE] Parsed confidence using utils: {confidence}")
+            return confidence
+        except ImportError:
+            pass  # Fall back to inline parsing
 
         match = re.search(r"confidence_score:\s*([0-9]*\.?[0-9]+)", response, re.IGNORECASE)
         if match:
