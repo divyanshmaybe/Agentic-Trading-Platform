@@ -151,6 +151,15 @@ class TradeEngine:
         exec_time = (time.time() - exec_start) * 1000
         print(f"[PERF] Market order execution for {trade.symbol} took {exec_time:.1f}ms")
         
+        # CRITICAL: If this was a TP/SL order, cancel the counterpart
+        # e.g., if TP executed, cancel any pending SL orders for same symbol
+        if trade.status in ["pending_tp", "pending_sl"]:
+            await self._cancel_counterpart_tp_sl_orders(
+                trade.portfolio_id, 
+                trade.symbol, 
+                executed_order_id=trade.id
+            )
+        
         portfolio_start = time.time()
         portfolio_snapshot = await self._build_portfolio_snapshot(trade.portfolio_id)
         portfolio_time = (time.time() - portfolio_start) * 1000
@@ -409,6 +418,87 @@ class TradeEngine:
         """
         # No-op: This method is deprecated but kept for compatibility
         pass
+
+    async def _cancel_counterpart_tp_sl_orders(
+        self,
+        portfolio_id: str,
+        symbol: str,
+        executed_order_id: str,
+    ) -> int:
+        """
+        Cancel any remaining pending TP/SL orders for the same symbol after one executes.
+        
+        When a TP order executes, we need to cancel the corresponding SL order (and vice versa).
+        This prevents the orphaned counterpart order from executing later.
+        
+        Args:
+            portfolio_id: Portfolio ID
+            symbol: Symbol of the executed order
+            executed_order_id: ID of the order that just executed (to exclude)
+            
+        Returns:
+            Number of orders cancelled
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        try:
+            # Find all pending TP/SL orders for this symbol (excluding the one we just executed)
+            pending_orders = await self.prisma.trade.find_many(
+                where={
+                    "portfolio_id": portfolio_id,
+                    "symbol": symbol,
+                    "status": {"in": ["pending_tp", "pending_sl"]},
+                    "id": {"not": executed_order_id},
+                }
+            )
+            
+            if not pending_orders:
+                return 0
+            
+            # Cancel each pending order
+            cancelled_count = 0
+            import json
+            for order in pending_orders:
+                # Parse existing metadata
+                existing_meta = order.metadata if isinstance(order.metadata, dict) else {}
+                if isinstance(order.metadata, str):
+                    try:
+                        existing_meta = json.loads(order.metadata)
+                    except:
+                        existing_meta = {}
+                
+                updated_meta = {
+                    **existing_meta,
+                    "cancelled_reason": "counterpart_executed",
+                    "cancelled_by_order": executed_order_id,
+                    "cancelled_at": datetime.utcnow().isoformat(),
+                }
+                
+                await self.prisma.trade.update(
+                    where={"id": order.id},
+                    data={
+                        "status": "cancelled",
+                        "metadata": json.dumps(updated_meta),
+                    },
+                )
+                cancelled_count += 1
+                logger.info(
+                    "✅ Cancelled counterpart %s order %s for %s (triggered by %s)",
+                    order.status.replace("pending_", "").upper(),
+                    order.id[:8],
+                    symbol,
+                    executed_order_id[:8],
+                )
+            
+            return cancelled_count
+            
+        except Exception as exc:
+            logger.exception(
+                "Failed to cancel counterpart TP/SL orders for %s: %s",
+                symbol, exc
+            )
+            return 0
 
     async def _build_portfolio_snapshot(self, portfolio_id: str) -> Dict:
         """

@@ -29,6 +29,9 @@ class TradeController:
         self.engine = TradeEngine(prisma)
 
     async def submit_trade(self, payload: TradeRequest, request: Request, user: Dict) -> TradeResponse:
+        import time
+        request_start_time = time.time()  # Track request start time for trade_delay calculation
+        
         organization_id = user.get("organization_id")
         if not organization_id:
             raise HTTPException(
@@ -274,7 +277,7 @@ class TradeController:
                 
                 await self.prisma.trade.update(
                     where={"id": trade_id},
-                    data={"auto_sell_at": auto_sell_at.isoformat() + "Z"}
+                    data={"auto_sell_at": auto_sell_at}  # Pass datetime directly, not string
                 )
                 
                 logger.info(
@@ -284,6 +287,16 @@ class TradeController:
                     payload.auto_sell_after
                 )
             
+            # Calculate trade_delay_ms: time from request received to trade stored in DB
+            trade_delay_ms = int((time.time() - request_start_time) * 1000)
+            
+            # Update TradeExecutionLog with trade_delay
+            if trade_id:
+                await self.prisma.tradeexecutionlog.update_many(
+                    where={"trade_id": trade_id},
+                    data={"trade_delay": trade_delay_ms}
+                )
+            
             # Fetch completed trade with execution log
             trade = await self.prisma.trade.find_unique(
                 where={"id": trade_id},
@@ -291,11 +304,6 @@ class TradeController:
             )
             if not trade:
                 raise RuntimeError("Trade execution completed but trade record not found")
-            
-            # Get trade_delay from execution log if available
-            trade_delay_ms = None
-            if trade.executions and len(trade.executions) > 0:
-                trade_delay_ms = trade.executions[0].trade_delay
             
             summaries = [TradeSummary(
                 id=trade.id,

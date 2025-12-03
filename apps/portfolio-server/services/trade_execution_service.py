@@ -409,10 +409,10 @@ class TradeExecutionService:
         if auto_close_time:
             if side.upper() == "SHORT_SELL":
                 # SHORT_SELL: Set auto_cover_at (buy to close after 15 min)
-                trade_data["auto_cover_at"] = auto_close_time.isoformat() + "Z"
+                trade_data["auto_cover_at"] = auto_close_time  # Pass datetime directly, not string
             elif side.upper() == "BUY":
                 # BUY (LONG): Set auto_sell_at (sell to close after 15 min)
-                trade_data["auto_sell_at"] = auto_close_time.isoformat() + "Z"
+                trade_data["auto_sell_at"] = auto_close_time  # Pass datetime directly, not string
         # SELL and COVER don't need auto-close (they ARE closing trades)
 
         # Add NSE-specific fields to Trade record
@@ -982,9 +982,9 @@ class TradeExecutionService:
             if auto_close_time:
                 # SHORT_SELL uses auto_cover_at, BUY uses auto_sell_at
                 if trade_side == "SHORT_SELL":
-                    update_data["auto_cover_at"] = auto_close_time.isoformat()
+                    update_data["auto_cover_at"] = auto_close_time  # Pass datetime directly, not string
                 else:
-                    update_data["auto_sell_at"] = auto_close_time.isoformat()
+                    update_data["auto_sell_at"] = auto_close_time  # Pass datetime directly, not string
             
             await self.update_status(
                 execution_log_id,  # Use TradeExecutionLog ID, not Trade ID

@@ -434,9 +434,20 @@ class PathwayOrderMonitor:
                 executed = await engine.process_pending_trade(signal.order_id)
                 
                 exec_time = (time.time() - exec_start) * 1000
+                exec_time_ms = int(exec_time)
                 
                 if executed:
                     logger.info(f"✅ Order {signal.order_id} executed successfully in {exec_time:.1f}ms")
+                    
+                    # Save trade_delay for TP/SL orders
+                    try:
+                        await self.db.tradeexecutionlog.update_many(
+                            where={"trade_id": signal.order_id},
+                            data={"trade_delay": exec_time_ms}
+                        )
+                        logger.debug(f"📊 Saved trade_delay: {exec_time_ms}ms for order {signal.order_id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to update trade_delay for {signal.order_id}: {e}")
                     
                     # Remove from pending orders cache
                     if signal.order_id in self._pending_orders:
@@ -741,6 +752,15 @@ class PathwayOrderMonitor:
             result = await trade_service.execute_trade(close_trade.id, simulate=True)
             
             exec_time_ms = int((time.time() - exec_start) * 1000)
+            
+            # Update TradeExecutionLog with trade_delay for auto-sell
+            try:
+                await self.db.tradeexecutionlog.update_many(
+                    where={"trade_id": close_trade.id},
+                    data={"trade_delay": exec_time_ms}
+                )
+            except Exception as delay_exc:
+                logger.warning(f"Failed to update trade_delay for auto-sell: {delay_exc}")
             
             if result and result.get("status") == "executed":
                 # Mark original trade as auto-sold
