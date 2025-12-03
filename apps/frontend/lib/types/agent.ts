@@ -68,6 +68,8 @@ export interface AgentTrade {
   trade_type: string
   created_at: string
   execution_time: string
+  llm_delay?: string
+  trade_delay?: string
 }
 
 export interface AgentDashboard {
