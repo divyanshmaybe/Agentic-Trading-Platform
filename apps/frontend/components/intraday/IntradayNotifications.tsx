@@ -76,8 +76,8 @@ function notificationToKafkaFormat(notification: Notification): KafkaNotificatio
 // Define notification type order and labels
 // Note: Sentiment analysis (news-sentiment-article) is excluded from intraday page
 const NOTIFICATION_TYPES = [
-  { type: "nse-signal", label: "Trading Signals" },
   { type: "news-stock-recommendation", label: "Stock Recommendations" },
+	{ type: "nse-signal", label: "Trading Signals" },
   { type: "news-sector-analysis", label: "Sector Analysis" },
 ] as const
 

@@ -1,10 +1,12 @@
+import type { ReactNode } from "react"
+
 export function DetailRow({
   label,
   value,
   valueClassName,
 }: {
   label: string
-  value: string | null
+  value: string | ReactNode | null
   valueClassName?: string
 }) {
   if (!value) {
