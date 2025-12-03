@@ -721,7 +721,7 @@ services:
     networks:
       - agentInvest
     profiles:
-      - debug
+      - monitoring
 
   # Frontend (Next.js)
   frontend:
@@ -851,9 +851,13 @@ services:
       - GF_SERVER_ROOT_URL=http://localhost:3001
     volumes:
       - grafana_data:/var/lib/grafana
-      - ./devops/monitoring/celery-dashboard.json:/etc/grafana/provisioning/dashboards/celery-dashboard.json:ro
+      - ./devops/monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./devops/monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./devops/monitoring/celery-dashboard.json:/var/lib/grafana/dashboards/celery-dashboard.json:ro
+      - ./devops/monitoring/celery-detailed-dashboard.json:/var/lib/grafana/dashboards/celery-detailed-dashboard.json:ro
     depends_on:
       - prometheus
+      - loki
     networks:
       - agentInvest
     profiles:

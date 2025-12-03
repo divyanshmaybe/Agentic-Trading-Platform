@@ -18,11 +18,11 @@ scrape_configs:
           worker_pool: 'trading'
           environment: 'local'
           
-  - job_name: 'celery-local-pipeline'
+  - job_name: 'celery-local-nse-pipeline'
     static_configs:
       - targets: ['host.docker.internal:9102']
         labels:
-          worker_pool: 'pipeline'
+          worker_pool: 'nse_pipeline'
           environment: 'local'
           
   - job_name: 'celery-local-allocation'
@@ -46,6 +46,27 @@ scrape_configs:
           worker_pool: 'general'
           environment: 'local'
 
+  - job_name: 'celery-local-streaming'
+    static_configs:
+      - targets: ['host.docker.internal:9106']
+        labels:
+          worker_pool: 'streaming'
+          environment: 'local'
+
+  - job_name: 'celery-local-low-risk'
+    static_configs:
+      - targets: ['host.docker.internal:9107']
+        labels:
+          worker_pool: 'low_risk'
+          environment: 'local'
+
+  - job_name: 'celery-local-news-pipeline'
+    static_configs:
+      - targets: ['host.docker.internal:9108']
+        labels:
+          worker_pool: 'news_pipeline'
+          environment: 'local'
+
   # Celery Workers (Docker - Distributed Architecture)
   - job_name: 'celery-docker-trading'
     static_configs:
@@ -55,13 +76,13 @@ scrape_configs:
           environment: 'docker'
           queue: 'trading'
 
-  - job_name: 'celery-docker-pipeline'
+  - job_name: 'celery-docker-nse-pipeline'
     static_configs:
-      - targets: ['portfolio_celery_pipeline:9102']
+      - targets: ['portfolio_celery_nse_pipeline:9102']
         labels:
-          worker_pool: 'pipeline'
+          worker_pool: 'nse_pipeline'
           environment: 'docker'
-          queue: 'pipelines'
+          queue: 'nse_pipeline'
 
   - job_name: 'celery-docker-allocation'
     static_configs:
@@ -94,6 +115,22 @@ scrape_configs:
           worker_pool: 'streaming'
           environment: 'docker'
           queue: 'streaming'
+
+  - job_name: 'celery-docker-low-risk'
+    static_configs:
+      - targets: ['portfolio_celery_low_risk:9107']
+        labels:
+          worker_pool: 'low_risk'
+          environment: 'docker'
+          queue: 'low_risk_pipeline'
+
+  - job_name: 'celery-docker-news-pipeline'
+    static_configs:
+      - targets: ['portfolio_celery_news_pipeline:9108']
+        labels:
+          worker_pool: 'news_pipeline'
+          environment: 'docker'
+          queue: 'news_pipeline,pipelines'
 
   # Redis Exporter
   - job_name: 'redis'
