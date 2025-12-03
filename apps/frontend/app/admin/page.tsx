@@ -39,7 +39,6 @@ import { useAdminDashboard } from "@/hooks/useAdminDashboard"
 import "@/lib/chart"
 import { lineDepthPlugin } from "@/components/dashboard/chartConfig"
 import { formatCurrency, computeRoiPct } from "@/lib/admin"
-import type { ChartData, ScriptableContext } from "chart.js"
 import { AlertTriangle } from "lucide-react"
 
 const POSITIVE_LINE_STYLE = {
@@ -526,7 +525,7 @@ export default function AdminDashboardPage() {
         onLogout={handleLogout}
       />
       <main className="py-8">
-        <Container className="space-y-6">
+        <Container className="max-w-none space-y-6 px-4 sm:px-6 lg:px-12 xl:px-16">
           {/* Error Banner */}
           {(errorDashboard || errorSummary) && (
             <div className="rounded-lg border border-red-500/50 bg-red-500/10 px-4 py-3 text-red-200">
@@ -586,8 +585,8 @@ export default function AdminDashboardPage() {
 
             {/* Trading Charts Row */}
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 xl:grid-cols-4">
-              <TradesByStatusChart data={dashboard?.trades_by_status} loading={loadingDashboard} />
-              <TradesBySideChart data={dashboard?.trades_by_side} loading={loadingDashboard} />
+              <TradesByStatusChart data={dashboard?.trades_by_status || undefined} loading={loadingDashboard} />
+              <TradesBySideChart data={dashboard?.trades_by_side || undefined} loading={loadingDashboard} />
               <HourlyTradeHeatmap data={dashboard?.hourly_trade_distribution || []} loading={loadingDashboard} />
               <TradeVolumeChart data={dashboard?.trade_volume_series || []} loading={loadingDashboard} />
             </div>

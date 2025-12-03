@@ -8,7 +8,7 @@ import type { TradesBySide } from "@/lib/admin"
 import "@/lib/chart"
 
 type TradesBySideChartProps = {
-  data: TradesBySide
+  data: TradesBySide | null | undefined
   title?: string
   className?: string
   loading?: boolean
