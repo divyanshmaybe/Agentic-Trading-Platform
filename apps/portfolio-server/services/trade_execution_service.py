@@ -1137,6 +1137,10 @@ class TradeExecutionService:
                     trade_id,
                     auto_close_time
                 )
+            
+            # Capture post-trade snapshot for the trading agent
+            trade_portfolio_id = str(getattr(trade, "portfolio_id", "")) if trade else None
+            await self._capture_post_trade_snapshot(agent_id, trade_portfolio_id)
 
             return {
                 "status": "executed",
@@ -1157,6 +1161,47 @@ class TradeExecutionService:
             "trade_id": trade_id,
             "error": "Live broker integration not configured",
         }
+    
+    async def _capture_post_trade_snapshot(
+        self,
+        agent_id: Optional[str],
+        portfolio_id: Optional[str],
+    ) -> None:
+        """
+        Capture snapshot for the trading agent and portfolio after a trade is executed.
+        
+        This ensures we have accurate point-in-time snapshots that reflect
+        the portfolio state immediately after each trade.
+        
+        Args:
+            agent_id: Trading agent ID (may be None)
+            portfolio_id: Portfolio ID (may be None)
+        """
+        try:
+            from services.snapshot_service import TradingAgentSnapshotService
+            snapshot_service = TradingAgentSnapshotService(logger=self.logger)
+            
+            if agent_id:
+                # Capture agent snapshot
+                result = await snapshot_service.capture_agent_snapshot(agent_id)
+                if result:
+                    self.logger.info(
+                        "📸 Post-trade snapshot captured for agent %s: value=₹%.2f",
+                        agent_id[:8],
+                        result.get("current_value", 0)
+                    )
+            
+            # Also capture portfolio snapshot
+            if portfolio_id:
+                result = await snapshot_service.capture_portfolio_snapshot(portfolio_id)
+                if result:
+                    self.logger.info(
+                        "📸 Post-trade portfolio snapshot: value=₹%.2f",
+                        result.get("current_value", 0)
+                    )
+                    
+        except Exception as e:
+            self.logger.warning("Failed to capture post-trade snapshot: %s", e)
     
     async def _create_tp_sl_orders(
         self,

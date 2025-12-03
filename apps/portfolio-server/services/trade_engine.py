@@ -50,7 +50,8 @@ class TradeEngine:
             try:
                 execution_price = await await_live_price(payload.symbol, timeout=10.0)
             except RuntimeError as price_error:
-                logger.error(
+                import logging
+                logging.getLogger(__name__).error(
                     f"❌ Price unavailable for {payload.symbol}: {price_error}. "
                     f"Trade will be rejected - no fallback pricing."
                 )
@@ -258,6 +259,9 @@ class TradeEngine:
         await self._create_trade_execution_log(trade, payload)
 
         await self._send_execution_email(trade.dict(), payload)
+        
+        # Capture post-trade snapshot for the trading agent
+        await self._capture_post_trade_snapshot(payload)
 
         return trade.dict()
 
@@ -693,3 +697,68 @@ class TradeEngine:
         except Exception as e:
             import logging
             logging.getLogger(__name__).warning(f"Failed to send trade execution email: {e}")
+
+    async def _capture_post_trade_snapshot(self, payload: TradeCreate) -> None:
+        """
+        Capture snapshot for the trading agent after a trade is executed.
+        
+        This ensures we have accurate point-in-time snapshots that reflect
+        the portfolio state immediately after each trade.
+        
+        Args:
+            payload: TradeCreate payload containing allocation_id or portfolio_id
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        try:
+            from services.snapshot_service import TradingAgentSnapshotService
+            snapshot_service = TradingAgentSnapshotService(logger=logger)
+            
+            agent_id = None
+            
+            # Try to get agent_id from allocation
+            if payload.allocation_id:
+                allocation = await self.prisma.portfolioallocation.find_unique(
+                    where={"id": payload.allocation_id},
+                    include={"tradingAgent": True}
+                )
+                if allocation and allocation.tradingAgent:
+                    agent_id = allocation.tradingAgent.id
+            
+            # Fallback: find the agent from portfolio_id that owns this position
+            if not agent_id and payload.portfolio_id:
+                # Find any active agent for this portfolio (prefer liquid for manual trades)
+                agents = await self.prisma.tradingagent.find_many(
+                    where={
+                        "portfolio_id": payload.portfolio_id,
+                        "status": "active"
+                    },
+                    order={"created_at": "desc"}
+                )
+                if agents:
+                    # Prefer liquid agent for manual trades
+                    liquid_agents = [a for a in agents if a.agent_type == "liquid"]
+                    agent_id = liquid_agents[0].id if liquid_agents else agents[0].id
+            
+            if agent_id:
+                # Capture agent snapshot
+                result = await snapshot_service.capture_agent_snapshot(agent_id)
+                if result:
+                    logger.info(
+                        "📸 Post-trade snapshot captured for agent %s: value=₹%.2f",
+                        agent_id[:8],
+                        result.get("current_value", 0)
+                    )
+            
+            # Also capture portfolio snapshot
+            if payload.portfolio_id:
+                result = await snapshot_service.capture_portfolio_snapshot(payload.portfolio_id)
+                if result:
+                    logger.info(
+                        "📸 Post-trade portfolio snapshot: value=₹%.2f",
+                        result.get("current_value", 0)
+                    )
+                    
+        except Exception as e:
+            logger.warning("Failed to capture post-trade snapshot: %s", e)
