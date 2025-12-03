@@ -535,6 +535,26 @@ async def test_trade_execution_service_persist_and_execute(monkeypatch: pytest.M
     
     monkeypatch.setattr("services.trade_execution_service.enforce_market_hours", mock_enforce_market_hours)
 
+    # Mock Redis for allocation locking
+    class FakeRedis:
+        def __init__(self):
+            self.locks = {}
+        
+        def set(self, key, value, nx=False, ex=None):
+            if nx and key in self.locks:
+                return False
+            self.locks[key] = value
+            return True
+        
+        def get(self, key):
+            return self.locks.get(key)
+        
+        def delete(self, key):
+            self.locks.pop(key, None)
+    
+    fake_redis = FakeRedis()
+    monkeypatch.setattr(trade_execution_service, "_redis_client", fake_redis)
+
     published_events: List[trade_pipeline.TradeExecutionEvent] = []
 
     def capture_publish(events, logger=None):  # type: ignore[override]
@@ -574,7 +594,10 @@ async def test_trade_execution_service_persist_and_execute(monkeypatch: pytest.M
     assert len(published_events) == 1
     record = await fake_manager.get_client().tradeexecutionlog.find_unique({"id": "req-1"})
     assert record.status == "pending"
-    assert record.agent_id == "agent-1"
+    # agent_id is stored in the Trade record, not TradeExecutionLog
+    # Check it from the linked trade via trade_id or from metadata
+    trade = await fake_manager.get_client().trade.find_unique({"id": record.trade_id})
+    assert trade.agent_id == "agent-1"
 
     result = await service.execute_trade(events[0].trade_id, simulate=True)
     assert result["status"] == "executed"

@@ -1615,7 +1615,16 @@ async def test_metadata_stored_in_trade_and_log(service_env):
     
     # Trade should have metadata
     assert "metadata" in trade
-    trade_meta = json.loads(trade["metadata"]) if isinstance(trade["metadata"], str) else trade["metadata"]
+    # Handle Prisma Json wrapper - it stores the actual data in .data attribute
+    trade_meta_raw = trade["metadata"]
+    if hasattr(trade_meta_raw, 'data'):
+        # Prisma Json object
+        trade_meta = trade_meta_raw.data
+    elif isinstance(trade_meta_raw, str):
+        trade_meta = json.loads(trade_meta_raw)
+    else:
+        # Already a dict
+        trade_meta = trade_meta_raw
     assert "triggered_by" in trade_meta
     
     # Log should have metadata
