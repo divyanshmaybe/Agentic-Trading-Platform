@@ -446,24 +446,27 @@ class NSEScraperSubject(ConnectorSubject):
                         xbrl_subject = ""
                         xbrl_attachment_url = ""
                         xbrl_datetime = ""
+                        xbrl_data = None
                         
-                        if not is_relevant and xbrl_url:
+                        # Always fetch XBRL data if URL is available (for metadata extraction)
+                        if xbrl_url:
                             try:
                                 xbrl_data = fetch_xbrl_content(xbrl_url)
-                                if is_relevant_announcement(xbrl_data):
-                                    is_relevant = True
-                                    print(f"[INFO] ✓ New relevant XBRL: {symbol} - {desc[:80]}")
+                                if xbrl_data:
+                                    # Extract XBRL fields regardless of relevance
+                                    xbrl_subject = xbrl_data.get('subject', '')
+                                    xbrl_attachment_url = xbrl_data.get('attachment_url', '')
+                                    xbrl_datetime = xbrl_data.get('datetime', '')
                                     
-                                    # Extract XBRL fields
-                                    if xbrl_data:
-                                        xbrl_subject = xbrl_data.get('subject', '')
-                                        xbrl_attachment_url = xbrl_data.get('attachment_url', '')
-                                        xbrl_datetime = xbrl_data.get('datetime', '')
+                                    # Update PDF URL from XBRL if available and current one is empty
+                                    if xbrl_attachment_url and (not pdf_url or pdf_url == ''):
+                                        ann['attchmntFile'] = xbrl_attachment_url
+                                        pdf_url = xbrl_attachment_url
                                     
-                                    # Update PDF URL from XBRL if available
-                                    if xbrl_data and 'attachment_url' in xbrl_data:
-                                        ann['attchmntFile'] = xbrl_data['attachment_url']
-                                        pdf_url = ann['attchmntFile']
+                                    # Check XBRL relevance
+                                    if not is_relevant and is_relevant_announcement(xbrl_data):
+                                        is_relevant = True
+                                        print(f"[INFO] ✓ New relevant XBRL: {symbol} - {desc[:80]}")
                             except Exception as e:
                                 print(f"[WARN] Error processing XBRL for announcement {seq_id}: {e}")
                         
