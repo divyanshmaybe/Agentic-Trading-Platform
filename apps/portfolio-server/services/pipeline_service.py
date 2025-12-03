@@ -1284,6 +1284,20 @@ class PipelineService:
                 self.logger.info("ℹ️ reference_price already in metadata: %s", metadata["reference_price"])
         else:
             self.logger.warning("⚠️ reference_price is None or not found in payload keys: %s", list(payload.keys()))
+        
+        # Copy LLM timing metadata to signal metadata for trade tracking
+        llm_delay_ms = payload.get("llm_delay_ms")
+        if llm_delay_ms is not None:
+            metadata["llm_delay_ms"] = llm_delay_ms
+            self.logger.info("⏱️ LLM delay: %dms", llm_delay_ms)
+        
+        llm_start_time = payload.get("llm_start_time")
+        if llm_start_time:
+            metadata["llm_start_time"] = llm_start_time
+        
+        llm_end_time = payload.get("llm_end_time")
+        if llm_end_time:
+            metadata["llm_end_time"] = llm_end_time
 
         signal_id = (
             str(payload.get("signal_id"))

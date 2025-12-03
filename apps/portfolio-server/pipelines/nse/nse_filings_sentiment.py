@@ -247,6 +247,7 @@ def publish_signal_to_kafka(
     explanation: str,
     confidence: float,
     stocktechdata: str,
+    llm_timing: str = "",
     subject_of_announcement: str = "",
     attachment_url: str = "",
     date_time_of_submission: str = "",
@@ -259,6 +260,9 @@ def publish_signal_to_kafka(
     2. Kafka publish → Analytics/audit trail (async, non-blocking)
     
     This ensures lowest latency: trade executes while Kafka publish happens in background.
+    
+    Args:
+        llm_timing: JSON string with LLM timing metadata (llm_start_time, llm_end_time, llm_delay_ms)
     """
 
     try:
@@ -267,6 +271,17 @@ def publish_signal_to_kafka(
         signal_value = 0
 
     safe_confidence = float(confidence or 0.0)
+    
+    # Parse LLM timing metadata
+    llm_timing_data = {}
+    if llm_timing:
+        try:
+            import json
+            llm_timing_data = json.loads(llm_timing)
+            llm_delay_ms = llm_timing_data.get("llm_delay_ms", 0)
+            print(f"[TIMING] ⏱️ LLM delay for {symbol}: {llm_delay_ms}ms")
+        except (json.JSONDecodeError, TypeError):
+            pass
     
     # Extract reference_price from stocktechdata
     reference_price = None  # Use None instead of 0.0 to indicate missing price
@@ -297,6 +312,12 @@ def publish_signal_to_kafka(
     # Prepare payload with reference_price for trade execution
     signal_payload = event.model_dump()
     signal_payload["reference_price"] = reference_price  # Add price to payload
+    
+    # Add LLM timing metadata to payload for trade execution tracking
+    if llm_timing_data:
+        signal_payload["llm_delay_ms"] = llm_timing_data.get("llm_delay_ms", 0)
+        signal_payload["llm_start_time"] = llm_timing_data.get("llm_start_time", "")
+        signal_payload["llm_end_time"] = llm_timing_data.get("llm_end_time", "")
 
     try:
         # STEP 1: Queue trade execution ONLY for actionable signals (1=BUY, -1=SELL)
@@ -304,12 +325,13 @@ def publish_signal_to_kafka(
         if signal_value in (1, -1):
             celery_app.send_task(
                 "pipeline.trade_execution.process_signal",
-                args=[signal_payload],  # Send enriched payload with reference_price
+                args=[signal_payload],  # Send enriched payload with reference_price + llm_timing
                 queue="trading",  # Route to TRADING queue (NOT pipelines!)
                 priority=9,  # HIGH PRIORITY - execute immediately
             )
             price_str = f"₹{reference_price:.2f}" if reference_price is not None else "N/A (will fetch)"
-            print(f"[CELERY] ✅ Queued HIGH-PRIORITY trade execution for {symbol} signal={signal_value} (price: {price_str})")
+            llm_delay_str = f"{llm_timing_data.get('llm_delay_ms', 0)}ms" if llm_timing_data else "N/A"
+            print(f"[CELERY] ✅ Queued HIGH-PRIORITY trade execution for {symbol} signal={signal_value} (price: {price_str}, llm_delay: {llm_delay_str})")
         else:
             print(f"[CELERY] ⏭️ Skipping signal=0 (HOLD) for {symbol} - no trade needed")
         
@@ -683,8 +705,19 @@ def generate_trading_signal(
 ) -> str:
     """
     Generate trading signal using LLM
-    Returns structured response with signal and explanation
+    Returns structured response with signal and explanation.
+    
+    Includes LLM timing metrics in the response for latency tracking:
+    - llm_start_time: ISO timestamp when LLM processing started
+    - llm_end_time: ISO timestamp when LLM processing completed  
+    - llm_delay_ms: Time in milliseconds for LLM to generate signal
     """
+    import time
+    
+    # Track LLM processing start time
+    llm_start_time = datetime.utcnow()
+    llm_start_ts = time.time()
+    
     # Load API key from environment if not provided or empty
     if not api_key or api_key.strip() == "":
         api_key = os.getenv("GEMINI_API_KEY", "")
@@ -778,10 +811,17 @@ RETURN EXACTLY THIS STRUCTURED OUTPUT AND NOTHING ELSE.
                 # Get response content (match original notebook implementation)
                 response_text = decision.content if hasattr(decision, 'content') else str(decision)
                 
+                # Calculate LLM delay
+                llm_end_time = datetime.utcnow()
+                llm_delay_ms = int((time.time() - llm_start_ts) * 1000)
+                
                 # Debug: Print response to see what LLM is returning
                 print(f"[PIPELINE] LLM Response: {response_text[:200]}...")
+                print(f"[PIPELINE] ⏱️ LLM delay: {llm_delay_ms}ms (started: {llm_start_time.isoformat()}Z)")
                 
-                return response_text
+                # Append timing metadata to response for downstream parsing
+                timing_suffix = f"\n__LLM_TIMING__:{llm_start_time.isoformat()}Z|{llm_end_time.isoformat()}Z|{llm_delay_ms}"
+                return response_text + timing_suffix
                 
             except Exception as invoke_error:
                 error_str = str(invoke_error)
@@ -922,6 +962,43 @@ def parse_trading_signal_confidence(response: str) -> float:
     except Exception as exc:  # pragma: no cover - defensive logging
         print(f"[ERROR] Error parsing confidence score: {exc}")
     return 0.0
+
+
+@pw.udf
+def parse_llm_timing(response: str) -> str:
+    """
+    Parse LLM timing metadata from response.
+    
+    Returns JSON string with timing info:
+    - llm_start_time: ISO timestamp when LLM processing started
+    - llm_end_time: ISO timestamp when LLM processing completed
+    - llm_delay_ms: Time in milliseconds for LLM to generate signal
+    
+    Returns empty string if timing not found.
+    """
+    try:
+        if not response:
+            return ""
+        
+        # Look for timing suffix: __LLM_TIMING__:start_time|end_time|delay_ms
+        timing_match = re.search(r"__LLM_TIMING__:([^|]+)\|([^|]+)\|(\d+)", response)
+        if timing_match:
+            llm_start_time = timing_match.group(1)
+            llm_end_time = timing_match.group(2)
+            llm_delay_ms = int(timing_match.group(3))
+            
+            import json
+            timing_data = {
+                "llm_start_time": llm_start_time,
+                "llm_end_time": llm_end_time,
+                "llm_delay_ms": llm_delay_ms,
+            }
+            return json.dumps(timing_data)
+        
+        return ""
+    except Exception as exc:
+        print(f"[ERROR] Error parsing LLM timing: {exc}")
+        return ""
 
 
 # ============================================================================
@@ -1086,6 +1163,7 @@ def create_nse_filings_pipeline(
         signal=parse_trading_signal_value(pw.this.llm_response),
         explanation=parse_trading_signal_explanation(pw.this.llm_response),
         confidence=parse_trading_signal_confidence(pw.this.llm_response),
+        llm_timing=parse_llm_timing(pw.this.llm_response),  # Extract LLM timing metadata
         stocktechdata=pw.this.stocktechdata,  # Pass through for price extraction
         # Carry through XBRL fields
         subject_of_announcement=pw.this.subject_of_announcement,
@@ -1107,6 +1185,7 @@ def create_nse_filings_pipeline(
             pw.this.explanation,
             pw.this.confidence,
             pw.this.stocktechdata,  # Pass stocktechdata for price extraction
+            pw.this.llm_timing,  # Pass LLM timing metadata
             pw.this.subject_of_announcement,  # XBRL field
             pw.this.attachment_url,  # XBRL field
             pw.this.date_time_of_submission,  # XBRL field
