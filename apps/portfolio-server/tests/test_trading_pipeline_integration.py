@@ -47,7 +47,6 @@ from services import trade_execution_service
 from services.pipeline_service import PipelineService
 from services.trade_engine import TradeEngine
 from utils import trade_execution as trade_utils
-from workers.auto_sell_worker import auto_sell_expired_trades
 from workers.order_monitor_worker import OrderMonitorWorker
 
 from pipelines.nse.trade_execution_pipeline import TradeExecutionEvent
