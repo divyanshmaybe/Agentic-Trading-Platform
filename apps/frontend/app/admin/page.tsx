@@ -9,24 +9,41 @@ import { CreateUserModal } from "@/components/admin/CreateUserModal"
 import { FinancialStatsCard } from "@/components/admin/FinancialStatsCard"
 import { PerformanceCard } from "@/components/admin/PerformanceCard"
 import { UserManagementCard } from "@/components/admin/UserManagementCard"
+import { MonthlyPnlChart } from "@/components/admin/MonthlyPnlChart"
+import { DailyPnlChart } from "@/components/admin/DailyPnlChart"
+import { TradesByStatusChart } from "@/components/admin/TradesByStatusChart"
+import { TradesBySideChart } from "@/components/admin/TradesBySideChart"
+import { HourlyTradeHeatmap } from "@/components/admin/HourlyTradeHeatmap"
+import { TradeVolumeChart } from "@/components/admin/TradeVolumeChart"
+import { AgentMetricsChart } from "@/components/admin/AgentMetricsChart"
+import { AgentPnlSeriesChart } from "@/components/admin/AgentPnlSeriesChart"
+import { UserPnlDistributionChart } from "@/components/admin/UserPnlDistributionChart"
+import { SymbolConcentrationChart } from "@/components/admin/SymbolConcentrationChart"
+import { PortfolioValueChart } from "@/components/admin/PortfolioValueChart"
+import { OrganizationSummaryCard } from "@/components/admin/OrganizationSummaryCard"
+import { TradingMetricsCard } from "@/components/admin/TradingMetricsCard"
+import { PositionMetricsCard } from "@/components/admin/PositionMetricsCard"
+import { PendingOrdersCard } from "@/components/admin/PendingOrdersCard"
+import { PipelineMetricsCard } from "@/components/admin/PipelineMetricsCard"
+import { ExecutionMetricsCard } from "@/components/admin/ExecutionMetricsCard"
+import { AlphaMetricsCard } from "@/components/admin/AlphaMetricsCard"
+import { AgentLeaderboardCard } from "@/components/admin/AgentLeaderboardCard"
+import { UserPortfolioTableCard } from "@/components/admin/UserPortfolioTableCard"
+import { TopBottomUsersCard } from "@/components/admin/TopBottomUsersCard"
 import type { AdminSettingsForm, AdminSettingsUserField, CreateUserFormValues, DirectoryUser } from "@/components/admin/types"
 import { Container } from "@/components/shared/Container"
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader"
 import { createUser, getUsers, type AuthUserSummary, type UserRole, updateUser } from "@/lib/auth"
 import { useAuth } from "@/hooks/useAuth"
+import { useAdminDashboard } from "@/hooks/useAdminDashboard"
 import "@/lib/chart"
 import { lineDepthPlugin } from "@/components/dashboard/chartConfig"
-import {
-  type DashboardData,
-  computeRoiPct,
-  formatCurrency,
-  getDashboardData,
-} from "@/lib/dashboardData"
+import { formatCurrency, computeRoiPct } from "@/lib/admin"
+import { AlertTriangle } from "lucide-react"
 
 const POSITIVE_LINE_STYLE = {
   border: "#22c55e",
   gradientFrom: "rgba(34,197,94,0.2)",
-  gradientSoft: "rgba(34,197,94,0.12)",
   gradientTo: "rgba(34,197,94,0)",
   shadow: "rgba(34,197,94,0.25)",
 } as const
@@ -34,7 +51,6 @@ const POSITIVE_LINE_STYLE = {
 const NEGATIVE_LINE_STYLE = {
   border: "#ef4444",
   gradientFrom: "rgba(239,68,68,0.2)",
-  gradientSoft: "rgba(239,68,68,0.12)",
   gradientTo: "rgba(239,68,68,0)",
   shadow: "rgba(239,68,68,0.25)",
 } as const
@@ -64,11 +80,19 @@ const gradientFill = (from: string, to: string) =>
   }
 
 export default function AdminDashboardPage() {
-  const initial: DashboardData = getDashboardData()
-  const [data] = useState<DashboardData>(initial)
-
   // Get admin user data securely from server-validated token
   const { user: authUser, loading: authLoading } = useAuth()
+  
+  // Admin dashboard data with polling
+  const {
+    dashboard,
+    summary,
+    loadingDashboard,
+    loadingSummary,
+    errorDashboard,
+    errorSummary,
+    lastUpdated,
+  } = useAdminDashboard()
 
   const {
     register: registerSettings,
@@ -107,11 +131,16 @@ export default function AdminDashboardPage() {
   const [selectedRoles, setSelectedRoles] = useState<UserRole[]>(["admin", "staff", "viewer"])
   const [isCreateUserModalOpen, setCreateUserModalOpen] = useState(false)
 
-  const months = data.months
-  const totals = data.companyTotals
-  const totalInvestment = totals[totals.length - 1] * 1_000_000
-  const totalProfit = (totals[totals.length - 1] - totals[0]) * 1_000_000
-  const roiPct = computeRoiPct(totals)
+  // Financial metrics from API
+  const financialMetricsData = dashboard?.financial_metrics
+  const organizationSummary = dashboard?.organization_summary
+  const monthlyPnlSeries = dashboard?.monthly_pnl_series || []
+  const portfolioValueSeries = dashboard?.portfolio_value_series || []
+  
+  // Calculate totals from API data
+  const totalInvestment = organizationSummary?.total_invested || 0
+  const totalProfit = financialMetricsData?.total_pnl || 0
+  const roiPct = financialMetricsData?.overall_roi_percentage || 0
 
   const formatUserName = useCallback((user: AuthUserSummary) => {
     const fullName = `${user.first_name} ${user.last_name}`.trim()
@@ -256,9 +285,9 @@ export default function AdminDashboardPage() {
         title: "Total invested capital to date",
       },
       {
-        label: "Total Profit",
+        label: "Total P&L",
         value: formatCurrency(totalProfit),
-        title: "Profit accumulated across all strategies",
+        title: "Profit/Loss accumulated across all strategies",
       },
       {
         label: "ROI",
@@ -270,12 +299,20 @@ export default function AdminDashboardPage() {
     [roiPct, totalInvestment, totalProfit],
   )
 
+  // Chart data from monthly PnL series
   const chart = useMemo(() => {
-    const companyPalette = pickPalette(totals)
+    if (!monthlyPnlSeries || monthlyPnlSeries.length === 0) {
+      return null
+    }
+
+    const labels = monthlyPnlSeries.map((d) => d.month)
+    const cumulativePnl = monthlyPnlSeries.map((d) => d.cumulative_pnl / 1_000_000) // Convert to millions for display
+    
+    const companyPalette = pickPalette(cumulativePnl)
     const datasets: ChartData<"line">["datasets"] = [
       {
-        label: "Company",
-        data: totals,
+        label: "Cumulative P&L",
+        data: cumulativePnl,
         borderColor: companyPalette.border,
         backgroundColor: gradientFill(companyPalette.gradientFrom, companyPalette.gradientTo),
         borderWidth: 2,
@@ -290,7 +327,7 @@ export default function AdminDashboardPage() {
 
     return {
       data: {
-        labels: months,
+        labels,
         datasets,
       },
       options: {
@@ -312,6 +349,17 @@ export default function AdminDashboardPage() {
             borderWidth: 1,
             titleColor: "#E5E5E5",
             bodyColor: "#9CA3AF",
+            callbacks: {
+              label: (context: any) => {
+                const index = context.dataIndex
+                const monthly = monthlyPnlSeries[index].realized_pnl
+                const cumulative = monthlyPnlSeries[index].cumulative_pnl
+                return [
+                  `Monthly: ${formatCurrency(monthly)}`,
+                  `Cumulative: ${formatCurrency(cumulative)}`,
+                ]
+              },
+            },
           },
         },
         interaction: { mode: "nearest" as const, intersect: false },
@@ -322,13 +370,16 @@ export default function AdminDashboardPage() {
           },
           y: {
             grid: { color: "rgba(255,255,255,0.05)" },
-            ticks: { color: "#9CA3AF" },
+            ticks: {
+              color: "#9CA3AF",
+              callback: (value: any) => `₹${((value as number) * 1_000_000).toLocaleString("en-IN")}`,
+            },
           },
         },
       },
       plugins: [lineDepthPlugin],
     }
-  }, [months, totals])
+  }, [monthlyPnlSeries])
 
   const handleLogout = useCallback(() => {
     if (typeof window !== "undefined") {
@@ -458,6 +509,13 @@ export default function AdminDashboardPage() {
     )
   }
 
+  // Alert badges
+  const hasAlerts = summary && (
+    summary.agents_with_errors > 0 ||
+    summary.portfolios_in_loss > 0 ||
+    (summary.high_concentration_symbols && summary.high_concentration_symbols.length > 0)
+  )
+
   return (
     <div className="min-h-screen bg-[#0c0c0c] text-[#fafafa]">
       <DashboardHeader
@@ -467,11 +525,115 @@ export default function AdminDashboardPage() {
         onLogout={handleLogout}
       />
       <main className="py-8">
-        <Container className="space-y-6">
+        <Container className="max-w-none space-y-6 px-4 sm:px-6 lg:px-12 xl:px-16">
+          {/* Error Banner */}
+          {(errorDashboard || errorSummary) && (
+            <div className="rounded-lg border border-red-500/50 bg-red-500/10 px-4 py-3 text-red-200">
+              {errorDashboard && <div>Dashboard Error: {errorDashboard}</div>}
+              {errorSummary && <div>Summary Error: {errorSummary}</div>}
+            </div>
+          )}
+
+          {/* Alerts Banner */}
+          {hasAlerts && summary && (
+            <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-4 py-3">
+              {summary.agents_with_errors > 0 && (
+                <div className="flex items-center gap-2 text-amber-200">
+                  <AlertTriangle className="size-4" />
+                  <span>{summary.agents_with_errors} agent(s) with errors</span>
+                </div>
+              )}
+              {summary.portfolios_in_loss > 0 && (
+                <div className="flex items-center gap-2 text-amber-200">
+                  <AlertTriangle className="size-4" />
+                  <span>{summary.portfolios_in_loss} portfolio(s) in loss</span>
+                </div>
+              )}
+              {summary.high_concentration_symbols && summary.high_concentration_symbols.length > 0 && (
+                <div className="flex items-center gap-2 text-amber-200">
+                  <AlertTriangle className="size-4" />
+                  <span>High concentration risk: {summary.high_concentration_symbols.join(", ")}</span>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="space-y-6">
-            <PerformanceCard chart={chart} />
+            {/* Top Row: Summary Cards */}
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+              <OrganizationSummaryCard data={organizationSummary || null} loading={loadingDashboard} className="lg:col-span-1" />
+              <FinancialStatsCard metrics={financialMetrics} savedAt={lastUpdated} className="lg:col-span-1" />
+              <TradingMetricsCard data={dashboard?.trading_metrics || null} loading={loadingDashboard} className="lg:col-span-1" />
+            </div>
+
+            {/* Performance Charts Row */}
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+              {chart ? (
+                <PerformanceCard chart={chart} className="lg:col-span-3" />
+              ) : (
+                <div className="lg:col-span-3 flex h-[360px] items-center justify-center rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_32px_70px_-45px_rgba(0,0,0,0.95)] backdrop-blur">
+                  {loadingDashboard ? "Loading performance data..." : "No performance data available"}
+                </div>
+              )}
+            </div>
+
+            {/* PnL Charts Row */}
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-              <FinancialStatsCard metrics={financialMetrics} savedAt={savedAt} className="lg:col-span-1" />
+              <MonthlyPnlChart data={monthlyPnlSeries} loading={loadingDashboard} />
+              <DailyPnlChart data={dashboard?.daily_pnl_series || []} loading={loadingDashboard} />
+            </div>
+
+            {/* Trading Charts Row */}
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 xl:grid-cols-4">
+              <TradesByStatusChart data={dashboard?.trades_by_status || undefined} loading={loadingDashboard} />
+              <TradesBySideChart data={dashboard?.trades_by_side || undefined} loading={loadingDashboard} />
+              <HourlyTradeHeatmap data={dashboard?.hourly_trade_distribution || []} loading={loadingDashboard} />
+              <TradeVolumeChart data={dashboard?.trade_volume_series || []} loading={loadingDashboard} />
+            </div>
+
+            {/* Portfolio Value Chart */}
+            <PortfolioValueChart data={portfolioValueSeries} loading={loadingDashboard} />
+
+            {/* Agent Metrics Row */}
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+              <AgentMetricsChart data={dashboard?.agent_metrics_by_type || []} loading={loadingDashboard} />
+              <AgentPnlSeriesChart data={dashboard?.agent_pnl_series || []} loading={loadingDashboard} />
+            </div>
+
+            {/* Agent Leaderboard */}
+            <AgentLeaderboardCard
+              topAgents={dashboard?.top_agents || []}
+              bottomAgents={dashboard?.bottom_agents || []}
+              loading={loadingDashboard}
+            />
+
+            {/* User Portfolio Table */}
+            <UserPortfolioTableCard data={dashboard?.user_portfolio_metrics || []} loading={loadingDashboard} />
+
+            {/* User Charts Row */}
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+              <UserPnlDistributionChart data={dashboard?.user_pnl_distribution || []} loading={loadingDashboard} />
+              <TopBottomUsersCard
+                topUsers={dashboard?.top_bottom_users?.top_users || []}
+                bottomUsers={dashboard?.top_bottom_users?.bottom_users || []}
+                loading={loadingDashboard}
+              />
+            </div>
+
+            {/* Metrics Cards Row */}
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 xl:grid-cols-5">
+              <PositionMetricsCard data={dashboard?.position_metrics || null} loading={loadingDashboard} />
+              <PendingOrdersCard data={dashboard?.pending_orders || null} loading={loadingDashboard} />
+              <PipelineMetricsCard data={dashboard?.pipeline_metrics || null} loading={loadingDashboard} />
+              <ExecutionMetricsCard data={dashboard?.execution_metrics || null} loading={loadingDashboard} />
+              <AlphaMetricsCard data={dashboard?.alpha_metrics || null} loading={loadingDashboard} />
+            </div>
+
+            {/* Risk Analysis */}
+            <SymbolConcentrationChart data={dashboard?.symbol_concentration || []} loading={loadingDashboard} />
+
+            {/* User Management Section */}
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
               <CompanySettingsCard
                 users={settingsUsers}
                 register={registerSettings}
@@ -481,14 +643,15 @@ export default function AdminDashboardPage() {
                 successMessage={settingsSuccess}
                 className="lg:col-span-1"
               />
+              <UserManagementCard
+                description={directoryDescription}
+                users={filteredDirectory}
+                selectedRoles={selectedRoles}
+                onSelectedRolesChange={handleRoleFilterChange}
+                onOpenCreateUser={handleOpenCreateUserModal}
+                className="lg:col-span-1"
+              />
             </div>
-            <UserManagementCard
-              description={directoryDescription}
-              users={filteredDirectory}
-              selectedRoles={selectedRoles}
-              onSelectedRolesChange={handleRoleFilterChange}
-              onOpenCreateUser={handleOpenCreateUserModal}
-            />
           </div>
         </Container>
         <CreateUserModal

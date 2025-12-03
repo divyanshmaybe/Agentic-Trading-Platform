@@ -146,10 +146,23 @@ class AdminController:
         live_alphas = await self.prisma.livealpha.find_many(
             where={"portfolio_id": {"in": portfolio_ids}},
         )
-        alpha_signals = await self.prisma.alphasignal.find_many(
-            where={"live_alpha": {"portfolio_id": {"in": portfolio_ids}}},
-            take=1000,
-        )
+        # Get live_alpha_ids to filter alpha_signals
+        live_alpha_ids = [alpha.id for alpha in live_alphas] if live_alphas else []
+        alpha_signals = []
+        if live_alpha_ids:
+            try:
+                # Try to access alphasignal model - may not exist if Prisma client not regenerated
+                alphasignal_model = getattr(self.prisma, 'alphasignal', None)
+                if alphasignal_model is not None:
+                    alpha_signals = await alphasignal_model.find_many(
+                        where={"live_alpha_id": {"in": live_alpha_ids}},
+                        take=1000,
+                    )
+                else:
+                    logger.warning("AlphaSignal model not available in Prisma client. Please regenerate Prisma client.")
+            except Exception as e:
+                logger.warning(f"Error querying AlphaSignal model: {e}, skipping alpha signals")
+                alpha_signals = []
         
         # Fetch users from auth service
         auth_users = await self._fetch_auth_users(organization_id)

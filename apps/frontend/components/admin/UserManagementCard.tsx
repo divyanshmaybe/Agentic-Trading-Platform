@@ -70,7 +70,7 @@ export function UserManagementCard({
 
   return (
     <Card
-      className={`card-glass rounded-2xl flex h-full flex-col lg:col-span-12 ${className}`}
+      className={`card-glass rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_32px_70px_-45px_rgba(0,0,0,0.95)] backdrop-blur flex h-full flex-col lg:col-span-12 ${className}`}
       {...cardProps}
     >
       <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
