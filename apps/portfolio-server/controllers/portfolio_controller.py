@@ -271,6 +271,7 @@ class PortfolioController:
         limit: int,
         search: Optional[str],
         profitability: Optional[str],
+        agent_id: Optional[str],
         sort_by: str,
         sort_order: Literal["asc", "desc"],
         target_user_id: Optional[str] = None,
@@ -289,6 +290,9 @@ class PortfolioController:
 
         if search:
             where["symbol"] = {"contains": search, "mode": "insensitive"}
+
+        if agent_id:
+            where["agent_id"] = agent_id
 
         # Note: profitability filtering removed - Position no longer has pnl field
         # P&L is calculated on-demand from snapshots or via aggregation

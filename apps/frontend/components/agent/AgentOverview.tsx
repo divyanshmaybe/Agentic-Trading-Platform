@@ -1,11 +1,13 @@
 "use client"
 
+import { useState, useEffect } from "react"
 import { motion, type Variants } from "framer-motion"
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import type { AgentDashboard } from "@/lib/types/agent"
 import { formatCurrency, formatPercentage, formatWeight, displayValue } from "@/lib/utils/formatters"
 import { AllocationLoadingState } from "@/components/shared/AllocationLoadingState"
+import { fetchQuotes } from "@/lib/portfolio"
 
 const container: Variants = {
   hidden: { opacity: 0, y: 12 },
@@ -28,6 +30,148 @@ interface AgentOverviewProps {
 }
 
 export function AgentOverview({ data, loading, isAllocating = false }: AgentOverviewProps) {
+  const [unrealizedPnl, setUnrealizedPnl] = useState<number | null>(null)
+  const [quotesLoading, setQuotesLoading] = useState(false)
+  const [quotesError, setQuotesError] = useState<string | null>(null)
+
+  // Fetch quotes and calculate unrealized PnL when positions data is available
+  useEffect(() => {
+    // Reset state when data changes
+    setUnrealizedPnl(null)
+    setQuotesError(null)
+    setQuotesLoading(false)
+
+    if (!data || !data.positions || data.positions.length === 0) {
+      return
+    }
+
+    let isMounted = true
+    let isInitialFetch = true
+
+    const calculateUnrealizedPnl = async () => {
+      if (!isMounted) return
+      
+      // Only show loading state on initial fetch, not on subsequent polls
+      if (isInitialFetch) {
+        setQuotesLoading(true)
+        isInitialFetch = false
+      }
+      setQuotesError(null)
+
+      try {
+        // Extract unique symbols from positions
+        const symbols = [...new Set(data.positions.map((pos) => pos.symbol).filter(Boolean))]
+        
+        // Skip if no valid symbols
+        if (symbols.length === 0) {
+          if (isMounted) {
+            setUnrealizedPnl(0)
+            setQuotesLoading(false)
+          }
+          return
+        }
+        
+        // Fetch quotes for all symbols
+        let quotesResponse
+        try {
+          quotesResponse = await fetchQuotes(symbols)
+        } catch (fetchError) {
+          console.error("Network error fetching quotes:", fetchError)
+          throw fetchError // Re-throw to be caught by outer catch
+        }
+        
+        if (!quotesResponse || !quotesResponse.data) {
+          throw new Error("Invalid quotes response")
+        }
+        
+        if (!isMounted) return
+        
+        // Check if we have missing quotes
+        if (quotesResponse.missing && quotesResponse.missing.length > 0) {
+          setQuotesError(`Missing quotes for: ${quotesResponse.missing.join(", ")}`)
+        }
+
+        // Create a map of symbol to price
+        const priceMap = new Map<string, number>()
+        if (quotesResponse.data) {
+          quotesResponse.data.forEach((quote) => {
+            if (quote && quote.symbol && quote.price) {
+              priceMap.set(quote.symbol, parseFloat(quote.price))
+            }
+          })
+        }
+
+        // Calculate unrealized PnL for each position
+        let totalUnrealizedPnl = 0
+        let hasMissingPrices = false
+
+        for (const position of data.positions) {
+          if (!position || !position.symbol) continue
+          
+          const currentPrice = priceMap.get(position.symbol)
+          
+          if (currentPrice === undefined || isNaN(currentPrice)) {
+            hasMissingPrices = true
+            continue // Skip positions without quotes
+          }
+
+          const averageBuyPrice = parseFloat(position.average_buy_price || "0")
+          const quantity = position.quantity || 0
+          
+          if (isNaN(averageBuyPrice) || quantity === 0) {
+            continue
+          }
+
+          const positionType = (position.position_type || "LONG").toUpperCase()
+
+          let positionPnl: number
+          if (positionType === "SHORT") {
+            // SHORT: (average_buy_price - current_price) * quantity
+            positionPnl = (averageBuyPrice - currentPrice) * quantity
+          } else {
+            // LONG or unknown: (current_price - average_buy_price) * quantity
+            positionPnl = (currentPrice - averageBuyPrice) * quantity
+          }
+
+          totalUnrealizedPnl += positionPnl
+        }
+
+        if (hasMissingPrices && (!quotesResponse.missing || quotesResponse.missing.length === 0)) {
+          setQuotesError("Some quotes are missing")
+        }
+
+        if (isMounted) {
+          setUnrealizedPnl(totalUnrealizedPnl)
+        }
+      } catch (error) {
+        console.error("Error fetching quotes for unrealized PnL:", error)
+        if (isMounted) {
+          setQuotesError(error instanceof Error ? error.message : "Failed to fetch market quotes")
+          setUnrealizedPnl(null)
+        }
+      } finally {
+        if (isMounted) {
+          setQuotesLoading(false)
+        }
+      }
+    }
+
+    // Calculate immediately
+    calculateUnrealizedPnl()
+
+    // Set up polling to recalculate every 10 seconds
+    const intervalId = setInterval(() => {
+      if (isMounted) {
+        calculateUnrealizedPnl()
+      }
+    }, 10000) // 10 seconds
+
+    return () => {
+      isMounted = false
+      clearInterval(intervalId)
+    }
+  }, [data])
+
   // Show allocating message when agents are being created
   if (isAllocating) {
     return (
@@ -120,6 +264,26 @@ export function AgentOverview({ data, loading, isAllocating = false }: AgentOver
             <p className={`mt-2 text-2xl font-semibold ${isPnlPositive ? "text-emerald-300" : "text-rose-300"}`}>
               {formatCurrency(data.realized_pnl)}
             </p>
+          </motion.div>
+
+          <motion.div
+            variants={item}
+            className="rounded-xl border border-white/10 bg-white/8 p-4 text-white/70 backdrop-blur-sm"
+          >
+            <p className="text-xs uppercase tracking-wide text-white/45">Unrealized PnL</p>
+            {quotesLoading ? (
+              <p className="mt-2 text-2xl font-semibold text-white/50">Loading...</p>
+            ) : quotesError ? (
+              <p className="mt-2 text-sm font-semibold text-rose-300" title={quotesError}>
+                Error
+              </p>
+            ) : unrealizedPnl !== null ? (
+              <p className={`mt-2 text-2xl font-semibold ${unrealizedPnl >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                {formatCurrency(unrealizedPnl.toString())}
+              </p>
+            ) : (
+              <p className="mt-2 text-2xl font-semibold text-white/50">—</p>
+            )}
           </motion.div>
 
           <motion.div
