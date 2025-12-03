@@ -760,11 +760,8 @@ class MarketDataService:
     
     @property
     def adapter(self):
-        """Return adapter info for compatibility"""
-        class Adapter:
-            name = "simple-angelone"
-            get_historical_candles = self.get_historical_candles
-        return Adapter()
+        """Return adapter for compatibility with code expecting an adapter object"""
+        return AngelOneAdapter(self)
 
 
 # Global instance

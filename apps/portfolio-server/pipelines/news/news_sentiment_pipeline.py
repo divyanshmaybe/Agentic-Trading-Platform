@@ -552,20 +552,29 @@ def execute_news_sentiment_pipeline(
         log.info("Fetching articles via NewsAPI and running sentiment analysis...")
         try:
             # Import the functions we need directly
+            from pipelines.news import research_pipeline
             from pipelines.news.research_pipeline import (
                 _fetch_news_api,
                 _ensure_finbert_loaded,
-                _finbert_tok,
-                _finbert_model,
-                _finbert_device,
             )
             import torch
+            import torch.nn.functional as F
             
             # Ensure FinBERT is loaded
             _ensure_finbert_loaded()
             
+            # Access the module-level variables AFTER loading
+            _finbert_tok = research_pipeline._finbert_tok
+            _finbert_model = research_pipeline._finbert_model
+            _finbert_device = research_pipeline._finbert_device
+            
+            # Verify FinBERT components are available
+            if _finbert_tok is None or _finbert_model is None or _finbert_device is None:
+                raise RuntimeError("FinBERT components not properly loaded after _ensure_finbert_loaded()")
+            
             # Process each stream
             articles_by_stream = {}
+            total_articles = 0
             for stream, query in NEWS_STREAMS.items():
                 try:
                     log.info(f"Fetching {top_k} articles for stream: {stream}")
@@ -574,22 +583,47 @@ def execute_news_sentiment_pipeline(
                     # Run sentiment analysis on each article
                     analyzed_articles = []
                     for title, content, url in articles:
-                        # FinBERT sentiment analysis
-                        combined_text = f"{title}. {content}"
-                        inputs = _finbert_tok(
-                            combined_text,
-                            return_tensors="pt",
-                            truncation=True,
-                            max_length=512,
-                            padding=True
-                        ).to(_finbert_device)
-                        
-                        with torch.no_grad():
-                            outputs = _finbert_model(**inputs)
-                            probs = torch.softmax(outputs.logits, dim=-1)
-                            sentiment_idx = torch.argmax(probs, dim=-1).item()
-                            sentiment_map = {0: "positive", 1: "negative", 2: "neutral"}
-                            sentiment_label = sentiment_map[sentiment_idx]
+                        try:
+                            # FinBERT sentiment analysis
+                            combined_text = f"{title}. {content}"
+                            inputs = _finbert_tok(
+                                combined_text,
+                                return_tensors="pt",
+                                truncation=True,
+                                max_length=512,
+                                padding=True
+                            ).to(_finbert_device)
+                            
+                            with torch.no_grad():
+                                outputs = _finbert_model(**inputs)
+                                logits = outputs.logits if hasattr(outputs, "logits") else outputs
+                                probs = F.softmax(logits, dim=-1)
+                                sentiment_idx = torch.argmax(probs, dim=-1).item()
+                                # FinBERT label order: 0=neutral, 1=positive, 2=negative
+                                sentiment_map = {0: "neutral", 1: "positive", 2: "negative"}
+                                sentiment_label = sentiment_map.get(sentiment_idx, "neutral")
+                            
+                            analyzed_articles.append({
+                                "stream": stream,
+                                "title": title,
+                                "content": content,
+                                "url": url,
+                                "sentiment": sentiment_label,
+                            })
+                        except Exception as sent_exc:
+                            log.warning(f"Sentiment analysis failed for article '{title[:50]}...': {sent_exc}")
+                            # Still add article with neutral sentiment
+                            analyzed_articles.append({
+                                "stream": stream,
+                                "title": title,
+                                "content": content,
+                                "url": url,
+                                "sentiment": "neutral",
+                            })
+                    
+                    articles_by_stream[stream] = analyzed_articles
+                    total_articles += len(analyzed_articles)
+                    log.info(f"Stream {stream}: analyzed {len(analyzed_articles)} articles")
                     
                 except Exception as exc:
                     log.warning(f"Failed to fetch/analyze articles for {stream}: {exc}")
@@ -601,8 +635,11 @@ def execute_news_sentiment_pipeline(
                     for article in stream_articles:
                         f.write(json.dumps(article) + "\n")
             
-            sentiment_source = "newsapi"
-            log.info("Article fetching and sentiment analysis completed")
+            if total_articles > 0:
+                sentiment_source = "newsapi"
+                log.info(f"Article fetching and sentiment analysis completed: {total_articles} articles across {len(articles_by_stream)} streams")
+            else:
+                log.warning("No articles fetched from NewsAPI, will use fallback")
             
         except Exception as exc:
             log.exception("Article fetching/sentiment failed, using fallback data: %s", exc)

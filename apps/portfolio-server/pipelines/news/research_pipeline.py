@@ -307,7 +307,14 @@ def compute_technical_indicators(symbol: str) -> Optional[Dict[str, Optional[flo
     if not adapter or not hasattr(adapter, "get_historical_candles"):
         raise RuntimeError("Active market data adapter does not support historical candles")
 
-    normalized_symbol = adapter.normalize_symbol(symbol)
+    # Use service's normalize method if available, otherwise use symbol as-is
+    if hasattr(service, "_normalize_symbol"):
+        normalized_symbol = service._normalize_symbol(symbol)
+    elif hasattr(service, "normalize_symbol"):
+        normalized_symbol = service.normalize_symbol(symbol)
+    else:
+        # Fallback: basic normalization (remove suffix like -EQ)
+        normalized_symbol = symbol.replace("-EQ", "").upper()
     now = datetime.utcnow()
     start_daily = (now - timedelta(days=120)).replace(hour=9, minute=15)
     start_hourly = (now - timedelta(days=2)).replace(hour=9, minute=15)
