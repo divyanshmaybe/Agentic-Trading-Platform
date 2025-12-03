@@ -62,6 +62,10 @@
       "cache": false,
       "persistent": true
     },
+    "streaming:orders": {
+      "cache": false,
+      "persistent": true
+    },
     "studio": {
       "cache": false,
       "persistent": true
