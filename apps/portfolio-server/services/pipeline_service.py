@@ -1897,9 +1897,9 @@ class PipelineService:
         # DISTRIBUTED LOCK: Prevent multiple workers from closing positions simultaneously
         import os
         from redis import Redis
-        from config import BROKER_URL
         
-        redis_client = Redis.from_url(BROKER_URL)
+        redis_url = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
+        redis_client = Redis.from_url(redis_url)
         lock_key = "market_close_worker:lock"
         lock_ttl = 300  # 5 minutes
         
