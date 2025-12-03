@@ -384,6 +384,7 @@ export type TradeRequest = {
   customer_id?: string
   source?: string
   metadata?: Record<string, unknown>
+  allocation_id?: string
 }
 
 export type TradeResponse = {
@@ -448,6 +449,9 @@ export async function submitTrade(
   }
   if (tradeData.metadata) {
     cleanedData.metadata = tradeData.metadata
+  }
+  if (tradeData.allocation_id) {
+    cleanedData.allocation_id = tradeData.allocation_id
   }
 
   // Handle price fields based on order type
