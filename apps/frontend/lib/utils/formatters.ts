@@ -64,3 +64,25 @@ export function displayValue(value: string | number | null | undefined, fallback
   return String(value)
 }
 
+export function formatDuration(value: string | number | null | undefined, fallback = "—"): string {
+  if (value === null || value === undefined || value === "") return fallback
+  
+  const num = typeof value === "number" ? value : parseFloat(String(value))
+  if (isNaN(num) || num === 0) return fallback
+  
+  // If less than 1 second, show in milliseconds
+  if (num < 1) {
+    return `${(num * 1000).toFixed(0)}ms`
+  }
+  
+  // If less than 60 seconds, show in seconds with 2 decimal places
+  if (num < 60) {
+    return `${num.toFixed(2)}s`
+  }
+  
+  // If 60 seconds or more, show in minutes and seconds
+  const minutes = Math.floor(num / 60)
+  const seconds = (num % 60).toFixed(0)
+  return `${minutes}m ${seconds}s`
+}
+

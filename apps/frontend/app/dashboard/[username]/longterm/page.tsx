@@ -7,6 +7,7 @@ import { Container } from "@/components/shared/Container"
 import { PageHeading } from "@/components/shared/PageHeading"
 import { useAuth } from "@/hooks/useAuth"
 import { AgentOverview, AgentTradesTable } from "@/components/agent"
+import { PortfolioSnapshots } from "@/components/portfolio/PortfolioSnapshots"
 import { useAgentDashboard } from "@/hooks/useAgentDashboard"
 import { useLowRiskEvents } from "@/components/hooks/useLowRiskEvents"
 import { createDynamicPieChartData } from "@/components/dashboard/chartConfig"
@@ -173,6 +174,10 @@ export default function LongTermPage() {
 				<section className="grid grid-cols-1 gap-6 lg:grid-cols-2">
 					<AgentOverview data={agentData} loading={agentLoading} isAllocating={isAllocating} />
 					<AgentTradesTable trades={agentData?.recent_trades ?? []} loading={agentLoading} />
+				</section>
+
+				<section>
+					<PortfolioSnapshots agentType="low_risk" title="Long-Term Strategy Snapshot History" />
 				</section>
 
 				{!agentLoading && !isAllocating && agentData !== null && (

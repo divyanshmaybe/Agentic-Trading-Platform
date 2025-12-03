@@ -4,7 +4,7 @@ import { motion } from "framer-motion"
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import type { AgentTrade } from "@/lib/types/agent"
-import { formatCurrency, formatNumber } from "@/lib/utils/formatters"
+import { formatCurrency, formatNumber, formatDuration } from "@/lib/utils/formatters"
 
 const rowVariants = {
   hidden: { opacity: 0, y: 12 },
@@ -92,6 +92,7 @@ export function AgentTradesTable({ trades, loading }: AgentTradesTableProps) {
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Executed Price</th>
                   <th className="px-4 py-3">Net Amount</th>
+                  <th className="px-4 py-3">Response Time</th>
                   <th className="px-4 py-3 text-right">Trade Type</th>
                 </tr>
               </thead>
@@ -131,6 +132,9 @@ export function AgentTradesTable({ trades, loading }: AgentTradesTableProps) {
                       </td>
                       <td className={`px-4 py-3 font-semibold ${isPositive ? "text-emerald-300" : "text-rose-300"}`}>
                         {formatCurrency(trade.net_amount)}
+                      </td>
+                      <td className="px-4 py-3 text-blue-300">
+                        {formatDuration(trade.llm_delay)}
                       </td>
                       <td className="px-4 py-3 text-right">
                         <span className="inline-flex items-center rounded-full bg-sky-500/15 px-3 py-1 text-xs font-semibold text-sky-200">
