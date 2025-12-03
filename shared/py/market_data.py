@@ -251,22 +251,27 @@ class MarketDataService:
             return eq_symbol
         return upper
     
-    def _get_token_info(self, symbol: str) -> Optional[Dict]:
+    def _get_token_info(self, symbol: str, prefer_exchange: str = "NSE") -> Optional[Dict]:
         """
         Get token info for symbol with automatic fallback.
         
         For equities, tries the symbol as-is, then EQ → BE → BL → N1 → N2 variants.
         Angel One API requires -EQ suffix for NSE equity symbols.
+        Prefers NSE tokens over BSE when both are available.
         
         Returns the token info dict with an added '_matched_key' field containing
         the actual key that was matched in the token map.
         """
         # First try to normalize the symbol (handles .NS suffix, aliases, etc.)
         normalized = self._normalize_symbol(symbol)
+        
+        # Collect all matching tokens, preferring NSE
+        candidates = []
+        
         if normalized in self._token_map:
-            result = self._token_map[normalized].copy()
-            result['_matched_key'] = normalized
-            return result
+            info = self._token_map[normalized].copy()
+            info['_matched_key'] = normalized
+            candidates.append(info)
         
         # If not found and symbol doesn't already have a segment suffix, try variants
         upper = symbol.upper()
@@ -278,14 +283,26 @@ class MarketDataService:
         for variant in variants:
             symbol_key = f"{upper}-{variant}"
             if symbol_key in self._token_map:
-                if variant != 'EQ':
-                    logger.debug(f"Symbol {symbol}: Using {variant} variant (EQ not found)")
-                result = self._token_map[symbol_key].copy()
-                result['_matched_key'] = symbol_key
-                return result
+                info = self._token_map[symbol_key].copy()
+                info['_matched_key'] = symbol_key
+                candidates.append(info)
         
-        # Return None if no variant found
-        return None
+        if not candidates:
+            return None
+        
+        # Prefer the exchange matching prefer_exchange (default NSE)
+        exchange_priority = {"NSE": 0, "BSE": 1, "NFO": 2, "MCX": 3, "CDS": 4}
+        preferred_priority = exchange_priority.get(prefer_exchange, 1)
+        
+        # Sort by: 1) matching preferred exchange, 2) exchange priority, 3) original order
+        def sort_key(info):
+            exch = info.get("exch_seg", "")
+            is_preferred = 0 if exch == prefer_exchange else 1
+            priority = exchange_priority.get(exch, 99)
+            return (is_preferred, priority)
+        
+        candidates.sort(key=sort_key)
+        return candidates[0]
     
     def has_symbol(self, symbol: str) -> bool:
         """Check if symbol exists in Angel One token map"""
@@ -672,8 +689,8 @@ class MarketDataService:
         import httpx
         from datetime import datetime
         
-        # Get token for symbol
-        token_info = self._get_token_info(symbol)
+        # Get token for symbol, preferring the specified exchange
+        token_info = self._get_token_info(symbol, prefer_exchange=exchange)
         if not token_info:
             logger.warning(f"No token found for symbol {symbol}")
             return []
@@ -683,10 +700,13 @@ class MarketDataService:
             logger.warning(f"No token available for {symbol}")
             return []
         
+        # Use the exchange from token_info if it matches, otherwise use specified exchange
+        actual_exchange = token_info.get("exch_seg", exchange)
+        
         # Use the matched key from _get_token_info (no need for reverse lookup)
         api_symbol = token_info.get("_matched_key") or token_info.get("symbol") or symbol
         
-        logger.info(f"Fetching historical candles for {symbol} (API symbol: {api_symbol}, token: {symbol_token}) ({interval}) from {fromdate} to {todate}")
+        logger.debug(f"Fetching historical candles for {symbol} (API symbol: {api_symbol}, token: {symbol_token}, exchange: {actual_exchange}) ({interval}) from {fromdate} to {todate}")
         
         # API endpoint
         url = "https://apiconnect.angelone.in/rest/secure/angelbroking/historical/v1/getCandleData"
@@ -704,9 +724,9 @@ class MarketDataService:
             "X-PrivateKey": self.api_key
         }
         
-        # Payload
+        # Payload - use actual_exchange from token info
         payload = {
-            "exchange": exchange,
+            "exchange": actual_exchange,
             "symboltoken": symbol_token,
             "interval": interval,
             "fromdate": fromdate,

@@ -473,11 +473,15 @@ def _fallback_sentiment() -> Dict[str, List[Dict[str, Any]]]:
 
 
 def _compute_technical_snapshot(logger: logging.Logger) -> List[Dict[str, Any]]:
+    import time
     indicators: List[Dict[str, Any]] = []
     failed_count = 0
-    for symbol, industry in SAMPLE_STOCKS:
+    for i, (symbol, industry) in enumerate(SAMPLE_STOCKS):
         logger.debug("Fetching technical indicators for %s", symbol)
         try:
+            # Add delay between requests to avoid rate limiting (Angel One allows ~10 requests/sec)
+            if i > 0:
+                time.sleep(0.5)  # 500ms delay between requests
             data = compute_technical_indicators(symbol)
         except Exception as exc:  # pragma: no cover - network/IO failures
             logger.warning("Technical indicator fetch failed for %s: %s", symbol, exc)
