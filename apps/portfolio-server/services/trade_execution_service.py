@@ -2324,6 +2324,21 @@ class TradeExecutionService:
                     "✅ [TX] Created BUY position: %s | qty: %d @ ₹%.2f",
                     symbol, quantity, executed_price
                 )
+            
+            # Update main portfolio cash for BUY trades
+            total_cost = executed_price * quantity
+            portfolio = await tx.portfolio.find_unique(where={"id": portfolio_id})
+            if portfolio:
+                portfolio_current_cash = float(getattr(portfolio, "available_cash", 0) or 0)
+                portfolio_new_cash = portfolio_current_cash - total_cost
+                await tx.portfolio.update(
+                    where={"id": portfolio_id},
+                    data={"available_cash": portfolio_new_cash}
+                )
+                self.logger.info(
+                    "💰 [TX] Portfolio cash updated on BUY: ₹%.2f → ₹%.2f (-₹%.2f)",
+                    portfolio_current_cash, portfolio_new_cash, total_cost
+                )
         
         elif side.upper() == "SELL":
             if not existing_position:
@@ -2356,6 +2371,20 @@ class TradeExecutionService:
                         "💰 [TX] Cash returned on SELL: ₹%.2f → ₹%.2f (+₹%.2f)",
                         current_cash, new_cash, sale_proceeds
                     )
+            
+            # Update main portfolio cash
+            portfolio = await tx.portfolio.find_unique(where={"id": portfolio_id})
+            if portfolio:
+                portfolio_current_cash = float(getattr(portfolio, "available_cash", 0) or 0)
+                portfolio_new_cash = portfolio_current_cash + sale_proceeds
+                await tx.portfolio.update(
+                    where={"id": portfolio_id},
+                    data={"available_cash": portfolio_new_cash}
+                )
+                self.logger.info(
+                    "💰 [TX] Portfolio cash updated on SELL: ₹%.2f → ₹%.2f (+₹%.2f)",
+                    portfolio_current_cash, portfolio_new_cash, sale_proceeds
+                )
             
             if new_quantity == 0:
                 # Close position
@@ -2462,6 +2491,20 @@ class TradeExecutionService:
                         "💰 [TX] Cash returned on COVER: ₹%.2f → ₹%.2f (+₹%.2f)",
                         current_cash, new_cash, cover_proceeds
                     )
+            
+            # Update main portfolio cash
+            portfolio = await tx.portfolio.find_unique(where={"id": portfolio_id})
+            if portfolio:
+                portfolio_current_cash = float(getattr(portfolio, "available_cash", 0) or 0)
+                portfolio_new_cash = portfolio_current_cash + cover_proceeds
+                await tx.portfolio.update(
+                    where={"id": portfolio_id},
+                    data={"available_cash": portfolio_new_cash}
+                )
+                self.logger.info(
+                    "💰 [TX] Portfolio cash updated on COVER: ₹%.2f → ₹%.2f (+₹%.2f)",
+                    portfolio_current_cash, portfolio_new_cash, cover_proceeds
+                )
             
             if new_quantity == 0:
                 # Close short position
