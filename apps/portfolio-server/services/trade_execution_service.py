@@ -379,8 +379,20 @@ class TradeExecutionService:
                 tp_price = reference_price * (Decimal("1") - tp_pct)
                 sl_price = reference_price * (Decimal("1") + sl_pct)
         
-        # Set 15-minute auto-close window based on trade side (only for non-manual trades)
-        auto_close_time = datetime.utcnow() + timedelta(minutes=15) if not is_manual_trade else None
+        # Set auto-close window based on trade type and configuration
+        auto_close_time = None
+        if is_manual_trade:
+            # For manual trades: use auto_sell_after from job_row if provided (in seconds)
+            auto_sell_after = job_row.get("auto_sell_after")
+            if auto_sell_after and auto_sell_after > 0:
+                auto_close_time = datetime.utcnow() + timedelta(seconds=int(auto_sell_after))
+                self.logger.info(
+                    "📅 Manual trade auto_sell_at set: %s (%d seconds from now)",
+                    auto_close_time, auto_sell_after
+                )
+        else:
+            # For NSE/automated trades: default 15-minute window
+            auto_close_time = datetime.utcnow() + timedelta(minutes=15)
         
         trade_data = {
             "organization_id": organization_id,  # From job_row or portfolio
@@ -405,7 +417,9 @@ class TradeExecutionService:
             trade_data["take_profit_price"] = tp_price
             trade_data["stop_loss_price"] = sl_price
         
-        # Set appropriate auto-close timestamp based on trade side (only for non-manual trades)
+        # Set appropriate auto-close timestamp based on trade side
+        # For manual trades: only if auto_sell_after was provided
+        # For NSE trades: always (15-minute default window)
         if auto_close_time:
             if side.upper() == "SHORT_SELL":
                 # SHORT_SELL: Set auto_cover_at (buy to close after 15 min)

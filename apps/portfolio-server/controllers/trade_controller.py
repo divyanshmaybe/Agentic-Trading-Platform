@@ -242,6 +242,8 @@ class TradeController:
                 "explanation": f"Manual {payload.side} order via API",
                 "filing_time": "",
                 "generated_at": "",
+                # auto_sell_after: seconds until auto-sell (for manual trades with auto-sell enabled)
+                "auto_sell_after": payload.auto_sell_after,
             }
             
             # Persist trade execution log
