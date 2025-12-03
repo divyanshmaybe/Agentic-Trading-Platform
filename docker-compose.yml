@@ -304,9 +304,59 @@ services:
                  echo 'Waiting for Postgres...';
                  sleep 2;
                done &&
-               celery -A celery_app:celery_app worker --loglevel=info -Q nse_pipeline,pipelines --concurrency=1 --hostname=nse_pipeline@%h --max-tasks-per-child=10 --prefetch-multiplier=1"
+               celery -A celery_app:celery_app worker --loglevel=info -Q nse_pipeline --concurrency=1 --hostname=nse_pipeline@%h --max-tasks-per-child=10 --prefetch-multiplier=1"
     ports:
       - "9102:9102"
+    volumes:
+      - ./apps/portfolio-server:/app/apps/portfolio-server
+      - ./shared:/app/shared
+      - ./middleware:/app/middleware
+      - ./scripts:/app/scripts
+    depends_on:
+      portfolio_postgres:
+        condition: service_healthy
+      portfolio_redis:
+        condition: service_healthy
+    networks:
+      - agentInvest
+
+  # Celery Worker - News Pipeline Queue (News sentiment - dedicated, 1 worker)
+  portfolio_celery_news_pipeline:
+    image: portfolio_server:latest
+    container_name: portfolio_celery_news_pipeline
+    restart: unless-stopped
+    env_file:
+      - .env
+      - apps/portfolio-server/.env
+    environment:
+      PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
+      SKIP_DOTENV: "true"
+      CELERY_WORKER_RUNNING: "1"
+      DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
+      SHADOW_DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
+      AUTH_SERVER_URL: http://auth_server:4000
+      PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
+      REDIS_HOST: portfolio_redis
+      REDIS_PORT: 6379
+      CELERY_BROKER_URL: redis://portfolio_redis:6379/0
+      CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/1
+      INTERNAL_SERVICE_SECRET: agentinvest-secret
+      PROMETHEUS_ENABLED: "true"
+      PROMETHEUS_PORT: "9108"
+      WORKER_NAME: news_pipeline@docker
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_CLIENT_ID: portfolio-celery-news-pipeline
+      KAFKA_ENABLED: "true"
+    working_dir: /app/apps/portfolio-server
+    command: >
+      bash -c "python -m prisma generate &&
+               until python -m prisma db push --accept-data-loss; do
+                 echo 'Waiting for Postgres...';
+                 sleep 2;
+               done &&
+               celery -A celery_app:celery_app worker --loglevel=info -Q news_pipeline,pipelines --concurrency=1 --hostname=news_pipeline@%h --max-tasks-per-child=10 --prefetch-multiplier=1"
+    ports:
+      - "9108:9108"
     volumes:
       - ./apps/portfolio-server:/app/apps/portfolio-server
       - ./shared:/app/shared
@@ -617,6 +667,8 @@ services:
       portfolio_celery_trading:
         condition: service_started
       portfolio_celery_nse_pipeline:
+        condition: service_started
+      portfolio_celery_news_pipeline:
         condition: service_started
       portfolio_celery_low_risk:
         condition: service_started
