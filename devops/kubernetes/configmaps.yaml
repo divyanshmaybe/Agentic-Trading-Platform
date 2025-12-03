@@ -15,10 +15,25 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
+  name: notification-config
+  namespace: agent-invest
+data:
+  NODE_ENV: production
+  REDIS_HOST: auth-redis
+  REDIS_PORT: "6379"
+  KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  KAFKA_CLIENT_ID: notification-server
+  KAFKA_GROUP_ID: notifications-consumer
+  KAFKA_ENABLED: "true"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
   name: portfolio-config
   namespace: agent-invest
 data:
   PORT: "8000"
+  SKIP_DOTENV: "true"
   AUTH_SERVER_URL: http://auth-server:4000
   PORTFOLIO_SERVICE_URL: http://portfolio-server:8000
   CLIENT_URL: http://localhost
@@ -45,14 +60,17 @@ data:
   # Worker Availability Checks
   MIN_AVAILABLE_WORKERS: "1"
   WORKER_CHECK_ENABLED: "true"
+  CELERY_WORKER_RUNNING: "1"
+  # Queue Configuration (matching docker-compose)
   CELERY_DEFAULT_QUEUE: general
   CELERY_QUEUE_ALLOCATIONS: allocations
   CELERY_QUEUE_TRADING: trading
-  CELERY_QUEUE_PIPELINES: pipelines
-  CELERY_QUEUE_RISK: risk
-  CELERY_QUEUE_ORDERS: orders
-  CELERY_QUEUE_MARKET: market
-  CELERY_QUEUE_TOKENS: tokens
+  CELERY_QUEUE_NSE_PIPELINE: nse_pipeline
+  CELERY_QUEUE_NEWS_PIPELINE: news_pipeline,pipelines
+  CELERY_QUEUE_LOW_RISK: low_risk_pipeline
+  CELERY_QUEUE_MARKET: market,tokens
+  CELERY_QUEUE_GENERAL: general,risk,orders
+  CELERY_QUEUE_STREAMING: streaming
   CELERY_WORKER_PREFETCH_MULTIPLIER: "1"
   CELERY_VISIBILITY_TIMEOUT: "900"
   CELERY_RESULT_TTL: "86400"
@@ -60,20 +78,15 @@ data:
   CELERY_TASK_TIME_LIMIT: "720"
   CELERY_REDBEAT_LOCK_TIMEOUT: "600"
   CELERY_REDBEAT_LOCK_KEY: redbeat::lock
+  # Concurrency settings per worker type
   CELERY_CONCURRENCY_ALLOCATIONS: "2"
   CELERY_CONCURRENCY_TRADING: "4"
-  CELERY_CONCURRENCY_PIPELINES: "2"
-  CELERY_CONCURRENCY_RISK: "2"
-  CELERY_CONCURRENCY_ORDERS: "2"
-  CELERY_CONCURRENCY_MARKET: "3"
-  CELERY_CONCURRENCY_TOKENS: "1"
-  CELERY_PREFETCH_ALLOCATIONS: "1"
-  CELERY_PREFETCH_TRADING: "1"
-  CELERY_PREFETCH_PIPELINES: "2"
-  CELERY_PREFETCH_RISK: "2"
-  CELERY_PREFETCH_ORDERS: "1"
-  CELERY_PREFETCH_MARKET: "4"
-  CELERY_PREFETCH_TOKENS: "1"
+  CELERY_CONCURRENCY_NSE_PIPELINE: "1"
+  CELERY_CONCURRENCY_NEWS_PIPELINE: "1"
+  CELERY_CONCURRENCY_LOW_RISK: "1"
+  CELERY_CONCURRENCY_MARKET: "4"
+  CELERY_CONCURRENCY_GENERAL: "4"
+  CELERY_CONCURRENCY_STREAMING: "1"
   CELERY_LOG_LEVEL: info
   # Auto-Sell Configuration
   AUTO_SELL_CHECK_INTERVAL_SECONDS: "60"
@@ -87,6 +100,8 @@ data:
   MARKET_DATA_MAX_RECONNECT_DELAY: "60"
   # Kafka Configuration
   KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  KAFKA_CLIENT_ID: portfolio-server
+  KAFKA_ENABLED: "true"
   KAFKA_NSE_TOPIC: nse_filings_trading_signal
   KAFKA_TRADE_LOGS_TOPIC: nse_pipeline_trade_logs
 ---
@@ -98,6 +113,10 @@ metadata:
 data:
   PORT: "3000"
   NEXT_TELEMETRY_DISABLED: "1"
+  NODE_ENV: production
+  # Redis for notifications pub/sub (uses auth-redis)
+  REDIS_HOST: auth-redis
+  REDIS_PORT: "6379"
   NEXT_PUBLIC_API_BASE_URL: http://api.localhost
   NEXT_PUBLIC_PORTFOLIO_API_URL: http://api.localhost/portfolio
   NEXT_PUBLIC_AUTH_BASE_URL: http://api.localhost/auth

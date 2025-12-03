@@ -35,6 +35,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: frontend-config
+            - secretRef:
+                name: auth-env-secret
           ports:
             - containerPort: 3000
               name: http
@@ -95,7 +97,8 @@ spec:
             - sh
             - -c
             - |
-              pnpm prisma db push && \
+              pnpm prisma generate --schema ../../shared/prisma/schema.prisma && \
+              pnpm prisma db push --schema ../../shared/prisma/schema.prisma && \
               pnpm run start
           readinessProbe:
             httpGet:
@@ -109,6 +112,49 @@ spec:
               port: http
             initialDelaySeconds: 40
             periodSeconds: 30
+---
+# =============================================================================
+# Notification Server (Kafka Consumer -> Redis Publisher)
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-server
+  namespace: agent-invest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: notification-server
+  template:
+    metadata:
+      labels:
+        app: notification-server
+    spec:
+      containers:
+        - name: notification-server
+          image: punhaniabhishek/agent-invest-notification-server:latest
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: notification-config
+            - secretRef:
+                name: auth-env-secret
+          command:
+            - sh
+            - -c
+            - |
+              cd apps/notification_server && \
+              pnpm prisma generate --schema /app/shared/prisma/schema.prisma && \
+              pnpm prisma db push --schema /app/shared/prisma/schema.prisma --accept-data-loss && \
+              node -r tsconfig-paths/register dist/apps/notification_server/src/index.js
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
 ---
 apiVersion: v1
 kind: Service
@@ -147,11 +193,6 @@ spec:
           env:
             - name: PYTHONPATH
               value: "/app:/app/apps/portfolio-server:/app/shared/py:/app/middleware:/app/middleware/py"
-            - name: DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: portfolio-env-secret
-                  key: DATABASE_URL
           envFrom:
             - configMapRef:
                 name: portfolio-config
@@ -250,29 +291,12 @@ spec:
               done && \
               exec celery -A celery_app:celery_app worker \
                 --loglevel=${CELERY_LOG_LEVEL:-info} \
-                --queues=${CELERY_QUEUE_ALLOCATIONS} \
+                --queues=allocations \
                 --concurrency=${CELERY_CONCURRENCY_ALLOCATIONS:-2} \
-                --prefetch-multiplier=${CELERY_PREFETCH_ALLOCATIONS:-1} \
-                --hostname=%h.allocations \
+                --prefetch-multiplier=1 \
+                --hostname=allocation@%h \
+                --max-tasks-per-child=100 \
                 --events
-          readinessProbe:
-            exec:
-              command:
-                - python
-                - /app/apps/portfolio-server/scripts/celery_healthcheck.py
-            initialDelaySeconds: 20
-            periodSeconds: 20
-            timeoutSeconds: 10
-            failureThreshold: 3
-          livenessProbe:
-            exec:
-              command:
-                - python
-                - /app/apps/portfolio-server/scripts/celery_healthcheck.py
-            initialDelaySeconds: 40
-            periodSeconds: 30
-            timeoutSeconds: 10
-            failureThreshold: 5
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
@@ -355,25 +379,12 @@ spec:
               done && \
               exec celery -A celery_app:celery_app worker \
                 --loglevel=${CELERY_LOG_LEVEL:-info} \
-                --queues=${CELERY_QUEUE_TRADING} \
+                --queues=trading \
                 --concurrency=${CELERY_CONCURRENCY_TRADING:-4} \
-                --prefetch-multiplier=${CELERY_PREFETCH_TRADING:-1} \
-                --hostname=%h.trading \
+                --prefetch-multiplier=1 \
+                --hostname=trading@%h \
+                --max-tasks-per-child=100 \
                 --events
-          readinessProbe:
-            exec:
-              command:
-                - python
-                - /app/apps/portfolio-server/scripts/celery_healthcheck.py
-            initialDelaySeconds: 20
-            periodSeconds: 20
-          livenessProbe:
-            exec:
-              command:
-                - python
-                - /app/apps/portfolio-server/scripts/celery_healthcheck.py
-            initialDelaySeconds: 40
-            periodSeconds: 30
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
@@ -429,40 +440,30 @@ spec:
               done && \
               exec celery -A celery_app:celery_app worker \
                 --loglevel=${CELERY_LOG_LEVEL:-info} \
-                --queues=${CELERY_QUEUE_MARKET} \
-                --concurrency=${CELERY_CONCURRENCY_MARKET:-3} \
-                --prefetch-multiplier=${CELERY_PREFETCH_MARKET:-4} \
-                --hostname=%h.market \
+                --queues=market,tokens \
+                --concurrency=${CELERY_CONCURRENCY_MARKET:-4} \
+                --prefetch-multiplier=1 \
+                --hostname=market@%h \
+                --max-tasks-per-child=500 \
                 --events
-          readinessProbe:
-            exec:
-              command:
-                - python
-                - /app/apps/portfolio-server/scripts/celery_healthcheck.py
-            initialDelaySeconds: 15
-            periodSeconds: 20
-          livenessProbe:
-            exec:
-              command:
-                - python
-                - /app/apps/portfolio-server/scripts/celery_healthcheck.py
-            initialDelaySeconds: 30
-            periodSeconds: 30
 ---
+# =============================================================================
+# Celery Worker - NSE Pipeline Queue (NSE filings - dedicated)
+# =============================================================================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: portfolio-celery-pipelines
+  name: portfolio-celery-nse-pipeline
   namespace: agent-invest
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: portfolio-celery-pipelines
+      app: portfolio-celery-nse-pipeline
   template:
     metadata:
       labels:
-        app: portfolio-celery-pipelines
+        app: portfolio-celery-nse-pipeline
     spec:
       containers:
         - name: worker
@@ -492,40 +493,189 @@ spec:
               done && \
               exec celery -A celery_app:celery_app worker \
                 --loglevel=${CELERY_LOG_LEVEL:-info} \
-                --queues=${CELERY_QUEUE_PIPELINES} \
-                --concurrency=${CELERY_CONCURRENCY_PIPELINES:-2} \
-                --prefetch-multiplier=${CELERY_PREFETCH_PIPELINES:-2} \
-                --hostname=%h.pipelines \
+                --queues=nse_pipeline \
+                --concurrency=${CELERY_CONCURRENCY_NSE_PIPELINE:-1} \
+                --prefetch-multiplier=1 \
+                --hostname=nse_pipeline@%h \
+                --max-tasks-per-child=10 \
                 --events
-          readinessProbe:
-            exec:
-              command:
-                - python
-                - /app/apps/portfolio-server/scripts/celery_healthcheck.py
-            initialDelaySeconds: 15
-            periodSeconds: 20
-          livenessProbe:
-            exec:
-              command:
-                - python
-                - /app/apps/portfolio-server/scripts/celery_healthcheck.py
-            initialDelaySeconds: 30
-            periodSeconds: 30
 ---
+# =============================================================================
+# Celery Worker - News Pipeline Queue (News sentiment - dedicated)
+# =============================================================================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: portfolio-celery-risk
+  name: portfolio-celery-news-pipeline
   namespace: agent-invest
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: portfolio-celery-risk
+      app: portfolio-celery-news-pipeline
   template:
     metadata:
       labels:
-        app: portfolio-celery-risk
+        app: portfolio-celery-news-pipeline
+    spec:
+      containers:
+        - name: worker
+          image: punhaniabhishek/agent-invest-portfolio-server:latest
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: portfolio-config
+            - secretRef:
+                name: portfolio-env-secret
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "2Gi"
+          command:
+            - sh
+            - -c
+            - |
+              rm -f /app/apps/portfolio-server/.env && \
+              python -m prisma generate && \
+              until python -m prisma db push --accept-data-loss; do \
+                echo "Waiting for Postgres..."; \
+                sleep 2; \
+              done && \
+              exec celery -A celery_app:celery_app worker \
+                --loglevel=${CELERY_LOG_LEVEL:-info} \
+                --queues=news_pipeline,pipelines \
+                --concurrency=${CELERY_CONCURRENCY_NEWS_PIPELINE:-1} \
+                --prefetch-multiplier=1 \
+                --hostname=news_pipeline@%h \
+                --max-tasks-per-child=10 \
+                --events
+---
+# =============================================================================
+# Celery Worker - Low Risk Pipeline Queue (Low-risk stock selection)
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portfolio-celery-low-risk
+  namespace: agent-invest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: portfolio-celery-low-risk
+  template:
+    metadata:
+      labels:
+        app: portfolio-celery-low-risk
+    spec:
+      containers:
+        - name: worker
+          image: punhaniabhishek/agent-invest-portfolio-server:latest
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: portfolio-config
+            - secretRef:
+                name: portfolio-env-secret
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "2Gi"
+          command:
+            - sh
+            - -c
+            - |
+              rm -f /app/apps/portfolio-server/.env && \
+              python -m prisma generate && \
+              until python -m prisma db push --accept-data-loss; do \
+                echo "Waiting for Postgres..."; \
+                sleep 2; \
+              done && \
+              exec celery -A celery_app:celery_app worker \
+                --loglevel=${CELERY_LOG_LEVEL:-info} \
+                --queues=low_risk_pipeline \
+                --concurrency=${CELERY_CONCURRENCY_LOW_RISK:-1} \
+                --prefetch-multiplier=1 \
+                --hostname=low_risk@%h \
+                --max-tasks-per-child=5 \
+                --events
+---
+# =============================================================================
+# Celery Worker - General Queue (Misc tasks, risk, orders)
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portfolio-celery-general
+  namespace: agent-invest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: portfolio-celery-general
+  template:
+    metadata:
+      labels:
+        app: portfolio-celery-general
+    spec:
+      containers:
+        - name: worker
+          image: punhaniabhishek/agent-invest-portfolio-server:latest
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: portfolio-config
+            - secretRef:
+                name: portfolio-env-secret
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "2Gi"
+          command:
+            - sh
+            - -c
+            - |
+              rm -f /app/apps/portfolio-server/.env && \
+              python -m prisma generate && \
+              until python -m prisma db push --accept-data-loss; do \
+                echo "Waiting for Postgres..."; \
+                sleep 2; \
+              done && \
+              exec celery -A celery_app:celery_app worker \
+                --loglevel=${CELERY_LOG_LEVEL:-info} \
+                --queues=general,risk,orders \
+                --concurrency=${CELERY_CONCURRENCY_GENERAL:-4} \
+                --prefetch-multiplier=1 \
+                --hostname=general@%h \
+                --max-tasks-per-child=200 \
+                --events
+---
+# =============================================================================
+# Celery Worker - Streaming Queue (Long-running streaming tasks)
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portfolio-celery-streaming
+  namespace: agent-invest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: portfolio-celery-streaming
+  template:
+    metadata:
+      labels:
+        app: portfolio-celery-streaming
     spec:
       containers:
         - name: worker
@@ -555,151 +705,14 @@ spec:
               done && \
               exec celery -A celery_app:celery_app worker \
                 --loglevel=${CELERY_LOG_LEVEL:-info} \
-                --queues=${CELERY_QUEUE_RISK} \
-                --concurrency=${CELERY_CONCURRENCY_RISK:-2} \
-                --prefetch-multiplier=${CELERY_PREFETCH_RISK:-2} \
-                --hostname=%h.risk \
+                --queues=streaming \
+                --concurrency=${CELERY_CONCURRENCY_STREAMING:-1} \
+                --prefetch-multiplier=1 \
+                --hostname=streaming@%h \
+                --max-tasks-per-child=1 \
+                --without-heartbeat \
+                --without-gossip \
                 --events
-          readinessProbe:
-            exec:
-              command:
-                - python
-                - /app/apps/portfolio-server/scripts/celery_healthcheck.py
-            initialDelaySeconds: 15
-            periodSeconds: 20
-          livenessProbe:
-            exec:
-              command:
-                - python
-                - /app/apps/portfolio-server/scripts/celery_healthcheck.py
-            initialDelaySeconds: 30
-            periodSeconds: 30
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: portfolio-celery-orders
-  namespace: agent-invest
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: portfolio-celery-orders
-  template:
-    metadata:
-      labels:
-        app: portfolio-celery-orders
-    spec:
-      containers:
-        - name: worker
-          image: punhaniabhishek/agent-invest-portfolio-server:latest
-          imagePullPolicy: Always
-          envFrom:
-            - configMapRef:
-                name: portfolio-config
-            - secretRef:
-                name: portfolio-env-secret
-          resources:
-            requests:
-              cpu: "250m"
-              memory: "512Mi"
-            limits:
-              cpu: "1"
-              memory: "2Gi"
-          command:
-            - sh
-            - -c
-            - |
-              rm -f /app/apps/portfolio-server/.env && \
-              python -m prisma generate && \
-              until python -m prisma db push --accept-data-loss; do \
-                echo "Waiting for Postgres..."; \
-                sleep 2; \
-              done && \
-              exec celery -A celery_app:celery_app worker \
-                --loglevel=${CELERY_LOG_LEVEL:-info} \
-                --queues=${CELERY_QUEUE_ORDERS} \
-                --concurrency=${CELERY_CONCURRENCY_ORDERS:-2} \
-                --prefetch-multiplier=${CELERY_PREFETCH_ORDERS:-1} \
-                --hostname=%h.orders \
-                --events
-          readinessProbe:
-            exec:
-              command:
-                - python
-                - /app/apps/portfolio-server/scripts/celery_healthcheck.py
-            initialDelaySeconds: 15
-            periodSeconds: 20
-          livenessProbe:
-            exec:
-              command:
-                - python
-                - /app/apps/portfolio-server/scripts/celery_healthcheck.py
-            initialDelaySeconds: 30
-            periodSeconds: 30
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: portfolio-celery-tokens
-  namespace: agent-invest
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: portfolio-celery-tokens
-  template:
-    metadata:
-      labels:
-        app: portfolio-celery-tokens
-    spec:
-      containers:
-        - name: worker
-          image: punhaniabhishek/agent-invest-portfolio-server:latest
-          imagePullPolicy: Always
-          envFrom:
-            - configMapRef:
-                name: portfolio-config
-            - secretRef:
-                name: portfolio-env-secret
-          resources:
-            requests:
-              cpu: "100m"
-              memory: "256Mi"
-            limits:
-              cpu: "500m"
-              memory: "1Gi"
-          command:
-            - sh
-            - -c
-            - |
-              rm -f /app/apps/portfolio-server/.env && \
-              python -m prisma generate && \
-              until python -m prisma db push --accept-data-loss; do \
-                echo "Waiting for Postgres..."; \
-                sleep 2; \
-              done && \
-              exec celery -A celery_app:celery_app worker \
-                --loglevel=${CELERY_LOG_LEVEL:-info} \
-                --queues=${CELERY_QUEUE_TOKENS} \
-                --concurrency=${CELERY_CONCURRENCY_TOKENS:-1} \
-                --prefetch-multiplier=${CELERY_PREFETCH_TOKENS:-1} \
-                --hostname=%h.tokens \
-                --events
-          readinessProbe:
-            exec:
-              command:
-                - python
-                - /app/apps/portfolio-server/scripts/celery_healthcheck.py
-            initialDelaySeconds: 15
-            periodSeconds: 20
-          livenessProbe:
-            exec:
-              command:
-                - python
-                - /app/apps/portfolio-server/scripts/celery_healthcheck.py
-            initialDelaySeconds: 30
-            periodSeconds: 30
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -753,13 +766,6 @@ spec:
                 --loglevel=${CELERY_LOG_LEVEL:-info} \
                 --pidfile= \
                 --scheduler=redbeat.RedBeatScheduler
-          livenessProbe:
-            exec:
-              command:
-                - python
-                - /app/apps/portfolio-server/scripts/celery_healthcheck.py
-            initialDelaySeconds: 30
-            periodSeconds: 30
 ---
 apiVersion: apps/v1
 kind: Deployment
