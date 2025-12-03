@@ -247,7 +247,13 @@ class TradeEngine:
         if payload.side == "BUY":
             await self._apply_buy_execution(payload, execution_price)
         else:
-            await self._apply_sell_execution(payload, execution_price)
+            realized_pnl = await self._apply_sell_execution(payload, execution_price)
+            # Update trade with realized_pnl
+            if realized_pnl is not None:
+                await self.prisma.trade.update(
+                    where={"id": trade.id},
+                    data={"realized_pnl": realized_pnl}
+                )
 
         await self._create_trade_execution_log(trade, payload)
 
@@ -355,7 +361,13 @@ class TradeEngine:
 
         await self._recalculate_portfolio_value(payload.portfolio_id)
 
-    async def _apply_sell_execution(self, payload: TradeCreate, execution_price: Decimal) -> None:
+    async def _apply_sell_execution(self, payload: TradeCreate, execution_price: Decimal) -> Decimal:
+        """
+        Apply sell execution - update position and calculate realized PnL.
+        
+        Returns:
+            Decimal: The realized PnL from this sale
+        """
         position = await self.prisma.position.find_first(
             where={"portfolio_id": payload.portfolio_id, "symbol": payload.symbol}
         )
@@ -408,6 +420,9 @@ class TradeEngine:
             )
 
         await self._recalculate_portfolio_value(payload.portfolio_id)
+        
+        # Return the realized PnL for this specific sale
+        return realized_pnl
 
     async def _recalculate_portfolio_value(self, portfolio_id: str) -> None:
         """
