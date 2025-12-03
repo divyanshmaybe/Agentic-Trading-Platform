@@ -405,8 +405,23 @@ class PortfolioController:
             order={"created_at": "desc"},
         )
 
-        summaries = [
-            PortfolioTradeSummary(
+        summaries = []
+        for trade in trades:
+            # Extract llm_delay and trade_delay from metadata
+            metadata = trade.metadata
+            if isinstance(metadata, str):
+                try:
+                    import json
+                    metadata = json.loads(metadata)
+                except:
+                    metadata = {}
+            elif not isinstance(metadata, dict):
+                metadata = {}
+            
+            llm_delay_ms = metadata.get("llm_delay_ms")
+            trade_delay_ms = metadata.get("trade_delay")
+            
+            summaries.append(PortfolioTradeSummary(
                 id=trade.id,
                 portfolio_id=trade.portfolio_id,
                 symbol=trade.symbol,
@@ -420,9 +435,9 @@ class PortfolioController:
                 trade_type=trade.trade_type,
                 created_at=trade.created_at,
                 execution_time=trade.execution_time,
-            )
-            for trade in trades
-        ]
+                llm_delay=f"{llm_delay_ms}ms" if llm_delay_ms is not None else "N/A",
+                trade_delay=f"{trade_delay_ms}ms" if trade_delay_ms is not None else "N/A",
+            ))
 
         return TradeListResponse(items=summaries, page=page, limit=limit, total=total)
 
@@ -591,8 +606,23 @@ class PortfolioController:
         ]
         
         # Build recent trade summaries
-        recent_trade_summaries = [
-            RecentTradeSummary(
+        recent_trade_summaries = []
+        for trade in recent_trades:
+            # Extract llm_delay and trade_delay from metadata
+            metadata = trade.metadata
+            if isinstance(metadata, str):
+                try:
+                    import json
+                    metadata = json.loads(metadata)
+                except:
+                    metadata = {}
+            elif not isinstance(metadata, dict):
+                metadata = {}
+            
+            llm_delay_ms = metadata.get("llm_delay_ms")
+            trade_delay_ms = metadata.get("trade_delay")
+            
+            recent_trade_summaries.append(RecentTradeSummary(
                 id=trade.id,
                 symbol=trade.symbol,
                 side=trade.side,
@@ -600,9 +630,9 @@ class PortfolioController:
                 executed_price=trade.executed_price,
                 executed_at=trade.execution_time,
                 realized_pnl=getattr(trade, "realized_pnl", None),
-            )
-            for trade in recent_trades
-        ]
+                llm_delay=f"{llm_delay_ms}ms" if llm_delay_ms is not None else "N/A",
+                trade_delay=f"{trade_delay_ms}ms" if trade_delay_ms is not None else "N/A",
+            ))
         
         return PortfolioDashboardResponse(
             portfolio_id=portfolio.id,
@@ -729,8 +759,23 @@ class PortfolioController:
         
         # Build trade summaries
         trades = getattr(agent, "trades", []) or []
-        trade_summaries = [
-            PortfolioTradeSummary(
+        trade_summaries = []
+        for trade in trades:
+            # Extract llm_delay and trade_delay from metadata
+            metadata = trade.metadata
+            if isinstance(metadata, str):
+                try:
+                    import json
+                    metadata = json.loads(metadata)
+                except:
+                    metadata = {}
+            elif not isinstance(metadata, dict):
+                metadata = {}
+            
+            llm_delay_ms = metadata.get("llm_delay_ms")
+            trade_delay_ms = metadata.get("trade_delay")
+            
+            trade_summaries.append(PortfolioTradeSummary(
                 id=trade.id,
                 portfolio_id=trade.portfolio_id,
                 symbol=trade.symbol,
@@ -744,9 +789,9 @@ class PortfolioController:
                 trade_type=trade.trade_type,
                 created_at=trade.created_at,
                 execution_time=trade.execution_time,
-            )
-            for trade in trades
-        ]
+                llm_delay=f"{llm_delay_ms}ms" if llm_delay_ms is not None else "N/A",
+                trade_delay=f"{trade_delay_ms}ms" if trade_delay_ms is not None else "N/A",
+            ))
         
         return AgentDashboardResponse(
             agent_id=agent.id,

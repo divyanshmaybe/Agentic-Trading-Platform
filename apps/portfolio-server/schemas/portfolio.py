@@ -82,6 +82,8 @@ class TradeSummary(BaseModel):
     trade_type: str
     created_at: datetime
     execution_time: Optional[datetime] = None
+    llm_delay: Optional[str] = None  # LLM processing delay in ms or "N/A"
+    trade_delay: Optional[str] = None  # Trade execution delay in ms or "N/A"
 
     class Config:
         from_attributes = True
@@ -200,6 +202,8 @@ class RecentTradeSummary(BaseModel):
     executed_price: Optional[Decimal] = None
     executed_at: Optional[datetime] = None
     realized_pnl: Optional[Decimal] = None
+    llm_delay: Optional[str] = None  # LLM processing delay in ms or "N/A"
+    trade_delay: Optional[str] = None  # Trade execution delay in ms or "N/A"
 
 
 class PortfolioDashboardResponse(BaseModel):

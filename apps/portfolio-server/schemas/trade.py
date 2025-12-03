@@ -85,6 +85,7 @@ class TradeSummary(BaseModel):
     price: Optional[Decimal] = None
     execution_time: Optional[datetime] = None
     trade_delay_ms: Optional[int] = Field(default=None, description="Trade execution delay in milliseconds")
+    llm_delay_ms: Optional[int] = Field(default=None, description="LLM processing delay in milliseconds")
 
     class Config:
         from_attributes = True

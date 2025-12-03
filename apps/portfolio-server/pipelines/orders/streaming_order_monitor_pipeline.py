@@ -53,7 +53,7 @@ class PendingOrder:
     trigger_price: Optional[float]  # For stop/TP/SL orders
     source_model: str  # "trade" or "trade_execution_log"
     created_at: datetime
-    user_id: str
+    customer_id: str  # customer_id from Trade model
     portfolio_id: Optional[str]
     
     def __hash__(self):
@@ -339,7 +339,7 @@ class PathwayOrderMonitor:
                         trigger_price=float(order.trigger_price) if order.trigger_price else None,
                         source_model="trade",
                         created_at=order.created_at,
-                        user_id=order.user_id,
+                        customer_id=order.customer_id,
                         portfolio_id=order.portfolio_id,
                     ))
                 except Exception as exc:
@@ -856,10 +856,24 @@ class PathwayOrderMonitor:
                     expired = sum(1 for t in trades 
                         if (t.auto_sell_at and t.auto_sell_at <= now) or 
                            (t.auto_cover_at and t.auto_cover_at <= now))
+                    
+                    # Log upcoming schedules
+                    upcoming = []
+                    for t in sorted(trades, key=lambda x: x.auto_sell_at or x.auto_cover_at or now):
+                        schedule_time = t.auto_sell_at or t.auto_cover_at
+                        if schedule_time and schedule_time > now:
+                            time_remaining = schedule_time - now
+                            mins = int(time_remaining.total_seconds() // 60)
+                            secs = int(time_remaining.total_seconds() % 60)
+                            upcoming.append(f"{t.symbol}({t.id[:8]}) in {mins}m{secs}s")
+                    
                     logger.info(
                         f"⏰ Monitoring {len(trades)} auto-sell trades "
                         f"({expired} expired, ready to execute)"
                     )
+                    if upcoming:
+                        logger.info(f"📅 Upcoming auto-sells: {', '.join(upcoming[:5])}" + 
+                                   (f" (+{len(upcoming)-5} more)" if len(upcoming) > 5 else ""))
                 
                 await asyncio.sleep(self.refresh_interval)
                 

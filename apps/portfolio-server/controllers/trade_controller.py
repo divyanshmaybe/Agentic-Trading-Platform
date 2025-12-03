@@ -307,6 +307,18 @@ class TradeController:
             if not trade:
                 raise RuntimeError("Trade execution completed but trade record not found")
             
+            # Extract llm_delay_ms from metadata
+            metadata = trade.metadata
+            if isinstance(metadata, str):
+                try:
+                    import json
+                    metadata = json.loads(metadata)
+                except:
+                    metadata = {}
+            elif not isinstance(metadata, dict):
+                metadata = {}
+            llm_delay_ms = metadata.get("llm_delay_ms")
+            
             summaries = [TradeSummary(
                 id=trade.id,
                 symbol=trade.symbol,
@@ -317,6 +329,7 @@ class TradeController:
                 price=trade.price,
                 execution_time=trade.execution_time,
                 trade_delay_ms=trade_delay_ms,
+                llm_delay_ms=llm_delay_ms,
             )]
             
             # Build portfolio snapshot
@@ -449,6 +462,7 @@ class TradeController:
                 price=trade_dict.get("price"),
                 execution_time=trade_dict.get("execution_time"),
                 trade_delay_ms=trade_dict.get("trade_delay_ms"),
+                llm_delay_ms=trade_dict.get("llm_delay_ms"),
             )
             for trade_dict in trades
         ]
