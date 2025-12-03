@@ -509,7 +509,8 @@ class StockSelectionPipeline:
 
         if len(failed_companies) > 0:
             logger.info("Rejecting companies due to failed guardrails")
-            publish_to_kafka({"content": f"Rejecting companies due to failed guardrails\n{', '.join(c["name"] for c in failed_companies)}"}, user_id=self.user_id, task_id=self.task_id)
+            failed_names = ', '.join(c['name'] for c in failed_companies)
+            publish_to_kafka({"content": f"Rejecting companies due to failed guardrails\n{failed_names}"}, user_id=self.user_id, task_id=self.task_id)
 
         return company_prompt.strip()
 
