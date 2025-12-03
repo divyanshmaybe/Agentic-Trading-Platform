@@ -30,8 +30,10 @@ services:
     command: >
       sh -c "redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru &
              sleep 2 &&
-             redis-cli FLUSHALL &&
-             echo 'Auth Redis: Cleared all locks and timestamps' &&
+             redis-cli KEYS '*lock*' | xargs -r redis-cli DEL &&
+             redis-cli KEYS '*timestamp*' | xargs -r redis-cli DEL &&
+             redis-cli KEYS 'redbeat:*' | xargs -r redis-cli DEL &&
+             echo 'Auth Redis: Cleared locks and timestamps' &&
              wait"
     ports:
       - "6379:6379"
@@ -77,8 +79,10 @@ services:
     command: >
       sh -c "redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru &
              sleep 2 &&
-             redis-cli FLUSHALL &&
-             echo 'Portfolio Redis: Cleared all locks and timestamps' &&
+             redis-cli KEYS '*lock*' | xargs -r redis-cli DEL &&
+             redis-cli KEYS '*timestamp*' | xargs -r redis-cli DEL &&
+             redis-cli KEYS 'redbeat:*' | xargs -r redis-cli DEL &&
+             echo 'Portfolio Redis: Cleared locks and timestamps' &&
              wait"
     ports:
       - "6381:6379"
