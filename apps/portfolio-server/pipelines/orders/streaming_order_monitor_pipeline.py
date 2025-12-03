@@ -719,6 +719,23 @@ class PathwayOrderMonitor:
             
             engine = TradeEngine(self.db)
             
+            # Pre-check: verify position exists and has sufficient holdings before execution
+            # This prevents noisy retry loops when position was already closed
+            if signal.close_type == "sell":
+                position = await self.db.position.find_first(
+                    where={"portfolio_id": signal.portfolio_id, "symbol": signal.symbol}
+                )
+                if not position or position.quantity < signal.quantity:
+                    available_qty = position.quantity if position else 0
+                    logger.warning(
+                        f"⚠️ Position check failed for auto-sell {signal.trade_id[:8]}: "
+                        f"need {signal.quantity} {signal.symbol}, have {available_qty}. "
+                        f"Position may have been closed manually."
+                    )
+                    # Remove from cache and mark as handled
+                    self._auto_sell_trades.pop(signal.trade_id, None)
+                    return
+            
             # Create payload for TradeEngine
             trade_payload = TradeCreate(
                 organization_id=trade.organization_id or "",
@@ -794,6 +811,26 @@ class PathwayOrderMonitor:
                 
         except Exception as exc:
             logger.exception(f"❌ Failed to auto-{signal.close_type} {signal.trade_id}: {exc}")
+            # Remove from cache to prevent infinite retry loops on permanent failures
+            # (e.g., position already closed, insufficient holdings)
+            self._auto_sell_trades.pop(signal.trade_id, None)
+            
+            # Mark trade metadata with failure info to prevent re-processing
+            try:
+                trade = await self.db.trade.find_unique(where={"id": signal.trade_id})
+                if trade:
+                    meta = trade.metadata if isinstance(trade.metadata, dict) else {}
+                    meta.update({
+                        "auto_sell_failed": True,
+                        "auto_sell_error": str(exc),
+                        "auto_sell_failed_at": datetime.now(timezone.utc).isoformat(),
+                    })
+                    await self.db.trade.update(
+                        where={"id": signal.trade_id},
+                        data={"metadata": json.dumps(meta)},
+                    )
+            except Exception as meta_exc:
+                logger.warning(f"Failed to update trade metadata after auto-sell failure: {meta_exc}")
         finally:
             self._auto_selling.discard(signal.trade_id)
     
