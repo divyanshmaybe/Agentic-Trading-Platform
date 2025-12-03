@@ -766,7 +766,12 @@ class TradeExecutionService:
         # Note: executed_price and executed_quantity removed from TradeExecutionLog
         # They are only used to update the Trade record below
         if metadata:
-            data["metadata"] = json.dumps(metadata)
+            # Convert datetime objects to ISO strings for JSON serialization
+            def serialize_metadata(obj):
+                if isinstance(obj, datetime):
+                    return obj.isoformat()
+                return obj
+            data["metadata"] = json.dumps(metadata, default=serialize_metadata)
 
         # Update TradeExecutionLog
         await client.tradeexecutionlog.update(
