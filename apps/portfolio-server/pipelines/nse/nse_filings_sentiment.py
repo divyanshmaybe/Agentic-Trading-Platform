@@ -709,8 +709,9 @@ def generate_trading_signal(
     api_key: str
 ) -> str:
     """
-    Generate trading signal using LLM
-    Returns structured response with signal and explanation.
+    Generate trading signal using two-model approach:
+    - Model 1 (gemini-2.5-flash): Generates trading_signal + explanation
+    - Model 2 (gemini-2.5-pro): Validates logic and generates confidence_score
     
     Includes LLM timing metrics in the response for latency tracking:
     - llm_start_time: ISO timestamp when LLM processing started
@@ -732,45 +733,54 @@ def generate_trading_signal(
         print("[WARN] Empty text provided to generate_trading_signal")
         return "Error: Empty text content"
     
-    print(f"[PIPELINE] Generating trading signal with LLM (text length: {len(text)} chars)...")
+    print(f"[PIPELINE] Generating trading signal with two-model approach (text length: {len(text)} chars)...")
+    
+    # ============ MODEL 1: Generate signal + explanation ============
     user_prompt = f"""
 You are a financial analysis model capable of making real-time trading decisions based on corporate filings, announcements, and financial news.
 
-Below is a company's filing report, related sentiment references, and technical market context. You must analyse all inputs and decide whether the development is a strong BUY (1), strong SELL (-1), or HOLD (0) signal to be acted upon on the current trading day.
+Below is a company's filing report and related information. You must analyze it and decide whether the news is a strong BUY (1), strong SELL (-1), or HOLD (0) signal.
 
-You must also provide a confidence_score between 0 and 1 representing your conviction. Higher confidence implies larger permissible allocation for the trade.
+Be cautious:
+- Also check if the news came in market hours; if it was during market hours, follow sentiment accordingly.
+- If it was filed out of market hours, and when the market opens the price has already risen by a significant amount (5–6%), consider taking a short position.
+- Only make a BUY or SELL recommendation if the event is highly impactful for the company's valuation or future prospects, and whether the price has already been impacted by more than 2–3%.
+- If the news is ordinary or has limited effect, choose HOLD (0).
+- Be aware of "Outcome of Board Meeting" filings — they often generate false or misleading signals.
+  Only give a signal 1 for such filings when it is **very impactful** (e.g., major earnings surprise, buyback, merger, or significant guidance update). Otherwise, default to HOLD (0) or (-1) if results are normal.
 
-Be cautious and account for the following:
-- Verify whether the filing arrived during market hours. If it was outside market hours and the opening move already reflects a 5–6% jump, consider contrarian positioning (short if the price gaps up, or long if it gaps down) only when fundamentals justify it.
-- Only issue BUY or SELL when the event is materially impactful for valuation or near-term price trajectory and the move is not already priced in beyond 2–3%.
-- Filings such as "Outcome of Board Meeting" often carry noise. Treat them as BUY only when the outcome is genuinely transformational (e.g. surprise earnings beat with guidance upgrade, large buyback, merger). Otherwise, default to HOLD or SELL if the tone is negative.
-- Markets trade expectations, not absolute numbers. Strong reported figures can result in declines if guidance softens, margins contract, cash flow weakens, inventory builds up, or management sounds cautious. Consider sector sentiment and expectations drift carefully.
+Important:
+A company's stock can fall even after beating results because markets trade on expectations, not absolute numbers.
+If strong results are already priced in or only marginally above forecasts, investors often book profits.
+The market focuses on earnings quality — sustainable margin growth, healthy cash flow, and balance-sheet strength — not temporary gains from forex, one-offs, or accounting effects.
+When filings show QoQ slowdown, inventory buildup, weak cash generation, capital outflows, or cautious management tone, the results are seen as lacking momentum.
+Sector weakness or a soft future outlook can also outweigh a numerical beat.
+Therefore, even when revenue, profit, or EPS exceed estimates, if the underlying strength or forward visibility is weak, the market reaction tends to be neutral or negative.
 
-Reference data for this filing type:
-- Technical data (past hour / relevant window): {stocktechdata}
-- Positive impact playbook: {pos_impact}
-- Negative impact playbook: {neg_impact}
+General reference for this filing type:
+- Technical data of past hour: {stocktechdata}
+- Positive impact scenarios: {pos_impact}
+- Negative impact scenarios: {neg_impact}
 
-Filings data and narrative context:
+Filings data:
 - NSE filings data: {text}
 
 Instructions:
-1. Read every piece of information carefully.
-2. Combine the qualitative sentiment from the filing, referenced playbooks, sector backdrop, and the provided technical data snapshot to evaluate near-term price action.
-3. If the news creates a highly positive, near-term catalyst with limited prior pricing-in, output 1 (BUY). If it materially deteriorates fundamentals/outlook, output -1 (SELL). Otherwise output 0 (HOLD).
-4. When assigning 1/-1 ensure the catalyst is powerful, time-sensitive, and not fully reflected in price. Err on the side of HOLD if doubt remains.
-5. Provide a concise two-sentence explanation covering the driver and how it ties to the trading action.
-6. Output a confidence_score between 0 and 1 reflecting conviction:
-   - 0.0–0.3 : very low confidence / noise
-   - 0.4–0.6 : moderate clarity
-   - 0.7–0.9 : high conviction
-   - 1.0     : extremely rare, only when the outcome is unequivocal.
+1. Read all information carefully.
+2. Consider the news sentiment, running summary, and stock/fiscal data together to assess the impact on the company's short-term stock price.
+3. If the news is highly positive or negative with respect to the company and can have a big short-term impact on the stock price, output 1 (BUY) or -1 (SELL) respectively.
+4. If the news weakens the company's fundamentals, output -1 (SELL).
+5. Otherwise, output 0 (HOLD).
+6. Along with the numeric signal, provide a detailed explanation (3-4 sentences) for your trading decision.
+
+Be extremely cautious with BUY (1) and SELL (-1) signals, especially in short-term or volatile markets.
+Be aware of "Outcome of Board Meeting" filings — only act when the event is highly impactful.
+If unsure whether a signal should be -1 or 1, it's safer to generate a 0 (HOLD) instead.
+If the meeting results were really outstanding then only give 1 else 0 or -1
 
 Strictly adhere to this output format:
 trading_signal: <1, 0, or -1>
-confidence_score: <float between 0 and 1>
-concise_explanation: <brief reasoning for the decision>
-
+explanation: <detailed reasoning for the decision>
 RETURN EXACTLY THIS STRUCTURED OUTPUT AND NOTHING ELSE.
 """
     
@@ -784,68 +794,114 @@ RETURN EXACTLY THIS STRUCTURED OUTPUT AND NOTHING ELSE.
         from langchain_google_genai import ChatGoogleGenerativeAI
         import time
         
-        # Get LLM model from env var (default: gemini-2.5-flash)
-        model_name = os.getenv("NSE_FILINGS_LLM_MODEL", LLM_MODEL)
-        
-        # langchain_google_genai uses GOOGLE_API_KEY env var, so set it
+        # Set GOOGLE_API_KEY env var for langchain
         original_google_key = os.environ.get("GOOGLE_API_KEY", None)
         os.environ["GOOGLE_API_KEY"] = api_key
         
         try:
-            # Create model - it will use GOOGLE_API_KEY from environment
+            # -------- MODEL 1: Generate signal + explanation --------
             trading_model = ChatGoogleGenerativeAI(
-                model=model_name,
-                temperature=0.7,
-                api_key=api_key  # Explicitly pass as well (original notebook format)
+                model="gemini-2.5-flash",
+                temperature=0.3,
+                api_key=api_key
             )
+            
+            print("[PIPELINE] Model 1 (gemini-2.5-flash): Generating signal + explanation...")
+            decision_raw = trading_model.invoke(user_prompt)
+            decision_text = decision_raw.content if hasattr(decision_raw, 'content') else str(decision_raw)
+            
+            print(f"[PIPELINE] Model 1 Response: {decision_text[:200]}...")
+            
+            # Extract signal from Model 1
+            sig_match = re.search(r"trading_signal:\s*(-?\d+)", decision_text, re.IGNORECASE)
+            signal = int(sig_match.group(1)) if sig_match else 0
+            
+            # Extract explanation from Model 1
+            exp_match = re.search(r"explanation:\s*(.*)", decision_text, re.DOTALL | re.IGNORECASE)
+            explanation = exp_match.group(1).strip() if exp_match else "No explanation provided"
+            
+            # Clean up explanation (remove any trailing markers)
+            explanation = re.sub(r'\n__LLM_TIMING__.*$', '', explanation).strip()
+            
+            print(f"[PIPELINE] Model 1 Result: signal={signal}, explanation={explanation[:100]}...")
+            
+            # -------- MODEL 2: Validate & generate confidence --------
+            validation_prompt = f"""
+You are a Trading Logic Validator.
+You receive a trading signal (-1, 0, 1) and an explanation generated by another model.
+You do NOT have access to the raw data, so you must assume the facts in the explanation are true.
+
+Your job is to evaluate the **Logical Coherence** and **Strength of Argument**.
+
+Input:
+signal: {signal}
+explanation: {explanation}
+
+YOUR TASKS:
+1. Detect Contradictions: Does the explanation describe a negative event (e.g., "profits fell") but the signal is Positive (1)? If so, output Low Confidence.
+2. Evaluate Conviction: Does the explanation use strong, definitive language ("surged," "plummeted," "record high") or weak language ("slightly," "flat," "marginal")?
+   - Strong language + High Impact Event = High Confidence.
+   - Weak language + Low Impact Event = Low Confidence.
+3. Assess Strategy Alignment:
+   - If the explanation mentions "Board Meeting" or "Quarterly Results" but describes the data as "mixed" or "in line with estimates," the signal should essentially be 0 (Hold). If the input signal is 1 or -1 in this case, penalize the confidence heavily.
+
+SCORING RUBRIC (Confidence Ratio 0.0 - 1.0):
+- < 0.5: Logical inconsistency (Signal says Buy, Text says Bad News) or extremely weak impact.
+- 0.5 - 0.7: Rational logic, but the event described is standard/low impact.
+- > 0.8: Strong logic AND the event described is a major valuation driver (Merger, Huge Earnings Beat, Regulatory Win).
+
+OUTPUT FORMAT:
+Return a structured output:
+
+final_signal: <Integer -1, 0, or 1>
+confidence_score: <Float 0.00 to 1.00>
+RETURN EXACTLY THIS STRUCTURED OUTPUT AND NOTHING ELSE.
+"""
+            
+            validator_model = ChatGoogleGenerativeAI(
+                model="gemini-2.5-pro",
+                temperature=0.4,
+                api_key=api_key
+            )
+            
+            print("[PIPELINE] Model 2 (gemini-2.5-pro): Validating signal + generating confidence...")
+            validation_raw = validator_model.invoke(validation_prompt)
+            validation_text = validation_raw.content if hasattr(validation_raw, 'content') else str(validation_raw)
+            
+            print(f"[PIPELINE] Model 2 Response: {validation_text[:200]}...")
+            
+            # Extract final_signal from Model 2
+            final_sig_match = re.search(r"final_signal:\s*(-?\d+)", validation_text, re.IGNORECASE)
+            final_signal = int(final_sig_match.group(1)) if final_sig_match else signal
+            
+            # Extract confidence from Model 2
+            conf_match = re.search(r"confidence(?:_score)?:\s*([0-9]*\.?[0-9]+)", validation_text, re.IGNORECASE)
+            confidence = float(conf_match.group(1)) if conf_match else 0.5
+            confidence = max(0.0, min(1.0, confidence))  # Clamp to [0, 1]
+            
+            print(f"[PIPELINE] Model 2 Result: final_signal={final_signal}, confidence={confidence}")
+            
+            # Calculate LLM delay
+            llm_end_time = datetime.utcnow()
+            llm_delay_ms = int((time.time() - llm_start_ts) * 1000)
+            
+            print(f"[PIPELINE] ⏱️ Total LLM delay (both models): {llm_delay_ms}ms")
+            
+            # Construct final response in expected format
+            response_text = f"""trading_signal: {final_signal}
+confidence_score: {confidence}
+concise_explanation: {explanation}"""
+            
+            # Append timing metadata to response for downstream parsing
+            timing_suffix = f"\n__LLM_TIMING__:{llm_start_time.isoformat()}Z|{llm_end_time.isoformat()}Z|{llm_delay_ms}"
+            return response_text + timing_suffix
+            
         finally:
             # Restore original environment variable if it existed
             if original_google_key is not None:
                 os.environ["GOOGLE_API_KEY"] = original_google_key
             elif "GOOGLE_API_KEY" in os.environ:
                 del os.environ["GOOGLE_API_KEY"]
-        
-        # Retry logic for rate limits
-        max_retries = 2
-        retry_delay = 5  # Start with 5 seconds
-        
-        for attempt in range(max_retries + 1):
-            try:
-                decision = trading_model.invoke(user_prompt)
-                
-                # Get response content (match original notebook implementation)
-                response_text = decision.content if hasattr(decision, 'content') else str(decision)
-                
-                # Calculate LLM delay
-                llm_end_time = datetime.utcnow()
-                llm_delay_ms = int((time.time() - llm_start_ts) * 1000)
-                
-                # Debug: Print response to see what LLM is returning
-                print(f"[PIPELINE] LLM Response: {response_text[:200]}...")
-                print(f"[PIPELINE] ⏱️ LLM delay: {llm_delay_ms}ms (started: {llm_start_time.isoformat()}Z)")
-                
-                # Append timing metadata to response for downstream parsing
-                timing_suffix = f"\n__LLM_TIMING__:{llm_start_time.isoformat()}Z|{llm_end_time.isoformat()}Z|{llm_delay_ms}"
-                return response_text + timing_suffix
-                
-            except Exception as invoke_error:
-                error_str = str(invoke_error)
-                
-                # Check if it's a rate limit error
-                if "429" in error_str or "quota" in error_str.lower() or "rate limit" in error_str.lower():
-                    if attempt < max_retries:
-                        wait_time = retry_delay * (2 ** attempt)  # Exponential backoff
-                        print(f"[WARN] Rate limit hit, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})...")
-                        time.sleep(wait_time)
-                        continue
-                    else:
-                        print(f"[ERROR] Rate limit exceeded after {max_retries} retries")
-                        return "Error: Rate limit exceeded. Please reduce scraping frequency or upgrade Gemini API tier."
-                else:
-                    # Not a rate limit error, re-raise
-                    raise invoke_error
-        
-        return "Error: Max retries exceeded"
         
     except Exception as e:
         error_msg = str(e)
