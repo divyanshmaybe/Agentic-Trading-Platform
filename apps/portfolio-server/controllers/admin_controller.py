@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
@@ -28,6 +28,15 @@ def _decimal_to_float(val: Any) -> float:
     if isinstance(val, Decimal):
         return float(val)
     return float(val)
+
+
+def _ensure_tz_aware(dt: Optional[datetime]) -> Optional[datetime]:
+    """Ensure datetime is timezone-aware (UTC)."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 def _parse_metadata(payload: Any) -> dict:
@@ -76,7 +85,7 @@ class AdminController:
         
         Returns a comprehensive dict with all metrics - no schema validation overhead.
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         week_start = today_start - timedelta(days=today_start.weekday())
         month_start = today_start.replace(day=1)
@@ -356,8 +365,9 @@ class AdminController:
         daily_data = defaultdict(lambda: {"realized_pnl": 0, "trade_count": 0})
         
         for trade in trades:
-            if trade.created_at >= since and trade.status == "executed":
-                date_key = trade.created_at.strftime("%Y-%m-%d")
+            trade_dt = _ensure_tz_aware(trade.created_at)
+            if trade_dt and trade_dt >= since and trade.status == "executed":
+                date_key = trade_dt.strftime("%Y-%m-%d")
                 if trade.realized_pnl:
                     daily_data[date_key]["realized_pnl"] += _decimal_to_float(trade.realized_pnl)
                 daily_data[date_key]["trade_count"] += 1
@@ -376,9 +386,9 @@ class AdminController:
         self, trades: List, today_start: datetime, week_start: datetime, month_start: datetime
     ) -> Dict[str, Any]:
         """Build trading activity metrics."""
-        trades_today = [t for t in trades if t.created_at >= today_start]
-        trades_week = [t for t in trades if t.created_at >= week_start]
-        trades_month = [t for t in trades if t.created_at >= month_start]
+        trades_today = [t for t in trades if _ensure_tz_aware(t.created_at) and _ensure_tz_aware(t.created_at) >= today_start]
+        trades_week = [t for t in trades if _ensure_tz_aware(t.created_at) and _ensure_tz_aware(t.created_at) >= week_start]
+        trades_month = [t for t in trades if _ensure_tz_aware(t.created_at) and _ensure_tz_aware(t.created_at) >= month_start]
         
         executed = [t for t in trades if t.status == "executed"]
         failed = [t for t in trades if t.status in ("failed", "rejected")]
@@ -453,8 +463,9 @@ class AdminController:
         daily = defaultdict(lambda: {"trade_count": 0, "buy_count": 0, "sell_count": 0, "volume": 0})
         
         for trade in trades:
-            if trade.created_at >= since:
-                date_key = trade.created_at.strftime("%Y-%m-%d")
+            trade_dt = _ensure_tz_aware(trade.created_at)
+            if trade_dt and trade_dt >= since:
+                date_key = trade_dt.strftime("%Y-%m-%d")
                 daily[date_key]["trade_count"] += 1
                 if trade.side.upper() == "BUY":
                     daily[date_key]["buy_count"] += 1
@@ -740,9 +751,10 @@ class AdminController:
             
             # Count NSE signals
             if metadata.get("source") == "nse_pipeline" or trade.trade_type == "nse_signal":
-                if trade.created_at >= today_start:
+                trade_dt = _ensure_tz_aware(trade.created_at)
+                if trade_dt and trade_dt >= today_start:
                     signals_today += 1
-                if trade.created_at >= week_start:
+                if trade_dt and trade_dt >= week_start:
                     signals_week += 1
             
             # Collect delay metrics
