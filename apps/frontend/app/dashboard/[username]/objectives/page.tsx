@@ -6,7 +6,6 @@ import { PageHeading } from "@/components/shared/PageHeading"
 import { LoadingState } from "@/components/objectives/LoadingState"
 import { ChatContainer } from "@/components/objectives/ChatContainer"
 import { UserInputBar } from "@/components/objectives/UserInputBar"
-import { ObjectiveDisplay } from "@/components/objectives/ObjectiveDisplay"
 import { useAuth } from "@/hooks/useAuth"
 import { useObjectiveFields } from "@/hooks/useObjectiveFields"
 import { useObjectiveChat } from "@/hooks/useObjectiveChat"
@@ -18,16 +17,7 @@ export default function ObjectivesPage() {
   const { user: authUser, loading: authLoading } = useAuth()
 
   const fieldHelpers = useObjectiveFields()
-  const {
-    messages,
-    isProcessing,
-    lastResponse,
-    objectiveId,
-    objective,
-    isFetchingObjective,
-    handleSend,
-    handleFieldSubmit,
-  } = useObjectiveChat(fieldHelpers)
+  const { messages, isProcessing, lastResponse, handleSend, handleFieldSubmit } = useObjectiveChat(fieldHelpers)
 
   if (authLoading || !authUser) {
     return <LoadingState />
@@ -35,29 +25,6 @@ export default function ObjectivesPage() {
 
   const currentField = fieldHelpers.getCurrentField(lastResponse)
   const showFieldInput = currentField && !isProcessing
-
-  // Show objective display if objective data exists
-  if (objective) {
-    return (
-      <div className="min-h-screen bg-[#0c0c0c] text-[#fafafa]">
-        <DashboardHeader
-          userName={authUser.firstName}
-          username={username}
-          userRole={authUser.role}
-        />
-        <Container className="max-w-6xl space-y-6 py-8">
-          <PageHeading
-            title="Objectives"
-            tagline="Manage your trading objectives and goals."
-          />
-
-          <div className="flex flex-col h-[calc(100vh-250px)] border border-white/10 rounded-lg bg-black/20 overflow-hidden">
-            <ObjectiveDisplay objective={objective} />
-          </div>
-        </Container>
-      </div>
-    )
-  }
 
   return (
     <div className="min-h-screen bg-[#0c0c0c] text-[#fafafa]">
