@@ -80,7 +80,7 @@ export default function DashboardPage() {
             />
           </div>
 
-          <div className="flex flex-col gap-6 lg:col-span-2 xl:col-span-3 h-screen overflow-y-auto min-w-0">
+          <div className="flex flex-col gap-6 lg:col-span-2 xl:col-span-3 h-screen overflow-y-auto min-w-0 pr-4">
             <DashboardContent
               portfolioNotFound={portfolioNotFound}
               portfolioSummary={portfolioSummary}
