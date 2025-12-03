@@ -21,7 +21,7 @@ export function PendingOrdersCard({ data, title = "Pending Orders", className = 
 
   if (loading) {
     return (
-      <Card className={`card-glass rounded-2xl ${className}`} {...cardProps}>
+      <Card className={`card-glass rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_32px_70px_-45px_rgba(0,0,0,0.95)] backdrop-blur ${className}`} {...cardProps}>
         <CardHeader>
           <CardTitle className="h-title text-xl">{title}</CardTitle>
         </CardHeader>
@@ -38,7 +38,7 @@ export function PendingOrdersCard({ data, title = "Pending Orders", className = 
 
   if (!data) {
     return (
-      <Card className={`card-glass rounded-2xl ${className}`} {...cardProps}>
+      <Card className={`card-glass rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_32px_70px_-45px_rgba(0,0,0,0.95)] backdrop-blur ${className}`} {...cardProps}>
         <CardHeader>
           <CardTitle className="h-title text-xl">{title}</CardTitle>
         </CardHeader>
@@ -50,7 +50,7 @@ export function PendingOrdersCard({ data, title = "Pending Orders", className = 
   }
 
   return (
-    <Card className={`card-glass rounded-2xl ${className}`} {...cardProps}>
+    <Card className={`card-glass rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_32px_70px_-45px_rgba(0,0,0,0.95)] backdrop-blur ${className}`} {...cardProps}>
       <CardHeader>
         <CardTitle className="h-title text-xl">{title}</CardTitle>
         {hasHighPending && (

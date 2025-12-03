@@ -32,7 +32,7 @@ export function CompanySettingsCard({
 }: CompanySettingsCardProps) {
   return (
     <Card
-      className={`card-glass rounded-2xl flex h-full flex-col sm:col-span-1 lg:col-span-6 ${className}`}
+      className={`card-glass rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_32px_70px_-45px_rgba(0,0,0,0.95)] backdrop-blur flex h-full flex-col sm:col-span-1 lg:col-span-6 ${className}`}
       role="region"
       aria-label={title}
       {...cardProps}

@@ -24,7 +24,7 @@ export function ExecutionMetricsCard({ data, title = "Execution Metrics", classN
 
   if (loading) {
     return (
-      <Card className={`card-glass rounded-2xl ${className}`} {...cardProps}>
+      <Card className={`card-glass rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_32px_70px_-45px_rgba(0,0,0,0.95)] backdrop-blur ${className}`} {...cardProps}>
         <CardHeader>
           <CardTitle className="h-title text-xl">{title}</CardTitle>
         </CardHeader>
@@ -41,7 +41,7 @@ export function ExecutionMetricsCard({ data, title = "Execution Metrics", classN
 
   if (!data) {
     return (
-      <Card className={`card-glass rounded-2xl ${className}`} {...cardProps}>
+      <Card className={`card-glass rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_32px_70px_-45px_rgba(0,0,0,0.95)] backdrop-blur ${className}`} {...cardProps}>
         <CardHeader>
           <CardTitle className="h-title text-xl">{title}</CardTitle>
         </CardHeader>
@@ -53,7 +53,7 @@ export function ExecutionMetricsCard({ data, title = "Execution Metrics", classN
   }
 
   return (
-    <Card className={`card-glass rounded-2xl ${className}`} {...cardProps}>
+    <Card className={`card-glass rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_32px_70px_-45px_rgba(0,0,0,0.95)] backdrop-blur ${className}`} {...cardProps}>
       <CardHeader>
         <CardTitle className="h-title text-xl">{title}</CardTitle>
       </CardHeader>

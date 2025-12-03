@@ -571,7 +571,7 @@ export default function AdminDashboardPage() {
               {chart ? (
                 <PerformanceCard chart={chart} className="lg:col-span-3" />
               ) : (
-                <div className="lg:col-span-3 flex h-[360px] items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white/60">
+                <div className="lg:col-span-3 flex h-[360px] items-center justify-center rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_32px_70px_-45px_rgba(0,0,0,0.95)] backdrop-blur">
                   {loadingDashboard ? "Loading performance data..." : "No performance data available"}
                 </div>
               )}
