@@ -755,6 +755,9 @@ services:
       AUTH_SERVER_URL: http://auth_server:4000
       INTERNAL_SERVICE_SECRET: agentinvest-secret
       DATABASE_URL: postgresql://auth_user:auth_password@postgres:5432/auth_db
+      # Redis configuration for notifications pub/sub
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
     working_dir: /app/apps/frontend
     command: >
       sh -c "pnpm --filter frontend exec next start -H 0.0.0.0 -p ${PORT:-3000}"
@@ -764,6 +767,8 @@ services:
     depends_on:
       auth_server:
         condition: service_started
+      redis:
+        condition: service_healthy
     networks:
       - agentInvest
 
