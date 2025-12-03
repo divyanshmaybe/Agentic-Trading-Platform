@@ -42,9 +42,17 @@ const notificationRenderers: Record<string, NotificationRenderer> = {
           ? "text-red-400 font-bold"
           : "text-white/80"
 
+    // Extract new fields from rawPayload (available via data object)
+    const attachmentUrl = data.attachment_url || data.url
+    const subjectOfAnnouncement = data.subject_of_announcement
+    const filingTime = data.filing_time || data.date_time_of_submission || data.generated_at
+
     return (
       <NotificationBodySection>
         {renderIfPresent(data.explanation)}
+        {subjectOfAnnouncement && (
+          <DetailRow label="Subject" value={String(subjectOfAnnouncement)} />
+        )}
         <DetailRow
           label="Signal Strength"
           value={signalStrengthValue}
@@ -52,7 +60,22 @@ const notificationRenderers: Record<string, NotificationRenderer> = {
         />
         <DetailRow label="Positioning" value={signalLabel ?? "Not provided"} />
         <DetailRow label="Confidence" value={confidence ?? "Not provided"} />
-        <DetailRow label="Filing Time" value={formatTemporal(data.filingTime)} />
+        <DetailRow label="Filing Time" value={formatTemporal(filingTime)} />
+        {attachmentUrl && (
+          <DetailRow
+            label="Attachment"
+            value={
+              <a
+                href={String(attachmentUrl)}
+                target="_blank"
+                rel="noreferrer"
+                className="text-emerald-400 hover:text-emerald-300 underline"
+              >
+                View Filing
+              </a>
+            }
+          />
+        )}
       </NotificationBodySection>
     )
   },

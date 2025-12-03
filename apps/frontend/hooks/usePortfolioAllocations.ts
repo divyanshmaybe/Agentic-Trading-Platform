@@ -58,11 +58,6 @@ export function usePortfolioAllocations() {
           setAllocations(allocation)
           setAllocationError(false)
           
-          if (allocationPollInterval) {
-            clearInterval(allocationPollInterval)
-            allocationPollInterval = null
-          }
-          
           return true
         }
         return false
@@ -76,13 +71,15 @@ export function usePortfolioAllocations() {
       const allocationFetched = await fetchAllocations()
       if (!allocationFetched) {
         setAllocationError(true)
-        allocationPollInterval = setInterval(async () => {
-          await fetchAllocations()
-        }, 60000)
       }
     }
 
     initializeAllocations()
+
+    // Poll every 10 seconds continuously
+    allocationPollInterval = setInterval(async () => {
+      await fetchAllocations()
+    }, 10000)
 
     return () => {
       if (allocationPollInterval) {

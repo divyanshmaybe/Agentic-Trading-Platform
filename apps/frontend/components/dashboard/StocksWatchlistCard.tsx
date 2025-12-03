@@ -16,21 +16,24 @@ type StocksWatchlistCardProps = {
 export function StocksWatchlistCard({ stocks, loading = false }: StocksWatchlistCardProps) {
 	return (
 		<Card className={cn(
-			"card-glass flex flex-1 flex-col rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_32px_70px_-45px_rgba(0,0,0,0.95)] backdrop-blur"
+			"card-glass flex flex-1 flex-col rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_32px_70px_-45px_rgba(0,0,0,0.95)] backdrop-blur min-h-0 max-h-[calc(100vh-30rem)]"
 		)}>
-			<CardHeader className="gap-2">
+			<CardHeader className="gap-2 shrink-0">
 				<CardDescription className="text-xs uppercase tracking-[0.3em] text-white/45">
 					Your Holdings
 				</CardDescription>
 				<CardTitle className="h-title text-2xl text-[#fafafa]">Positions</CardTitle>
 			</CardHeader>
-			<CardContent className={stocks.length === 0 && !loading ? "flex flex-col items-center justify-center flex-1" : "flex flex-col gap-4"}>
+			<CardContent className={cn(
+				"flex flex-col min-h-0 flex-1",
+				stocks.length === 0 && !loading ? "items-center justify-center" : "gap-4 overflow-y-auto"
+			)}>
 				{loading ? (
 					<>
 						{[1, 2, 3, 4].map((i) => (
 							<div
 								key={i}
-								className="h-20 animate-pulse rounded-xl border border-white/10 bg-white/7"
+								className="h-20 animate-pulse rounded-xl border border-white/10 bg-white/7 shrink-0"
 							/>
 						))}
 					</>
@@ -39,7 +42,11 @@ export function StocksWatchlistCard({ stocks, loading = false }: StocksWatchlist
 						No positions yet. Start trading to see your holdings here.
 					</div>
 				) : (
-					stocks.map((stock) => <StockSparklineRow key={stock.symbol} stock={stock} />)
+					stocks.map((stock) => (
+						<div key={stock.symbol} className="shrink-0">
+							<StockSparklineRow stock={stock} />
+						</div>
+					))
 				)}
 			</CardContent>
 		</Card>

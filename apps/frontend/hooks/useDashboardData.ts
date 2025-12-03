@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
 import type { PortfolioSummary, StockItem } from "@/lib/dashboardTypes"
 import { getPortfolio, getPortfolioDashboard, getPositions, fetchMarketCandles } from "@/lib/portfolio"
 import type { Portfolio } from "@/lib/portfolio"
@@ -35,6 +35,20 @@ export function useDashboardData(allocations: { label: string; value: number }[]
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [portfolioNotFound, setPortfolioNotFound] = useState(false)
+  const hasInitialDataRef = useRef(false)
+  const allocationsRef = useRef(allocations)
+
+  // Keep allocations ref up to date
+  useEffect(() => {
+    allocationsRef.current = allocations
+    // Update allocations in portfolioSummary when allocations change (without re-fetching)
+    if (hasInitialDataRef.current && portfolioSummary.portfolioName !== "No Portfolio") {
+      setPortfolioSummary((prev) => ({
+        ...prev,
+        allocation: allocations,
+      }))
+    }
+  }, [allocations, portfolioSummary.portfolioName])
 
   useEffect(() => {
     async function fetchStocksData(positionsData: any) {
@@ -103,9 +117,12 @@ export function useDashboardData(allocations: { label: string; value: number }[]
       }
     }
 
-    async function fetchDashboardData() {
+    async function fetchDashboardData(isPolling = false) {
       try {
-        setLoading(true)
+        // Only show loading on initial fetch, not on polls when data exists
+        if (!isPolling || !hasInitialDataRef.current) {
+          setLoading(true)
+        }
         setError(null)
         setPortfolioNotFound(false)
 
@@ -171,10 +188,13 @@ export function useDashboardData(allocations: { label: string; value: number }[]
           expectedReturn: parseFloat(portfolioData.expected_return_target) * 100,
           investmentHorizon: portfolioData.investment_horizon_years,
           liquidityNeeds: portfolioData.liquidity_needs,
-          allocation: allocations,
+          allocation: allocationsRef.current,
         })
         
         await fetchStocksData(positionsData)
+        
+        // Mark that we have initial data (only set to true, never reset)
+        hasInitialDataRef.current = true
         
       } catch (err) {
         console.error("Error fetching dashboard data:", err)
@@ -192,8 +212,19 @@ export function useDashboardData(allocations: { label: string; value: number }[]
       }
     }
 
-    fetchDashboardData()
-  }, [allocations])
+    // Initial fetch
+    fetchDashboardData(false)
+
+    // Poll every 10 seconds
+    const pollInterval = setInterval(() => {
+      fetchDashboardData(true)
+    }, 10000)
+
+    return () => {
+      clearInterval(pollInterval)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // Only run once on mount, allocations are updated separately
 
   return { portfolio, portfolioSummary, stocks, loading, error, portfolioNotFound }
 }

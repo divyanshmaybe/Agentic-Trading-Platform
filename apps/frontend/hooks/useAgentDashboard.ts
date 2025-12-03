@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, useRef } from "react"
 import type { AgentDashboard, AgentType } from "@/lib/types/agent"
 
 const PORTFOLIO_API_URL = process.env.NEXT_PUBLIC_PORTFOLIO_API_URL ?? "http://localhost:8000"
@@ -36,10 +36,14 @@ export function useAgentDashboard(agentType: AgentType): UseAgentDashboardReturn
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [isAllocating, setIsAllocating] = useState(false)
+  const hasInitialDataRef = useRef(false)
 
-  const fetchAgentData = useCallback(async () => {
+  const fetchAgentData = useCallback(async (isPolling = false) => {
     try {
-      setLoading(true)
+      // Only show loading on initial fetch, not on polls when data exists
+      if (!isPolling || !hasInitialDataRef.current) {
+        setLoading(true)
+      }
       setError(null)
       setIsAllocating(false)
 
@@ -59,8 +63,12 @@ export function useAgentDashboard(agentType: AgentType): UseAgentDashboardReturn
 
       if (!response.ok) {
         // Handle 404 specifically - agents are being allocated
+        // Only show allocating state if we've never fetched data before
         if (response.status === 404) {
-          setIsAllocating(true)
+          // Only set isAllocating if we've never successfully fetched data
+          if (!hasInitialDataRef.current) {
+            setIsAllocating(true)
+          }
           setError(null)
           return
         }
@@ -69,6 +77,9 @@ export function useAgentDashboard(agentType: AgentType): UseAgentDashboardReturn
 
       const result = await response.json()
       setData(result)
+      hasInitialDataRef.current = true
+      // Once we have data, never show allocating state again
+      setIsAllocating(false)
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Failed to fetch agent data"
       setError(errorMessage)
@@ -79,22 +90,17 @@ export function useAgentDashboard(agentType: AgentType): UseAgentDashboardReturn
   }, [agentType])
 
   useEffect(() => {
-    fetchAgentData()
-  }, [fetchAgentData])
+    fetchAgentData(false)
 
-  // Poll every minute when agents are being allocated
-  useEffect(() => {
-    if (!isAllocating) return
-
+    // Poll every 10 seconds continuously
     const pollInterval = setInterval(() => {
-      console.log(`[useAgentDashboard] Polling for ${agentType} agent data...`)
-      fetchAgentData()
-    }, 60000) // Poll every 60 seconds
+      fetchAgentData(true)
+    }, 10000) // Poll every 10 seconds
 
     return () => {
       clearInterval(pollInterval)
     }
-  }, [isAllocating, agentType, fetchAgentData])
+  }, [fetchAgentData])
 
   return {
     data,
