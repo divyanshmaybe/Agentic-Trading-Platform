@@ -58,6 +58,7 @@ async def list_user_positions(
     profitability: Optional[str] = Query(
         None, description="Filter by profitability: profitable, loss-making, breakeven"
     ),
+    agent_id: Optional[str] = Query(None, description="Filter by agent ID"),
     sortBy: str = Query("updatedAt", regex="^[A-Za-z]+$"),
     sortOrder: Literal["asc", "desc"] = Query("desc"),
 ) -> PositionListResponse:
@@ -67,6 +68,7 @@ async def list_user_positions(
         limit=limit,
         search=search,
         profitability=profitability,
+        agent_id=agent_id,
         sort_by=sortBy,
         sort_order=sortOrder,
     )
