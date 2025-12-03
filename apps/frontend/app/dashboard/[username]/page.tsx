@@ -80,7 +80,7 @@ export default function DashboardPage() {
             />
           </div>
 
-          <div className="flex flex-col gap-6 lg:col-span-2 xl:col-span-3 h-full">
+          <div className="flex flex-col gap-6 lg:col-span-2 xl:col-span-3 h-screen overflow-y-auto min-w-0">
             <DashboardContent
               portfolioNotFound={portfolioNotFound}
               portfolioSummary={portfolioSummary}
@@ -88,7 +88,9 @@ export default function DashboardPage() {
               loading={loading}
               username={username}
             />
-            <PortfolioSnapshots title="Portfolio Snapshot History" />
+            <div className="shrink-0">
+              <PortfolioSnapshots title="Portfolio Snapshot History" />
+            </div>
           </div>
 
           <div className="flex flex-col max-h-screen h-screen overflow-hidden">
