@@ -7,6 +7,7 @@ import { LoadingState } from "@/components/objectives/LoadingState"
 import { ChatContainer } from "@/components/objectives/ChatContainer"
 import { UserInputBar } from "@/components/objectives/UserInputBar"
 import { ObjectiveDashboard } from "@/components/objectives/ObjectiveDashboard"
+import { RequiredFieldsForm } from "@/components/objectives/RequiredFieldsForm"
 import { useAuth } from "@/hooks/useAuth"
 import { useObjectiveFields } from "@/hooks/useObjectiveFields"
 import { useObjectiveChat } from "@/hooks/useObjectiveChat"
@@ -20,7 +21,17 @@ export default function ObjectivesPage() {
   const { activeObjective, loading: objectivesLoading, error: objectivesError } = useObjectives()
 
   const fieldHelpers = useObjectiveFields()
-  const { messages, isProcessing, lastResponse, handleSend, handleFieldSubmit } = useObjectiveChat(fieldHelpers)
+  const {
+    messages,
+    isProcessing,
+    lastResponse,
+    handleSend,
+    handleFieldSubmit,
+    setObjectiveName,
+    setUserAge,
+    objectiveName,
+    userAge,
+  } = useObjectiveChat(fieldHelpers)
 
   if (authLoading || !authUser) {
     return <LoadingState />
@@ -103,7 +114,15 @@ export default function ObjectivesPage() {
           tagline="Manage your trading objectives and goals."
         />
 
-        <div className="flex flex-col h-[calc(100vh-250px)] border border-white/10 rounded-lg bg-white/6 backdrop-blur overflow-hidden">
+        <RequiredFieldsForm
+          onFieldsChange={(name, age) => {
+            setObjectiveName(name)
+            setUserAge(age)
+          }}
+          disabled={isProcessing}
+        />
+
+        <div className="flex flex-col h-[calc(100vh-400px)] border border-white/10 rounded-lg bg-white/6 backdrop-blur overflow-hidden">
           <ChatContainer
             messages={messages}
             isProcessing={isProcessing}
@@ -114,9 +133,11 @@ export default function ObjectivesPage() {
           <div className="border-t border-white/10 p-4 bg-white/8">
             <UserInputBar
               onSend={handleSend}
-              disabled={isProcessing || !!showFieldInput}
+              disabled={isProcessing || !!showFieldInput || !objectiveName.trim() || !userAge}
               placeholder={
-                showFieldInput
+                !objectiveName.trim() || !userAge
+                  ? "Please fill in the required fields above first..."
+                  : showFieldInput
                   ? "Please complete the field above first..."
                   : "Type your message or upload a .txt file..."
               }
