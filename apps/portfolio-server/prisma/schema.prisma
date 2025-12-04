@@ -546,3 +546,49 @@ model AlphaSignal {
   @@index([generated_at])
   @@map("alpha_signals")
 }
+
+/// --------------------
+/// NSE Observability Log (Analysis of losing trades from NSE pipeline)
+/// --------------------
+model NseObservabilityLog {
+  id                          String    @id @default(uuid())
+  
+  // Trade reference
+  trade_id                    String    @unique
+  signal_id                   String?
+  
+  // Symbol and market info
+  symbol                      String
+  filing_type                 String?
+  
+  // Analysis results from LLM
+  trading_decision            String    // Trading decision made by NSE agent
+  timestamp_of_trade_execution String?  // Timestamp of trade execution
+  reasoning_of_nse_agent      String    @db.Text // Original reasoning from NSE agent
+  loss_incurred               String    // Profit or loss incurred (formatted string)
+  feedback_on_agent_performance String  @db.Text // Analysis and feedback on agent decision
+  
+  // Numeric fields for filtering/sorting
+  realized_pnl                Float     @default(0)
+  confidence_score            Float     @default(0)
+  
+  // Trigger context
+  triggered_by                String    // "stop_loss", "negative_pnl", "batch_analysis", etc.
+  
+  // Metadata
+  source                      String    @default("nse_observability_agent")
+  metadata                    Json?     @default("{}")
+  
+  // Timestamps
+  analyzed_at                 DateTime  @default(now())
+  created_at                  DateTime  @default(now())
+  updated_at                  DateTime  @updatedAt
+  
+  @@index([symbol])
+  @@index([filing_type])
+  @@index([triggered_by])
+  @@index([realized_pnl])
+  @@index([analyzed_at])
+  @@index([created_at])
+  @@map("nse_observability_logs")
+}

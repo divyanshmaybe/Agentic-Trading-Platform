@@ -41,6 +41,7 @@ from routes.alpha_routes import router as alpha_router
 from routes.company_routes import router as company_router
 from routes.low_risk_routes import router as low_risk_router
 from routes.admin_routes import router as admin_router
+from routes.observability_routes import router as observability_router
 from utils.pipeline_utils import get_pipeline_status
 from workers.pipeline_tasks import start_nse_pipeline, run_news_sentiment_pipeline
 from monitoring.http_metrics import PrometheusMiddleware, metrics_endpoint
@@ -218,6 +219,7 @@ base_app.add_routes("/api", alpha_router)
 base_app.add_routes("/api", company_router)
 base_app.add_routes("/api", low_risk_router)
 base_app.add_routes("/api", admin_router)
+base_app.add_routes("/api", observability_router)
 base_app.add_routes("", create_health_routes(pipeline_service, server_dir))
 
 # Override root endpoint

@@ -143,6 +143,18 @@ class ObservabilityAnalysisResult(BaseModel):
     triggered_by: str = ""
 
 
+@dataclass
+class LLMAnalysisOutput:
+    """Extended output from LLM analysis including metadata for DB storage."""
+    result: ObservabilityAnalysisResult
+    prompt: str
+    raw_response: str
+    model_name: str
+    model_provider: str
+    latency_ms: int
+    token_count: Optional[int] = None
+
+
 # ============================================================================
 # Kafka Publisher
 # ============================================================================
@@ -184,6 +196,140 @@ def publish_observability_result(result: ObservabilityAnalysisResult) -> bool:
     except Exception as exc:
         task_logger.error(f"❌ Failed to publish observability result: {exc}")
         return False
+
+
+# ============================================================================
+# Database Storage for Observability Logs
+# ============================================================================
+
+async def save_observability_to_db(
+    result: ObservabilityAnalysisResult,
+    context: "TradeObservabilityContext",
+    prompt: str = "",
+    raw_response: str = "",
+    model_name: str = "gemini-2.0-flash",
+    model_provider: str = "google",
+    token_count: Optional[int] = None,
+    latency_ms: Optional[int] = None,
+) -> Optional[str]:
+    """
+    Save observability analysis result to database.
+    
+    Args:
+        result: The analyzed result from LLM
+        context: The trade context used for analysis
+        prompt: The prompt sent to the LLM
+        raw_response: The raw LLM response text
+        model_name: Name of the model used
+        model_provider: Provider of the model (google, openai, etc.)
+        token_count: Number of tokens used
+        latency_ms: Time taken for LLM call in milliseconds
+        
+    Returns:
+        The created record ID, or None if save fails
+    """
+    try:
+        from db_context import get_db_connection
+        
+        async with get_db_connection() as client:
+            # Extract key findings and recommendations from feedback
+            feedback = result.feedback_on_agent_performance or ""
+            
+            # Build context data JSON
+            context_data = {
+                "trade_id": result.trade_id,
+                "signal_id": result.signal_id,
+                "symbol": result.symbol,
+                "side": context.side if context else None,
+                "quantity": context.quantity if context else None,
+                "entry_price": context.entry_price if context else None,
+                "exit_price": context.exit_price if context else None,
+                "realized_pnl": context.realized_pnl if context else None,
+                "pdf_url": context.pdf_url if context else None,
+                "filing_type": result.filing_type,
+            }
+            
+            # Determine sentiment from the feedback
+            sentiment = None
+            feedback_lower = feedback.lower()
+            if any(word in feedback_lower for word in ["good", "correct", "accurate", "profit", "successful"]):
+                sentiment = "positive"
+            elif any(word in feedback_lower for word in ["bad", "wrong", "incorrect", "loss", "failed", "poor"]):
+                sentiment = "negative"
+            else:
+                sentiment = "neutral"
+            
+            # Create the record
+            record = await client.nseobservabilitylog.create(
+                data={
+                    "analysisType": "trade_loss_analysis",
+                    "symbol": result.symbol,
+                    "analysisPeriod": context.generated_at if context else None,
+                    "prompt": prompt,
+                    "response": raw_response,
+                    "modelName": model_name,
+                    "modelProvider": model_provider,
+                    "tokenCount": token_count,
+                    "latencyMs": latency_ms,
+                    "contextData": json.dumps(context_data),
+                    "summary": result.feedback_on_agent_performance[:500] if result.feedback_on_agent_performance else None,
+                    "keyFindings": json.dumps([
+                        result.trading_decision,
+                        result.reasoning_of_nse_agent,
+                        result.loss_incurred,
+                    ]),
+                    "sentiment": sentiment,
+                    "riskFactors": json.dumps([result.loss_incurred]) if result.loss_incurred else None,
+                    "recommendations": json.dumps([feedback]) if feedback else None,
+                    "confidenceScore": result.confidence_score,
+                    "dataFreshness": datetime.now(timezone.utc),
+                    "triggeredBy": result.triggered_by,
+                    "workerId": f"celery-observability-{os.getpid()}",
+                    "status": "completed",
+                    "metadata": json.dumps({
+                        "trade_id": result.trade_id,
+                        "signal_id": result.signal_id,
+                        "analyzed_at": result.analyzed_at,
+                        "source": result.source,
+                    }),
+                }
+            )
+            
+            task_logger.info(f"💾 Saved observability analysis to DB for trade {result.trade_id[:8]} (record_id={record.id})")
+            return record.id
+            
+    except Exception as exc:
+        task_logger.error(f"❌ Failed to save observability result to DB: {exc}")
+        return None
+
+
+def save_observability_to_db_sync(
+    result: ObservabilityAnalysisResult,
+    context: "TradeObservabilityContext",
+    prompt: str = "",
+    raw_response: str = "",
+    model_name: str = "gemini-2.0-flash",
+    model_provider: str = "google",
+    token_count: Optional[int] = None,
+    latency_ms: Optional[int] = None,
+) -> Optional[str]:
+    """Synchronous wrapper for save_observability_to_db."""
+    try:
+        return asyncio.run(save_observability_to_db(
+            result, context, prompt, raw_response, 
+            model_name, model_provider, token_count, latency_ms
+        ))
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            return loop.run_until_complete(save_observability_to_db(
+                result, context, prompt, raw_response,
+                model_name, model_provider, token_count, latency_ms
+            ))
+        finally:
+            asyncio.set_event_loop(None)
+            loop.close()
 
 
 # ============================================================================
@@ -301,7 +447,7 @@ def get_prompt_config() -> Dict[str, Any]:
 async def analyze_trade_with_llm(
     context: TradeObservabilityContext,
     pdf_base64: Optional[str] = None,
-) -> Optional[ObservabilityAnalysisResult]:
+) -> Optional[LLMAnalysisOutput]:
     """
     Analyze a losing trade using the Gemini LLM.
     
@@ -310,7 +456,7 @@ async def analyze_trade_with_llm(
         pdf_base64: Base64 encoded PDF of the filing (optional)
         
     Returns:
-        ObservabilityAnalysisResult or None if analysis fails
+        LLMAnalysisOutput with result and metadata, or None if analysis fails
     """
     if not GEMINI_API_KEY:
         task_logger.error("❌ GEMINI_API_KEY not configured - cannot run observability analysis")
@@ -396,13 +542,26 @@ async def analyze_trade_with_llm(
             HumanMessage(content=content_parts),
         ]
         
+        # Build full prompt for storage
+        full_prompt = f"SYSTEM:\n{system_prompt}\n\nHUMAN:\n{human_text}"
+        
         task_logger.info(f"🤖 Invoking Gemini for observability analysis of {context.symbol}...")
+        
+        # Track timing for latency
+        import time
+        start_time = time.time()
         
         # Invoke the model
         response = await asyncio.to_thread(model.invoke, messages)
         
+        # Calculate latency
+        latency_ms = int((time.time() - start_time) * 1000)
+        
         # Parse response
         response_text = response.content if hasattr(response, 'content') else str(response)
+        
+        # Store raw response before cleaning
+        raw_response_text = response_text
         
         # Clean up response (remove any markdown artifacts)
         response_text = response_text.strip()
@@ -443,8 +602,21 @@ async def analyze_trade_with_llm(
             triggered_by=context.triggered_by,
         )
         
-        task_logger.info(f"✅ Observability analysis complete for {context.symbol}")
-        return result
+        # Get model name from config
+        model_name = model_config.get("name", "gemini-2.5-flash")
+        
+        task_logger.info(f"✅ Observability analysis complete for {context.symbol} (latency={latency_ms}ms)")
+        
+        # Return extended output with metadata
+        return LLMAnalysisOutput(
+            result=result,
+            prompt=full_prompt,
+            raw_response=raw_response_text,
+            model_name=model_name,
+            model_provider="google",
+            latency_ms=latency_ms,
+            token_count=None,  # Could extract from response metadata if available
+        )
         
     except ImportError as exc:
         task_logger.error(f"❌ Missing dependency for LLM analysis: {exc}")
@@ -639,17 +811,26 @@ def analyze_losing_trade_task(
             pdf_base64 = download_pdf_as_base64(context.pdf_url)
         
         # Run LLM analysis
-        result = await analyze_trade_with_llm(context, pdf_base64)
+        llm_output = await analyze_trade_with_llm(context, pdf_base64)
         
-        if not result:
+        if not llm_output:
             return {
                 "success": False,
                 "error": "LLM analysis failed",
                 "trade_id": trade_id,
             }
         
-        # Publish to Kafka
-        published = publish_observability_result(result)
+        # Save to database instead of Kafka
+        record_id = await save_observability_to_db(
+            result=llm_output.result,
+            context=context,
+            prompt=llm_output.prompt,
+            raw_response=llm_output.raw_response,
+            model_name=llm_output.model_name,
+            model_provider=llm_output.model_provider,
+            token_count=llm_output.token_count,
+            latency_ms=llm_output.latency_ms,
+        )
         
         return {
             "success": True,
@@ -657,10 +838,11 @@ def analyze_losing_trade_task(
             "symbol": context.symbol,
             "realized_pnl": context.realized_pnl,
             "triggered_by": triggered_by,
-            "analysis_summary": result.feedback_on_agent_performance[:200] + "..." 
-                if len(result.feedback_on_agent_performance) > 200 
-                else result.feedback_on_agent_performance,
-            "published_to_kafka": published,
+            "analysis_summary": llm_output.result.feedback_on_agent_performance[:200] + "..." 
+                if len(llm_output.result.feedback_on_agent_performance) > 200 
+                else llm_output.result.feedback_on_agent_performance,
+            "saved_to_db": record_id is not None,
+            "record_id": record_id,
         }
     
     # Run async function
@@ -805,8 +987,11 @@ def trigger_loss_analysis(
 __all__ = [
     "TradeObservabilityContext",
     "ObservabilityAnalysisResult",
+    "LLMAnalysisOutput",
     "analyze_losing_trade_task",
     "batch_analyze_losses_task",
     "trigger_loss_analysis",
     "publish_observability_result",
+    "save_observability_to_db",
+    "save_observability_to_db_sync",
 ]
