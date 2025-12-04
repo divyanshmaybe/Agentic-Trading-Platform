@@ -67,3 +67,6 @@ nse_announcements_price_analysis.csv
 trading_signals.jsonl
 **/.trading_economics.json.lock
 **/.cpi_data.json.lock
+# Generated Docker env files
+docker.env
+apps/*/docker.env

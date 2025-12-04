@@ -5,6 +5,164 @@ set -e
 echo "🐳 Docker Management Script"
 echo "==========================="
 
+# Function to generate docker.env files with Docker-specific overrides
+generate_docker_env() {
+    echo "📝 Generating docker.env files..."
+    
+    # Variables to exclude from source .env (we'll add Docker-specific values)
+    EXCLUDE_VARS=(
+        "DATABASE_URL"
+        "SHADOW_DATABASE_URL"
+        "REDIS_HOST"
+        "REDIS_PORT"
+        "CELERY_BROKER_URL"
+        "CELERY_RESULT_BACKEND"
+        "KAFKA_BOOTSTRAP_SERVERS"
+        "AUTH_DATABASE_URL"
+        "PORTFOLIO_DATABASE_URL"
+    )
+    
+    # Build grep pattern to exclude these vars
+    EXCLUDE_PATTERN=""
+    for var in "${EXCLUDE_VARS[@]}"; do
+        if [ -z "$EXCLUDE_PATTERN" ]; then
+            EXCLUDE_PATTERN="^${var}="
+        else
+            EXCLUDE_PATTERN="${EXCLUDE_PATTERN}|^${var}="
+        fi
+    done
+    
+    # ========================================
+    # Generate ROOT docker.env (shared vars)
+    # ========================================
+    if [ -f ".env" ]; then
+        grep -v -E "$EXCLUDE_PATTERN" .env | grep -v "^#" | grep -v "^$" > docker.env
+    else
+        touch docker.env
+    fi
+    
+    # Add common Docker networking overrides
+    cat >> docker.env << 'EOF'
+
+# ====== Docker Network Overrides ======
+# Auth service database & redis
+AUTH_DATABASE_URL=postgresql://auth_user:auth_password@auth_postgres:5432/auth_db
+AUTH_REDIS_HOST=auth_redis
+AUTH_REDIS_PORT=6379
+
+# Portfolio service database & redis
+PORTFOLIO_DATABASE_URL=postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
+PORTFOLIO_REDIS_HOST=portfolio_redis
+PORTFOLIO_REDIS_PORT=6379
+
+# Kafka
+KAFKA_BOOTSTRAP_SERVERS=pathway-kafka:9092
+KAFKA_ENABLED=true
+EOF
+    echo "   ✅ docker.env generated"
+    
+    # ========================================
+    # Generate AUTH SERVER docker.env
+    # ========================================
+    if [ -f "apps/auth_server/.env" ]; then
+        grep -v -E "$EXCLUDE_PATTERN" apps/auth_server/.env | grep -v "^#" | grep -v "^$" > apps/auth_server/docker.env 2>/dev/null || true
+    else
+        touch apps/auth_server/docker.env
+    fi
+    cat >> apps/auth_server/docker.env << 'EOF'
+
+# ====== Docker Network Overrides ======
+DATABASE_URL=postgresql://auth_user:auth_password@auth_postgres:5432/auth_db
+REDIS_HOST=auth_redis
+REDIS_PORT=6379
+REDIS_URL=redis://auth_redis:6379
+CELERY_BROKER_URL=redis://auth_redis:6379/0
+CELERY_RESULT_BACKEND=redis://auth_redis:6379/1
+PORTFOLIO_SERVICE_URL=http://portfolio_server:8000
+EOF
+    echo "   ✅ apps/auth_server/docker.env generated"
+    
+    # ========================================
+    # Generate PORTFOLIO SERVER docker.env
+    # ========================================
+    if [ -f "apps/portfolio-server/.env" ]; then
+        grep -v -E "$EXCLUDE_PATTERN" apps/portfolio-server/.env | grep -v "^#" | grep -v "^$" > apps/portfolio-server/docker.env 2>/dev/null || true
+    else
+        touch apps/portfolio-server/docker.env
+    fi
+    cat >> apps/portfolio-server/docker.env << 'EOF'
+
+# ====== Docker Network Overrides ======
+DATABASE_URL=postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
+SHADOW_DATABASE_URL=postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
+REDIS_HOST=portfolio_redis
+REDIS_PORT=6379
+CELERY_BROKER_URL=redis://portfolio_redis:6379/0
+CELERY_RESULT_BACKEND=redis://portfolio_redis:6379/1
+AUTH_SERVER_URL=http://auth_server:4000
+KAFKA_BOOTSTRAP_SERVERS=pathway-kafka:9092
+KAFKA_ENABLED=true
+EOF
+    echo "   ✅ apps/portfolio-server/docker.env generated"
+    
+    # ========================================
+    # Generate ALPHACOPILOT SERVER docker.env
+    # ========================================
+    if [ -f "apps/alphacopilot-server/.env" ]; then
+        grep -v -E "$EXCLUDE_PATTERN" apps/alphacopilot-server/.env | grep -v "^#" | grep -v "^$" > apps/alphacopilot-server/docker.env 2>/dev/null || true
+    else
+        touch apps/alphacopilot-server/docker.env
+    fi
+    cat >> apps/alphacopilot-server/docker.env << 'EOF'
+
+# ====== Docker Network Overrides ======
+DATABASE_URL=postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
+SHADOW_DATABASE_URL=postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
+REDIS_HOST=portfolio_redis
+REDIS_PORT=6379
+CELERY_BROKER_URL=redis://portfolio_redis:6379/2
+CELERY_RESULT_BACKEND=redis://portfolio_redis:6379/3
+EOF
+    echo "   ✅ apps/alphacopilot-server/docker.env generated"
+    
+    # ========================================
+    # Generate NOTIFICATION SERVER docker.env
+    # ========================================
+    if [ -f "apps/notification_server/.env" ]; then
+        grep -v -E "$EXCLUDE_PATTERN" apps/notification_server/.env | grep -v "^#" | grep -v "^$" > apps/notification_server/docker.env 2>/dev/null || true
+    else
+        touch apps/notification_server/docker.env
+    fi
+    cat >> apps/notification_server/docker.env << 'EOF'
+
+# ====== Docker Network Overrides ======
+DATABASE_URL=postgresql://auth_user:auth_password@auth_postgres:5432/auth_db
+REDIS_HOST=auth_redis
+REDIS_PORT=6379
+REDIS_URL=redis://auth_redis:6379
+AUTH_SERVER_URL=http://auth_server:4000
+EOF
+    echo "   ✅ apps/notification_server/docker.env generated"
+    
+    # ========================================
+    # Generate FRONTEND docker.env
+    # ========================================
+    if [ -f "apps/frontend/.env" ]; then
+        grep -v -E "$EXCLUDE_PATTERN" apps/frontend/.env | grep -v "^#" | grep -v "^$" > apps/frontend/docker.env 2>/dev/null || true
+    else
+        touch apps/frontend/docker.env
+    fi
+    cat >> apps/frontend/docker.env << 'EOF'
+
+# ====== Docker Network Overrides ======
+DATABASE_URL=postgresql://auth_user:auth_password@auth_postgres:5432/auth_db
+NEXT_PUBLIC_API_URL=http://auth_server:4000
+NEXT_PUBLIC_PORTFOLIO_API_URL=http://portfolio_server:8000
+NEXT_PUBLIC_WS_URL=ws://notification_server:4001
+EOF
+    echo "   ✅ apps/frontend/docker.env generated"
+}
+
 # Parse arguments
 CLEAR_VOLUMES=false
 CLEAR_REDIS_ONLY=false
@@ -116,6 +274,10 @@ if [ "$REBUILD" = true ]; then
     fi
     echo "   ✅ Images rebuilt"
 fi
+
+# Generate docker.env files before starting
+echo ""
+generate_docker_env
 
 # Start all containers
 echo ""

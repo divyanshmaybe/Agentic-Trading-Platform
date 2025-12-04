@@ -13,7 +13,7 @@
     "celery:beat": "turbo run celery:beat",
     "studio": "turbo run studio studio:kafka",
     "studio:all": "concurrently \"turbo run studio\" \"streamlit run kafkaStudio.py\"",
-    "docker-logs": "turbo run --concurrency 17 logs:databases logs:redis logs:auth logs:notif logs:portfolio logs:celery-trading logs:celery-nse logs:celery-news logs:celery-lowrisk logs:celery-allocation logs:celery-market logs:celery-general logs:celery-streaming logs:celery-beat logs:kafka logs:frontend"
+    "docker-logs": "turbo run --concurrency 19 logs:databases logs:redis logs:auth logs:notif logs:portfolio logs:celery-trading logs:celery-nse logs:celery-news logs:celery-lowrisk logs:celery-allocation logs:celery-market logs:celery-general logs:celery-streaming logs:celery-beat logs:kafka logs:frontend logs:alphacopilot logs:alphacopilot-celery"
   },
   "dependencies": {
     "@prisma/client": "5.22.0",

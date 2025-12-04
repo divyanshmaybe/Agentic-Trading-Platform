@@ -105,18 +105,12 @@ services:
       context: .
       dockerfile: apps/auth_server/Dockerfile
     env_file:
-      - .env
+      - docker.env
+      - apps/auth_server/docker.env
     environment:
       NODE_ENV: production
       PORT: 4000
-      DATABASE_URL: postgresql://auth_user:auth_password@postgres:5432/auth_db
-      REDIS_URL: redis://redis:6379
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
       CLIENT_URL: http://localhost:3000
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/1
       INTERNAL_SERVICE_SECRET: agentinvest-secret
     working_dir: /app/apps/auth_server
     command: >
@@ -148,17 +142,12 @@ services:
       context: .
       dockerfile: apps/notification_server/Dockerfile
     env_file:
-      - .env
-      - apps/portfolio-server/.env
+      - docker.env
+      - apps/notification_server/docker.env
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://auth_user:auth_password@postgres:5432/auth_db
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_CLIENT_ID: notification-server
       KAFKA_GROUP_ID: notifications-consumer
-      KAFKA_ENABLED: "true"
       INTERNAL_SERVICE_SECRET: agentinvest-secret
     working_dir: /app
     command: >
@@ -190,26 +179,16 @@ services:
       context: .
       dockerfile: apps/portfolio-server/Dockerfile
     env_file:
-      - .env
-      - apps/portfolio-server/.env
+      - docker.env
+      - apps/portfolio-server/docker.env
     environment:
       PORT: 8000
       SKIP_DOTENV: "true"
-      DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
-      SHADOW_DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
-      AUTH_SERVER_URL: http://auth_server:4000
       PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
-      REDIS_HOST: portfolio_redis
-      REDIS_PORT: 6379
-      CELERY_BROKER_URL: redis://portfolio_redis:6379/0
-      CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/1
       INTERNAL_SERVICE_SECRET: agentinvest-secret
       CLIENT_URL: http://localhost:3000
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
-      # Override Kafka config for Docker networking
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_CLIENT_ID: portfolio-server
-      KAFKA_ENABLED: "true"
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "python -m prisma generate &&
@@ -239,28 +218,19 @@ services:
     container_name: portfolio_celery_trading
     restart: unless-stopped
     env_file:
-      - .env
-      - apps/portfolio-server/.env
+      - docker.env
+      - apps/portfolio-server/docker.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
       SKIP_DOTENV: "true"
       CELERY_WORKER_RUNNING: "1"
-      DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
-      SHADOW_DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
-      AUTH_SERVER_URL: http://auth_server:4000
       PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
-      REDIS_HOST: portfolio_redis
-      REDIS_PORT: 6379
-      CELERY_BROKER_URL: redis://portfolio_redis:6379/0
-      CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/1
       INTERNAL_SERVICE_SECRET: agentinvest-secret
       PROMETHEUS_ENABLED: "true"
       PROMETHEUS_PORT: "9101"
       WORKER_NAME: trading@docker
       # Override Kafka config for Docker networking
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_CLIENT_ID: portfolio-celery-trading
-      KAFKA_ENABLED: "true"
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "python -m prisma generate &&
@@ -290,27 +260,18 @@ services:
     container_name: portfolio_celery_nse_pipeline
     restart: unless-stopped
     env_file:
-      - .env
-      - apps/portfolio-server/.env
+      - docker.env
+      - apps/portfolio-server/docker.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
       SKIP_DOTENV: "true"
       CELERY_WORKER_RUNNING: "1"
-      DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
-      SHADOW_DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
-      AUTH_SERVER_URL: http://auth_server:4000
       PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
-      REDIS_HOST: portfolio_redis
-      REDIS_PORT: 6379
-      CELERY_BROKER_URL: redis://portfolio_redis:6379/0
-      CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/1
       INTERNAL_SERVICE_SECRET: agentinvest-secret
       PROMETHEUS_ENABLED: "true"
       PROMETHEUS_PORT: "9102"
       WORKER_NAME: nse_pipeline@docker
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_CLIENT_ID: portfolio-celery-nse-pipeline
-      KAFKA_ENABLED: "true"
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "python -m prisma generate &&
@@ -340,27 +301,18 @@ services:
     container_name: portfolio_celery_news_pipeline
     restart: unless-stopped
     env_file:
-      - .env
-      - apps/portfolio-server/.env
+      - docker.env
+      - apps/portfolio-server/docker.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
       SKIP_DOTENV: "true"
       CELERY_WORKER_RUNNING: "1"
-      DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
-      SHADOW_DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
-      AUTH_SERVER_URL: http://auth_server:4000
       PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
-      REDIS_HOST: portfolio_redis
-      REDIS_PORT: 6379
-      CELERY_BROKER_URL: redis://portfolio_redis:6379/0
-      CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/1
       INTERNAL_SERVICE_SECRET: agentinvest-secret
       PROMETHEUS_ENABLED: "true"
       PROMETHEUS_PORT: "9108"
       WORKER_NAME: news_pipeline@docker
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_CLIENT_ID: portfolio-celery-news-pipeline
-      KAFKA_ENABLED: "true"
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "python -m prisma generate &&
@@ -390,27 +342,18 @@ services:
     container_name: portfolio_celery_low_risk
     restart: unless-stopped
     env_file:
-      - .env
-      - apps/portfolio-server/.env
+      - docker.env
+      - apps/portfolio-server/docker.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
       SKIP_DOTENV: "true"
       CELERY_WORKER_RUNNING: "1"
-      DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
-      SHADOW_DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
-      AUTH_SERVER_URL: http://auth_server:4000
       PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
-      REDIS_HOST: portfolio_redis
-      REDIS_PORT: 6379
-      CELERY_BROKER_URL: redis://portfolio_redis:6379/0
-      CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/1
       INTERNAL_SERVICE_SECRET: agentinvest-secret
       PROMETHEUS_ENABLED: "true"
       PROMETHEUS_PORT: "9107"
       WORKER_NAME: low_risk@docker
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_CLIENT_ID: portfolio-celery-low-risk
-      KAFKA_ENABLED: "true"
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "python -m prisma generate &&
@@ -440,27 +383,18 @@ services:
     container_name: portfolio_celery_allocation
     restart: unless-stopped
     env_file:
-      - .env
-      - apps/portfolio-server/.env
+      - docker.env
+      - apps/portfolio-server/docker.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
       SKIP_DOTENV: "true"
       CELERY_WORKER_RUNNING: "1"
-      DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
-      SHADOW_DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
-      AUTH_SERVER_URL: http://auth_server:4000
       PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
-      REDIS_HOST: portfolio_redis
-      REDIS_PORT: 6379
-      CELERY_BROKER_URL: redis://portfolio_redis:6379/0
-      CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/1
       INTERNAL_SERVICE_SECRET: agentinvest-secret
       PROMETHEUS_ENABLED: "true"
       PROMETHEUS_PORT: "9103"
       WORKER_NAME: allocation@docker
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_CLIENT_ID: portfolio-celery-allocation
-      KAFKA_ENABLED: "true"
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "python -m prisma generate &&
@@ -490,27 +424,18 @@ services:
     container_name: portfolio_celery_market
     restart: unless-stopped
     env_file:
-      - .env
-      - apps/portfolio-server/.env
+      - docker.env
+      - apps/portfolio-server/docker.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
       SKIP_DOTENV: "true"
       CELERY_WORKER_RUNNING: "1"
-      DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
-      SHADOW_DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
-      AUTH_SERVER_URL: http://auth_server:4000
       PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
-      REDIS_HOST: portfolio_redis
-      REDIS_PORT: 6379
-      CELERY_BROKER_URL: redis://portfolio_redis:6379/0
-      CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/1
       INTERNAL_SERVICE_SECRET: agentinvest-secret
       PROMETHEUS_ENABLED: "true"
       PROMETHEUS_PORT: "9104"
       WORKER_NAME: market@docker
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_CLIENT_ID: portfolio-celery-market
-      KAFKA_ENABLED: "true"
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "python -m prisma generate &&
@@ -540,27 +465,18 @@ services:
     container_name: portfolio_celery_general
     restart: unless-stopped
     env_file:
-      - .env
-      - apps/portfolio-server/.env
+      - docker.env
+      - apps/portfolio-server/docker.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
       SKIP_DOTENV: "true"
       CELERY_WORKER_RUNNING: "1"
-      DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
-      SHADOW_DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
-      AUTH_SERVER_URL: http://auth_server:4000
       PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
-      REDIS_HOST: portfolio_redis
-      REDIS_PORT: 6379
-      CELERY_BROKER_URL: redis://portfolio_redis:6379/0
-      CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/1
       INTERNAL_SERVICE_SECRET: agentinvest-secret
       PROMETHEUS_ENABLED: "true"
       PROMETHEUS_PORT: "9105"
       WORKER_NAME: general@docker
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_CLIENT_ID: portfolio-celery-general
-      KAFKA_ENABLED: "true"
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "python -m prisma generate &&
@@ -590,27 +506,18 @@ services:
     container_name: portfolio_celery_streaming
     restart: unless-stopped
     env_file:
-      - .env
-      - apps/portfolio-server/.env
+      - docker.env
+      - apps/portfolio-server/docker.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
       SKIP_DOTENV: "true"
       CELERY_WORKER_RUNNING: "1"
-      DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
-      SHADOW_DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
-      AUTH_SERVER_URL: http://auth_server:4000
       PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
-      REDIS_HOST: portfolio_redis
-      REDIS_PORT: 6379
-      CELERY_BROKER_URL: redis://portfolio_redis:6379/0
-      CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/1
       INTERNAL_SERVICE_SECRET: agentinvest-secret
       PROMETHEUS_ENABLED: "true"
       PROMETHEUS_PORT: "9106"
       WORKER_NAME: streaming@docker
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_CLIENT_ID: portfolio-celery-streaming
-      KAFKA_ENABLED: "true"
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "python -m prisma generate &&
@@ -640,26 +547,17 @@ services:
     container_name: portfolio_celery_beat
     restart: unless-stopped
     env_file:
-      - .env
-      - apps/portfolio-server/.env
+      - docker.env
+      - apps/portfolio-server/docker.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
       SKIP_DOTENV: "true"
-      DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
-      SHADOW_DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
-      AUTH_SERVER_URL: http://auth_server:4000
       PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
-      REDIS_HOST: portfolio_redis
-      REDIS_PORT: 6379
-      CELERY_BROKER_URL: redis://portfolio_redis:6379/0
-      CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/1
       REDBEAT_REDIS_URL: redis://portfolio_redis:6379/0
       INTERNAL_SERVICE_SECRET: agentinvest-secret
       PROMETHEUS_ENABLED: "false"
       # Override Kafka config for Docker networking
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_CLIENT_ID: portfolio-celery-beat
-      KAFKA_ENABLED: "true"
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "python -m prisma generate &&
@@ -703,16 +601,11 @@ services:
     container_name: flower
     restart: unless-stopped
     env_file:
-      - .env
-      - apps/portfolio-server/.env
+      - docker.env
+      - apps/portfolio-server/docker.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
       SKIP_DOTENV: "true"
-      DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
-      CELERY_BROKER_URL: redis://portfolio_redis:6379/0
-      CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/1
-      REDIS_HOST: portfolio_redis
-      REDIS_PORT: 6379
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "python -m prisma generate &&
@@ -746,18 +639,14 @@ services:
       context: .
       dockerfile: apps/frontend/Dockerfile
     env_file:
-      - .env
-      - apps/portfolio-server/.env
+      - docker.env
+      - apps/frontend/docker.env
     environment:
       PORT: 3000
       NEXT_TELEMETRY_DISABLED: "1"
       NODE_ENV: production
-      AUTH_SERVER_URL: http://auth_server:4000
       INTERNAL_SERVICE_SECRET: agentinvest-secret
-      DATABASE_URL: postgresql://auth_user:auth_password@postgres:5432/auth_db
       # Redis configuration for notifications pub/sub
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
     working_dir: /app/apps/frontend
     command: >
       sh -c "pnpm --filter frontend exec next start -H 0.0.0.0 -p ${PORT:-3000}"
@@ -810,18 +699,12 @@ services:
       context: .
       dockerfile: apps/alphacopilot-server/Dockerfile
     env_file:
-      - .env
-      - apps/alphacopilot-server/.env
+      - docker.env
+      - apps/alphacopilot-server/docker.env
     environment:
       # Override for Docker networking
       ALPHACOPILOT_HOST: "0.0.0.0"
       ALPHACOPILOT_PORT: "8069"
-      DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
-      SHADOW_DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
-      REDIS_HOST: portfolio_redis
-      REDIS_PORT: 6379
-      CELERY_BROKER_URL: redis://portfolio_redis:6379/2
-      CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/3
       PYTHONPATH: /app:/app/shared/py:/app/quant-stream:/app/apps/alphacopilot-server
       ALPHACOPILOT_CORS_ORIGINS: http://localhost:3000,http://frontend:3000
       MCP_SERVER_URL: http://portfolio_server:8000/mcp
@@ -853,16 +736,10 @@ services:
     container_name: alphacopilot_celery
     restart: unless-stopped
     env_file:
-      - .env
-      - apps/alphacopilot-server/.env
+      - docker.env
+      - apps/alphacopilot-server/docker.env
     environment:
       # Override for Docker networking
-      DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
-      SHADOW_DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
-      REDIS_HOST: portfolio_redis
-      REDIS_PORT: 6379
-      CELERY_BROKER_URL: redis://portfolio_redis:6379/2
-      CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/3
       PYTHONPATH: /app:/app/shared/py:/app/quant-stream:/app/apps/alphacopilot-server
     working_dir: /app/quant-stream
     command: celery -A quant_stream.mcp_server.core.celery_config worker --loglevel=info -Q backtest --concurrency=2 --hostname=backtest@%h --max-tasks-per-child=50
