@@ -30,7 +30,11 @@ if str(PROJECT_ROOT) not in sys.path:
 from db import get_db_manager  # type: ignore  # noqa: E402
 from market_data import get_market_data_service  # type: ignore  # noqa: E402
 from prisma import fields, Json  # type: ignore  # noqa: E402
-from pipelines.portfolio.portfolio_manager import DEFAULT_SEGMENTS  # type: ignore  # noqa: E402
+from pipelines.portfolio.portfolio_manager import (  # type: ignore  # noqa: E402
+    DEFAULT_SEGMENTS,
+    calculate_segment_metrics_from_db,
+    get_portfolio_value_history,
+)
 from pipelines.risk import (  # type: ignore  # noqa: E402
     prepare_risk_alerts,
     publish_risk_alerts_to_kafka,
@@ -241,7 +245,7 @@ class PipelineService:
             self.logger.warning("Portfolio %s not found for immediate rebalance", portfolio_id)
             return {"processed": 0, "requested": 1, "portfolio_id": portfolio_id}
 
-        request = self._prepare_allocation_request(
+        request = await self._prepare_allocation_request(
             portfolio,
             default_regime=regime_override or "sideways",
         )
@@ -324,7 +328,7 @@ class PipelineService:
             self.logger.info("No portfolios due for scheduled rebalancing at %s", as_of.isoformat())
             return {"processed": 0, "requested": 0, "portfolio_ids": []}
 
-        requests, portfolio_map = self._build_allocation_requests(portfolios)
+        requests, portfolio_map = await self._build_allocation_requests(portfolios)
         if not requests:
             self.logger.info("No valid allocation requests constructed for scheduled rebalancing")
             return {"processed": 0, "requested": 0, "portfolio_ids": []}
@@ -529,7 +533,7 @@ class PipelineService:
             "generated_at": generated_at,
         }
 
-    def _build_allocation_requests(
+    async def _build_allocation_requests(
         self,
         portfolios: Sequence[Any],
         *,
@@ -540,7 +544,7 @@ class PipelineService:
 
         for portfolio in portfolios:
             try:
-                request = self._prepare_allocation_request(portfolio, default_regime=default_regime)
+                request = await self._prepare_allocation_request(portfolio, default_regime=default_regime)
             except Exception as exc:  # pragma: no cover - defensive logging
                 self.logger.warning(
                     "Skipping portfolio %s during scheduled rebalance preparation: %s",
@@ -553,7 +557,7 @@ class PipelineService:
 
         return requests, portfolio_map
 
-    def _prepare_allocation_request(self, portfolio: Any, *, default_regime: str) -> Dict[str, Any]:
+    async def _prepare_allocation_request(self, portfolio: Any, *, default_regime: str) -> Dict[str, Any]:
         metadata_obj: Mapping[str, Any] = (
             portfolio.metadata if isinstance(portfolio.metadata, Mapping) else {}
         )
@@ -607,12 +611,51 @@ class PipelineService:
         )
         current_value = self._safe_float(portfolio.available_cash, default=initial_value)
 
-        value_history = metadata_obj.get("value_history")
-        if not isinstance(value_history, list) or not value_history:
-            value_history = [initial_value, current_value]
-
-        segment_history = metadata_obj.get("segment_history")
         lookback_quarters = int(metadata_obj.get("lookback_quarters", 4))
+        portfolio_id = str(portfolio.id)
+
+        # Fetch value history from portfolio snapshots (fallback to metadata or defaults)
+        try:
+            value_history = await get_portfolio_value_history(portfolio_id, lookback_quarters=lookback_quarters)
+            if not value_history:
+                # Fallback to metadata or defaults
+                value_history = metadata_obj.get("value_history")
+                if not isinstance(value_history, list) or not value_history:
+                    value_history = [initial_value, current_value]
+        except Exception as exc:
+            self.logger.warning(
+                "Failed to fetch value history from DB for portfolio %s: %s, using fallback",
+                portfolio_id, exc
+            )
+            value_history = metadata_obj.get("value_history")
+            if not isinstance(value_history, list) or not value_history:
+                value_history = [initial_value, current_value]
+
+        # Calculate segment metrics from TradingAgentSnapshots (fallback to metadata or None)
+        segment_history: Optional[Dict[str, Any]] = None
+        try:
+            segment_metrics = await calculate_segment_metrics_from_db(portfolio_id, lookback_quarters=lookback_quarters)
+            if segment_metrics:
+                # Convert SegmentMetrics to dict format expected by allocation pipeline
+                segment_history = {
+                    segment: [{
+                        "return_rate": metrics.return_rate,
+                        "volatility": metrics.volatility,
+                        "max_drawdown": metrics.max_drawdown,
+                        "sharpe_ratio": metrics.sharpe_ratio,
+                    }]
+                    for segment, metrics in segment_metrics.items()
+                }
+                self.logger.debug(
+                    "Calculated segment metrics from DB for portfolio %s: %s",
+                    portfolio_id, list(segment_history.keys())
+                )
+        except Exception as exc:
+            self.logger.warning(
+                "Failed to calculate segment metrics from DB for portfolio %s: %s, using fallback",
+                portfolio_id, exc
+            )
+            segment_history = metadata_obj.get("segment_history")
 
         user_identifier = getattr(portfolio, "user_id", None) or portfolio.customer_id or portfolio.organization_id
         if not user_identifier:

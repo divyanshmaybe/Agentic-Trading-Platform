@@ -568,63 +568,170 @@ def ensure_segment_metrics(
 
 async def calculate_segment_metrics_from_db(portfolio_id: str, lookback_quarters: int = 4) -> Dict[str, SegmentMetrics]:
     """
-    Calculate SegmentMetrics from DB snapshots for a given portfolio.
+    Calculate SegmentMetrics from TradingAgentSnapshots and PortfolioSnapshots for a given portfolio.
+
+    This function computes per-segment performance metrics (return_rate, volatility, 
+    max_drawdown, sharpe_ratio) by analyzing historical snapshots.
 
     Args:
         portfolio_id: The portfolio ID to calculate metrics for
         lookback_quarters: Number of recent quarters to use for calculation
 
     Returns:
-        Dictionary mapping segment names to their metrics
+        Dictionary mapping segment names (agent_type) to their metrics
     """
     from prisma import Prisma
+    from datetime import datetime, timedelta
     
     client = Prisma()
     await client.connect()
     
     try:
-        # Use allocation snapshots to calculate segment metrics
-        snapshots = await client.allocationsnapshot.find_many(
+        # Calculate date range for lookback period
+        lookback_days = lookback_quarters * 90  # ~90 days per quarter
+        cutoff_date = datetime.utcnow() - timedelta(days=lookback_days)
+        
+        # Fetch TradingAgentSnapshots grouped by agent_type (segment)
+        agent_snapshots = await client.tradingagentsnapshot.find_many(
             where={
-                "rebalance_run": {
-                    "portfolio_id": portfolio_id
-                }
+                "portfolio_id": portfolio_id,
+                "snapshot_at": {"gte": cutoff_date}
             },
-            order={"created_at": "desc"},
-            take=lookback_quarters * 4  # Assuming ~4 snapshots per quarter
+            order={"snapshot_at": "asc"}
         )
-
-        # Group by allocation_type (segment)
-        segment_data = {}
-        for snap in snapshots:
-            segment = snap.portfolio_allocation.allocation_type if hasattr(snap, 'portfolio_allocation') else None
+        
+        # Fetch PortfolioSnapshots for overall portfolio metrics
+        portfolio_snapshots = await client.portfoliosnapshot.find_many(
+            where={
+                "portfolio_id": portfolio_id,
+                "snapshot_at": {"gte": cutoff_date}
+            },
+            order={"snapshot_at": "asc"}
+        )
+        
+        # Group agent snapshots by agent_type (segment)
+        segment_snapshots: Dict[str, List[Dict[str, Any]]] = {}
+        for snap in agent_snapshots:
+            segment = snap.agent_type
             if not segment:
                 continue
-            if segment not in segment_data:
-                segment_data[segment] = []
-            segment_data[segment].append({
-                "return_rate": float(snap.metadata.get("return_rate", 0.0)) if snap.metadata else 0.0,
-                "volatility": float(snap.metadata.get("volatility", 0.0)) if snap.metadata else 0.0,
-                "max_drawdown": float(snap.metadata.get("max_drawdown", 0.0)) if snap.metadata else 0.0,
-                "sharpe_ratio": float(snap.metadata.get("sharpe_ratio", 0.0)) if snap.metadata else 0.0
+            if segment not in segment_snapshots:
+                segment_snapshots[segment] = []
+            segment_snapshots[segment].append({
+                "current_value": float(snap.current_value),
+                "realized_pnl": float(snap.realized_pnl),
+                "unrealized_pnl": float(snap.unrealized_pnl),
+                "snapshot_at": snap.snapshot_at,
+                "metadata": snap.metadata if snap.metadata else {}
             })
-
+        
         # Calculate metrics for each segment
-        metrics = {}
-        for segment, data in segment_data.items():
-            if not data:
+        metrics: Dict[str, SegmentMetrics] = {}
+        
+        for segment, snapshots in segment_snapshots.items():
+            if len(snapshots) < 2:
+                # Not enough data, use defaults
+                metrics[segment] = SegmentMetrics(
+                    return_rate=0.02,
+                    volatility=0.05,
+                    max_drawdown=0.03,
+                    sharpe_ratio=0.4,
+                )
                 continue
-            returns = [d["return_rate"] for d in data]
-            volatilities = [d["volatility"] for d in data]
-            drawdowns = [d["max_drawdown"] for d in data]
-            sharpes = [d["sharpe_ratio"] for d in data]
+            
+            # Calculate returns from consecutive snapshots
+            values = [s["current_value"] for s in snapshots]
+            returns: List[float] = []
+            for i in range(1, len(values)):
+                if values[i - 1] > 0:
+                    ret = (values[i] - values[i - 1]) / values[i - 1]
+                    returns.append(ret)
+            
+            if not returns:
+                metrics[segment] = SegmentMetrics(
+                    return_rate=0.02,
+                    volatility=0.05,
+                    max_drawdown=0.03,
+                    sharpe_ratio=0.4,
+                )
+                continue
+            
+            # Calculate return rate (annualized average return)
+            avg_return = float(np.mean(returns))
+            # Assuming snapshots are roughly daily, annualize
+            return_rate = avg_return * 252  # Trading days per year
+            
+            # Calculate volatility (annualized std dev of returns)
+            volatility = float(np.std(returns)) * np.sqrt(252) if len(returns) > 1 else 0.05
+            
+            # Calculate max drawdown
+            peak = values[0]
+            max_dd = 0.0
+            for val in values:
+                if val > peak:
+                    peak = val
+                if peak > 0:
+                    drawdown = (peak - val) / peak
+                    max_dd = max(max_dd, drawdown)
+            
+            # Calculate Sharpe ratio (assuming risk-free rate of 5%)
+            risk_free_rate = 0.05
+            excess_return = return_rate - risk_free_rate
+            sharpe_ratio = excess_return / volatility if volatility > 0 else 0.0
+            
             metrics[segment] = SegmentMetrics(
-                return_rate=returns[-1] if returns else 0.0,
-                volatility=np.mean(volatilities) if volatilities else 0.0,
-                max_drawdown=max(drawdowns) if drawdowns else 0.0,
-                sharpe_ratio=np.mean(sharpes) if sharpes else 0.0
+                return_rate=float(np.clip(return_rate, -0.5, 1.0)),  # Clip to reasonable range
+                volatility=float(np.clip(volatility, 0.01, 1.0)),
+                max_drawdown=float(np.clip(max_dd, 0.0, 1.0)),
+                sharpe_ratio=float(np.clip(sharpe_ratio, -3.0, 5.0)),
             )
+        
+        # Ensure all default segments have metrics
+        for segment in DEFAULT_SEGMENTS:
+            if segment not in metrics:
+                metrics[segment] = SegmentMetrics(
+                    return_rate=0.02,
+                    volatility=0.05,
+                    max_drawdown=0.03,
+                    sharpe_ratio=0.4,
+                )
+        
         return metrics
+    
+    finally:
+        await client.disconnect()
+
+
+async def get_portfolio_value_history(portfolio_id: str, lookback_quarters: int = 4) -> List[float]:
+    """
+    Get portfolio value history from PortfolioSnapshots.
+
+    Args:
+        portfolio_id: The portfolio ID to get history for
+        lookback_quarters: Number of recent quarters to include
+
+    Returns:
+        List of portfolio values ordered chronologically
+    """
+    from prisma import Prisma
+    from datetime import datetime, timedelta
+    
+    client = Prisma()
+    await client.connect()
+    
+    try:
+        lookback_days = lookback_quarters * 90
+        cutoff_date = datetime.utcnow() - timedelta(days=lookback_days)
+        
+        snapshots = await client.portfoliosnapshot.find_many(
+            where={
+                "portfolio_id": portfolio_id,
+                "snapshot_at": {"gte": cutoff_date}
+            },
+            order={"snapshot_at": "asc"}
+        )
+        
+        return [float(s.current_value) for s in snapshots]
     
     finally:
         await client.disconnect()
