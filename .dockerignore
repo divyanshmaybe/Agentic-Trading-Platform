@@ -1,25 +1,16 @@
+# ===========================================
 # Global Docker build ignores
+# Build from monorepo root context
+# ===========================================
+
+# =====================
+# Version Control
+# =====================
 .git
 .gitignore
 .gitmodules
 .github/
-
-# =====================
-# Environment files - CRITICAL: prevent .env from overriding Docker env vars
-# =====================
-.env
-.env.*
-.env.local
-.env.development
-.env.production
-.env.test
-**/.env
-**/.env.*
-**/.env.local
-apps/**/.env
-apps/**/.env.*
-shared/**/.env
-shared/**/.env.*
+.gitattributes
 
 # =====================
 # Python artifacts
@@ -32,14 +23,22 @@ __pycache__/
 **/.pytest_cache/
 .mypy_cache/
 **/.mypy_cache/
+.ruff_cache/
+**/.ruff_cache/
 .coverage
 **/.coverage
+htmlcov/
 .venv/
 venv/
+.virtualenvs/
 *.egg-info/
 .eggs/
 pip-log.txt
 pip-delete-this-directory.txt
+.python-version
+.pdm.toml
+pdm.lock
+poetry.lock
 
 # =====================
 # Node / frontend artifacts
@@ -54,38 +53,55 @@ node_modules/
 **/.cache/
 *.tsbuildinfo
 **/*.tsbuildinfo
+.npm/
+.pnpm-store/
 
 # =====================
-# Build outputs
+# Build outputs (built inside Docker)
 # =====================
 dist/
+**/dist/
 build/
+**/build/
 out/
+**/out/
 coverage/
 **/coverage/
 
 # =====================
-# Test files
+# Test files (not needed in production)
 # =====================
 tests/
 **/tests/
+test/
+**/test/
 **/*.test.ts
 **/*.test.js
+**/*.test.tsx
+**/*.test.jsx
 **/*.spec.ts
 **/*.spec.js
+**/*.spec.tsx
+**/*.spec.jsx
 __tests__/
 **/__tests__/
 pytest.ini
 setup.cfg
 tox.ini
+jest.config.*
+vitest.config.*
+*.test.py
+**/*.test.py
 
 # =====================
-# Documentation
+# Documentation (not needed in runtime)
 # =====================
 docs/
 *.md
 !README.md
 LICENSE
+CHANGELOG*
+CONTRIBUTING*
 
 # =====================
 # Logs and temporary files
@@ -100,6 +116,8 @@ temp/
 **/temp/
 celerybeat-schedule
 celerybeat-schedule.*
+*.pid
+*.seed
 
 # =====================
 # IDE and OS files
@@ -107,42 +125,101 @@ celerybeat-schedule.*
 .DS_Store
 **/.DS_Store
 .idea/
+**/.idea/
 .vscode/
+**/.vscode/
 *.swp
 *.swo
 *~
 .project
 .classpath
 .settings/
+*.sublime-*
+.editorconfig
 
 # =====================
-# Docker related
+# Docker related (avoid recursive copy)
 # =====================
 docker-compose.override.yml
 docker-compose.*.yml
 !docker-compose.yml
-Dockerfile*
-!apps/*/Dockerfile
 .docker/
+docker_manifests/
 
 # =====================
-# Project-specific scripts not needed in images
+# DevOps / Infrastructure (not needed in app images)
 # =====================
+devops/
+.kubernetes/
+k8s/
+helm/
+terraform/
+ansible/
+
+# =====================
+# Scripts and utilities (not needed in images)
+# =====================
+scripts/
 kafkaStudio.py
 push_*.py
 push_*.sh
 *.sh
-!setup.sh
+!apps/*/entrypoint.sh
 Makefile
+build-and-push.sh
+docker.sh
+kafka.sh
+restart.sh
+setup.sh
 
 # =====================
-# Data and scripts folders not needed
+# Data files (should be mounted as volumes, not baked in)
 # =====================
-data/
-apps/data/
-scripts/
-devops/
-docker_manifests/
+# Top-level data directory
+/data/
+# Hidden data directories
+.data/
+**/.data/
+# Data files (not code directories)
+*.csv
+*.parquet
+*.pkl
+*.pickle
+*.h5
+*.hdf5
+*.sqlite
+*.db
+
+# =====================
+# Large model files / ML artifacts
+# =====================
+*.pt
+*.pth
+*.onnx
+*.bin
+# ML model weight directories (not code directories named 'models')
+checkpoints/
+**/checkpoints/
+# Only exclude top-level models directory (data), not quant_stream/models (code)
+/models/
+
+# =====================
+# Quant-stream data (large files, mount as volume)
+# =====================
+quant-stream/.data/
+quant-stream/data/
+quant-stream/**/*.csv
+quant-stream/**/*.parquet
+
+# =====================
+# PDF and document files
+# =====================
+*.pdf
+*.zip
+*.tar.gz
+*.tar
+*.rar
+*.7z
 
 # =====================
 # Development / Debug tools
@@ -150,9 +227,10 @@ docker_manifests/
 .nyc_output/
 .scannerwork/
 .sonar/
+.benchmarks/
 
 # =====================
-# Package manager files (use lock files only)
+# Package manager lock files (copy specific ones only)
 # =====================
 package-lock.json
 yarn.lock
@@ -160,8 +238,10 @@ yarn.lock
 # =====================
 # Misc
 # =====================
-*.csv
-*.pdf
-*.zip
-*.tar.gz
+*.bak
+*.orig
+*.rej
+.npmrc
+.yarnrc
+.pnpmfile.cjs
 
