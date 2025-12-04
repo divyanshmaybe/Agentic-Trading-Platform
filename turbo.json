@@ -137,6 +137,14 @@
     "logs:frontend": {
       "cache": false,
       "persistent": true
+    },
+    "logs:alphacopilot": {
+      "cache": false,
+      "persistent": true
+    },
+    "logs:alphacopilot-celery": {
+      "cache": false,
+      "persistent": true
     }
   }
 }
