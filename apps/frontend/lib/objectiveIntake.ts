@@ -29,6 +29,32 @@ export type ObjectiveIntakeResponse = {
   allocation?: AllocationResultSummary | null
 }
 
+export type ObjectiveResponse = {
+  id: string
+  user_id: string
+  name?: string | null
+  raw?: Record<string, any> | null
+  source?: string | null
+  structured_payload?: Record<string, any> | null
+  investable_amount?: string | number | null
+  investment_horizon_years?: number | null
+  investment_horizon_label?: string | null
+  target_return?: string | number | null
+  risk_tolerance?: string | null
+  risk_aversion_lambda?: string | number | null
+  liquidity_needs?: string | null
+  rebalancing_frequency?: string | null
+  constraints?: Record<string, any> | null
+  target_returns?: any[] | null
+  preferences?: Record<string, any> | null
+  generic_notes?: string[] | any[] | null
+  missing_fields?: string[] | null
+  completion_status: string
+  status: string
+  created_at: string
+  updated_at: string
+}
+
 type ApiError = {
   detail?: string
   message?: string
@@ -112,6 +138,32 @@ export async function submitObjectiveIntake(
       Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify(payload),
+  })
+}
+
+export async function fetchObjectives(
+  accessToken?: string,
+  status?: string,
+  includeInactive?: boolean,
+): Promise<ObjectiveResponse[]> {
+  const token = resolveAccessToken(accessToken)
+  
+  const params = new URLSearchParams()
+  if (status) {
+    params.append("status", status)
+  }
+  if (includeInactive !== undefined) {
+    params.append("include_inactive", includeInactive.toString())
+  }
+  
+  const queryString = params.toString()
+  const path = `/api/objectives${queryString ? `?${queryString}` : ""}`
+
+  return request<ObjectiveResponse[]>(path, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
   })
 }
 
