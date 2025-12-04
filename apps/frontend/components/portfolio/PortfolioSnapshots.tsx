@@ -131,6 +131,15 @@ export function PortfolioSnapshots({
         if (!isMounted) return
 
         if (!response.ok) {
+          // Handle 404 for agent not found - this is expected if user doesn't have this agent type
+          if (response.status === 404 && agentType) {
+            if (isMounted) {
+              setData([])
+              setLoading(false)
+            }
+            return
+          }
+          
           // Try to get error message from response
           let errorMessage = `Failed to fetch snapshots: ${response.statusText}`
           try {

@@ -131,33 +131,33 @@ export const chatMessages: ChatMessage[] = [
   {
     id: "msg-1",
     role: "assistant",
-    content: "👋 Hey! Share the asset or regime you're targeting and I can suggest alpha ideas.",
+    content: "👋 Welcome to the Alpha Research Tutorial!\n\nThis workspace helps you develop trading strategies from hypothesis to live deployment.\n\nStart by describing a market observation or trading idea you want to test!",
     time: "09:35",
   },
   {
     id: "msg-2",
     role: "user",
-    content: "Need a mean reversion alpha for NIFTY intraday. Prefer mid-volatility names.",
+    content: "I think momentum stocks with high volume breakouts tend to outperform in trending markets.",
     time: "09:36",
   },
   {
     id: "msg-3",
     role: "assistant",
     content:
-      "Try combining Bollinger Band extreme with RSI divergence. Layer in volume squeeze to filter chop.",
+      "Great hypothesis! Here's how to test it:\n\n**Factor Ideas:**\n• `DELTA($close, 20) / $close` — Momentum\n• `$volume / SMA($volume, 20)` — Volume surge\n\nClick **'New Research'** to run a full backtest with AI-generated factors. The system will train an ML model and report Sharpe Ratio, IC, and returns.",
     time: "09:36",
   },
   {
     id: "msg-4",
     role: "user",
-    content: "Can you tweak it to exit on VWAP reversion or time stop?",
+    content: "The backtest shows Sharpe of 1.8. How do I deploy it live?",
     time: "09:38",
   },
   {
     id: "msg-5",
     role: "assistant",
     content:
-      "Absolutely. Use VWAP cross as soft exit with hard stop = entry ±1.2×ATR. Add time stop at 45 mins.",
+      "Sharpe 1.8 looks promising! To deploy:\n\n1. Click **'Deploy'** on your completed research run\n2. Name your alpha and allocate capital\n3. The system will stream daily trading signals\n\nMonitor performance in the **'Live Alphas'** tab. You can pause/resume anytime.",
     time: "09:39",
   },
 ]
@@ -165,5 +165,3 @@ export const chatMessages: ChatMessage[] = [
 export const alphaPagination = {
   pageSize: 4,
 }
-
-

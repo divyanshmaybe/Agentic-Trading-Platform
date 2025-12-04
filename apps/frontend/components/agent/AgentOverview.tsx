@@ -5,7 +5,7 @@ import { motion, type Variants } from "framer-motion"
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import type { AgentDashboard } from "@/lib/types/agent"
-import { formatCurrency, formatPercentage, formatWeight, displayValue } from "@/lib/utils/formatters"
+import { formatCurrencyInteger, formatPercentageInteger, displayValue } from "@/lib/utils/formatters"
 import { AllocationLoadingState } from "@/components/shared/AllocationLoadingState"
 import { fetchQuotes } from "@/lib/portfolio"
 
@@ -223,9 +223,11 @@ export function AgentOverview({ data, loading, isAllocating = false }: AgentOver
 
   const pnlValue = parseFloat(data.realized_pnl || "0")
   const isPnlPositive = pnlValue >= 0
+  const allocationPnlValue = parseFloat(data.allocation.pnl || "0")
+  const isAllocationPnlPositive = allocationPnlValue >= 0
 
   return (
-    <Card className="card-glass flex h-full flex-col rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_28px_65px_-38px_rgba(0,0,0,0.9)] backdrop-blur">
+    <Card className="card-glass flex h-full flex-col rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_32px_70px_-45px_rgba(0,0,0,0.95)] backdrop-blur">
       <CardHeader>
         <div className="flex items-center justify-between">
           <CardTitle className="h-title text-xl text-[#fafafa]">{data.agent_name}</CardTitle>
@@ -239,59 +241,59 @@ export function AgentOverview({ data, loading, isAllocating = false }: AgentOver
           Agent Performance
         </CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="flex-1">
         <motion.div
-          className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3"
+          className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3"
           variants={container}
           initial="hidden"
           animate="show"
         >
           <motion.div
             variants={item}
-            className="rounded-xl border border-white/10 bg-white/8 p-4 text-white/70 backdrop-blur-sm"
+            className="rounded-xl border border-white/10 bg-white/5 p-4"
           >
-            <p className="text-xs uppercase tracking-wide text-white/45">Current Value</p>
-            <p className="mt-2 text-2xl font-semibold text-[#fafafa]">
-              {formatCurrency(data.current_value)}
+            <p className="text-xs text-white/60">Current Value</p>
+            <p className="mt-1 text-lg font-semibold text-[#fafafa]">
+              {formatCurrencyInteger(data.current_value)}
             </p>
           </motion.div>
 
           <motion.div
             variants={item}
-            className="rounded-xl border border-white/10 bg-white/8 p-4 text-white/70 backdrop-blur-sm"
+            className="rounded-xl border border-white/10 bg-white/5 p-4"
           >
-            <p className="text-xs uppercase tracking-wide text-white/45">Realized PnL</p>
-            <p className={`mt-2 text-2xl font-semibold ${isPnlPositive ? "text-emerald-300" : "text-rose-300"}`}>
-              {formatCurrency(data.realized_pnl)}
+            <p className="text-xs text-white/60">Realized PnL</p>
+            <p className={`mt-1 text-lg font-semibold ${isPnlPositive ? "text-emerald-300" : "text-rose-300"}`}>
+              {formatCurrencyInteger(data.realized_pnl)}
             </p>
           </motion.div>
 
           <motion.div
             variants={item}
-            className="rounded-xl border border-white/10 bg-white/8 p-4 text-white/70 backdrop-blur-sm"
+            className="rounded-xl border border-white/10 bg-white/5 p-4"
           >
-            <p className="text-xs uppercase tracking-wide text-white/45">Unrealized PnL</p>
+            <p className="text-xs text-white/60">Unrealized PnL</p>
             {quotesLoading ? (
-              <p className="mt-2 text-2xl font-semibold text-white/50">Loading...</p>
+              <p className="mt-1 text-lg font-semibold text-white/50">Loading...</p>
             ) : quotesError ? (
-              <p className="mt-2 text-sm font-semibold text-rose-300" title={quotesError}>
+              <p className="mt-1 text-sm font-semibold text-rose-300" title={quotesError}>
                 Error
               </p>
             ) : unrealizedPnl !== null ? (
-              <p className={`mt-2 text-2xl font-semibold ${unrealizedPnl >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
-                {formatCurrency(unrealizedPnl.toString())}
+              <p className={`mt-1 text-lg font-semibold ${unrealizedPnl >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                {formatCurrencyInteger(unrealizedPnl)}
               </p>
             ) : (
-              <p className="mt-2 text-2xl font-semibold text-white/50">—</p>
+              <p className="mt-1 text-lg font-semibold text-white/50">—</p>
             )}
           </motion.div>
 
           <motion.div
             variants={item}
-            className="rounded-xl border border-white/10 bg-white/8 p-4 text-white/70 backdrop-blur-sm"
+            className="rounded-xl border border-white/10 bg-white/5 p-4"
           >
-            <p className="text-xs uppercase tracking-wide text-white/45">Positions</p>
-            <p className="mt-2 text-2xl font-semibold text-[#fafafa]">{data.positions_count}</p>
+            <p className="text-xs text-white/60">Positions</p>
+            <p className="mt-1 text-lg font-semibold text-[#fafafa]">{data.positions_count}</p>
           </motion.div>
 
           {/* <motion.div
@@ -316,90 +318,70 @@ export function AgentOverview({ data, loading, isAllocating = false }: AgentOver
 
           <motion.div
             variants={item}
-            className="rounded-xl border border-white/10 bg-white/8 p-4 text-white/70 backdrop-blur-sm"
+            className="rounded-xl border border-white/10 bg-white/5 p-4"
           >
-            <p className="text-xs uppercase tracking-wide text-white/45">Allocated Amount</p>
-            <p className="mt-2 text-2xl font-semibold text-[#fafafa]">
-              {formatCurrency(data.allocation.allocated_amount)}
+            <p className="text-xs text-white/60">Allocated Amount</p>
+            <p className="mt-1 text-lg font-semibold text-[#fafafa]">
+              {formatCurrencyInteger(data.allocation.allocated_amount)}
             </p>
           </motion.div>
 
           <motion.div
             variants={item}
-            className="rounded-xl border border-white/10 bg-white/8 p-4 text-white/70 backdrop-blur-sm"
+            className="rounded-xl border border-white/10 bg-white/5 p-4"
           >
-            <p className="text-xs uppercase tracking-wide text-white/45">Available Cash</p>
-            <p className="mt-2 text-2xl font-semibold text-[#fafafa]">
-              {formatCurrency(data.allocation.available_cash)}
+            <p className="text-xs text-white/60">Available Cash</p>
+            <p className="mt-1 text-lg font-semibold text-[#fafafa]">
+              {formatCurrencyInteger(data.allocation.available_cash)}
             </p>
           </motion.div>
 
-          {/* <motion.div
-            variants={item}
-            className="rounded-xl border border-white/10 bg-white/8 p-4 text-white/70 backdrop-blur-sm"
-          >
-            <p className="text-xs uppercase tracking-wide text-white/45">Expected Return</p>
-            <p className="mt-2 text-2xl font-semibold text-[#fafafa]">
-              {formatPercentage(data.allocation.expected_return)}
-            </p>
-          </motion.div> */}
-
-          {/* <motion.div
-            variants={item}
-            className="rounded-xl border border-white/10 bg-white/8 p-4 text-white/70 backdrop-blur-sm"
-          >
-            <p className="text-xs uppercase tracking-wide text-white/45">Expected Risk</p>
-            <p className="mt-2 text-2xl font-semibold text-[#fafafa]">
-              {formatPercentage(data.allocation.expected_risk)}
-            </p>
-          </motion.div> */}
-
           <motion.div
             variants={item}
-            className="rounded-xl border border-white/10 bg-white/8 p-4 text-white/70 backdrop-blur-sm"
+            className="rounded-xl border border-white/10 bg-white/5 p-4"
           >
-            <p className="text-xs uppercase tracking-wide text-white/45">Regime</p>
-            <p className="mt-2 text-lg font-semibold text-[#fafafa]">
+            <p className="text-xs text-white/60">Regime</p>
+            <p className="mt-1 text-lg font-semibold text-[#fafafa]">
               {displayValue(data.allocation.regime).replace(/_/g, " ").toUpperCase()}
             </p>
           </motion.div>
 
           <motion.div
             variants={item}
-            className="rounded-xl border border-white/10 bg-white/8 p-4 text-white/70 backdrop-blur-sm"
+            className="rounded-xl border border-white/10 bg-white/5 p-4"
           >
-            <p className="text-xs uppercase tracking-wide text-white/45">PnL</p>
-            <p className="mt-2 text-2xl font-semibold text-[#fafafa]">
-              {formatCurrency(data.allocation.pnl)}
+            <p className="text-xs text-white/60">PnL</p>
+            <p className={`mt-1 text-lg font-semibold ${isAllocationPnlPositive ? "text-emerald-300" : "text-rose-300"}`}>
+              {formatCurrencyInteger(data.allocation.pnl)}
             </p>
           </motion.div>
 
           <motion.div
             variants={item}
-            className="rounded-xl border border-white/10 bg-white/8 p-4 text-white/70 backdrop-blur-sm"
+            className="rounded-xl border border-white/10 bg-white/5 p-4"
           >
-            <p className="text-xs uppercase tracking-wide text-white/45">PnL %</p>
-            <p className="mt-2 text-2xl font-semibold text-[#fafafa]">
-              {formatPercentage(data.allocation.pnl_percentage)}
+            <p className="text-xs text-white/60">PnL %</p>
+            <p className={`mt-1 text-lg font-semibold ${isAllocationPnlPositive ? "text-emerald-300" : "text-rose-300"}`}>
+              {formatPercentageInteger(data.allocation.pnl_percentage)}
             </p>
           </motion.div>
 
           <motion.div
             variants={item}
-            className="rounded-xl border border-white/10 bg-white/8 p-4 text-white/70 backdrop-blur-sm"
+            className="rounded-xl border border-white/10 bg-white/5 p-4"
           >
-            <p className="text-xs uppercase tracking-wide text-white/45">Drift %</p>
-            <p className="mt-2 text-2xl font-semibold text-[#fafafa]">
-              {formatPercentage(data.allocation.drift_percentage)}
+            <p className="text-xs text-white/60">Drift %</p>
+            <p className="mt-1 text-lg font-semibold text-[#fafafa]">
+              {formatPercentageInteger(data.allocation.drift_percentage)}
             </p>
           </motion.div>
 
           <motion.div
             variants={item}
-            className="rounded-xl border border-white/10 bg-white/8 p-4 text-white/70 backdrop-blur-sm"
+            className="rounded-xl border border-white/10 bg-white/5 p-4"
           >
-            <p className="text-xs uppercase tracking-wide text-white/45">Rebalancing</p>
-            <p className="mt-2 text-2xl font-semibold text-[#fafafa]">
+            <p className="text-xs text-white/60">Rebalancing</p>
+            <p className="mt-1 text-lg font-semibold">
               {data.allocation.requires_rebalancing ? (
                 <span className="text-amber-300">Required</span>
               ) : (
@@ -412,4 +394,3 @@ export function AgentOverview({ data, loading, isAllocating = false }: AgentOver
     </Card>
   )
 }
-

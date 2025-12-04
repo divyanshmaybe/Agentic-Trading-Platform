@@ -987,10 +987,20 @@ def allocate_for_objective_task(
                 allocation_result["weights"] = weights
                 
                 # Get investable amount from portfolio or initial_value
-                portfolio_record = await db.portfolio.find_unique(where={"id": portfolio_id})
+                # Retry a few times in case of database replication delay
+                portfolio_record = None
+                max_retries = 3
+                for retry in range(max_retries):
+                    portfolio_record = await db.portfolio.find_unique(where={"id": portfolio_id})
+                    if portfolio_record:
+                        break
+                    if retry < max_retries - 1:
+                        logger.info(f"Portfolio {portfolio_id} not found, retrying in 2 seconds... (attempt {retry + 1}/{max_retries})")
+                        await asyncio.sleep(2)
+                
                 if not portfolio_record:
                     logger.warning(
-                        f"⚠️ Portfolio {portfolio_id} not found in database. "
+                        f"⚠️ Portfolio {portfolio_id} not found in database after {max_retries} retries. "
                         f"Skipping allocation creation. This may be a test/demo portfolio ID."
                     )
                     return {

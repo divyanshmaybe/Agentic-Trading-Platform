@@ -207,7 +207,7 @@ class PortfolioController:
                         "available_cash": float(defaults["investment_amount"]),
                         "triggered_by": "portfolio_auto_created",
                     },
-                    countdown=2,
+                    countdown=5,  # Wait 5 seconds for database to sync
                 )
                 
                 self.logger.info(

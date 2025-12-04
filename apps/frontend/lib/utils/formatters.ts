@@ -32,6 +32,18 @@ export function formatCurrency(value: string | number | null | undefined, fallba
   }).format(num)
 }
 
+export function formatCurrencyInteger(value: string | number | null | undefined, fallback = "—"): string {
+  const num = parseScientificNotation(value)
+  
+  if (num === 0 && (value === null || value === undefined)) return fallback
+  
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0,
+  }).format(Math.round(num))
+}
+
 export function formatNumber(value: string | number | null | undefined, fallback = "—"): string {
   const num = parseScientificNotation(value)
   
@@ -48,6 +60,15 @@ export function formatPercentage(value: string | number | null | undefined, fall
   if (num === 0 && (value === null || value === undefined)) return fallback
   
   const formatted = (num * 100).toFixed(2)
+  return `${num >= 0 ? "+" : ""}${formatted}%`
+}
+
+export function formatPercentageInteger(value: string | number | null | undefined, fallback = "—"): string {
+  const num = parseScientificNotation(value)
+  
+  if (num === 0 && (value === null || value === undefined)) return fallback
+  
+  const formatted = Math.round(num * 100)
   return `${num >= 0 ? "+" : ""}${formatted}%`
 }
 
