@@ -1,0 +1,800 @@
+"""
+Observability Agent Tasks - NSE Pipeline Loss Analysis
+
+This module implements an observability agent that analyzes trades from the NSE pipeline
+when they result in losses (negative realized PnL or stop-loss triggers).
+
+The agent:
+1. Receives trade closure data with signal context
+2. Downloads and analyzes the original NSE filing PDF
+3. Compares the LLM's reasoning with actual market outcome
+4. Generates structured feedback for pipeline improvement
+5. Publishes analysis to Kafka for monitoring/alerting
+
+Trigger conditions:
+- Trade closed with negative realized_pnl
+- Stop-loss triggered (status changes to executed with stop_loss order_type)
+"""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import json
+import logging
+import os
+import sys
+import tempfile
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Mapping, Optional
+
+import httpx
+from celery.utils.log import get_task_logger
+from pydantic import BaseModel, Field
+
+# Add paths for imports
+SERVER_ROOT = Path(__file__).resolve().parents[1]
+if str(SERVER_ROOT) not in sys.path:
+    sys.path.insert(0, str(SERVER_ROOT))
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+SHARED_PY_PATH = PROJECT_ROOT / "shared" / "py"
+if str(SHARED_PY_PATH) not in sys.path:
+    sys.path.insert(0, str(SHARED_PY_PATH))
+
+from celery_app import celery_app, QUEUE_NAMES  # type: ignore  # noqa: E402
+from kafka_service import (  # type: ignore  # noqa: E402
+    KafkaPublisher,
+    PublisherAlreadyRegistered,
+    default_kafka_bus,
+)
+
+task_logger = get_task_logger(__name__)
+
+# ============================================================================
+# Constants and Configuration
+# ============================================================================
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+OBSERVABILITY_KAFKA_TOPIC = os.getenv("NSE_OBSERVABILITY_TOPIC", "nse_agent_observability_logs")
+OBSERVABILITY_PUBLISHER_NAME = "nse_observability_publisher"
+
+# Filing type impact data (same as in nse_filings_sentiment.py)
+RELEVANT_FILE_TYPES = {
+    "Outcome of Board Meeting": {"positive": True, "negative": True},
+    "Press Release": {"positive": True, "negative": False},
+    "Appointment": {"positive": True, "negative": True},
+    "Acquisition": {"positive": True, "negative": True},
+    "Updates": {"positive": True, "negative": True},
+    "Action(s) initiated or orders passed": {"positive": True, "negative": True},
+    "Investor Presentation": {"positive": True, "negative": True},
+    "Sale or Disposal": {"positive": True, "negative": True},
+    "Bagging/Receiving of Orders/Contracts": {"positive": True, "negative": True},
+    "Change in Director(s)": {"positive": True, "negative": True},
+}
+
+
+# ============================================================================
+# Data Models
+# ============================================================================
+
+@dataclass
+class TradeObservabilityContext:
+    """Context for observability analysis of a trade."""
+    
+    # Trade information
+    trade_id: str
+    symbol: str
+    side: str  # BUY or SELL
+    quantity: int
+    entry_price: float
+    exit_price: float
+    realized_pnl: float
+    
+    # Signal information
+    signal_id: Optional[str] = None
+    signal_value: int = 0  # 1=BUY, -1=SELL, 0=HOLD
+    signal_confidence: float = 0.0
+    signal_explanation: str = ""
+    filing_time: str = ""
+    generated_at: str = ""
+    
+    # Filing information
+    filing_type: str = ""
+    subject_of_announcement: str = ""
+    attachment_url: str = ""
+    pdf_url: str = ""
+    
+    # Execution metadata
+    triggered_by: str = ""  # "stop_loss", "take_profit", "auto_sell", "manual"
+    execution_time: Optional[str] = None
+    trade_delay_ms: int = 0
+    
+    # Additional context
+    agent_id: Optional[str] = None
+    portfolio_id: Optional[str] = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+class ObservabilityAnalysisResult(BaseModel):
+    """Structured result from the observability agent analysis."""
+    
+    # Identifiers
+    trade_id: str
+    signal_id: Optional[str] = None
+    symbol: str
+    
+    # Analysis results
+    trading_decision: str = Field(description="Trading decision made by NSE agent")
+    timestamp_of_trade_execution: str = Field(description="Timestamp of trade execution")
+    reasoning_of_nse_agent: str = Field(description="Original reasoning from NSE agent")
+    loss_incurred: str = Field(description="Profit or loss incurred")
+    feedback_on_agent_performance: str = Field(description="Analysis and feedback on agent decision")
+    
+    # Metadata
+    analyzed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    source: str = "nse_observability_agent"
+    
+    # Additional context
+    filing_type: Optional[str] = None
+    confidence_score: float = 0.0
+    triggered_by: str = ""
+
+
+# ============================================================================
+# Kafka Publisher
+# ============================================================================
+
+_observability_publisher: Optional[KafkaPublisher] = None
+
+
+def _get_observability_publisher() -> KafkaPublisher:
+    """Get or create Kafka publisher for observability logs."""
+    global _observability_publisher
+    
+    if _observability_publisher is not None:
+        return _observability_publisher
+    
+    bus = default_kafka_bus
+    try:
+        _observability_publisher = bus.register_publisher(
+            OBSERVABILITY_PUBLISHER_NAME,
+            topic=OBSERVABILITY_KAFKA_TOPIC,
+            value_model=ObservabilityAnalysisResult,
+            default_headers={"stream": "nse_observability"},
+        )
+        task_logger.info(f"✅ Registered Kafka publisher for {OBSERVABILITY_KAFKA_TOPIC}")
+    except PublisherAlreadyRegistered:
+        _observability_publisher = bus.get_publisher(OBSERVABILITY_PUBLISHER_NAME)
+        task_logger.debug(f"Using existing Kafka publisher for {OBSERVABILITY_KAFKA_TOPIC}")
+    
+    return _observability_publisher
+
+
+def publish_observability_result(result: ObservabilityAnalysisResult) -> bool:
+    """Publish observability analysis result to Kafka."""
+    try:
+        publisher = _get_observability_publisher()
+        payload = result.model_dump()
+        publisher.publish(payload, key=result.trade_id)
+        task_logger.info(f"📤 Published observability analysis for trade {result.trade_id[:8]} to Kafka")
+        return True
+    except Exception as exc:
+        task_logger.error(f"❌ Failed to publish observability result: {exc}")
+        return False
+
+
+# ============================================================================
+# PDF Download and Encoding
+# ============================================================================
+
+def download_pdf_as_base64(pdf_url: str, timeout: float = 30.0) -> Optional[str]:
+    """
+    Download PDF from URL and return as base64 encoded string.
+    
+    Args:
+        pdf_url: URL to download PDF from
+        timeout: Request timeout in seconds
+        
+    Returns:
+        Base64 encoded PDF string, or None if download fails
+    """
+    if not pdf_url:
+        task_logger.warning("No PDF URL provided for download")
+        return None
+    
+    try:
+        task_logger.info(f"📥 Downloading PDF from: {pdf_url[:80]}...")
+        
+        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+            response = client.get(pdf_url)
+            response.raise_for_status()
+            
+            pdf_bytes = response.content
+            pdf_base64 = base64.standard_b64encode(pdf_bytes).decode("utf-8")
+            
+            task_logger.info(f"✅ Downloaded PDF ({len(pdf_bytes)} bytes)")
+            return pdf_base64
+            
+    except httpx.HTTPStatusError as exc:
+        task_logger.error(f"❌ HTTP error downloading PDF: {exc.response.status_code}")
+        return None
+    except httpx.RequestError as exc:
+        task_logger.error(f"❌ Request error downloading PDF: {exc}")
+        return None
+    except Exception as exc:
+        task_logger.error(f"❌ Unexpected error downloading PDF: {exc}")
+        return None
+
+
+# ============================================================================
+# Impact Data Loading
+# ============================================================================
+
+def get_filing_impact_data(filing_type: str) -> str:
+    """
+    Get positive/negative impact data for a filing type.
+    
+    Args:
+        filing_type: The type of filing (e.g., "Outcome of Board Meeting")
+        
+    Returns:
+        String describing positive and negative impacts
+    """
+    try:
+        static_data_path = SERVER_ROOT / "pipelines" / "nse" / "staticdata.csv"
+        
+        if not static_data_path.exists():
+            return f"Filing type: {filing_type}\nImpact data not available."
+        
+        import pandas as pd
+        staticdf = pd.read_csv(static_data_path)
+        match = staticdf[staticdf["file type"].str.lower() == filing_type.lower()]
+        
+        if not match.empty:
+            pos_impact = str(match["positive impct "].values[0])
+            neg_impact = str(match["negative impact"].values[0])
+            return (
+                f"Filing type: {filing_type}\n"
+                f"Positive impact scenarios: {pos_impact}\n"
+                f"Negative impact scenarios: {neg_impact}"
+            )
+        else:
+            return f"Filing type: {filing_type}\nNo specific impact data available."
+            
+    except Exception as exc:
+        task_logger.warning(f"Failed to load impact data: {exc}")
+        return f"Filing type: {filing_type}\nImpact data loading failed."
+
+
+# ============================================================================
+# LLM Analysis Agent
+# ============================================================================
+
+OBSERVABILITY_SYSTEM_PROMPT = """
+You are a monitoring agent for the intraday trading NSE pipeline. Your task is to deeply analyse and scrutinize any trade executed by the NSE pipeline and generate
+a log for the trade executed. In the generated log, you must mention the trade executed by the NSE agent, the reasoning of the agent in generating the certain signal and
+executing the trade, and the loss calculated from the actual execution of the trade along with your understanding of the decision of the NSE agent. You will only
+be triggered when the trade executed leads to a loss. Thus as a financial expert with deep financial analysis abilities and farsight, you must deeply analyse the mistakes
+in the reasoning of the trading agent or any fault in the order of the reasoning steps which could have led to this outcome. You will be provided the actual filing upon which the decision was made.
+You will also be provided data mapping the type of filing to the impact it has on the market. It is possible that a filing that creates a negative impact on the market was analysed by the reasoning agent
+in a positive light which led to loss instead of a profit. A detailed explanation of what the llm did along with its response will be provided to you. Considering these combined data sources, you have to provide a detailed analysis of what went wrong or right.
+Examples are the llm might hallucinate a figure which did not exist in the original filing which led to a loss. You must be highly specific and explicit. The drawbacks highlighted by you act as a source of observability to
+improve upon the pipeline. Therefore if you highlight a number of potential drawbacks unnecessarily, the user will find it difficult to make the changes to the entire pipeline.
+Therefore you have to strictly analyse the pain points - which led to this loss and which can be fixed to keep the system up and running. Any change which is not that useful but aims
+to fundamentally affect the structure of the pipeline must strongly not be recommended. Mistakes if at all any lie primarily in the reasoning of the pipeline, thus suggestions to improve the prompt of the agent
+should be prioritized first - that is if any changes in the prompt itself would be sufficient to fix the issue and turn the loss to 0 loss or most importantly profit, prioritize that. If you feel any additional
+guardrails can be added to prevent this, then recommend those additional guardrails. The changes suggested by you should be highly accurate, valid and sufficient enough to
+fix the loss and rather transform it to profit. Deeply analyse.
+
+You must return an output in a structured JSON format as follows:
+{
+    "trading_decision": "<trading decision of the NSE agent - BUY/SELL with quantity>",
+    "timestamp_of_trade_execution": "<timestamp of trade execution in ISO format>",
+    "reasoning_of_nse_agent": "<original reasoning provided by the NSE agent>",
+    "loss_incurred": "<profit or loss incurred with exact amount>",
+    "feedback_on_agent_performance": "<your detailed analysis of the decision and reasoning of the NSE agent, specific recommendations for improvement>"
+}
+
+CRITICAL: Return ONLY valid JSON. No markdown, no backticks, no additional text. The output will be directly parsed as JSON in Python.
+"""
+
+
+async def analyze_trade_with_llm(
+    context: TradeObservabilityContext,
+    pdf_base64: Optional[str] = None,
+) -> Optional[ObservabilityAnalysisResult]:
+    """
+    Analyze a losing trade using the Gemini LLM.
+    
+    Args:
+        context: TradeObservabilityContext with all trade and signal information
+        pdf_base64: Base64 encoded PDF of the filing (optional)
+        
+    Returns:
+        ObservabilityAnalysisResult or None if analysis fails
+    """
+    if not GEMINI_API_KEY:
+        task_logger.error("❌ GEMINI_API_KEY not configured - cannot run observability analysis")
+        return None
+    
+    try:
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        from langchain_core.messages import SystemMessage, HumanMessage
+        
+        # Initialize the Gemini model
+        model = ChatGoogleGenerativeAI(
+            model="gemini-2.5-flash",
+            google_api_key=GEMINI_API_KEY,
+            temperature=0.7,
+            timeout=120,
+            max_retries=3,
+        )
+        
+        # Get filing impact data
+        impact_data = get_filing_impact_data(context.filing_type)
+        
+        # Build the human message content
+        trade_signal_info = (
+            f"Symbol: {context.symbol}\n"
+            f"Signal: {context.signal_value} ({'BUY' if context.signal_value > 0 else 'SELL' if context.signal_value < 0 else 'HOLD'})\n"
+            f"Confidence: {context.signal_confidence:.2%}\n"
+            f"Side executed: {context.side}\n"
+            f"Quantity: {context.quantity}\n"
+            f"Entry price: ₹{context.entry_price:.2f}\n"
+            f"Exit price: ₹{context.exit_price:.2f}"
+        )
+        
+        loss_info = (
+            f"Realized PnL: ₹{context.realized_pnl:.2f}\n"
+            f"Triggered by: {context.triggered_by}\n"
+            f"Trade delay: {context.trade_delay_ms}ms"
+        )
+        
+        reasoning_info = context.signal_explanation or "No reasoning provided by the agent."
+        
+        # Build message content
+        content_parts = [
+            {
+                "type": "text",
+                "text": (
+                    f"Here is the impact the filing has over the market:\n{impact_data}\n\n"
+                    f"Here is the trade signal generated:\n{trade_signal_info}\n\n"
+                    f"Here is the loss incurred:\n{loss_info}\n\n"
+                    f"Here is the reasoning of the agent behind this trade signal:\n{reasoning_info}"
+                )
+            }
+        ]
+        
+        # Add PDF if available
+        if pdf_base64:
+            content_parts.append({
+                "type": "file",
+                "mime_type": "application/pdf",
+                "data": pdf_base64,
+            })
+            task_logger.info("📄 Including PDF in analysis")
+        else:
+            task_logger.warning("⚠️ No PDF available for analysis")
+        
+        messages = [
+            SystemMessage(content=OBSERVABILITY_SYSTEM_PROMPT),
+            HumanMessage(content=content_parts),
+        ]
+        
+        task_logger.info(f"🤖 Invoking Gemini for observability analysis of {context.symbol}...")
+        
+        # Invoke the model
+        response = await asyncio.to_thread(model.invoke, messages)
+        
+        # Parse response
+        response_text = response.content if hasattr(response, 'content') else str(response)
+        
+        # Clean up response (remove any markdown artifacts)
+        response_text = response_text.strip()
+        if response_text.startswith("```json"):
+            response_text = response_text[7:]
+        if response_text.startswith("```"):
+            response_text = response_text[3:]
+        if response_text.endswith("```"):
+            response_text = response_text[:-3]
+        response_text = response_text.strip()
+        
+        try:
+            analysis_dict = json.loads(response_text)
+        except json.JSONDecodeError as exc:
+            task_logger.error(f"❌ Failed to parse LLM response as JSON: {exc}")
+            task_logger.debug(f"Raw response: {response_text[:500]}")
+            # Create a fallback result
+            analysis_dict = {
+                "trading_decision": f"{context.side} {context.quantity} shares of {context.symbol}",
+                "timestamp_of_trade_execution": context.execution_time or context.generated_at,
+                "reasoning_of_nse_agent": context.signal_explanation,
+                "loss_incurred": f"₹{context.realized_pnl:.2f}",
+                "feedback_on_agent_performance": f"LLM analysis failed to parse. Raw response: {response_text[:200]}",
+            }
+        
+        # Build result
+        result = ObservabilityAnalysisResult(
+            trade_id=context.trade_id,
+            signal_id=context.signal_id,
+            symbol=context.symbol,
+            trading_decision=analysis_dict.get("trading_decision", "Unknown"),
+            timestamp_of_trade_execution=analysis_dict.get("timestamp_of_trade_execution", context.execution_time or ""),
+            reasoning_of_nse_agent=analysis_dict.get("reasoning_of_nse_agent", context.signal_explanation),
+            loss_incurred=analysis_dict.get("loss_incurred", f"₹{context.realized_pnl:.2f}"),
+            feedback_on_agent_performance=analysis_dict.get("feedback_on_agent_performance", "Analysis not available"),
+            filing_type=context.filing_type,
+            confidence_score=context.signal_confidence,
+            triggered_by=context.triggered_by,
+        )
+        
+        task_logger.info(f"✅ Observability analysis complete for {context.symbol}")
+        return result
+        
+    except ImportError as exc:
+        task_logger.error(f"❌ Missing dependency for LLM analysis: {exc}")
+        return None
+    except Exception as exc:
+        task_logger.exception(f"❌ Error during LLM analysis: {exc}")
+        return None
+
+
+# ============================================================================
+# Trade Context Extraction
+# ============================================================================
+
+async def extract_trade_context(
+    trade_id: str,
+    triggered_by: str = "unknown",
+) -> Optional[TradeObservabilityContext]:
+    """
+    Extract full context for a trade from the database.
+    
+    Args:
+        trade_id: The ID of the trade to analyze
+        triggered_by: What triggered this analysis (stop_loss, negative_pnl, etc.)
+        
+    Returns:
+        TradeObservabilityContext or None if extraction fails
+    """
+    try:
+        from db_context import get_db_connection
+        
+        async with get_db_connection() as client:
+            # Fetch trade with execution logs
+            trade = await client.trade.find_unique(
+                where={"id": trade_id},
+                include={
+                    "executions": True,
+                    "portfolio": True,
+                    "agent": True,
+                }
+            )
+            
+            if not trade:
+                task_logger.warning(f"Trade {trade_id} not found")
+                return None
+            
+            # Parse metadata
+            metadata = {}
+            if trade.metadata:
+                if isinstance(trade.metadata, dict):
+                    metadata = trade.metadata
+                elif isinstance(trade.metadata, str):
+                    try:
+                        metadata = json.loads(trade.metadata)
+                    except json.JSONDecodeError:
+                        pass
+            
+            # Extract prices
+            entry_price = float(trade.price or 0)
+            exit_price = float(trade.executed_price or entry_price)
+            realized_pnl = float(trade.realized_pnl or 0)
+            
+            # Extract signal information from metadata
+            signal_id = trade.signal_id or metadata.get("signal_id")
+            signal_explanation = metadata.get("explanation", "")
+            signal_confidence = float(trade.confidence or metadata.get("confidence", 0))
+            
+            # Extract filing information
+            filing_type = metadata.get("filing_type", "")
+            subject_of_announcement = metadata.get("subject_of_announcement", "")
+            attachment_url = metadata.get("attachment_url", "")
+            pdf_url = metadata.get("pdf_url", attachment_url)
+            
+            # Get trade delay from execution log
+            trade_delay_ms = 0
+            if trade.executions:
+                for exec_log in trade.executions:
+                    if exec_log.trade_delay:
+                        trade_delay_ms = exec_log.trade_delay
+                        break
+            
+            context = TradeObservabilityContext(
+                trade_id=trade_id,
+                symbol=trade.symbol,
+                side=trade.side,
+                quantity=trade.quantity,
+                entry_price=entry_price,
+                exit_price=exit_price,
+                realized_pnl=realized_pnl,
+                signal_id=signal_id,
+                signal_value=1 if trade.side == "BUY" else -1 if trade.side in ["SELL", "SHORT_SELL"] else 0,
+                signal_confidence=signal_confidence,
+                signal_explanation=signal_explanation,
+                filing_time=metadata.get("filing_time", ""),
+                generated_at=metadata.get("generated_at", ""),
+                filing_type=filing_type,
+                subject_of_announcement=subject_of_announcement,
+                attachment_url=attachment_url,
+                pdf_url=pdf_url,
+                triggered_by=triggered_by,
+                execution_time=trade.execution_time.isoformat() if trade.execution_time else None,
+                trade_delay_ms=trade_delay_ms,
+                agent_id=trade.agent_id,
+                portfolio_id=trade.portfolio_id,
+                metadata=metadata,
+            )
+            
+            return context
+            
+    except Exception as exc:
+        task_logger.exception(f"❌ Failed to extract trade context for {trade_id}: {exc}")
+        return None
+
+
+# ============================================================================
+# Celery Tasks
+# ============================================================================
+
+@celery_app.task(
+    bind=True,
+    name="observability.analyze_losing_trade",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_kwargs={"max_retries": 2},
+    soft_time_limit=180,  # 3 minutes (LLM can be slow)
+    time_limit=240,       # 4 minutes hard limit
+    acks_late=True,
+)
+def analyze_losing_trade_task(
+    self,
+    trade_id: str,
+    triggered_by: str = "unknown",
+    signal_context: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Celery task to analyze a losing trade from the NSE pipeline.
+    
+    This task is triggered when:
+    1. A trade is closed with negative realized_pnl
+    2. A stop-loss order is executed
+    
+    Args:
+        trade_id: The ID of the trade to analyze
+        triggered_by: What triggered this analysis ("stop_loss", "negative_pnl", "take_profit_miss")
+        signal_context: Optional additional context about the original signal
+        
+    Returns:
+        Dict with analysis results and publish status
+    """
+    task_logger.info(
+        f"🔍 Starting observability analysis for trade {trade_id[:8]} "
+        f"(triggered_by: {triggered_by})"
+    )
+    
+    async def _analyze():
+        # Extract trade context
+        context = await extract_trade_context(trade_id, triggered_by)
+        
+        if not context:
+            return {
+                "success": False,
+                "error": "Failed to extract trade context",
+                "trade_id": trade_id,
+            }
+        
+        # Merge any additional signal context
+        if signal_context:
+            if signal_context.get("explanation"):
+                context.signal_explanation = signal_context["explanation"]
+            if signal_context.get("pdf_url"):
+                context.pdf_url = signal_context["pdf_url"]
+            if signal_context.get("filing_type"):
+                context.filing_type = signal_context["filing_type"]
+        
+        # Skip if not actually a loss
+        if context.realized_pnl >= 0 and triggered_by != "stop_loss":
+            task_logger.info(
+                f"⏭️ Skipping analysis for trade {trade_id[:8]} - "
+                f"PnL is not negative (₹{context.realized_pnl:.2f})"
+            )
+            return {
+                "success": True,
+                "skipped": True,
+                "reason": "Trade is not a loss",
+                "trade_id": trade_id,
+                "realized_pnl": context.realized_pnl,
+            }
+        
+        # Download PDF if available
+        pdf_base64 = None
+        if context.pdf_url:
+            pdf_base64 = download_pdf_as_base64(context.pdf_url)
+        
+        # Run LLM analysis
+        result = await analyze_trade_with_llm(context, pdf_base64)
+        
+        if not result:
+            return {
+                "success": False,
+                "error": "LLM analysis failed",
+                "trade_id": trade_id,
+            }
+        
+        # Publish to Kafka
+        published = publish_observability_result(result)
+        
+        return {
+            "success": True,
+            "trade_id": trade_id,
+            "symbol": context.symbol,
+            "realized_pnl": context.realized_pnl,
+            "triggered_by": triggered_by,
+            "analysis_summary": result.feedback_on_agent_performance[:200] + "..." 
+                if len(result.feedback_on_agent_performance) > 200 
+                else result.feedback_on_agent_performance,
+            "published_to_kafka": published,
+        }
+    
+    # Run async function
+    try:
+        return asyncio.run(_analyze())
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            return loop.run_until_complete(_analyze())
+        finally:
+            asyncio.set_event_loop(None)
+            loop.close()
+
+
+@celery_app.task(
+    bind=True,
+    name="observability.batch_analyze_losses",
+    soft_time_limit=600,  # 10 minutes
+    time_limit=720,       # 12 minutes hard limit
+)
+def batch_analyze_losses_task(
+    self,
+    lookback_hours: int = 24,
+    max_trades: int = 50,
+) -> Dict[str, Any]:
+    """
+    Batch analyze recent losing trades for observability.
+    
+    This can be scheduled to run periodically to catch any missed analyses.
+    
+    Args:
+        lookback_hours: How far back to look for losing trades
+        max_trades: Maximum number of trades to analyze in one batch
+        
+    Returns:
+        Dict with batch analysis summary
+    """
+    from datetime import timedelta
+    
+    task_logger.info(
+        f"🔍 Starting batch loss analysis (lookback: {lookback_hours}h, max: {max_trades})"
+    )
+    
+    async def _batch_analyze():
+        from db_context import get_db_connection
+        
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
+        
+        async with get_db_connection() as client:
+            # Find losing trades from NSE pipeline
+            losing_trades = await client.trade.find_many(
+                where={
+                    "source": {"contains": "nse"},
+                    "status": "executed",
+                    "realized_pnl": {"lt": 0},
+                    "updated_at": {"gte": cutoff_time},
+                },
+                order={"updated_at": "desc"},
+                take=max_trades,
+            )
+            
+            task_logger.info(f"Found {len(losing_trades)} losing trades to analyze")
+            
+            analyzed = 0
+            failed = 0
+            
+            for trade in losing_trades:
+                try:
+                    # Queue individual analysis
+                    analyze_losing_trade_task.delay(
+                        trade_id=trade.id,
+                        triggered_by="batch_analysis",
+                    )
+                    analyzed += 1
+                except Exception as exc:
+                    task_logger.warning(f"Failed to queue analysis for {trade.id}: {exc}")
+                    failed += 1
+            
+            return {
+                "success": True,
+                "total_found": len(losing_trades),
+                "queued_for_analysis": analyzed,
+                "failed_to_queue": failed,
+                "lookback_hours": lookback_hours,
+            }
+    
+    try:
+        return asyncio.run(_batch_analyze())
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            return loop.run_until_complete(_batch_analyze())
+        finally:
+            asyncio.set_event_loop(None)
+            loop.close()
+
+
+# ============================================================================
+# Helper function to trigger analysis from other modules
+# ============================================================================
+
+def trigger_loss_analysis(
+    trade_id: str,
+    triggered_by: str,
+    signal_context: Optional[Dict[str, Any]] = None,
+    priority: int = 5,
+) -> None:
+    """
+    Trigger observability analysis for a losing trade.
+    
+    This is called from the streaming order monitor when:
+    1. Stop-loss is executed
+    2. Trade is closed with negative PnL
+    
+    Args:
+        trade_id: The ID of the trade to analyze
+        triggered_by: What triggered this ("stop_loss", "negative_pnl", etc.)
+        signal_context: Optional context from the original signal
+        priority: Celery task priority (default 5, lower = higher priority)
+    """
+    try:
+        analyze_losing_trade_task.apply_async(
+            args=[trade_id, triggered_by],
+            kwargs={"signal_context": signal_context},
+            queue=QUEUE_NAMES.get("general", "general"),
+            priority=priority,
+        )
+        task_logger.info(
+            f"📤 Queued observability analysis for trade {trade_id[:8]} "
+            f"(triggered_by: {triggered_by})"
+        )
+    except Exception as exc:
+        task_logger.error(f"❌ Failed to queue observability analysis: {exc}")
+
+
+# ============================================================================
+# Module exports
+# ============================================================================
+
+__all__ = [
+    "TradeObservabilityContext",
+    "ObservabilityAnalysisResult",
+    "analyze_losing_trade_task",
+    "batch_analyze_losses_task",
+    "trigger_loss_analysis",
+    "publish_observability_result",
+]

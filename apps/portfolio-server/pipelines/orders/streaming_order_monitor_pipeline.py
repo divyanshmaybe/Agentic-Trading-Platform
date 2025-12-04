@@ -533,6 +533,39 @@ class PathwayOrderMonitor:
                     except Exception as e:
                         logger.warning(f"Failed to update trade_delay for {signal.order_id}: {e}")
                     
+                    # Trigger observability analysis for stop_loss orders
+                    if signal.order_type in ["stop_loss", "stop"]:
+                        try:
+                            from workers.observability_agent_tasks import trigger_loss_analysis
+                            
+                            # Get the parent trade to extract signal context
+                            order = self._pending_orders.get(signal.order_id)
+                            parent_trade_id = order.parent_trade_id if order else None
+                            
+                            signal_context = {}
+                            if parent_trade_id:
+                                parent_trade = await self.db.trade.find_unique(
+                                    where={"id": parent_trade_id}
+                                )
+                                if parent_trade and parent_trade.metadata:
+                                    meta = parent_trade.metadata if isinstance(parent_trade.metadata, dict) else {}
+                                    signal_context = {
+                                        "explanation": meta.get("explanation", ""),
+                                        "pdf_url": meta.get("attachment_url", "") or meta.get("pdf_url", ""),
+                                        "filing_type": meta.get("filing_type", ""),
+                                    }
+                            
+                            trigger_loss_analysis(
+                                trade_id=parent_trade_id or signal.order_id,
+                                triggered_by="stop_loss",
+                                signal_context=signal_context,
+                            )
+                            logger.info(
+                                f"📤 Queued observability analysis for stop_loss {signal.order_id[:8]}"
+                            )
+                        except Exception as obs_exc:
+                            logger.warning(f"Failed to trigger observability analysis: {obs_exc}")
+                    
                     # Remove from pending orders cache
                     if signal.order_id in self._pending_orders:
                         order = self._pending_orders.pop(signal.order_id)
@@ -1364,6 +1397,29 @@ class PathwayOrderMonitor:
                     f"{signal.trade_id[:8]} {signal.symbol} x {signal.quantity} @ ₹{signal.current_price:.2f} "
                     f"(PnL: {pnl_str})"
                 )
+                
+                # Trigger observability analysis for stop-loss or negative PnL trades
+                if signal.close_type == "stop_loss" or pnl < 0:
+                    try:
+                        from workers.observability_agent_tasks import trigger_loss_analysis
+                        triggered_by = "stop_loss" if signal.close_type == "stop_loss" else "negative_pnl"
+                        signal_context = {
+                            "explanation": meta.get("explanation", ""),
+                            "pdf_url": meta.get("attachment_url", "") or meta.get("pdf_url", ""),
+                            "filing_type": meta.get("filing_type", ""),
+                            "realized_pnl": pnl,
+                        }
+                        trigger_loss_analysis(
+                            trade_id=signal.trade_id,
+                            triggered_by=triggered_by,
+                            signal_context=signal_context,
+                        )
+                        logger.info(
+                            f"📤 Queued observability analysis for {signal.trade_id[:8]} "
+                            f"(triggered_by: {triggered_by}, PnL: {pnl_str})"
+                        )
+                    except Exception as obs_exc:
+                        logger.warning(f"Failed to trigger observability analysis: {obs_exc}")
                 
                 # Remove from cache
                 self._tpsl_trades.pop(signal.trade_id, None)

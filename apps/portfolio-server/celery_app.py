@@ -143,6 +143,7 @@ celery_app = Celery(
         "workers.economic_indicators_tasks",
         "workers.low_risk_tasks",  # Low-risk pipeline worker
         "workers.alpha_signal_tasks",
+        "workers.observability_agent_tasks",  # NSE pipeline loss analysis
     ],
 )
 
@@ -259,6 +260,9 @@ celery_app.conf.task_routes = {
     "alpha.generate_daily_signals": {"queue": QUEUE_NAMES["pipelines"], "routing_key": "pipelines"},
     "alpha.generate_signals_for_alpha": {"queue": QUEUE_NAMES["trading"], "routing_key": "trading"},
     "alpha.process_signal_batch": {"queue": QUEUE_NAMES["trading"], "routing_key": "trading"},
+    # Observability agent - uses general queue for loss analysis
+    "observability.analyze_losing_trade": {"queue": QUEUE_NAMES["general"], "routing_key": "general"},
+    "observability.batch_analyze_losses": {"queue": QUEUE_NAMES["general"], "routing_key": "general"},
 }
 
 # Task categories with different resource requirements
