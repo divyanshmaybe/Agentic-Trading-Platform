@@ -5,6 +5,10 @@ from pipelines.orders.streaming_order_monitor_pipeline import (
     OrderConditionChecker,
     PendingOrder,
     OrderExecutionSignal,
+    AutoSellTrade,
+    AutoSellSignal,
+    TPSLTrade,
+    TPSLSignal,
 )
 
 __all__ = [
@@ -12,4 +16,8 @@ __all__ = [
     "OrderConditionChecker",
     "PendingOrder",
     "OrderExecutionSignal",
+    "AutoSellTrade",
+    "AutoSellSignal",
+    "TPSLTrade",
+    "TPSLSignal",
 ]
