@@ -19,8 +19,8 @@ export function ChatMessage({ content, isUser }: ChatMessageProps) {
         className={cn(
           "max-w-[80%] rounded-lg px-4 py-3 text-sm",
           isUser
-            ? "bg-white/10 text-[#fafafa]"
-            : "bg-white/5 text-white/90"
+            ? "bg-white/8 text-[#fafafa]"
+            : "bg-white/6 text-white/90"
         )}
       >
         <p className="whitespace-pre-wrap wrap-break-word">{content}</p>

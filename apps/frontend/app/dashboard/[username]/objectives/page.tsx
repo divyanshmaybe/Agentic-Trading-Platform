@@ -103,7 +103,7 @@ export default function ObjectivesPage() {
           tagline="Manage your trading objectives and goals."
         />
 
-        <div className="flex flex-col h-[calc(100vh-250px)] border border-white/10 rounded-lg bg-black/20 overflow-hidden">
+        <div className="flex flex-col h-[calc(100vh-250px)] border border-white/10 rounded-lg bg-white/6 backdrop-blur overflow-hidden">
           <ChatContainer
             messages={messages}
             isProcessing={isProcessing}
@@ -111,7 +111,7 @@ export default function ObjectivesPage() {
             onFieldSubmit={handleFieldSubmit}
           />
 
-          <div className="border-t border-white/10 p-4 bg-black/30">
+          <div className="border-t border-white/10 p-4 bg-white/8">
             <UserInputBar
               onSend={handleSend}
               disabled={isProcessing || !!showFieldInput}

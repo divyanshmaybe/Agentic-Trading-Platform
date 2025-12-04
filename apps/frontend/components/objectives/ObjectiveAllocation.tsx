@@ -59,7 +59,7 @@ export function ObjectiveAllocation({ objective }: ObjectiveAllocationProps) {
       <h3 className="text-lg font-semibold text-[#fafafa]">Portfolio Allocation</h3>
 
       {allocation.message && (
-        <div className="rounded-lg border border-white/10 bg-black/20 p-4">
+        <div className="rounded-lg border border-white/10 bg-white/8 p-4">
           <div className="text-sm text-white/70">{allocation.message}</div>
         </div>
       )}
@@ -69,8 +69,8 @@ export function ObjectiveAllocation({ objective }: ObjectiveAllocationProps) {
           <div
             key={item.label}
             className={cn(
-              "rounded-lg border border-white/10 bg-black/20 p-4",
-              "hover:bg-black/30 transition-colors"
+              "rounded-lg border border-white/10 bg-white/8 p-4",
+              "hover:bg-white/10 transition-colors"
             )}
           >
             <div className="text-sm text-white/60 mb-1">{item.label}</div>
@@ -80,7 +80,7 @@ export function ObjectiveAllocation({ objective }: ObjectiveAllocationProps) {
       </div>
 
       {allocation.weights && Object.keys(allocation.weights).length > 0 && (
-        <div className="rounded-lg border border-white/10 bg-black/20 p-4">
+        <div className="rounded-lg border border-white/10 bg-white/8 p-4">
           <div className="text-sm font-medium text-white/80 mb-3">Allocation Weights</div>
           <div className="space-y-2">
             {Object.entries(allocation.weights).map(([key, value]) => (

@@ -62,7 +62,7 @@ export function UserInputBar({
             disabled={disabled}
             placeholder={placeholder}
             className={cn(
-              "w-full rounded-lg border border-white/15 bg-black/40 px-4 py-3",
+              "w-full rounded-lg border border-white/15 bg-white/8 px-4 py-3",
               "text-[#fafafa] placeholder:text-white/40",
               "focus:outline-none focus:ring-2 focus:ring-white/20 focus:border-white/30",
               "disabled:opacity-50 disabled:cursor-not-allowed",
@@ -89,8 +89,8 @@ export function UserInputBar({
             htmlFor="file-upload"
             className={cn(
               "flex items-center gap-2 px-3 py-2 rounded-md",
-              "border border-white/15 bg-black/40 text-white/80",
-              "hover:bg-black/60 hover:border-white/25 cursor-pointer",
+              "border border-white/15 bg-white/8 text-white/80",
+              "hover:bg-white/10 hover:border-white/25 cursor-pointer",
               "transition-all text-sm",
               disabled && "opacity-50 cursor-not-allowed"
             )}

@@ -76,8 +76,8 @@ export function ObjectiveDetails({ objective }: ObjectiveDetailsProps) {
           <div
             key={detail.label}
             className={cn(
-              "rounded-lg border border-white/10 bg-black/20 p-4",
-              "hover:bg-black/30 transition-colors"
+              "rounded-lg border border-white/10 bg-white/8 p-4",
+              "hover:bg-white/10 transition-colors"
             )}
           >
             <div className="text-sm text-white/60 mb-1">{detail.label}</div>

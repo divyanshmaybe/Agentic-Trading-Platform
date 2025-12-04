@@ -48,7 +48,7 @@ export function ObjectiveDashboard({ objective }: ObjectiveDashboardProps) {
   return (
     <div className="space-y-6">
       {/* Header Section */}
-      <div className="rounded-lg border border-white/10 bg-black/20 p-6">
+      <div className="rounded-lg border border-white/10 bg-white/6 backdrop-blur p-6">
         <div className="flex items-start justify-between mb-4">
           <div>
             <h2 className="text-2xl font-bold text-[#fafafa] mb-2">

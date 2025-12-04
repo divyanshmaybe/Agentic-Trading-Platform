@@ -49,12 +49,12 @@ function renderFieldCards(data: Record<string, any>, title: string) {
           <div
             key={key}
             className={cn(
-              "rounded-lg border border-white/10 bg-black/20 p-3",
-              "hover:bg-black/30 transition-colors"
+              "rounded-lg border border-white/10 bg-white/8 p-3",
+              "hover:bg-white/10 transition-colors"
             )}
           >
             <div className="text-xs text-white/60 mb-1">{formatFieldName(key)}</div>
-            <div className="text-sm font-medium text-[#fafafa] break-words">
+            <div className="text-sm font-medium text-[#fafafa] wrap-break-word">
               {formatFieldValue(value)}
             </div>
           </div>
@@ -82,19 +82,19 @@ export function ObjectiveConstraints({ objective }: ObjectiveConstraintsProps) {
       <h3 className="text-lg font-semibold text-[#fafafa]">Constraints & Preferences</h3>
 
       {objective.constraints && Object.keys(objective.constraints).length > 0 && (
-        <div className="rounded-lg border border-white/10 bg-black/20 p-4">
+        <div className="rounded-lg border border-white/10 bg-white/8 backdrop-blur p-4">
           {renderFieldCards(objective.constraints, "Constraints")}
         </div>
       )}
 
       {objective.preferences && Object.keys(objective.preferences).length > 0 && (
-        <div className="rounded-lg border border-white/10 bg-black/20 p-4">
+        <div className="rounded-lg border border-white/10 bg-white/8 backdrop-blur p-4">
           {renderFieldCards(objective.preferences, "Preferences")}
         </div>
       )}
 
       {objective.generic_notes && objective.generic_notes.length > 0 && (
-        <div className="rounded-lg border border-white/10 bg-black/20 p-4">
+        <div className="rounded-lg border border-white/10 bg-white/8 backdrop-blur p-4">
           <div className="text-sm font-medium text-white/80 mb-3">Notes</div>
           <ul className="space-y-2">
             {objective.generic_notes.map((note, index) => (
