@@ -79,6 +79,9 @@ REDIS_URL=redis://auth_redis:6379
 CELERY_BROKER_URL=redis://auth_redis:6379/0
 CELERY_RESULT_BACKEND=redis://auth_redis:6379/1
 PORTFOLIO_SERVICE_URL=http://portfolio_server:8000
+NODE_ENV=production
+PORT=4000
+CLIENT_URL=http://localhost:3000
 EOF
     echo "   ✅ apps/auth_server/docker.env generated"
     
@@ -102,6 +105,9 @@ CELERY_RESULT_BACKEND=redis://portfolio_redis:6379/1
 AUTH_SERVER_URL=http://auth_server:4000
 KAFKA_BOOTSTRAP_SERVERS=pathway-kafka:9092
 KAFKA_ENABLED=true
+PORTFOLIO_SERVICE_URL=http://portfolio_server:8000
+REDBEAT_REDIS_URL=redis://portfolio_redis:6379/0
+SKIP_DOTENV=true
 EOF
     echo "   ✅ apps/portfolio-server/docker.env generated"
     
@@ -122,6 +128,10 @@ REDIS_HOST=portfolio_redis
 REDIS_PORT=6379
 CELERY_BROKER_URL=redis://portfolio_redis:6379/2
 CELERY_RESULT_BACKEND=redis://portfolio_redis:6379/3
+MCP_SERVER_URL=http://portfolio_server:8000/mcp
+ALPHACOPILOT_HOST=0.0.0.0
+ALPHACOPILOT_PORT=8069
+ALPHACOPILOT_CORS_ORIGINS=http://localhost:3000,http://frontend:3000
 EOF
     echo "   ✅ apps/alphacopilot-server/docker.env generated"
     
@@ -141,6 +151,9 @@ REDIS_HOST=auth_redis
 REDIS_PORT=6379
 REDIS_URL=redis://auth_redis:6379
 AUTH_SERVER_URL=http://auth_server:4000
+NODE_ENV=production
+KAFKA_CLIENT_ID=notification-server
+KAFKA_GROUP_ID=notifications-consumer
 EOF
     echo "   ✅ apps/notification_server/docker.env generated"
     
@@ -159,6 +172,9 @@ DATABASE_URL=postgresql://auth_user:auth_password@auth_postgres:5432/auth_db
 NEXT_PUBLIC_API_URL=http://auth_server:4000
 NEXT_PUBLIC_PORTFOLIO_API_URL=http://portfolio_server:8000
 NEXT_PUBLIC_WS_URL=ws://notification_server:4001
+PORT=3000
+NEXT_TELEMETRY_DISABLED=1
+NODE_ENV=production
 EOF
     echo "   ✅ apps/frontend/docker.env generated"
 }

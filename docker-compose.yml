@@ -107,11 +107,6 @@ services:
     env_file:
       - docker.env
       - apps/auth_server/docker.env
-    environment:
-      NODE_ENV: production
-      PORT: 4000
-      CLIENT_URL: http://localhost:3000
-      INTERNAL_SERVICE_SECRET: agentinvest-secret
     working_dir: /app/apps/auth_server
     command: >
       sh -c "pnpm prisma generate --schema ../../shared/prisma/schema.prisma &&
@@ -144,11 +139,6 @@ services:
     env_file:
       - docker.env
       - apps/notification_server/docker.env
-    environment:
-      NODE_ENV: production
-      KAFKA_CLIENT_ID: notification-server
-      KAFKA_GROUP_ID: notifications-consumer
-      INTERNAL_SERVICE_SECRET: agentinvest-secret
     working_dir: /app
     command: >
       sh -c "cd apps/notification_server && pnpm prisma generate --schema /app/shared/prisma/schema.prisma &&
@@ -182,11 +172,6 @@ services:
       - docker.env
       - apps/portfolio-server/docker.env
     environment:
-      PORT: 8000
-      SKIP_DOTENV: "true"
-      PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
-      INTERNAL_SERVICE_SECRET: agentinvest-secret
-      CLIENT_URL: http://localhost:3000
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
       KAFKA_CLIENT_ID: portfolio-server
     working_dir: /app/apps/portfolio-server
@@ -222,14 +207,10 @@ services:
       - apps/portfolio-server/docker.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
-      SKIP_DOTENV: "true"
       CELERY_WORKER_RUNNING: "1"
-      PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
-      INTERNAL_SERVICE_SECRET: agentinvest-secret
       PROMETHEUS_ENABLED: "true"
       PROMETHEUS_PORT: "9101"
       WORKER_NAME: trading@docker
-      # Override Kafka config for Docker networking
       KAFKA_CLIENT_ID: portfolio-celery-trading
     working_dir: /app/apps/portfolio-server
     command: >
@@ -264,10 +245,7 @@ services:
       - apps/portfolio-server/docker.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
-      SKIP_DOTENV: "true"
       CELERY_WORKER_RUNNING: "1"
-      PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
-      INTERNAL_SERVICE_SECRET: agentinvest-secret
       PROMETHEUS_ENABLED: "true"
       PROMETHEUS_PORT: "9102"
       WORKER_NAME: nse_pipeline@docker
@@ -305,10 +283,7 @@ services:
       - apps/portfolio-server/docker.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
-      SKIP_DOTENV: "true"
       CELERY_WORKER_RUNNING: "1"
-      PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
-      INTERNAL_SERVICE_SECRET: agentinvest-secret
       PROMETHEUS_ENABLED: "true"
       PROMETHEUS_PORT: "9108"
       WORKER_NAME: news_pipeline@docker
@@ -346,10 +321,7 @@ services:
       - apps/portfolio-server/docker.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
-      SKIP_DOTENV: "true"
       CELERY_WORKER_RUNNING: "1"
-      PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
-      INTERNAL_SERVICE_SECRET: agentinvest-secret
       PROMETHEUS_ENABLED: "true"
       PROMETHEUS_PORT: "9107"
       WORKER_NAME: low_risk@docker
@@ -387,10 +359,7 @@ services:
       - apps/portfolio-server/docker.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
-      SKIP_DOTENV: "true"
       CELERY_WORKER_RUNNING: "1"
-      PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
-      INTERNAL_SERVICE_SECRET: agentinvest-secret
       PROMETHEUS_ENABLED: "true"
       PROMETHEUS_PORT: "9103"
       WORKER_NAME: allocation@docker
@@ -428,10 +397,7 @@ services:
       - apps/portfolio-server/docker.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
-      SKIP_DOTENV: "true"
       CELERY_WORKER_RUNNING: "1"
-      PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
-      INTERNAL_SERVICE_SECRET: agentinvest-secret
       PROMETHEUS_ENABLED: "true"
       PROMETHEUS_PORT: "9104"
       WORKER_NAME: market@docker
@@ -469,10 +435,7 @@ services:
       - apps/portfolio-server/docker.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
-      SKIP_DOTENV: "true"
       CELERY_WORKER_RUNNING: "1"
-      PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
-      INTERNAL_SERVICE_SECRET: agentinvest-secret
       PROMETHEUS_ENABLED: "true"
       PROMETHEUS_PORT: "9105"
       WORKER_NAME: general@docker
@@ -510,10 +473,7 @@ services:
       - apps/portfolio-server/docker.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
-      SKIP_DOTENV: "true"
       CELERY_WORKER_RUNNING: "1"
-      PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
-      INTERNAL_SERVICE_SECRET: agentinvest-secret
       PROMETHEUS_ENABLED: "true"
       PROMETHEUS_PORT: "9106"
       WORKER_NAME: streaming@docker
@@ -551,12 +511,6 @@ services:
       - apps/portfolio-server/docker.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
-      SKIP_DOTENV: "true"
-      PORTFOLIO_SERVICE_URL: http://portfolio_server:8000
-      REDBEAT_REDIS_URL: redis://portfolio_redis:6379/0
-      INTERNAL_SERVICE_SECRET: agentinvest-secret
-      PROMETHEUS_ENABLED: "false"
-      # Override Kafka config for Docker networking
       KAFKA_CLIENT_ID: portfolio-celery-beat
     working_dir: /app/apps/portfolio-server
     command: >
@@ -605,7 +559,6 @@ services:
       - apps/portfolio-server/docker.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
-      SKIP_DOTENV: "true"
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "python -m prisma generate &&
@@ -641,12 +594,6 @@ services:
     env_file:
       - docker.env
       - apps/frontend/docker.env
-    environment:
-      PORT: 3000
-      NEXT_TELEMETRY_DISABLED: "1"
-      NODE_ENV: production
-      INTERNAL_SERVICE_SECRET: agentinvest-secret
-      # Redis configuration for notifications pub/sub
     working_dir: /app/apps/frontend
     command: >
       sh -c "pnpm --filter frontend exec next start -H 0.0.0.0 -p ${PORT:-3000}"
@@ -702,12 +649,7 @@ services:
       - docker.env
       - apps/alphacopilot-server/docker.env
     environment:
-      # Override for Docker networking
-      ALPHACOPILOT_HOST: "0.0.0.0"
-      ALPHACOPILOT_PORT: "8069"
       PYTHONPATH: /app:/app/shared/py:/app/quant-stream:/app/apps/alphacopilot-server
-      ALPHACOPILOT_CORS_ORIGINS: http://localhost:3000,http://frontend:3000
-      MCP_SERVER_URL: http://portfolio_server:8000/mcp
     working_dir: /app/apps/alphacopilot-server
     command: python -m uvicorn main:app --host 0.0.0.0 --port 8069
     ports:
@@ -739,7 +681,6 @@ services:
       - docker.env
       - apps/alphacopilot-server/docker.env
     environment:
-      # Override for Docker networking
       PYTHONPATH: /app:/app/shared/py:/app/quant-stream:/app/apps/alphacopilot-server
     working_dir: /app/quant-stream
     command: celery -A quant_stream.mcp_server.core.celery_config worker --loglevel=info -Q backtest --concurrency=2 --hostname=backtest@%h --max-tasks-per-child=50
