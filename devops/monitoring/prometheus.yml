@@ -57,8 +57,17 @@ scrape_configs:
   # Redis Exporter
   - job_name: 'redis'
     static_configs:
-      - targets: ['host.docker.internal:9121', 'redis-exporter:9121']
-        
+      - targets: ['localhost:9121', 'host.docker.internal:9121', 'redis-exporter:9121']
+        labels:
+          environment: 'local'
+
+  # Celery Exporter (Primary Celery Metrics)
+  - job_name: 'celery-exporter'
+    static_configs:
+      - targets: ['localhost:9540', 'host.docker.internal:9540', 'celery-exporter:9540']
+        labels:
+          environment: 'local'
+          
   # PostgreSQL Exporter
   - job_name: 'postgresql'
     static_configs:

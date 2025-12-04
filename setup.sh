@@ -19,6 +19,12 @@ PROMETHEUS_CONTAINER_NAME="${PROMETHEUS_CONTAINER_NAME:-pathway-prometheus}"
 GRAFANA_IMAGE="${GRAFANA_IMAGE:-grafana/grafana:latest}"
 GRAFANA_CONTAINER_NAME="${GRAFANA_CONTAINER_NAME:-pathway-grafana}"
 
+CELERY_EXPORTER_IMAGE="${CELERY_EXPORTER_IMAGE:-danihodovic/celery-exporter:latest}"
+CELERY_EXPORTER_CONTAINER_NAME="${CELERY_EXPORTER_CONTAINER_NAME:-pathway-celery-exporter}"
+
+REDIS_EXPORTER_IMAGE="${REDIS_EXPORTER_IMAGE:-oliver006/redis_exporter:latest}"
+REDIS_EXPORTER_CONTAINER_NAME="${REDIS_EXPORTER_CONTAINER_NAME:-pathway-redis-exporter}"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -229,6 +235,8 @@ datasources:
     editable: true
     jsonData:
       timeInterval: "15s"
+      httpMethod: "POST"
+      manageAlerts: true
     
   - name: Loki
     type: loki
@@ -276,6 +284,62 @@ EOF
     log_success "Grafana is running on http://localhost:3001 (admin/admin)"
 }
 
+setup_celery_exporter() {
+    log_info "Setting up Celery Exporter (Prometheus metrics for Celery)..."
+    
+    # Pull image
+    log_info "Pulling Celery Exporter image ${CELERY_EXPORTER_IMAGE}..."
+    docker pull "${CELERY_EXPORTER_IMAGE}" >/dev/null
+    
+    # Remove existing container
+    if docker ps -a --format '{{.Names}}' | grep -q "^${CELERY_EXPORTER_CONTAINER_NAME}$"; then
+        log_warning "Removing existing container ${CELERY_EXPORTER_CONTAINER_NAME}..."
+        docker rm -f "${CELERY_EXPORTER_CONTAINER_NAME}" >/dev/null
+    fi
+    
+    # Get Redis URL from environment or use default
+    local redis_url="${CELERY_BROKER_URL:-redis://localhost:6381/0}"
+    
+    # Start Celery Exporter with host network
+    log_info "Starting Celery Exporter container ${CELERY_EXPORTER_CONTAINER_NAME}..."
+    docker run -d --name "${CELERY_EXPORTER_CONTAINER_NAME}" \
+        --network=host \
+        -e CE_BROKER_URL="${redis_url}" \
+        -e CE_LISTEN_ADDRESS="0.0.0.0:9540" \
+        -e CE_NAMESPACE="celery" \
+        -e CE_MAX_TASKS="10000" \
+        -e CE_RETRY_INTERVAL="5" \
+        "${CELERY_EXPORTER_IMAGE}" >/dev/null
+    
+    log_success "Celery Exporter is running on http://localhost:9540/metrics"
+}
+
+setup_redis_exporter() {
+    log_info "Setting up Redis Exporter (Prometheus metrics for Redis)..."
+    
+    # Pull image
+    log_info "Pulling Redis Exporter image ${REDIS_EXPORTER_IMAGE}..."
+    docker pull "${REDIS_EXPORTER_IMAGE}" >/dev/null
+    
+    # Remove existing container
+    if docker ps -a --format '{{.Names}}' | grep -q "^${REDIS_EXPORTER_CONTAINER_NAME}$"; then
+        log_warning "Removing existing container ${REDIS_EXPORTER_CONTAINER_NAME}..."
+        docker rm -f "${REDIS_EXPORTER_CONTAINER_NAME}" >/dev/null
+    fi
+    
+    # Get Redis address from environment or use default (portfolio_redis port)
+    local redis_addr="${REDIS_ADDR:-redis://localhost:6381}"
+    
+    # Start Redis Exporter with host network
+    log_info "Starting Redis Exporter container ${REDIS_EXPORTER_CONTAINER_NAME}..."
+    docker run -d --name "${REDIS_EXPORTER_CONTAINER_NAME}" \
+        --network=host \
+        -e REDIS_ADDR="${redis_addr}" \
+        "${REDIS_EXPORTER_IMAGE}" >/dev/null
+    
+    log_success "Redis Exporter is running on http://localhost:9121/metrics"
+}
+
 # ============================================================================
 # MAIN LOGIC
 # ============================================================================
@@ -284,16 +348,19 @@ usage() {
     echo "Usage: $0 [SERVICE...]"
     echo ""
     echo "Services:"
-    echo "  kafka      - Apache Kafka message broker"
-    echo "  loki       - Grafana Loki log aggregation"
-    echo "  prometheus - Prometheus metrics collection"
-    echo "  grafana    - Grafana visualization dashboard"
-    echo "  monitoring - All monitoring services (Loki, Prometheus, Grafana)"
-    echo "  all        - All services (Kafka + monitoring stack)"
+    echo "  kafka           - Apache Kafka message broker"
+    echo "  loki            - Grafana Loki log aggregation"
+    echo "  prometheus      - Prometheus metrics collection"
+    echo "  grafana         - Grafana visualization dashboard"
+    echo "  celery-exporter - Celery Prometheus exporter (port 9540)"
+    echo "  redis-exporter  - Redis Prometheus exporter (port 9121)"
+    echo "  monitoring      - All monitoring services (Loki, Prometheus, Grafana, Celery Exporter, Redis Exporter)"
+    echo "  all             - All services (Kafka + monitoring stack)"
     echo ""
     echo "Examples:"
     echo "  $0 kafka                    # Start only Kafka"
-    echo "  $0 monitoring              # Start Loki, Prometheus, Grafana"
+    echo "  $0 monitoring               # Start Loki, Prometheus, Grafana, Celery Exporter, Redis Exporter"
+    echo "  $0 celery-exporter          # Start only Celery Exporter"
     echo "  $0 all                      # Start everything"
     echo ""
     echo "Environment variables:"
@@ -301,6 +368,10 @@ usage() {
     echo "  LOKI_IMAGE, LOKI_CONTAINER_NAME"
     echo "  PROMETHEUS_IMAGE, PROMETHEUS_CONTAINER_NAME"
     echo "  GRAFANA_IMAGE, GRAFANA_CONTAINER_NAME"
+    echo "  CELERY_EXPORTER_IMAGE, CELERY_EXPORTER_CONTAINER_NAME"
+    echo "  REDIS_EXPORTER_IMAGE, REDIS_EXPORTER_CONTAINER_NAME"
+    echo "  CELERY_BROKER_URL           # Redis URL for Celery Exporter (default: redis://localhost:6381/0)"
+    echo "  REDIS_ADDR                  # Redis address for Redis Exporter (default: redis://localhost:6381)"
 }
 
 main() {
@@ -334,12 +405,22 @@ main() {
                 setup_loki
                 setup_prometheus
                 setup_grafana
+                setup_celery_exporter
+                setup_redis_exporter
+                ;;
+            celery-exporter)
+                setup_celery_exporter
+                ;;
+            redis-exporter)
+                setup_redis_exporter
                 ;;
             all)
                 setup_kafka
                 setup_loki
                 setup_prometheus
                 setup_grafana
+                setup_celery_exporter
+                setup_redis_exporter
                 ;;
             *)
                 log_error "Unknown service: $service"
@@ -364,7 +445,13 @@ main() {
         echo "  Prometheus: http://localhost:9090"
     fi
     if docker ps --format '{{.Names}}' | grep -q "^${GRAFANA_CONTAINER_NAME}$"; then
-        echo "  Grafana:    http://localhost:3001 (admin/admin)"
+        echo "  Grafana:         http://localhost:3001 (admin/admin)"
+    fi
+    if docker ps --format '{{.Names}}' | grep -q "^${CELERY_EXPORTER_CONTAINER_NAME}$"; then
+        echo "  Celery Exporter: http://localhost:9540/metrics"
+    fi
+    if docker ps --format '{{.Names}}' | grep -q "^${REDIS_EXPORTER_CONTAINER_NAME}$"; then
+        echo "  Redis Exporter:  http://localhost:9121/metrics"
     fi
 }
 
