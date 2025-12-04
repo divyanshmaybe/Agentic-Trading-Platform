@@ -1,21 +1,59 @@
 """
 Utility functions and Pydantic models for extracting structured investment
 objectives from transcripts or pre-structured JSON payloads.
+
+Uses gemini-2.5-flash for LLM-based extraction with YAML prompt templates.
 """
 
 from __future__ import annotations
 
 import json
+import logging
+import os
 import re
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
-import aiohttp
+import yaml
+from jinja2 import Environment, StrictUndefined
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
+logger = logging.getLogger(__name__)
 
-# LLM Extractor Classes
-class ExtractionResult(BaseModel):
+# -----------------------------------------------------------------------------
+# Prompt Loading Utilities
+# -----------------------------------------------------------------------------
+
+
+def _load_prompt_config() -> Dict[str, Any]:
+    """Load objective intake prompt from YAML template."""
+    template_path = Path(__file__).parent.parent / "templates" / "objective_intake_prompt.yaml"
+    
+    if not template_path.exists():
+        raise FileNotFoundError(f"Prompt template not found: {template_path}")
+    
+    with open(template_path, "r") as f:
+        config = yaml.safe_load(f)
+    
+    logger.debug(f"Loaded prompt config: {config.get('name', 'unknown')}")
+    return config
+
+
+def _render_prompt(template: str, **kwargs) -> str:
+    """Render a Jinja2 template with provided variables."""
+    env = Environment(undefined=StrictUndefined)
+    jinja_template = env.from_string(template)
+    return jinja_template.render(**kwargs)
+
+
+# -----------------------------------------------------------------------------
+# LLM Extractor - Gemini 2.5 Flash
+# -----------------------------------------------------------------------------
+
+
+class LLMExtractionResult(BaseModel):
+    """Result from LLM-based extraction."""
     success: bool
     data: Optional[Dict[str, Any]] = None
     missing_fields: List[str] = Field(default_factory=list)
@@ -24,6 +62,7 @@ class ExtractionResult(BaseModel):
 
 
 class InvestmentObjective(BaseModel):
+    """Schema for extracted investment objectives."""
     investment_amount: Optional[float] = None
     investment_horizon_years: Optional[int] = None
     expected_return_target: Optional[float] = None
@@ -33,239 +72,193 @@ class InvestmentObjective(BaseModel):
     generic_notes: Optional[List[str]] = None
 
 
-class InvestmentObjectiveExtractor:
-    def __init__(self, api_key: str, model: str = "llama-3.1-8b-instant"):
-        self.api_key = api_key
-        self.model = model
-        self.api_url = "https://api.groq.com/openai/v1/chat/completions"
+class GeminiObjectiveExtractor:
+    """
+    Extract investment objectives from transcripts using Gemini 2.5 Flash.
     
-    def _create_extraction_prompt(self, transcript: str) -> str:
-        """Create a few-shot prompt for extracting investment objectives."""
-        
-        prompt = f"""You are an expert financial data extractor. Your task is to extract investment objectives from a conversation transcript between a user and an investment professional.
-
-Extract the following information and return ONLY a valid JSON object (no markdown, no explanation, no extra text):
-
-Fields to extract (only include if mentioned in transcript):
-- investment_amount: Total amount user wants to invest (number)
-- investment_horizon_years: Investment duration in years (integer)
-- expected_return_target: Expected return as decimal (e.g., 0.25 for 25%)
-- risk_tolerance: Must be one of: "low", "medium", or "high"
-- allocation_strategy: Object with low_risk, high_risk, alpha, liquid percentages (decimals that sum to 1.0)
-- constraints: Object containing investment constraints (min_allocation, max_allocation, max_weight_drift, segment wise constraints)
-- generic_notes: Any additional preferences or notes
-
-Keep in mind that the objective might be complex and span multiple parts of the conversation. Synthesize the information to create a coherent investment objective.
-
-IMPORTANT: Do NOT include fields that are not mentioned in the transcript. Only extract what is explicitly stated or clearly implied.
-
-
-EXAMPLES:
-
-Example 1:
-Transcript: "Hi, I'm John. I want to invest 500,000 rupees for my daughter's education in 5 years. I can't afford to lose much, so I prefer safe options."
-Output:
-{{
-  "investment_amount": 500000,
-  "investment_horizon_years": 5,
-  "risk_tolerance": "low",
-  "generic_notes": ["Investment for daughter's education, prefers safe options"]
-}}
-
-Example 2:
-Transcript: "Professional: How much are you looking to invest? User: Around 2 million. Professional: What's your timeline? User: 10 years, retirement planning. Professional: Risk appetite? User: I'm okay with moderate risk, aiming for 15% annual returns. Professional: Any preferences? User: No tobacco or alcohol companies please."
-Output:
-{{
-  "investment_amount": 2000000,
-  "investment_horizon_years": 10,
-  "expected_return_target": 0.15,
-  "risk_tolerance": "medium",
-  "constraints": {{
-    "ESG_exclusions": ["tobacco", "alcohol"]
-  }},
-  "generic_notes": ["Retirement planning, ESG-conscious investor"]
-}}
-
-Example 3:
-Transcript: "User: I have 10 lakhs. Professional: Timeline? User: 3 years. Professional: Risk level? User: High, I want aggressive growth. Target 30% returns. I want 60% in high-risk stocks, 25% in moderate, 10% in alternatives, 5% cash."
-Output:
-{{
-  "investment_amount": 1000000,
-  "investment_horizon_years": 3,
-  "expected_return_target": 0.30,
-  "risk_tolerance": "high",
-  "allocation_strategy": {{
-    "low_risk": 0.25,
-    "high_risk": 0.60,
-    "alpha": 0.10,
-    "liquid": 0.05
-  }},
-  "generic_notes": ["Seeking aggressive growth strategy"]
-}}
-
-NOW EXTRACT FROM THIS TRANSCRIPT:
-
-Transcript: "{transcript}"
-
-Return ONLY the JSON object, no other text:"""
-        
-        return prompt
+    Uses YAML-based prompt templates for clean, maintainable prompts.
+    """
     
-    async def extract_from_transcript(self, transcript: str) -> ExtractionResult:
+    def __init__(self, api_key: Optional[str] = None):
+        """Initialize extractor with Gemini API key."""
+        self.api_key = api_key or os.getenv("GEMINI_API_KEY")
+        if not self.api_key:
+            raise ValueError("GEMINI_API_KEY not found")
+        
+        self._config: Optional[Dict[str, Any]] = None
+        self._model = None
+    
+    @property
+    def config(self) -> Dict[str, Any]:
+        """Lazily load prompt configuration."""
+        if self._config is None:
+            self._config = _load_prompt_config()
+        return self._config
+    
+    def _get_model(self):
+        """Get or create Gemini model instance."""
+        if self._model is None:
+            try:
+                from langchain_google_genai import ChatGoogleGenerativeAI
+                
+                model_config = self.config.get("model_config", {})
+                model_name = self.config.get("model", "gemini-2.5-flash")
+                
+                self._model = ChatGoogleGenerativeAI(
+                    model=model_name,
+                    google_api_key=self.api_key,
+                    temperature=model_config.get("temperature", 0.1),
+                    max_tokens=model_config.get("max_tokens", 1024),
+                )
+                logger.info(f"Initialized Gemini model: {model_name}")
+            except ImportError as e:
+                raise ImportError(
+                    "langchain_google_genai required for Gemini extraction. "
+                    "Install with: pip install langchain-google-genai"
+                ) from e
+        return self._model
+    
+    def extract_from_transcript(self, transcript: str) -> LLMExtractionResult:
+        """
+        Extract investment objectives from transcript using Gemini.
+        
+        Args:
+            transcript: User conversation transcript
+            
+        Returns:
+            LLMExtractionResult with extracted data or errors
+        """
         try:
-            prompt = self._create_extraction_prompt(transcript)
-
-            headers = {
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json"
-            }
+            # Render prompt with transcript
+            prompt_template = self.config.get("prompt", "")
+            rendered_prompt = _render_prompt(prompt_template, transcript=transcript)
             
-            payload = {
-                "model": self.model,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "You are a financial data extraction expert. Extract investment information and return ONLY valid JSON with no additional text or markdown."
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                "temperature": 0.1,
-                "max_tokens": 1024
-            }
+            # Call Gemini
+            model = self._get_model()
+            response = model.invoke(rendered_prompt)
+            llm_response = response.content if hasattr(response, 'content') else str(response)
             
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    self.api_url, 
-                    headers=headers, 
-                    json=payload
-                ) as response:
-                    if response.status != 200:
-                        error_text = await response.text()
-                        return ExtractionResult(
-                            success=False,
-                            validation_errors=[f"API Error {response.status}: {error_text}"]
-                        )
-                    
-                    result = await response.json()
-                    llm_response = result["choices"][0]["message"]["content"]
-            
-            # Parse and validate the response
+            # Parse and validate
             return self._parse_and_validate(llm_response)
             
         except Exception as e:
-            return ExtractionResult(
+            logger.error(f"Gemini extraction failed: {e}")
+            return LLMExtractionResult(
                 success=False,
                 validation_errors=[f"Extraction error: {str(e)}"]
             )
     
-    def _parse_and_validate(self, llm_response: str) -> ExtractionResult:
-        """
-        Parse LLM response and validate against schema
-        """
+    def _parse_and_validate(self, llm_response: str) -> LLMExtractionResult:
+        """Parse LLM response and validate against schema."""
         try:
-            cleaned_response = llm_response.strip()
-            if cleaned_response.startswith("```"):
-                cleaned_response = re.sub(r'^```(?:json)?\n?', '', cleaned_response)
-                cleaned_response = re.sub(r'\n?```$', '', cleaned_response)
+            # Clean markdown code blocks
+            cleaned = llm_response.strip()
+            if cleaned.startswith("```"):
+                cleaned = re.sub(r'^```(?:json)?\n?', '', cleaned)
+                cleaned = re.sub(r'\n?```$', '', cleaned)
             
-
-            raw_data = json.loads(cleaned_response)
+            # Parse JSON
+            raw_data = json.loads(cleaned)
             investment_obj = InvestmentObjective(**raw_data)
             
-            # Identify missing fields
-            missing_fields = self._identify_missing_fields(investment_obj)
+            # Identify missing critical fields
+            missing = self._identify_missing_fields(investment_obj)
             
-            # Additional validation
-            validation_errors = self._additional_validations(investment_obj)
+            # Additional validations
+            errors = self._validate_business_rules(investment_obj)
             
-            return ExtractionResult(
-                success=len(validation_errors) == 0,
+            return LLMExtractionResult(
+                success=len(errors) == 0,
                 data=investment_obj.model_dump() if investment_obj else None,
-                missing_fields=missing_fields,
-                validation_errors=validation_errors,
+                missing_fields=missing,
+                validation_errors=errors,
                 raw_llm_response=llm_response
             )
             
         except json.JSONDecodeError as e:
-            return ExtractionResult(
+            return LLMExtractionResult(
                 success=False,
                 validation_errors=[f"JSON parsing error: {str(e)}"],
                 raw_llm_response=llm_response
             )
         except ValidationError as e:
-            return ExtractionResult(
+            return LLMExtractionResult(
                 success=False,
                 validation_errors=[f"Validation error: {str(e)}"],
                 raw_llm_response=llm_response
             )
         except Exception as e:
-            return ExtractionResult(
+            return LLMExtractionResult(
                 success=False,
                 validation_errors=[f"Unknown error: {str(e)}"],
                 raw_llm_response=llm_response
             )
     
     def _identify_missing_fields(self, obj: InvestmentObjective) -> List[str]:
-        """Identify which critical fields are missing."""
+        """Identify critical fields that are missing."""
         missing = []
-        
         critical_fields = {
             "investment_amount": obj.investment_amount,
-            "expected_return_target": obj.expected_return_target,
             "investment_horizon_years": obj.investment_horizon_years,
-            "risk_tolerance": obj.risk_tolerance
+            "expected_return_target": obj.expected_return_target,
+            "risk_tolerance": obj.risk_tolerance,
         }
-        
         for field_name, field_value in critical_fields.items():
             if field_value is None:
                 missing.append(field_name)
-        
         return missing
     
-    def _additional_validations(self, obj: InvestmentObjective) -> List[str]:
-        """Perform additional business logic validations."""
+    def _validate_business_rules(self, obj: InvestmentObjective) -> List[str]:
+        """Validate business logic rules."""
         errors = []
         
-        # Validate allocation strategy sums to 1
+        # Allocation strategy must sum to 1.0
         if obj.allocation_strategy:
             total = sum(obj.allocation_strategy.values())
             if abs(total - 1.0) > 0.01:
-                errors.append(
-                    f"Allocation strategy must sum to 1.0, got {total:.2f}"
-                )
+                errors.append(f"Allocation strategy must sum to 1.0, got {total:.2f}")
         
-        # Validate expected return is reasonable
+        # Expected return should be reasonable (0-100%)
         if obj.expected_return_target and obj.expected_return_target > 1.0:
             errors.append(
-                f"Expected return target seems unrealistic: {obj.expected_return_target*100}%"
+                f"Expected return seems unrealistic: {obj.expected_return_target * 100}%"
+            )
+        
+        # Risk tolerance must be valid
+        if obj.risk_tolerance and obj.risk_tolerance not in ["low", "medium", "high"]:
+            errors.append(
+                f"Invalid risk tolerance: {obj.risk_tolerance}. Must be low/medium/high"
             )
         
         return errors
 
 
-def extract_investment_objectives_sync(
-    transcript: str, 
-    api_key: str,
-    model: str = "llama-3.1-8b-instant"
-) -> ExtractionResult:
-    import asyncio
+def extract_objectives_with_gemini(transcript: str) -> LLMExtractionResult:
+    """
+    Extract investment objectives from transcript using Gemini 2.5 Flash.
     
-    extractor = InvestmentObjectiveExtractor(api_key, model)
-
+    This is the primary extraction method using YAML-based prompts.
+    
+    Args:
+        transcript: User conversation transcript
+        
+    Returns:
+        LLMExtractionResult with extracted data
+    """
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # If already in async context, create new loop
-            import nest_asyncio
-            nest_asyncio.apply()
-    except RuntimeError:
-        pass
-    
-    return asyncio.run(extractor.extract_from_transcript(transcript))
+        extractor = GeminiObjectiveExtractor()
+        return extractor.extract_from_transcript(transcript)
+    except Exception as e:
+        logger.error(f"Gemini extraction failed: {e}")
+        return LLMExtractionResult(
+            success=False,
+            validation_errors=[f"Extraction failed: {str(e)}"]
+        )
 
+
+# -----------------------------------------------------------------------------
+# Constants and Schema Models
+# -----------------------------------------------------------------------------
 
 MANDATORY_FIELDS = [
     "investable_amount",
@@ -393,25 +386,23 @@ def _search_first(patterns: Iterable[str], text: str) -> Optional[re.Match[str]]
 
 def extract_from_transcript(transcript: str) -> Dict[str, Any]:
     """
-    Extract investment objectives from transcript using LLM-based extraction.
-    Falls back to regex-based extraction if LLM fails or returns invalid data.
-    """
-    import os
+    Extract investment objectives from transcript.
     
-    # Try LLM extraction first
-    api_key = os.getenv("GROQ_API_KEY")
-    if api_key:
+    Uses Gemini 2.5 Flash as primary extraction method.
+    Falls back to regex-based extraction if LLM fails.
+    """
+    # Try Gemini extraction first
+    result = extract_objectives_with_gemini(transcript)
+    
+    if result.success and result.data:
         try:
-            result = extract_investment_objectives_sync(transcript, api_key)
-            if result.success and result.data:
-                try:
-                    return _map_llm_output_to_system_format(result.data)
-                except ValueError as e:
-                    # LLM returned data but it was invalid - log and fall back
-                    print(f"LLM returned invalid data: {e}")
-        except Exception as e:
-            # LLM extraction failed completely - log and fall back
-            print(f"LLM extraction failed: {e}")
+            return _map_llm_output_to_system_format(result.data)
+        except ValueError as e:
+            logger.warning(f"LLM returned invalid data: {e}")
+    
+    # Fallback to regex-based extraction
+    logger.info("Falling back to regex-based extraction")
+    return _extract_from_transcript_regex(transcript)
     
     # Fallback to regex-based extraction
     return _extract_from_transcript_regex(transcript)
