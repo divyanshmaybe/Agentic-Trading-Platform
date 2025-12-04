@@ -107,7 +107,6 @@ KAFKA_BOOTSTRAP_SERVERS=pathway-kafka:9092
 KAFKA_ENABLED=true
 PORTFOLIO_SERVICE_URL=http://portfolio_server:8000
 REDBEAT_REDIS_URL=redis://portfolio_redis:6379/0
-SKIP_DOTENV=true
 EOF
     echo "   ✅ apps/portfolio-server/docker.env generated"
     
@@ -169,9 +168,14 @@ EOF
 
 # ====== Docker Network Overrides ======
 DATABASE_URL=postgresql://auth_user:auth_password@auth_postgres:5432/auth_db
-NEXT_PUBLIC_API_URL=http://auth_server:4000
-NEXT_PUBLIC_PORTFOLIO_API_URL=http://portfolio_server:8000
-NEXT_PUBLIC_WS_URL=ws://notification_server:4001
+AUTH_SERVER_URL=http://auth_server:4000
+PORTFOLIO_SERVICE_URL=http://portfolio_server:8000
+NEXT_PUBLIC_API_URL=http://localhost:4000
+NEXT_PUBLIC_AUTH_BASE_URL=http://localhost:4000/api/auth
+NEXT_PUBLIC_PORTFOLIO_API_URL=http://localhost:8000
+NEXT_PUBLIC_WS_URL=ws://localhost:4001
+REDIS_HOST=auth_redis
+REDIS_PORT=6379
 PORT=3000
 NEXT_TELEMETRY_DISABLED=1
 NODE_ENV=production
