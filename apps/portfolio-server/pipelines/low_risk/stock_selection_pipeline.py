@@ -422,9 +422,9 @@ class StockSelectionPipeline:
             price =      data['current_price']
             sma200 =     data['sma200']
             sma50 =      data['sma50']
-            ocf =        data['operating_cashflow']
+            ocf =        data['operating_cash_flow']
             net_income = data['net_income']
-            rsi =        data['rsi']
+            rsi =        data['rsi_14']
             volatility = 0
 
             # Guardrail 1
@@ -437,10 +437,10 @@ class StockSelectionPipeline:
                 if sma50 <= sma200:
                     fail(f"Guardrail 2 Violation: SMA50 ({sma50}) is not greater than SMA200 ({sma200})")
 
-            # Guardrail 3
-            if is_valid(ocf) and is_valid(net_income):
-                if ocf <= net_income:
-                    fail(f"Guardrail 3 Violation: Operating Cashflow ({ocf}) is not greater than Net Income ({net_income})")
+            # # Guardrail 3
+            # if is_valid(ocf) and is_valid(net_income):
+            #     if ocf <= net_income:
+            #         fail(f"Guardrail 3 Violation: Operating Cashflow ({ocf}) is not greater than Net Income ({net_income})")
 
             # Guardrail 4
             if is_valid(rsi):

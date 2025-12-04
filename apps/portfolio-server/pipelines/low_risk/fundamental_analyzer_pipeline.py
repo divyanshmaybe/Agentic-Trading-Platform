@@ -661,7 +661,7 @@ class FundamentalAnalyzer:
             "sma50": self.compute_sma50(),
             "sma200": self.compute_sma200(),
             "volatility": self.compute_volatility(),
-            "live_price": self.compute_live_price(),
+            "current_price": self.compute_live_price(),
         }
 
         # Add all info-based metrics
