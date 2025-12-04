@@ -77,7 +77,6 @@ if not skip_dotenv:
             raise FileNotFoundError(f".env file not found in portfolio-server directory: {env_file}")
 
 # Configuration
-MAX_TOKENS = 1024
 TARGET = 0.04  # +4% profit target
 STOPLOSS = 0.01  # -1% stoploss
 MARKET_OPEN = (9, 15)
@@ -254,13 +253,13 @@ def publish_signal_to_kafka(
 ) -> str:
     """
     Queue trade execution via Celery, then publish signal to Kafka for analytics.
-    
+
     Flow:
     1. Celery task → Execute trade immediately (fast path)
     2. Kafka publish → Analytics/audit trail (async, non-blocking)
-    
+
     This ensures lowest latency: trade executes while Kafka publish happens in background.
-    
+
     Args:
         llm_timing: JSON string with LLM timing metadata (llm_start_time, llm_end_time, llm_delay_ms)
     """
@@ -271,7 +270,7 @@ def publish_signal_to_kafka(
         signal_value = 0
 
     safe_confidence = float(confidence or 0.0)
-    
+
     # Parse LLM timing metadata
     llm_timing_data = {}
     if llm_timing:
@@ -284,7 +283,7 @@ def publish_signal_to_kafka(
             print(f"[TIMING] ⚠️ Failed to parse llm_timing for {symbol}: {e} | llm_timing={llm_timing[:100] if llm_timing else 'None'}")
     else:
         print(f"[TIMING] ⚠️ No llm_timing data for {symbol}")
-    
+
     # Extract reference_price from stocktechdata
     # Format: "Current price: 3500.50, timestamp: 2024-01-15 10:30:00"
     reference_price = None
@@ -311,7 +310,7 @@ def publish_signal_to_kafka(
             print(f"[PRICE] ⚠️ Failed to parse reference_price for {symbol}: {exc}")
     else:
         print(f"[PRICE] ⚠️ Empty or invalid stocktechdata for {symbol}: {type(stocktechdata)}")
-    
+
     event = NSESignalEvent(
         symbol=symbol,
         filing_time=filing_time,
@@ -324,11 +323,11 @@ def publish_signal_to_kafka(
         attachment_url=attachment_url or "",
         date_time_of_submission=date_time_of_submission or "",
     )
-    
+
     # Prepare payload with reference_price for trade execution
     signal_payload = event.model_dump()
     signal_payload["reference_price"] = reference_price  # Add price to payload
-    
+
     # Add LLM timing metadata to payload for trade execution tracking
     if llm_timing_data:
         signal_payload["llm_delay_ms"] = llm_timing_data.get("llm_delay_ms", 0)
@@ -353,7 +352,7 @@ def publish_signal_to_kafka(
             print(f"[CELERY] ✅ Queued HIGH-PRIORITY trade execution for {symbol} signal={signal_value} (price: {price_str}, llm_delay: {llm_delay_str})")
         else:
             print(f"[CELERY] ⏭️ Skipping signal=0 (HOLD) for {symbol} - no trade needed")
-        
+
         # STEP 2: Publish to Kafka (non-critical, analytics only)
         # This happens async and doesn't block trade execution
         try:
@@ -362,9 +361,9 @@ def publish_signal_to_kafka(
         except Exception as kafka_exc:
             # Kafka failure doesn't affect trade execution
             print(f"[KAFKA] ⚠️ Failed to publish to Kafka (trade still executing): {kafka_exc}")
-        
+
         return "published"
-        
+
     except Exception as celery_exc:  # pragma: no cover - defensive logging
         print(f"[CELERY] ❌ Failed to queue trade execution for {symbol}: {celery_exc}")
         # Try Kafka at least for audit trail
@@ -382,22 +381,22 @@ def publish_signal_to_kafka(
 @pw.udf
 def map_filing_type(desc: str) -> str:
     """Map announcement description to a relevant filing type
-    
+
     Returns the matched filing type from RELEVANT_FILE_TYPES, or empty string if no match.
     """
     if not desc:
         print(f"[DEBUG] map_filing_type: Empty description")
         return ""
-    
+
     desc_lower = desc.lower()
     print(f"[DEBUG] map_filing_type: Processing '{desc[:100]}...'")
-    
+
     # Direct keyword matching - check if filing type appears in description
     for filing_type in RELEVANT_FILE_TYPES.keys():
         if filing_type.lower() in desc_lower:
             print(f"[DEBUG] map_filing_type: Matched filing_type='{filing_type}'")
             return filing_type
-    
+
     # Fuzzy matching for common patterns
     if "board" in desc_lower and "meeting" in desc_lower:
         return "Outcome of Board Meeting"
@@ -419,7 +418,7 @@ def map_filing_type(desc: str) -> str:
         return "Bagging/Receiving of Orders/Contracts"
     elif "director" in desc_lower and "change" in desc_lower:
         return "Change in Director(s)"
-    
+
     # No match found
     print(f"[DEBUG] map_filing_type: NO MATCH for '{desc[:100]}...'")
     return ""
@@ -455,43 +454,43 @@ def download_and_parse_pdf(url: str, filename: str) -> str:
         import warnings
         import tempfile
         import uuid
-        
+
         # Suppress pdfplumber warnings about invalid color values
         warnings.filterwarnings("ignore", message=".*Cannot set gray.*")
-        
+
         if not url or not url.strip():
             print(f"[WARN] Empty PDF URL for {filename}, skipping download")
             return ""
-        
+
         print(f"[PIPELINE] Downloading PDF: {filename} from {url[:100]}...")
-        
+
         # Use unique temporary file per worker to avoid race conditions
         os.makedirs("docs", exist_ok=True)
         unique_suffix = str(uuid.uuid4())[:8]
         temp_filename = f"{filename}.{unique_suffix}.tmp"
         path = os.path.join("docs", temp_filename)
-        
+
         # Always download fresh (scraper handles deduplication)
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                          "AppleWebKit/537.36 (KHTML, like Gecko) "
                          "Chrome/124.0.0.0 Safari/537.36"
         }
-        
+
         # Ensure URL is complete (some PDFs might be relative URLs)
         if not url.startswith('http'):
             url = f"https://www.nseindia.com{url}"
-        
+
         try:
             response = requests.get(url, headers=headers, stream=True, timeout=30)
             response.raise_for_status()
-            
+
             print(f"[PIPELINE] PDF download started: {filename} ({response.headers.get('Content-Length', 'unknown')} bytes)")
-            
+
             with open(path, "wb") as f:
                 for chunk in response.iter_content(8192):
                     f.write(chunk)
-            
+
             file_size = os.path.getsize(path)
             print(f"[PIPELINE] PDF downloaded: {filename} ({file_size} bytes), extracting text...")
         except requests.exceptions.RequestException as e:
@@ -500,7 +499,7 @@ def download_and_parse_pdf(url: str, filename: str) -> str:
         except Exception as e:
             print(f"[ERROR] Unexpected error downloading PDF {filename}: {e}")
             return ""
-        
+
         # Extract text using pdfplumber (suppress warnings)
         text = ""
         try:
@@ -508,11 +507,11 @@ def download_and_parse_pdf(url: str, filename: str) -> str:
             import sys
             import warnings
             from io import StringIO
-            
+
             # Suppress all warnings
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                
+
                 # Also redirect stderr to suppress pdfplumber's direct prints
                 original_stderr = sys.stderr
                 try:
@@ -533,7 +532,7 @@ def download_and_parse_pdf(url: str, filename: str) -> str:
                     print(f"[PIPELINE] Temporary PDF cleaned up: {temp_filename}")
             except Exception as cleanup_error:
                 print(f"Warning: Could not delete temporary PDF {temp_filename}: {cleanup_error}")
-        
+
         print(f"[PIPELINE] PDF processed: {filename} ({len(text)} chars extracted)")
         return text
     except Exception as e:
@@ -558,7 +557,7 @@ def download_and_parse_pdf(url: str, filename: str) -> str:
 def fetch_stock_data(symbol: str, filing_time: str) -> str:
     """Fetch current stock price using market_data service"""
     from zoneinfo import ZoneInfo
-    
+
     try:
         filing_dt = datetime.strptime(filing_time, "%Y-%m-%d %H:%M:%S")
     except Exception:
@@ -571,12 +570,12 @@ def fetch_stock_data(symbol: str, filing_time: str) -> str:
         portfolio_server_path = Path(__file__).resolve().parents[2]
         if str(portfolio_server_path) not in sys.path:
             sys.path.insert(0, str(portfolio_server_path))
-        
+
         from utils.market_hours import is_market_hours as check_market_hours, get_market_status
-        
+
         market_open = check_market_hours()
         market_status, market_status_msg = get_market_status()
-        
+
         # Show market status for logging/monitoring
         if not market_open:
             if DEMO_MODE:
@@ -597,7 +596,7 @@ def fetch_stock_data(symbol: str, filing_time: str) -> str:
         market_open_time = datetime.strptime(f"{MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d}", "%H:%M").time()
         market_close_time = datetime.strptime(f"{MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d}", "%H:%M").time()
         market_open = market_open_time <= current_time <= market_close_time
-        
+
         if not market_open and not DEMO_MODE:
             msg = f"Market closed (NSE hours: {MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d} - {MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST)"
             logging.warning(msg)
@@ -607,14 +606,14 @@ def fetch_stock_data(symbol: str, filing_time: str) -> str:
         # Get current live price via HTTP API (market_data service)
         portfolio_server_url = os.getenv("PORTFOLIO_SERVER_URL", "http://localhost:8000")
         internal_secret = os.getenv("INTERNAL_SERVICE_SECRET", "agentinvest-secret")
-        
+
         url = f"{portfolio_server_url}/api/market/quotes"
         params = {"symbols": symbol}
         headers = {
             "X-Internal-Service": "true",
             "X-Service-Secret": internal_secret,
         }
-        
+
         # Increased timeout from 5s to 15s to prevent timeouts during signal generation
         with httpx.Client(timeout=15.0) as client:
             response = client.get(url, params=params, headers=headers)
@@ -625,7 +624,7 @@ def fetch_stock_data(symbol: str, filing_time: str) -> str:
                     if price:
                         print(f"[PRICE] ✅ Fetched live price for {symbol}: ₹{price}")
                         return f"Current price: {price}, timestamp: {filing_time}"
-            
+
             # If API call failed, log but DON'T return error - will trigger fallback
             error_msg = f"HTTP {response.status_code}: {response.text[:100]}"
             print(f"[WARN] Market service API call failed for {symbol}: {error_msg}")
@@ -647,27 +646,27 @@ def fetch_stock_data(symbol: str, filing_time: str) -> str:
 @pw.udf
 def get_pos_impact(file_type: str, use_positive: bool, static_data_path: str = "staticdata.csv") -> str:
     """Get positive impact scenario for filing type
-    
+
     Args:
         file_type: The mapped filing type
         use_positive: Whether to fetch positive impact based on RELEVANT_FILE_TYPES config
         static_data_path: Path to CSV with filing type impact scenarios
-    
+
     Returns:
         Positive impact scenario text, or "not applicable" if shouldn't be used
     """
     if not use_positive:
         return "not applicable for this filing type"
-    
+
     try:
         import pandas as pd
-        
+
         if not os.path.exists(static_data_path):
             return "not much specific"
-        
+
         staticdf = pd.read_csv(static_data_path)
         match = staticdf[staticdf["file type"].str.lower() == file_type.lower()]
-        
+
         if not match.empty:
             return str(match["positive impct "].values[0])
         else:
@@ -680,27 +679,27 @@ def get_pos_impact(file_type: str, use_positive: bool, static_data_path: str = "
 @pw.udf
 def get_neg_impact(file_type: str, use_negative: bool, static_data_path: str = "staticdata.csv") -> str:
     """Get negative impact scenario for filing type
-    
+
     Args:
         file_type: The mapped filing type
         use_negative: Whether to fetch negative impact based on RELEVANT_FILE_TYPES config
         static_data_path: Path to CSV with filing type impact scenarios
-    
+
     Returns:
         Negative impact scenario text, or "not applicable" if shouldn't be used
     """
     if not use_negative:
         return "not applicable for this filing type"
-    
+
     try:
         import pandas as pd
-        
+
         if not os.path.exists(static_data_path):
             return "not much specific"
-        
+
         staticdf = pd.read_csv(static_data_path)
         match = staticdf[staticdf["file type"].str.lower() == file_type.lower()]
-        
+
         if not match.empty:
             return str(match["negtive impct"].values[0])
         else:
@@ -726,18 +725,18 @@ def generate_trading_signal(
     Generate trading signal using two-model approach:
     - Model 1 (gemini-2.5-flash): Generates trading_signal + explanation
     - Model 2 (gemini-2.5-pro): Validates logic and generates confidence_score
-    
+
     Prompts are loaded from YAML templates in the templates/ folder.
     Uses llm_response_utils for response cleaning and parsing.
-    
+
     Includes LLM timing metrics in the response for latency tracking:
     - llm_start_time: ISO timestamp when LLM processing started
-    - llm_end_time: ISO timestamp when LLM processing completed  
+    - llm_end_time: ISO timestamp when LLM processing completed
     - llm_delay_ms: Time in milliseconds for LLM to generate signal
     """
     import time
     import yaml
-    
+
     # Import LLM response utilities
     try:
         from utils.low_risk_utils.llm_response_utils import (
@@ -748,42 +747,42 @@ def generate_trading_signal(
     except ImportError:
         has_llm_utils = False
         print("[WARN] llm_response_utils not available, using inline cleaning")
-    
+
     # Track LLM processing start time
     llm_start_time = datetime.utcnow()
     llm_start_ts = time.time()
-    
+
     # Load API key from environment if not provided or empty
     if not api_key or api_key.strip() == "":
         api_key = os.getenv("GEMINI_API_KEY", "")
-    
+
     # Validate inputs
     if not text or not text.strip():
         print("[WARN] Empty text provided to generate_trading_signal")
         return "Error: Empty text content"
-    
+
     print(f"[PIPELINE] Generating trading signal with two-model approach (text length: {len(text)} chars)...")
-    
+
     # Load prompt templates from YAML files
     templates_dir = Path(__file__).resolve().parents[2] / "templates"
-    
+
     try:
         # Load signal generation prompt (Model 1)
         gen_prompt_path = templates_dir / "nse_signal_generation_prompt.yaml"
         with open(gen_prompt_path, 'r') as f:
             gen_config = yaml.safe_load(f)
-        
+
         # Load signal validation prompt (Model 2)
         val_prompt_path = templates_dir / "nse_signal_validation_prompt.yaml"
         with open(val_prompt_path, 'r') as f:
             val_config = yaml.safe_load(f)
-        
+
         print(f"[PIPELINE] Loaded prompt templates from {templates_dir}")
     except Exception as e:
         error_msg = f"Failed to load YAML templates from {templates_dir}: {e}"
         print(f"[ERROR] {error_msg}")
         return f"Error: {error_msg}"
-    
+
     def clean_llm_response(response_text: str) -> str:
         """Clean LLM response using utils or inline fallback."""
         if has_llm_utils:
@@ -792,14 +791,14 @@ def generate_trading_signal(
         cleaned = re.sub(r"```(?:python|json|yaml|xml|html)?\s*\n?", "", response_text)
         cleaned = re.sub(r"```\s*$", "", cleaned)
         return cleaned.strip()
-    
+
     def extract_content_from_response(response) -> str:
         """Extract content string from LLM response object."""
         if hasattr(response, 'content'):
             content = response.content
         else:
             content = str(response)
-        
+
         # Handle content that is a list of content blocks (Gemini format)
         if isinstance(content, list) and len(content) > 0:
             text_parts = []
@@ -812,9 +811,9 @@ def generate_trading_signal(
                 else:
                     text_parts.append(str(block))
             content = '\n'.join(text_parts)
-        
+
         return clean_llm_response(content)
-    
+
     # ============ MODEL 1: Generate signal + explanation ============
     user_prompt = gen_config['prompt_template'].format(
         stocktechdata=stocktechdata,
@@ -824,21 +823,21 @@ def generate_trading_signal(
     )
     model1_name = gen_config.get('model', 'gemini-2.5-flash')
     model1_temp = gen_config.get('temperature', 0.3)
-    
+
     try:
         # Validate API key
         if not api_key or api_key.strip() == "":
             error_msg = "GEMINI_API_KEY is empty or not set. Please check your .env file."
             print(f"[ERROR] {error_msg}")
             return f"Error: {error_msg}"
-        
+
         from langchain_google_genai import ChatGoogleGenerativeAI
         import time
-        
+
         # Set GOOGLE_API_KEY env var for langchain
         original_google_key = os.environ.get("GOOGLE_API_KEY", None)
         os.environ["GOOGLE_API_KEY"] = api_key
-        
+
         try:
             # -------- MODEL 1: Generate signal + explanation --------
             trading_model = ChatGoogleGenerativeAI(
@@ -846,26 +845,26 @@ def generate_trading_signal(
                 temperature=model1_temp,
                 api_key=api_key
             )
-            
+
             print(f"[PIPELINE] Model 1 ({model1_name}): Generating signal + explanation...")
             decision_raw = trading_model.invoke(user_prompt)
             decision_text = extract_content_from_response(decision_raw)
-            
+
             print(f"[PIPELINE] Model 1 Response: {decision_text[:200]}...")
-            
+
             # Extract signal from Model 1
             sig_match = re.search(r"trading_signal:\s*(-?\d+)", decision_text, re.IGNORECASE)
             signal = int(sig_match.group(1)) if sig_match else 0
-            
+
             # Extract explanation from Model 1
             exp_match = re.search(r"explanation:\s*(.*)", decision_text, re.DOTALL | re.IGNORECASE)
             explanation = exp_match.group(1).strip() if exp_match else "No explanation provided"
-            
+
             # Clean up explanation (remove any trailing markers)
             explanation = re.sub(r'\n__LLM_TIMING__.*$', '', explanation).strip()
-            
+
             print(f"[PIPELINE] Model 1 Result: signal={signal}, explanation={explanation[:100]}...")
-            
+
             # -------- MODEL 2: Validate & generate confidence --------
             validation_prompt = val_config['prompt_template'].format(
                 signal=signal,
@@ -873,56 +872,56 @@ def generate_trading_signal(
             )
             model2_name = val_config.get('model', 'gemini-2.5-pro')
             model2_temp = val_config.get('temperature', 0.4)
-            
+
             validator_model = ChatGoogleGenerativeAI(
                 model=model2_name,
                 temperature=model2_temp,
                 api_key=api_key
             )
-            
+
             print(f"[PIPELINE] Model 2 ({model2_name}): Validating signal + generating confidence...")
             validation_raw = validator_model.invoke(validation_prompt)
             validation_text = extract_content_from_response(validation_raw)
-            
+
             print(f"[PIPELINE] Model 2 Response: {validation_text[:200]}...")
-            
+
             # Extract final_signal from Model 2
             final_sig_match = re.search(r"final_signal:\s*(-?\d+)", validation_text, re.IGNORECASE)
             final_signal = int(final_sig_match.group(1)) if final_sig_match else signal
-            
+
             # Extract confidence from Model 2
             conf_match = re.search(r"confidence(?:_score)?:\s*([0-9]*\.?[0-9]+)", validation_text, re.IGNORECASE)
             confidence = float(conf_match.group(1)) if conf_match else 0.5
             confidence = max(0.0, min(1.0, confidence))  # Clamp to [0, 1]
-            
+
             print(f"[PIPELINE] Model 2 Result: final_signal={final_signal}, confidence={confidence}")
-            
+
             # Calculate LLM delay
             llm_end_time = datetime.utcnow()
             llm_delay_ms = int((time.time() - llm_start_ts) * 1000)
-            
+
             print(f"[PIPELINE] ⏱️ Total LLM delay (both models): {llm_delay_ms}ms")
-            
+
             # Construct final response in expected format
             response_text = f"""trading_signal: {final_signal}
 confidence_score: {confidence}
 concise_explanation: {explanation}"""
-            
+
             # Append timing metadata to response for downstream parsing
             timing_suffix = f"\n__LLM_TIMING__:{llm_start_time.isoformat()}Z|{llm_end_time.isoformat()}Z|{llm_delay_ms}"
             return response_text + timing_suffix
-            
+
         finally:
             # Restore original environment variable if it existed
             if original_google_key is not None:
                 os.environ["GOOGLE_API_KEY"] = original_google_key
             elif "GOOGLE_API_KEY" in os.environ:
                 del os.environ["GOOGLE_API_KEY"]
-        
+
     except Exception as e:
         error_msg = str(e)
         print(f"[ERROR] LLM generation failed: {error_msg}")
-        
+
         # Provide helpful error message
         if "credentials" in error_msg.lower() or "api key" in error_msg.lower():
             return f"Error: API key issue - {error_msg}. Please check GEMINI_API_KEY in .env file."
@@ -939,7 +938,7 @@ def parse_trading_signal_value(response: str) -> int:
         if not response or "error" in response.lower() or "429" in response or "quota" in response.lower():
             print(f"[WARN] Invalid LLM response (error detected): {response[:200]}")
             return 0
-        
+
         # Try to use llm_response_utils
         try:
             from utils.low_risk_utils.llm_response_utils import extract_trading_signal_fields
@@ -949,7 +948,7 @@ def parse_trading_signal_value(response: str) -> int:
             return signal
         except ImportError:
             pass  # Fall back to inline parsing
-        
+
         # Fallback: Try multiple patterns to match various response formats
         patterns = [
             r"trading_signal:\s*(-?\d+)",  # Original format
@@ -958,7 +957,7 @@ def parse_trading_signal_value(response: str) -> int:
             r"BUY.*?(\d+)|SELL.*?(-?\d+)|HOLD.*?(\d+)",  # Text format
             r"(-?\d+)\s*[,\n]?\s*(?:BUY|SELL|HOLD)",  # Number before text
         ]
-        
+
         for pattern in patterns:
             signal_match = re.search(pattern, response, re.IGNORECASE)
             if signal_match:
@@ -972,7 +971,7 @@ def parse_trading_signal_value(response: str) -> int:
                         return 0
                     print(f"[PIPELINE] Parsed signal: {signal} from response")
                     return signal
-        
+
         # If no pattern matches, print debug info
         print(f"[WARN] Could not parse signal from response: {response[:300]}")
         return 0
@@ -995,7 +994,7 @@ def parse_trading_signal_explanation(response: str) -> str:
                 return explanation
         except ImportError:
             pass  # Fall back to inline parsing
-        
+
         # Fallback: Try multiple patterns
         patterns = [
             r"concise_explanation:\s*(.+?)(?:\n\n|\n[A-Z]|$)",  # Original format with lookahead
@@ -1003,7 +1002,7 @@ def parse_trading_signal_explanation(response: str) -> str:
             r"explanation:\s*(.+?)(?:\n\n|\n[A-Z]|$)",  # Alternative format
             r"reasoning:\s*(.+?)(?:\n\n|\n[A-Z]|$)",  # Another alternative
         ]
-        
+
         for pattern in patterns:
             explanation_match = re.search(pattern, response, re.DOTALL | re.IGNORECASE)
             if explanation_match:
@@ -1011,7 +1010,7 @@ def parse_trading_signal_explanation(response: str) -> str:
                 if explanation:
                     print(f"[PIPELINE] Parsed explanation: {explanation[:100]}...")
                     return explanation
-        
+
         # If no pattern matches, try to extract anything after the signal
         # Look for text after "concise_explanation" or after the signal line
         fallback_match = re.search(r"(?:concise_explanation|explanation|reasoning)[:\s]*(.+?)(?:\n\n|$)", response, re.DOTALL | re.IGNORECASE)
@@ -1019,7 +1018,7 @@ def parse_trading_signal_explanation(response: str) -> str:
             explanation = fallback_match.group(1).strip()
             if explanation and len(explanation) > 10:  # Only if meaningful
                 return explanation
-        
+
         print(f"[WARN] Could not parse explanation from response: {response[:300]}")
         return "No explanation provided"
     except Exception as e:
@@ -1035,7 +1034,7 @@ def parse_trading_signal_confidence(response: str) -> float:
             return 0.0
         if "error" in response.lower() or "rate limit" in response.lower():
             return 0.0
-        
+
         # Try to use llm_response_utils
         try:
             from utils.low_risk_utils.llm_response_utils import extract_trading_signal_fields
@@ -1076,25 +1075,25 @@ def parse_trading_signal_confidence(response: str) -> float:
 def parse_llm_timing(response: str) -> str:
     """
     Parse LLM timing metadata from response.
-    
+
     Returns JSON string with timing info:
     - llm_start_time: ISO timestamp when LLM processing started
     - llm_end_time: ISO timestamp when LLM processing completed
     - llm_delay_ms: Time in milliseconds for LLM to generate signal
-    
+
     Returns empty string if timing not found.
     """
     try:
         if not response:
             return ""
-        
+
         # Look for timing suffix: __LLM_TIMING__:start_time|end_time|delay_ms
         timing_match = re.search(r"__LLM_TIMING__:([^|]+)\|([^|]+)\|(\d+)", response)
         if timing_match:
             llm_start_time = timing_match.group(1)
             llm_end_time = timing_match.group(2)
             llm_delay_ms = int(timing_match.group(3))
-            
+
             import json
             timing_data = {
                 "llm_start_time": llm_start_time,
@@ -1102,7 +1101,7 @@ def parse_llm_timing(response: str) -> str:
                 "llm_delay_ms": llm_delay_ms,
             }
             return json.dumps(timing_data)
-        
+
         return ""
     except Exception as exc:
         print(f"[ERROR] Error parsing LLM timing: {exc}")
@@ -1120,13 +1119,13 @@ def create_nse_filings_pipeline(
 ):
     """
     Create the main Pathway pipeline for NSE filings sentiment analysis
-    
+
     Args:
         filings_source: Pathway table with NSE filing data
         static_data_path: Path to CSV with filing type impact scenarios
         output_path: Path to write trading signals
     """
-    
+
     from datetime import datetime, time as dt_time, timezone, timedelta
     # Use IST timezone (UTC+5:30) for market hours check
     ist = timezone(timedelta(hours=5, minutes=30))
@@ -1138,12 +1137,12 @@ def create_nse_filings_pipeline(
         MARKET_CLOSE[0],
         max(0, MARKET_CLOSE[1] - MARKET_CLOSE_BUFFER_MINUTES)
     )
-    
+
     # Check market hours using centralized utility
     try:
         # Import centralized market hours utility
         from utils.market_hours import enforce_market_hours, get_market_status
-        
+
         enforce_market_hours()  # Respects DEMO_MODE automatically
         is_market_open = True
         is_near_close = False
@@ -1155,7 +1154,7 @@ def create_nse_filings_pipeline(
         market_status = f"🔴 MARKET CLOSED - {msg}"
         print(f"[MARKET] {market_status}")
         logging.warning(market_status)
-        
+
         # Skip signal processing if market closed (unless DEMO_MODE)
         if not DEMO_MODE:
             return filings_source.select(
@@ -1165,7 +1164,7 @@ def create_nse_filings_pipeline(
                 explanation=pw.apply(lambda s: f"Market closed - {msg}", pw.this.symbol),
                 confidence=pw.apply(lambda s: 0.0, pw.this.symbol),
             ).filter(pw.this.symbol == "__NEVER_MATCH__")
-    
+
     # Log market status at pipeline start (only if market is open)
     if DEMO_MODE:
         market_status = f"🟢 MARKET OPEN (NSE: {MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d}-{MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST, Current: {current_time.strftime('%H:%M:%S')} IST) 🔵 DEMO MODE ENABLED"
@@ -1179,7 +1178,7 @@ def create_nse_filings_pipeline(
         market_status = f"🔴 MARKET CLOSED - NSE hours: {MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d} - {MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST. Current time: {current_time.strftime('%H:%M:%S')} IST. Skipping signal processing."
         print(f"[MARKET] {market_status}")
         logging.warning(market_status)
-    
+
     # Skip signal processing only if not in DEMO_MODE and market is closed
     if not DEMO_MODE and not is_market_open:
         # Return empty table with correct schema by filtering on a boolean column
@@ -1190,34 +1189,34 @@ def create_nse_filings_pipeline(
             explanation=pw.apply(lambda s: "Market closed - skipping new trades", pw.this.symbol),
             confidence=pw.apply(lambda s: 0.0, pw.this.symbol),
         ).filter(pw.this.symbol == "__NEVER_MATCH__")
-    
+
     print("[SENTIMENT] Step 1: Processing filings from scraper...")
-    
+
     # Log incoming filings
     def log_filing(symbol, desc, attchmntFile):
         print(f"[DEBUG] Incoming filing: {symbol} - {desc[:80]}... PDF: {bool(attchmntFile)}")
         return symbol
-    
+
     filings_source = filings_source.select(
         *pw.this,
         _debug=pw.apply(log_filing, pw.this.symbol, pw.this.desc, pw.this.attchmntFile)
     )
-    
+
     # Map filing descriptions to filing types and filter relevant ones
     filings_with_types = filings_source.select(
         *pw.this,
         filing_type=map_filing_type(pw.this.desc),
         filename=pw.apply(lambda url: url.split("/")[-1] if url else "", pw.this.attchmntFile),
     )
-    
+
     # Filter to only process relevant filing types
     relevant_filings = filings_with_types.filter(pw.this.filing_type != "")
-    
+
     print("[SENTIMENT] Step 1a: Filtered filings by relevant types...")
     print(f"[SENTIMENT] Relevant filing types: {list(RELEVANT_FILE_TYPES.keys())}")
-    
+
     print("[SENTIMENT] Step 2: Downloading and parsing PDFs...")
-    
+
     filings_with_text = relevant_filings.select(
         symbol=pw.this.symbol,
         desc=pw.this.desc,
@@ -1231,28 +1230,28 @@ def create_nse_filings_pipeline(
         attachment_url=pw.this.attachment_url,
         date_time_of_submission=pw.this.date_time_of_submission,
     ).filter(pw.this.text != "")
-    
+
     print("[SENTIMENT] Step 2 complete: PDFs parsed, proceeding to sentiment analysis...")
     print("[SENTIMENT] Step 3: Fetching impact scenarios and stock data...")
-    
+
     # Determine which impacts to fetch based on filing type configuration
     filings_with_impact_flags = filings_with_text.select(
         *pw.this,
         use_positive=should_use_positive_impact(pw.this.filing_type),
         use_negative=should_use_negative_impact(pw.this.filing_type),
     )
-    
+
     filings_enriched = filings_with_impact_flags.select(
         *pw.this,
         pos_impact=get_pos_impact(pw.this.filing_type, pw.this.use_positive, static_data_path),
         neg_impact=get_neg_impact(pw.this.filing_type, pw.this.use_negative, static_data_path),
         stocktechdata=fetch_stock_data(pw.this.symbol, pw.this.sort_date)
     )
-    
+
     print("[SENTIMENT] Step 4: Generating trading signals with LLM...")
     if not GEMINI_API_KEY or not GEMINI_API_KEY.strip():
         print("[WARN] GEMINI_API_KEY not set - trading signals will fail!")
-    
+
     filings_with_responses = filings_enriched.select(
         *pw.this,
         llm_response=generate_trading_signal(
@@ -1263,7 +1262,7 @@ def create_nse_filings_pipeline(
             GEMINI_API_KEY
         )
     )
-    
+
     print("[SENTIMENT] Step 5: Parsing trading signals...")
     trading_signals = filings_with_responses.select(
         symbol=pw.this.symbol,
@@ -1278,7 +1277,7 @@ def create_nse_filings_pipeline(
         attachment_url=pw.this.attachment_url,
         date_time_of_submission=pw.this.date_time_of_submission,
     )
- 
+
     print("[SENTIMENT] Step 6: Publishing signals to Kafka and writing to disk...")
     signals_with_kafka = trading_signals.select(
         symbol=pw.this.symbol,
@@ -1317,7 +1316,7 @@ def create_nse_filings_pipeline(
         ),
         output_path,
     )
- 
+
     print("[SENTIMENT] Pipeline ready - waiting for data from scraper...")
     return signals_with_kafka
 
@@ -1361,16 +1360,16 @@ def create_filings_input_from_http(port: int = 8001) -> tuple[pw.Table, pw.io.ht
         seq_id: str
         attchmntText: str
         fileSize: str
-    
+
     webserver = pw.io.http.PathwayWebserver(host="0.0.0.0", port=port)
-    
+
     filings, writer = pw.io.http.rest_connector(
         webserver=webserver,
         schema=FilingInputSchema,
         autocommit_duration_ms=50,  # Minimal latency for trading signals
         delete_completed_queries=False,
     )
-    
+
     return filings, writer
 
 
@@ -1380,9 +1379,9 @@ def create_filings_input_from_http(port: int = 8001) -> tuple[pw.Table, pw.io.ht
 
 def main():
     """Main execution function"""
-    
+
     filings_input, writer = create_filings_input_from_http(port=8001)
-    
+
     trading_signals = create_nse_filings_pipeline(
         filings_source=filings_input,
         static_data_path="staticdata.csv",
