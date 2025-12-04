@@ -18,6 +18,7 @@ import {
 	LowRiskReasoningEvent,
 	LowRiskSummaryEvent,
 	LowRiskStageEvent,
+	LowRiskMetricsEvent,
 	LowRiskValueEnvelope,
 } from "./types/lowRisk";
 
@@ -415,6 +416,29 @@ export function isLowRiskStageEvent(obj: any): obj is LowRiskStageEvent {
 }
 
 /**
+ * Type guard for LowRiskMetricsEvent
+ */
+export function isLowRiskMetricsEvent(obj: any): obj is LowRiskMetricsEvent {
+	if (!isObject(obj)) {
+		return false;
+	}
+
+	if (!hasStringField(obj, "userId")) {
+		return false;
+	}
+
+	if (obj.kind !== "metrics") {
+		return false;
+	}
+
+	if (!("content" in obj)) {
+		return false;
+	}
+
+	return true;
+}
+
+/**
  * Type guard for any LowRiskEvent (union type)
  */
 export function isLowRiskEvent(obj: any): obj is LowRiskEvent {
@@ -430,6 +454,7 @@ export function isLowRiskEvent(obj: any): obj is LowRiskEvent {
 		isLowRiskReportEventGenerated(obj) ||
 		isLowRiskReasoningEvent(obj) ||
 		isLowRiskSummaryEvent(obj) ||
-		isLowRiskStageEvent(obj)
+		isLowRiskStageEvent(obj) ||
+		isLowRiskMetricsEvent(obj)
 	);
 }

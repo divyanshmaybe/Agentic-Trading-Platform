@@ -146,7 +146,7 @@ model LowRiskUserSummaries {
   id        String   @id @default(uuid())
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  summary   Json     // summary content as JSON
+  jsonContent   Json     // summary content as JSON
   createdAt DateTime @default(now())
 
   @@index([userId])

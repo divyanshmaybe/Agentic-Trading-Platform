@@ -214,6 +214,15 @@ export interface LowRiskStageEvent {
 }
 
 /**
+ * METRICS event
+ */
+export interface LowRiskMetricsEvent {
+	userId: string;
+	kind: "metrics";
+	content: any;
+}
+
+/**
  * Strict union type for all low-risk events
  */
 export type LowRiskEvent =
@@ -228,7 +237,8 @@ export type LowRiskEvent =
 	| LowRiskReportEventGenerated
 	| LowRiskReasoningEvent
 	| LowRiskSummaryEvent
-	| LowRiskStageEvent;
+	| LowRiskStageEvent
+	| LowRiskMetricsEvent;
 
 /**
  * Normalized low-risk event (server-side representation)
@@ -237,7 +247,7 @@ export type LowRiskEvent =
  */
 export type LowRiskNormalized = {
 	userId: string;
-	kind: "info" | "industry" | "stock" | "report" | "reasoning" | "summary" | "stage";
+	kind: "info" | "industry" | "stock" | "report" | "reasoning" | "summary" | "stage" | "metrics";
 	eventType: string | null;   // null for info/reasoning/summary/stage, "industry"/"stock"/"report" for others
 	status: string | null;      // "fetching" | "fetched" | "done" | "cached" | "generating" | "generated" | "thinking" | "start" | "progress" | "done" | "error" | null
 	content: any | null;
