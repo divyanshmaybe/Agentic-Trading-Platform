@@ -42,6 +42,7 @@ show_help() {
     echo "  status          Show status of all containers"
     echo "  clean           Stop containers and remove volumes (full reset)"
     echo "  clean-redis     Clear Redis locks and timestamps only"
+    echo "  rmi             Remove all project Docker images"
     echo "  env             Generate docker.env files only"
     echo "  help            Show this help message"
     echo ""
@@ -60,6 +61,7 @@ show_help() {
     echo "  ./docker.sh status            # Show container status"
     echo "  ./docker.sh clean             # Full reset (removes data)"
     echo "  ./docker.sh clean-redis       # Clear Redis locks only"
+    echo "  ./docker.sh rmi               # Remove all project images"
     echo "  ./docker.sh env               # Regenerate env files"
     echo ""
 }
@@ -280,6 +282,33 @@ do_clean() {
     print_success "Containers stopped and volumes removed"
 }
 
+# Function to remove Docker images
+do_remove_images() {
+    print_info "🗑️  Removing project Docker images..."
+    
+    # List of project images to remove
+    local images=(
+        "portfolio_server"
+        "alphacopilot_server"
+        "auth_server"
+        "notification_server"
+        "frontend_web"
+    )
+    
+    for img in "${images[@]}"; do
+        if docker images --format '{{.Repository}}' | grep -q "^${img}$"; then
+            echo "   Removing ${img}..."
+            docker rmi -f "${img}:latest" 2>/dev/null || true
+        fi
+    done
+    
+    # Also remove dangling images
+    echo "   Removing dangling images..."
+    docker image prune -f 2>/dev/null || true
+    
+    print_success "Docker images removed"
+}
+
 # Function to clear Redis locks
 do_clean_redis() {
     print_info "🧹 Clearing Redis locks and timestamps..."
@@ -444,6 +473,11 @@ case $COMMAND in
         ;;
     clean-redis)
         do_clean_redis
+        ;;
+    rmi|remove-images)
+        do_remove_images
+        echo ""
+        echo -e "${GREEN}✅ Docker images removed!${NC}"
         ;;
     env)
         generate_docker_env
