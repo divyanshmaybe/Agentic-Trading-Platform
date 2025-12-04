@@ -468,7 +468,7 @@ class PortfolioManager:
 
         # Get metrics
         if use_rolling_metrics and self.monitor.time_semi_annual >= 2:
-            metrics = self.monitor.get_rolling_metrics(lookback_semi_annual)
+            metrics = self.monitor.get_rolling_metrics(lookback_semi_annual=lookback_semi_annual)
         else:
             metrics = self.monitor.get_latest_metrics()
 
@@ -531,9 +531,6 @@ class PortfolioManager:
         )
 
 
-# ---------------------------------------------------------------------------
-# Convenience helpers
-# ---------------------------------------------------------------------------
 
 def ensure_segment_metrics(
     data: Optional[Mapping[str, Sequence[Mapping[str, Any]]]],
@@ -582,7 +579,7 @@ async def calculate_segment_metrics_from_db(portfolio_id: str, lookback_semi_ann
     
     try:
         # Calculate date range for lookback period
-        lookback_days = lookback_quarters * 90  # ~90 days per quarter
+        lookback_days = lookback_semi_annual * 180  # ~180 days per semi_annual
         cutoff_date = datetime.utcnow() - timedelta(days=lookback_days)
         
         # Fetch TradingAgentSnapshots grouped by agent_type (segment)
@@ -594,22 +591,15 @@ async def calculate_segment_metrics_from_db(portfolio_id: str, lookback_semi_ann
             order={"snapshot_at": "asc"}
         )
         
-        # Fetch PortfolioSnapshots for overall portfolio metrics
-        portfolio_snapshots = await client.portfoliosnapshot.find_many(
-            where={
-                "portfolio_id": portfolio_id,
-                "snapshot_at": {"gte": cutoff_date}
-            },
-            order={"created_at": "desc"},
-            take=lookback_semi_annual * 4  # Assuming ~4 snapshots per semi_annual
-        )
-
-        # Group by allocation_type (segment)
-        segment_data = {}
-        for snap in snapshots:
-            segment = snap.portfolio_allocation.allocation_type if hasattr(snap, 'portfolio_allocation') else None
-            order={"snapshot_at": "asc"}
-        )
+        # # Fetch PortfolioSnapshots for overall portfolio metrics
+        # portfolio_snapshots = await client.portfoliosnapshot.find_many(
+        #     where={
+        #         "portfolio_id": portfolio_id,
+        #         "snapshot_at": {"gte": cutoff_date}
+        #     },
+        #     order={"created_at": "desc"},
+        #     take=lookback_semi_annual * 4  # Assuming ~4 snapshots per semi_annual
+        # )
         
         # Group agent snapshots by agent_type (segment)
         segment_snapshots: Dict[str, List[Dict[str, Any]]] = {}
@@ -704,13 +694,13 @@ async def calculate_segment_metrics_from_db(portfolio_id: str, lookback_semi_ann
         await client.disconnect()
 
 
-async def get_portfolio_value_history(portfolio_id: str, lookback_quarters: int = 4) -> List[float]:
+async def get_portfolio_value_history(portfolio_id: str, lookback_semi_annual: int = 4) -> List[float]:
     """
     Get portfolio value history from PortfolioSnapshots.
 
     Args:
         portfolio_id: The portfolio ID to get history for
-        lookback_quarters: Number of recent quarters to include
+        lookback_semi_annual: Number of recent semi_annual to include
 
     Returns:
         List of portfolio values ordered chronologically
@@ -722,7 +712,7 @@ async def get_portfolio_value_history(portfolio_id: str, lookback_quarters: int 
     await client.connect()
     
     try:
-        lookback_days = lookback_quarters * 90
+        lookback_days = lookback_semi_annual * 180
         cutoff_date = datetime.utcnow() - timedelta(days=lookback_days)
         
         snapshots = await client.portfoliosnapshot.find_many(
