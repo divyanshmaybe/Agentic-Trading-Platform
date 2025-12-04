@@ -270,36 +270,32 @@ def get_filing_impact_data(filing_type: str) -> str:
 
 
 # ============================================================================
-# LLM Analysis Agent
+# Prompt Configuration (loaded from YAML)
 # ============================================================================
 
-OBSERVABILITY_SYSTEM_PROMPT = """
-You are a monitoring agent for the intraday trading NSE pipeline. Your task is to deeply analyse and scrutinize any trade executed by the NSE pipeline and generate
-a log for the trade executed. In the generated log, you must mention the trade executed by the NSE agent, the reasoning of the agent in generating the certain signal and
-executing the trade, and the loss calculated from the actual execution of the trade along with your understanding of the decision of the NSE agent. You will only
-be triggered when the trade executed leads to a loss. Thus as a financial expert with deep financial analysis abilities and farsight, you must deeply analyse the mistakes
-in the reasoning of the trading agent or any fault in the order of the reasoning steps which could have led to this outcome. You will be provided the actual filing upon which the decision was made.
-You will also be provided data mapping the type of filing to the impact it has on the market. It is possible that a filing that creates a negative impact on the market was analysed by the reasoning agent
-in a positive light which led to loss instead of a profit. A detailed explanation of what the llm did along with its response will be provided to you. Considering these combined data sources, you have to provide a detailed analysis of what went wrong or right.
-Examples are the llm might hallucinate a figure which did not exist in the original filing which led to a loss. You must be highly specific and explicit. The drawbacks highlighted by you act as a source of observability to
-improve upon the pipeline. Therefore if you highlight a number of potential drawbacks unnecessarily, the user will find it difficult to make the changes to the entire pipeline.
-Therefore you have to strictly analyse the pain points - which led to this loss and which can be fixed to keep the system up and running. Any change which is not that useful but aims
-to fundamentally affect the structure of the pipeline must strongly not be recommended. Mistakes if at all any lie primarily in the reasoning of the pipeline, thus suggestions to improve the prompt of the agent
-should be prioritized first - that is if any changes in the prompt itself would be sufficient to fix the issue and turn the loss to 0 loss or most importantly profit, prioritize that. If you feel any additional
-guardrails can be added to prevent this, then recommend those additional guardrails. The changes suggested by you should be highly accurate, valid and sufficient enough to
-fix the loss and rather transform it to profit. Deeply analyse.
+PROMPTS_DIR = Path(__file__).parent / "prompts"
 
-You must return an output in a structured JSON format as follows:
-{
-    "trading_decision": "<trading decision of the NSE agent - BUY/SELL with quantity>",
-    "timestamp_of_trade_execution": "<timestamp of trade execution in ISO format>",
-    "reasoning_of_nse_agent": "<original reasoning provided by the NSE agent>",
-    "loss_incurred": "<profit or loss incurred with exact amount>",
-    "feedback_on_agent_performance": "<your detailed analysis of the decision and reasoning of the NSE agent, specific recommendations for improvement>"
-}
+# Cache for prompt config
+_cached_config: Optional[Dict[str, Any]] = None
 
-CRITICAL: Return ONLY valid JSON. No markdown, no backticks, no additional text. The output will be directly parsed as JSON in Python.
-"""
+
+def get_prompt_config() -> Dict[str, Any]:
+    """Load and cache the observability agent prompt configuration from YAML."""
+    global _cached_config
+    if _cached_config is not None:
+        return _cached_config
+    
+    prompt_file = PROMPTS_DIR / "observability_agent.yaml"
+    
+    if not prompt_file.exists():
+        raise FileNotFoundError(f"Prompt config not found: {prompt_file}")
+    
+    import yaml
+    with open(prompt_file, "r", encoding="utf-8") as f:
+        _cached_config = yaml.safe_load(f) or {}
+    
+    task_logger.info(f"✅ Loaded prompt config from {prompt_file.name}")
+    return _cached_config
 
 
 async def analyze_trade_with_llm(
@@ -324,13 +320,17 @@ async def analyze_trade_with_llm(
         from langchain_google_genai import ChatGoogleGenerativeAI
         from langchain_core.messages import SystemMessage, HumanMessage
         
+        # Get model config from YAML or use defaults
+        config = get_prompt_config()
+        model_config = config.get("model", {})
+        
         # Initialize the Gemini model
         model = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
+            model=model_config.get("name", "gemini-2.5-flash"),
             google_api_key=GEMINI_API_KEY,
-            temperature=0.7,
-            timeout=120,
-            max_retries=3,
+            temperature=model_config.get("temperature", 0.7),
+            timeout=model_config.get("timeout", 120),
+            max_retries=model_config.get("max_retries", 3),
         )
         
         # Get filing impact data
@@ -355,16 +355,23 @@ async def analyze_trade_with_llm(
         
         reasoning_info = context.signal_explanation or "No reasoning provided by the agent."
         
+        # Get human message template from YAML
+        human_template = config.get("human_message_template", "")
+        if not human_template:
+            raise ValueError("human_message_template not found in YAML config")
+        
+        human_text = human_template.format(
+            impact_data=impact_data,
+            trade_signal_info=trade_signal_info,
+            loss_info=loss_info,
+            reasoning_info=reasoning_info,
+        )
+        
         # Build message content
         content_parts = [
             {
                 "type": "text",
-                "text": (
-                    f"Here is the impact the filing has over the market:\n{impact_data}\n\n"
-                    f"Here is the trade signal generated:\n{trade_signal_info}\n\n"
-                    f"Here is the loss incurred:\n{loss_info}\n\n"
-                    f"Here is the reasoning of the agent behind this trade signal:\n{reasoning_info}"
-                )
+                "text": human_text,
             }
         ]
         
@@ -379,8 +386,13 @@ async def analyze_trade_with_llm(
         else:
             task_logger.warning("⚠️ No PDF available for analysis")
         
+        # Get system prompt from YAML config
+        system_prompt = config.get("system_prompt", "")
+        if not system_prompt:
+            raise ValueError("system_prompt not found in YAML config")
+        
         messages = [
-            SystemMessage(content=OBSERVABILITY_SYSTEM_PROMPT),
+            SystemMessage(content=system_prompt),
             HumanMessage(content=content_parts),
         ]
         
