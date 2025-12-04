@@ -746,9 +746,18 @@ export class NotificationConsumer {
 				// SPECIAL HANDLING FOR METRICS: Store in LowRiskUserSummaries and STOP (no Redis, no LowRiskEvent)
 				if (normalized.kind === "metrics") {
 					try {
+						// Delete old metrics for this user
+						await this.prisma.lowRiskUserSummaries.deleteMany({
+							where: {
+								userId: normalized.userId,
+								type: "metrics",
+							},
+						});
+
 						await this.prisma.lowRiskUserSummaries.create({
 							data: {
 								userId: normalized.userId,
+								type: "metrics",
 								jsonContent: normalized.content,
 							},
 						});
@@ -778,9 +787,18 @@ export class NotificationConsumer {
 				// If this is a summary event, also write to LowRiskUserSummaries table
 				if (normalized.kind === "summary" && normalized.content) {
 					try {
+						// Delete old summary for this user
+						await this.prisma.lowRiskUserSummaries.deleteMany({
+							where: {
+								userId: normalized.userId,
+								type: "summary",
+							},
+						});
+
 						const summaryRecord = await this.prisma.lowRiskUserSummaries.create({
 							data: {
 								userId: normalized.userId,
+								type: "summary",
 								jsonContent: normalized.content,
 							},
 						});

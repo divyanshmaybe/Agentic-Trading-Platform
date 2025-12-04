@@ -145,6 +145,7 @@ model LowRiskEvent {
 model LowRiskUserSummaries {
   id        String   @id @default(uuid())
   userId    String
+  type      String   // "metrics" | "summary"
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   jsonContent   Json     // summary content as JSON
   createdAt DateTime @default(now())
