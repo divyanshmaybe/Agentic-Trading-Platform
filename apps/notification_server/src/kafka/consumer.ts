@@ -386,10 +386,10 @@ function normalizeFilingSignal(
 	const url = attachmentUrl || unwrappedPayload?.url || undefined;
 
 	// Parse eventTime from filing_time, date_time_of_submission, or generated_at (in that order)
-	const eventTime = parseDateTimeStrict(filingTime) || 
-	                  parseDateTimeStrict(dateTimeOfSubmission) || 
-	                  parseDateTimeStrict(generatedAt) ||
-	                  undefined;
+	const eventTime = parseDateTimeStrict(filingTime) ||
+		parseDateTimeStrict(dateTimeOfSubmission) ||
+		parseDateTimeStrict(generatedAt) ||
+		undefined;
 
 	return {
 		kafkaKey,
@@ -752,6 +752,22 @@ export class NotificationConsumer {
 
 				console.log(`[DB][LowRisk] Created event ${event.id} for user ${normalized.userId} kind=${normalized.kind} with eventTime=${normalized.eventTime.toISOString()}`);
 				console.warn(`[Kafka][LowRisk] lowrisk_processed_success`);
+
+				// If this is a summary event, also write to LowRiskUserSummaries table
+				if (normalized.kind === "summary" && normalized.content) {
+					try {
+						const summaryRecord = await this.prisma.lowRiskUserSummaries.create({
+							data: {
+								userId: normalized.userId,
+								summary: normalized.content,
+							},
+						});
+						console.log(`[DB][LowRisk] Created summary record ${summaryRecord.id} for user ${normalized.userId}`);
+					} catch (summaryError) {
+						console.error(`[DB][LowRisk] Failed to create summary record for user ${normalized.userId}:`, summaryError);
+						// Don't throw - we still want to publish the event even if summary write fails
+					}
+				}
 
 				// Publish to Redis per-user channel (sequential, after DB write)
 				// normalized.eventTime is already set from Kafka timestamp
