@@ -1,0 +1,92 @@
+# Multi-factor strategy configuration
+# This example uses multiple alpha factors for prediction
+
+data:
+  path: ".data/indian_stock_market_nifty500.csv"
+  start_date: "2021-06-01"
+  end_date: "2021-12-31"
+  symbol_col: "symbol"
+  timestamp_col: "timestamp"
+
+# Option 1: Named features (verbose format)
+features:
+  # Momentum factors
+  - name: "momentum_1d"
+    expression: "DELTA($close, 1)"
+  
+  - name: "momentum_5d"
+    expression: "DELTA($close, 5)"
+  
+  # Mean reversion factors
+  - name: "close_vs_sma20"
+    expression: "DIVIDE(SUBTRACT($close, SMA($close, 20)), SMA($close, 20))"
+  
+  # Volume factors
+  - name: "volume_sma_ratio"
+    expression: "DIVIDE($volume, SMA($volume, 20))"
+  
+  # Volatility factors
+  - name: "volatility_20d"
+    expression: "TS_STD($close, 20)"
+
+# Tip: add more expressions by appending to the features list above.
+
+model:
+  type: "LightGBM"
+  # Explicit feature selection - mix of factor names and expressions
+  features:
+    - "momentum_1d"
+    - "momentum_5d"
+    - "close_vs_sma20"
+    - "volume_sma_ratio"
+    - "volatility_20d"
+    # Add inline expressions for additional features
+    - "($close - $open) / $open"
+    - "TS_PCTCHANGE($close, 10)"
+  include_ohlcv: false
+  params:
+    # LightGBM hyperparameters
+    objective: "regression"
+    metric: "l2"
+    boosting_type: "gbdt"
+    learning_rate: 0.05
+    num_leaves: 31
+    max_depth: 5
+    min_child_samples: 50
+    subsample: 0.8
+    subsample_freq: 1
+    colsample_bytree: 0.8
+    reg_alpha: 0.1
+    reg_lambda: 0.1
+    random_state: 42
+    verbose: -1
+    # Training parameters
+    num_boost_round: 200
+    early_stopping_rounds: 10
+  target: "forward_return_1d"
+
+strategy:
+  type: "TopkDropout"
+  params:
+    topk: 50
+    n_drop: 10
+    method: "signal"  # Weight by signal strength
+
+backtest:
+  segments:
+    train: ["2021-01-01", "2021-12-31"]
+    test: ["2022-01-01", "2022-12-31"]
+  initial_capital: 1000000
+  commission: 0.001
+  slippage: 0.001
+  min_commission: 0.0
+  rebalance_frequency: 1
+
+experiment:
+  name: "multi_factor_strategy"
+  tracking_uri: "sqlite:///mlruns.db"
+  run_name: "multi_factor_lgbm"
+  tags:
+    strategy: "multi_factor"
+    model: "LightGBM"
+    factors: "5"

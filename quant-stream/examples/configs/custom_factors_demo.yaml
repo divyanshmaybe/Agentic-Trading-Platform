@@ -1,0 +1,96 @@
+# Custom Factors Demo Configuration
+# This example demonstrates using custom factor expressions (Qlib-style)
+# Custom factors are simple expression strings without explicit names; we define them
+# as features with auto-generated names for clarity.
+
+data:
+  path: ".data/indian_stock_market_nifty500.csv"
+  start_date: "2021-06-01"
+  end_date: "2021-12-31"
+  symbol_col: "symbol"
+  timestamp_col: "timestamp"
+
+features:
+  # Intraday return
+  - name: "custom_factor_intraday_return"
+    expression: "($close - $open) / $open"
+
+  # 1-day momentum
+  - name: "custom_factor_momentum_1d"
+    expression: "$close / DELAY($close, 1) - 1"
+
+  # Volume ratio vs 20-day average
+  - name: "custom_factor_volume_ratio"
+    expression: "$volume / TS_MEAN($volume, 20)"
+
+  # Intraday range vs previous close
+  - name: "custom_factor_intraday_range"
+    expression: "($high - $low) / DELAY($close, 1)"
+
+  # Volatility factor
+  - name: "custom_factor_volatility"
+    expression: "TS_STD($close, 20) / TS_MEAN($close, 20)"
+
+  # Volume-weighted momentum
+  - name: "custom_factor_volume_weighted_momentum"
+    expression: "MULTIPLY(DELTA($close, 5), $volume) / TS_MEAN($volume, 20)"
+
+model:
+  type: "LightGBM"
+  # Qlib-style: Use inline expressions directly (no need to pre-compute factors)
+  features:
+    # Pure expressions like qlib - no pre-computed factors needed
+    - "($close - $open) / $open"
+    - "$close / DELAY($close, 1) - 1"
+    - "$volume / TS_MEAN($volume, 20)"
+    - "($high - $low) / DELAY($close, 1)"
+    - "TS_STD($close, 20) / TS_MEAN($close, 20)"
+    - "MULTIPLY(DELTA($close, 5), $volume) / TS_MEAN($volume, 20)"
+  include_ohlcv: false
+  params:
+    # LightGBM hyperparameters
+    objective: "regression"
+    metric: "l2"
+    boosting_type: "gbdt"
+    learning_rate: 0.05
+    num_leaves: 31
+    max_depth: 5
+    min_child_samples: 20
+    subsample: 0.8
+    subsample_freq: 1
+    colsample_bytree: 0.8
+    reg_alpha: 0.1
+    reg_lambda: 0.1
+    random_state: 42
+    verbose: -1
+    # Training parameters
+    num_boost_round: 100
+    early_stopping_rounds: 10
+  target: "forward_return_1d"
+
+strategy:
+  type: "TopkDropout"
+  params:
+    topk: 30
+    n_drop: 5
+    method: "signal"  # Weight by signal strength
+
+backtest:
+  segments:
+    train: ["2021-06-01", "2021-10-31"]
+    test: ["2021-11-01", "2021-12-31"]
+  initial_capital: 1000000
+  commission: 0.001
+  slippage: 0.001
+  min_commission: 0.0
+  rebalance_frequency: 1
+
+experiment:
+  name: "custom_factors_demo"
+  tracking_uri: "sqlite:///mlruns.db"
+  run_name: "custom_factors_lgbm"
+  tags:
+    strategy: "custom_factors"
+    model: "LightGBM"
+    style: "qlib"
+

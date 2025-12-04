@@ -1,0 +1,73 @@
+# Multi-factor strategy configuration
+# This example uses multiple alpha factors for prediction
+
+data:
+  path: ".data/indian_stock_market_nifty500.csv"
+  start_date: "2021-06-01"
+  end_date: "2021-12-31"
+  symbols_file: ".data/nifty500.txt"  # Filter to NIFTY 500 symbols for faster processing
+  symbol_col: "symbol"
+  timestamp_col: "timestamp"
+
+features:
+  - name: "Ranked10D_Price_Momentum_Smooth_5D"
+    expression: "EMA(RANK(TS_PCTCHANGE($close, 10)), 5)"
+  - name: "Ranked10D_Volume_Adjusted_Momentum"
+    expression: "RANK(TS_PCTCHANGE($close, 10) * TS_ZSCORE(TS_PCTCHANGE($volume, 10), 10))"
+  - name: "CrossSectionalRank_10D_Return_vs_PrevDayRange"
+    expression: "RANK(TS_PCTCHANGE($close, 10) / ABS($high - $low) / DELAY($close, 1))"
+
+model:
+  type: "LightGBM"
+  # Explicit feature selection - reference computed factors
+  features:
+    - "Ranked10D_Price_Momentum_Smooth_5D"
+    - "Ranked10D_Volume_Adjusted_Momentum"
+    - "CrossSectionalRank_10D_Return_vs_PrevDayRange"
+  include_ohlcv: false
+  params:
+    # LightGBM hyperparameters
+    objective: "regression"
+    metric: "l2"
+    boosting_type: "gbdt"
+    learning_rate: 0.05
+    num_leaves: 31
+    max_depth: 5
+    min_child_samples: 50
+    subsample: 0.8
+    subsample_freq: 1
+    colsample_bytree: 0.8
+    reg_alpha: 0.1
+    reg_lambda: 0.1
+    random_state: 42
+    verbose: -1
+    # Training parameters
+    num_boost_round: 200
+    early_stopping_rounds: 10
+  target: "forward_return_1d"
+
+strategy:
+  type: "TopkDropout"
+  params:
+    topk: 50
+    n_drop: 10
+    method: "signal"  # Weight by signal strength
+
+backtest:
+  segments:
+    train: ["2021-06-01", "2021-12-01"]
+    test: ["2021-12-01", "2021-12-31"]
+  initial_capital: 1000000
+  commission: 0.001
+  slippage: 0.001
+  min_commission: 0.0
+  rebalance_frequency: 1
+
+experiment:
+  name: "test_strategy"
+  tracking_uri: "sqlite:///mlruns.db"
+  run_name: "multi_factor_lgbm"
+  tags:
+    strategy: "test"
+    model: "LightGBM"
+    factors: "5"
