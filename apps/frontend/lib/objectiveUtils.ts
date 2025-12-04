@@ -51,29 +51,41 @@ export function buildStructuredPayload(
 ): Record<string, any> {
   const structuredPayload: Record<string, any> = {}
   
+  console.log("🔵 [buildStructuredPayload] Building payload:", {
+    context,
+    missingFieldsList,
+    lastResponseData_structured_payload: lastResponseData?.structured_payload,
+  })
+  
+  // Include ALL fields from context - we want to send what the user just provided
+  // even if it's still in missingFieldsList (the API will update the list)
   Object.entries(context).forEach(([key, value]) => {
-    if (!missingFieldsList.includes(key)) {
-      if (key.includes(".")) {
-        const [parent, child] = key.split(".")
-        if (!structuredPayload[parent]) {
-          structuredPayload[parent] = {}
-        }
-        structuredPayload[parent][child] = value
-      } else {
-        structuredPayload[key] = value
+    if (key.includes(".")) {
+      const [parent, child] = key.split(".")
+      if (!structuredPayload[parent]) {
+        structuredPayload[parent] = {}
       }
+      structuredPayload[parent][child] = value
+    } else {
+      structuredPayload[key] = value
     }
   })
 
   if (lastResponseData?.structured_payload) {
     const basePayload = JSON.parse(JSON.stringify(lastResponseData.structured_payload))
+    // Remove fields that are still missing (but keep what we just collected in context)
     missingFieldsList.forEach((field) => {
-      removeFieldFromPayload(basePayload, field)
+      // Only remove if it's not in our context (user hasn't provided it yet)
+      if (!context[field]) {
+        removeFieldFromPayload(basePayload, field)
+      }
     })
+    // Merge: context values override base payload, but base payload provides other existing values
     const merged = deepMerge(basePayload, structuredPayload)
     Object.assign(structuredPayload, merged)
   }
 
+  console.log("🟢 [buildStructuredPayload] Final payload:", structuredPayload)
   return structuredPayload
 }
 

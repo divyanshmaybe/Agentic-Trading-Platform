@@ -51,7 +51,7 @@ export function FieldInput({ fieldName, onSubmit, disabled = false }: FieldInput
   }
 
   return (
-    <div className="flex flex-col gap-3 rounded-lg bg-white/5 p-4 border border-white/10">
+    <div className="flex flex-col gap-3 rounded-lg bg-white/8 backdrop-blur p-4 border border-white/10">
       <div>
         <p className="text-sm text-white/80">
           Please provide: <span className="font-semibold text-[#fafafa]">{displayName}</span>
@@ -69,7 +69,7 @@ export function FieldInput({ fieldName, onSubmit, disabled = false }: FieldInput
             onChange={(e) => setValue(e.target.value)}
             disabled={disabled}
             className={cn(
-              "flex-1 rounded-lg border border-white/15 bg-black/40 px-4 py-2",
+              "flex-1 rounded-lg border border-white/15 bg-white/8 px-4 py-2",
               "text-[#fafafa]",
               "focus:outline-none focus:ring-2 focus:ring-white/20 focus:border-white/30",
               "disabled:opacity-50 disabled:cursor-not-allowed",
@@ -93,7 +93,7 @@ export function FieldInput({ fieldName, onSubmit, disabled = false }: FieldInput
             placeholder={`Enter ${displayName.toLowerCase()}...`}
             step={fieldType === "number" ? "any" : undefined}
             className={cn(
-              "flex-1 rounded-lg border border-white/15 bg-black/40 px-4 py-2",
+              "flex-1 rounded-lg border border-white/15 bg-white/8 px-4 py-2",
               "text-[#fafafa] placeholder:text-white/40",
               "focus:outline-none focus:ring-2 focus:ring-white/20 focus:border-white/30",
               "disabled:opacity-50 disabled:cursor-not-allowed",
