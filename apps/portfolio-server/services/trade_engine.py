@@ -336,6 +336,7 @@ class TradeEngine:
         return trade.dict()
 
     async def _apply_buy_execution(self, payload: TradeCreate, execution_price: Decimal) -> None:
+        """Apply buy execution - update position atomically."""
         position = await self.prisma.position.find_first(
             where={"portfolio_id": payload.portfolio_id, "symbol": payload.symbol}
         )
@@ -349,14 +350,17 @@ class TradeEngine:
             previous_value = Decimal(str(position.average_buy_price)) * Decimal(str(position.quantity))
             new_average = (previous_value + total_cost) / Decimal(str(new_quantity))
             new_average = new_average.quantize(FOUR_DP, rounding=ROUND_HALF_UP)
-            await self.prisma.position.update(
-                where={"id": position.id},
-                data={
-                    "quantity": new_quantity,
-                    "average_buy_price": new_average,
-                    "status": "open",
-                },
-            )
+            
+            # Use transaction for atomic position update
+            async with self.prisma.tx() as tx:
+                await tx.position.update(
+                    where={"id": position.id},
+                    data={
+                        "quantity": new_quantity,
+                        "average_buy_price": new_average,
+                        "status": "open",
+                    },
+                )
         else:
             # NOTE: Legacy position creation path - deprecated
             # Position creation now requires agent_id and allocation_id (NOT NULL)
@@ -368,12 +372,14 @@ class TradeEngine:
     async def _apply_sell_execution(self, payload: TradeCreate, execution_price: Decimal) -> Decimal:
         """
         Apply sell execution - update position and calculate realized PnL.
+        Uses Prisma transaction for atomic writes to ensure data consistency.
         
         Returns:
             Decimal: The realized PnL from this sale
         """
         import logging
         logger = logging.getLogger(__name__)
+        
         # For test compatibility, avoid using 'include' parameter which isn't supported by in-memory Prisma
         position = await self.prisma.position.find_first(
             where={"portfolio_id": payload.portfolio_id, "symbol": payload.symbol}
@@ -405,82 +411,102 @@ class TradeEngine:
 
         remaining = position.quantity - payload.quantity
         
-        # Update portfolio's total_realized_pnl
+        # Fetch portfolio for atomic update
         portfolio = await self.prisma.portfolio.find_unique(where={"id": payload.portfolio_id})
+        
+        # Calculate all values before the transaction
+        portfolio_new_realized_pnl = None
         if portfolio:
             portfolio_current_realized_pnl = Decimal(str(portfolio.total_realized_pnl)) if portfolio.total_realized_pnl else Decimal(0)
             portfolio_new_realized_pnl = portfolio_current_realized_pnl + realized_pnl
-            
-            await self.prisma.portfolio.update(
-                where={"id": payload.portfolio_id},
-                data={"total_realized_pnl": portfolio_new_realized_pnl},
-            )
-
-        # Update agent and allocation realized PnL
+        
+        agent_new_pnl = None
+        agent_current_pnl = None
         if agent:
-            try:
-                # Update TradingAgent realized_pnl
-                agent_current_pnl = Decimal(str(agent.realized_pnl)) if agent.realized_pnl else Decimal(0)
-                agent_new_pnl = agent_current_pnl + realized_pnl
-                await self.prisma.tradingagent.update(
+            agent_current_pnl = Decimal(str(agent.realized_pnl)) if agent.realized_pnl else Decimal(0)
+            agent_new_pnl = agent_current_pnl + realized_pnl
+        
+        alloc_new_pnl = None
+        alloc_new_cash = None
+        alloc_current_pnl = None
+        alloc_current_cash = None
+        sale_proceeds = None
+        if allocation:
+            alloc_current_pnl = Decimal(str(allocation.realized_pnl)) if allocation.realized_pnl else Decimal(0)
+            alloc_new_pnl = alloc_current_pnl + realized_pnl
+            
+            # Calculate sale proceeds to return to allocation (net of fees)
+            gross_value = execution_price * quantity_sold
+            fees = (gross_value * FEE_RATE).quantize(FOUR_DP, rounding=ROUND_HALF_UP)
+            taxes = (gross_value * TAX_RATE).quantize(FOUR_DP, rounding=ROUND_HALF_UP)
+            sale_proceeds = gross_value - fees - taxes
+            
+            alloc_current_cash = Decimal(str(allocation.available_cash)) if allocation.available_cash else Decimal(0)
+            alloc_new_cash = alloc_current_cash + sale_proceeds
+
+        # Use Prisma transaction for atomic writes
+        # All updates succeed or all fail together
+        async with self.prisma.tx() as tx:
+            # 1. Update portfolio's total_realized_pnl
+            if portfolio and portfolio_new_realized_pnl is not None:
+                await tx.portfolio.update(
+                    where={"id": payload.portfolio_id},
+                    data={"total_realized_pnl": portfolio_new_realized_pnl},
+                )
+
+            # 2. Update agent realized_pnl
+            if agent and agent_new_pnl is not None:
+                await tx.tradingagent.update(
                     where={"id": agent.id},
                     data={"realized_pnl": agent_new_pnl},
                 )
-                logger.info(
-                    "💰 Updated agent %s realized_pnl: ₹%.2f → ₹%.2f (+₹%.2f)",
-                    agent.agent_name, float(agent_current_pnl), float(agent_new_pnl), float(realized_pnl)
-                )
                 
-                # Update PortfolioAllocation realized_pnl AND return sale proceeds to available_cash
-                if allocation:
-                    alloc_current_pnl = Decimal(str(allocation.realized_pnl)) if allocation.realized_pnl else Decimal(0)
-                    alloc_new_pnl = alloc_current_pnl + realized_pnl
-                    
-                    # Calculate sale proceeds to return to allocation (net of fees)
-                    gross_value = execution_price * quantity_sold
-                    fees = (gross_value * FEE_RATE).quantize(FOUR_DP, rounding=ROUND_HALF_UP)
-                    taxes = (gross_value * TAX_RATE).quantize(FOUR_DP, rounding=ROUND_HALF_UP)
-                    sale_proceeds = gross_value - fees - taxes
-                    
-                    alloc_current_cash = Decimal(str(allocation.available_cash)) if allocation.available_cash else Decimal(0)
-                    alloc_new_cash = alloc_current_cash + sale_proceeds
-                    
-                    await self.prisma.portfolioallocation.update(
-                        where={"id": allocation.id},
-                        data={
-                            "realized_pnl": alloc_new_pnl,
-                            "available_cash": alloc_new_cash,
-                        },
-                    )
-                    logger.info(
-                        "💰 Updated allocation %s: realized_pnl ₹%.2f → ₹%.2f (+₹%.2f), cash ₹%.2f → ₹%.2f (+₹%.2f)",
-                        allocation.allocation_type, 
-                        float(alloc_current_pnl), float(alloc_new_pnl), float(realized_pnl),
-                        float(alloc_current_cash), float(alloc_new_cash), float(sale_proceeds)
-                    )
-            except Exception as pnl_exc:
-                logger.warning("Failed to update agent/allocation realized_pnl: %s", pnl_exc)
+            # 3. Update allocation realized_pnl and available_cash
+            if allocation and alloc_new_pnl is not None and alloc_new_cash is not None:
+                await tx.portfolioallocation.update(
+                    where={"id": allocation.id},
+                    data={
+                        "realized_pnl": alloc_new_pnl,
+                        "available_cash": alloc_new_cash,
+                    },
+                )
 
-        if remaining == 0:
-            # Mark position as closed instead of deleting
-            await self.prisma.position.update(
-                where={"id": position.id},
-                data={
-                    "quantity": 0,
-                    "realized_pnl": new_realized_pnl,
-                    "status": "closed",
-                    "closed_at": datetime.utcnow(),
-                },
+            # 4. Update position (close or reduce quantity)
+            if remaining == 0:
+                # Mark position as closed instead of deleting
+                await tx.position.update(
+                    where={"id": position.id},
+                    data={
+                        "quantity": 0,
+                        "realized_pnl": new_realized_pnl,
+                        "status": "closed",
+                        "closed_at": datetime.utcnow(),
+                    },
+                )
+            else:
+                # Keep position open, update quantity and realized_pnl
+                await tx.position.update(
+                    where={"id": position.id},
+                    data={
+                        "quantity": remaining,
+                        "realized_pnl": new_realized_pnl,
+                        "status": "open",
+                    },
+                )
+
+        # Log updates after successful transaction
+        if agent and agent_new_pnl is not None:
+            logger.info(
+                "💰 Updated agent %s realized_pnl: ₹%.2f → ₹%.2f (+₹%.2f)",
+                agent.agent_name, float(agent_current_pnl), float(agent_new_pnl), float(realized_pnl)
             )
-        else:
-            # Keep position open, update quantity and realized_pnl
-            await self.prisma.position.update(
-                where={"id": position.id},
-                data={
-                    "quantity": remaining,
-                    "realized_pnl": new_realized_pnl,
-                    "status": "open",
-                },
+            
+        if allocation and alloc_new_pnl is not None and sale_proceeds is not None:
+            logger.info(
+                "💰 Updated allocation %s: realized_pnl ₹%.2f → ₹%.2f (+₹%.2f), cash ₹%.2f → ₹%.2f (+₹%.2f)",
+                allocation.allocation_type, 
+                float(alloc_current_pnl), float(alloc_new_pnl), float(realized_pnl),
+                float(alloc_current_cash), float(alloc_new_cash), float(sale_proceeds)
             )
 
         await self._recalculate_portfolio_value(payload.portfolio_id)
