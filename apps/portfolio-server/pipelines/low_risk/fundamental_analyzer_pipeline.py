@@ -530,6 +530,44 @@ class FundamentalAnalyzer:
 
         return float((gp - gp_prev) / gp_prev)
 
+    def compute_live_price(self):
+        """Fetch live price from market data service."""
+        try:
+            from market_data import get_market_data_service
+            
+            # Get the service and fetch price
+            service = get_market_data_service()
+            
+            # Try to get cached price first (non-blocking)
+            price = service.get_latest_price(self.ticker_symbol)
+            if price is not None:
+                return float(price)
+            
+            # If not cached, try synchronous fetch
+            try:
+                price = service.get_or_fetch_price(self.ticker_symbol)
+                return float(price)
+            except RuntimeError:
+                # Running in async context or price not available
+                pass
+            
+            # Fallback: try to get from yfinance info
+            if self._info:
+                current_price = self._info.get('currentPrice') or self._info.get('regularMarketPrice')
+                if current_price:
+                    return float(current_price)
+            
+            return pd.NA
+        except ImportError:
+            # market_data module not available, use yfinance
+            if self._info:
+                current_price = self._info.get('currentPrice') or self._info.get('regularMarketPrice')
+                if current_price:
+                    return float(current_price)
+            return pd.NA
+        except Exception as e:
+            logger.warning(f"Failed to fetch live price for {self.ticker_symbol}: {e}")
+            return pd.NA
     
 
     def get_valuation_metrics(self):
@@ -623,7 +661,7 @@ class FundamentalAnalyzer:
             "sma50": self.compute_sma50(),
             "sma200": self.compute_sma200(),
             "volatility": self.compute_volatility(),
-            # "price":
+            "live_price": self.compute_live_price(),
         }
 
         # Add all info-based metrics
