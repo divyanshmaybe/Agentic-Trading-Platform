@@ -89,8 +89,8 @@ class PortfolioMonitor:
         self.value_history: List[float] = (
             list(map(float, value_history)) if value_history else [float(initial_value), float(self.current_value)]
         )
-        # Minimum of one quarter to avoid division-by-zero in progress metrics.
-        self.time_quarters: int = max(1, len(self.value_history) - 1)
+        # Minimum of one semi_annual to avoid division-by-zero in progress metrics.
+        self.time_semi_annual: int = max(1, len(self.value_history) - 1)
         self.history: Dict[str, List[SegmentMetrics]] = {
             segment: [] for segment in self.segments
         }
@@ -107,16 +107,16 @@ class PortfolioMonitor:
                             sharpe_ratio=float(metrics.get("sharpe_ratio", 0.0)),
                         )
                     )
-            self.time_quarters = max(
-                self.time_quarters,
+            self.time_semi_annual = max(
+                self.time_semi_annual,
                 max((len(values) for values in self.history.values()), default=1),
             )
 
     # ------------------------------------------------------------------ Metrics
-    def record_quarter(
+    def record_semi_annual(
         self, segment_metrics: Mapping[str, SegmentMetrics], *, new_portfolio_value: float
     ) -> None:
-        """Persist a completed quarter into rolling histories."""
+        """Persist a completed semi_annual into rolling histories."""
 
         for segment, metrics in segment_metrics.items():
             if segment in self.history:
@@ -124,7 +124,7 @@ class PortfolioMonitor:
 
         self.current_value = float(new_portfolio_value)
         self.value_history.append(self.current_value)
-        self.time_quarters += 1
+        self.time_semi_annual += 1
 
     def get_latest_metrics(self) -> Dict[str, SegmentMetrics]:
         """Return most recently observed metrics, or cold-start defaults."""
@@ -140,7 +140,7 @@ class PortfolioMonitor:
             latest[segment] = self.history[segment][-1] if self.history[segment] else defaults
         return latest
 
-    def get_rolling_metrics(self, *, lookback_quarters: int = 4) -> Dict[str, SegmentMetrics]:
+    def get_rolling_metrics(self, *, lookback_semi_annual: int = 4) -> Dict[str, SegmentMetrics]:
         """Return rolling average metrics across the provided lookback window."""
 
         rolling: Dict[str, SegmentMetrics] = {}
@@ -150,8 +150,8 @@ class PortfolioMonitor:
                 rolling[segment] = self.get_latest_metrics()[segment]
                 continue
             window = (
-                metrics_history[-lookback_quarters:]
-                if len(metrics_history) >= lookback_quarters
+                metrics_history[-lookback_semi_annual:]
+                if len(metrics_history) >= lookback_semi_annual
                 else metrics_history
             )
             rolling[segment] = SegmentMetrics(
@@ -261,7 +261,7 @@ class PortfolioManager:
                 'drawdown': 0.4     # Less concerned about drawdowns
             },
             MarketRegime.BEAR: {
-                'variance': 1.8,    # More risk averse
+                'variance': 2.5,    # More risk averse
                 'drawdown': 1.5     # Highly concerned about drawdowns
             },
             MarketRegime.SIDEWAYS: {
@@ -293,13 +293,13 @@ class PortfolioManager:
         cumulative_return = self.monitor.get_cumulative_return()
 
         # Calculate expected cumulative return to date
-        annual_target = self.user_inputs.get('expected_return_target')
+        target = self.user_inputs.get('expected_return_target')
         horizon_years = self.user_inputs.get('investment_horizon_years')
-        quarters_elapsed = max(1, self.monitor.time_quarters)
+        semi_annual_elapsed = max(1, self.monitor.time_semi_annual)
 
         # Target cumulative return for this point in time
-        fraction_elapsed = quarters_elapsed / (4.0 * horizon_years)
-        target_cumulative = (1 + annual_target) ** fraction_elapsed - 1
+        fraction_elapsed = semi_annual_elapsed / (2.0 * horizon_years)
+        target_cumulative = (1 + target) ** fraction_elapsed - 1
 
         # Progress ratio
         if target_cumulative <= 0:
@@ -351,13 +351,7 @@ class PortfolioManager:
 
     def get_variance(self, metrics: Dict[str, SegmentMetrics]) -> np.ndarray:
         """
-        Construct covariance matrix from segment volatilities and correlations.
-
-        Args:
-            metrics: Dictionary of segment metrics
-
-        Returns:
-            4x4 covariance matrix
+        Returns volatility of each segment as a variance vector.
         """
         vols = np.array([metrics[seg].volatility for seg in self.segments])
         variance = vols ** 2
@@ -454,14 +448,14 @@ class PortfolioManager:
     def rebalance(self,
                   current_regime: str,
                   use_rolling_metrics: bool = True,
-                  lookback_quarters: int = 4) -> OptimizationResult:
+                  lookback_semi_annual: int = 4) -> OptimizationResult:
         """
         Compute optimal portfolio weights for the next period.
 
         Args:
             current_regime: Current market regime as string
             use_rolling_metrics: Whether to use rolling average metrics
-            lookback_quarters: Number of quarters for rolling average
+            lookback_semi_annual: Number of semi_annual for rolling average
 
         Returns:
             OptimizationResult containing new weights and diagnostic information
@@ -473,8 +467,8 @@ class PortfolioManager:
             regime = MarketRegime.SIDEWAYS
 
         # Get metrics
-        if use_rolling_metrics and self.monitor.time_quarters >= 2:
-            metrics = self.monitor.get_rolling_metrics(lookback_quarters)
+        if use_rolling_metrics and self.monitor.time_semi_annual >= 2:
+            metrics = self.monitor.get_rolling_metrics(lookback_semi_annual)
         else:
             metrics = self.monitor.get_latest_metrics()
 
@@ -566,7 +560,7 @@ def ensure_segment_metrics(
     return segment_metrics
 
 
-async def calculate_segment_metrics_from_db(portfolio_id: str, lookback_quarters: int = 4) -> Dict[str, SegmentMetrics]:
+async def calculate_segment_metrics_from_db(portfolio_id: str, lookback_semi_annual: int = 4) -> Dict[str, SegmentMetrics]:
     """
     Calculate SegmentMetrics from TradingAgentSnapshots and PortfolioSnapshots for a given portfolio.
 
@@ -575,7 +569,7 @@ async def calculate_segment_metrics_from_db(portfolio_id: str, lookback_quarters
 
     Args:
         portfolio_id: The portfolio ID to calculate metrics for
-        lookback_quarters: Number of recent quarters to use for calculation
+        lookback_semi_annual: Number of recent semi_annual to use for calculation
 
     Returns:
         Dictionary mapping segment names (agent_type) to their metrics
@@ -606,6 +600,14 @@ async def calculate_segment_metrics_from_db(portfolio_id: str, lookback_quarters
                 "portfolio_id": portfolio_id,
                 "snapshot_at": {"gte": cutoff_date}
             },
+            order={"created_at": "desc"},
+            take=lookback_semi_annual * 4  # Assuming ~4 snapshots per semi_annual
+        )
+
+        # Group by allocation_type (segment)
+        segment_data = {}
+        for snap in snapshots:
+            segment = snap.portfolio_allocation.allocation_type if hasattr(snap, 'portfolio_allocation') else None
             order={"snapshot_at": "asc"}
         )
         

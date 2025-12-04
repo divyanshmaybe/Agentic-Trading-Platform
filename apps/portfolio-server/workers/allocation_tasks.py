@@ -254,7 +254,7 @@ def _calculate_next_rebalance_date(
         "annually": relativedelta(years=1),
     }
     
-    delta = frequency_map.get(frequency.lower(), relativedelta(months=3))  # Default to quarterly
+    delta = frequency_map.get(frequency.lower(), relativedelta(months=6))  # Default to semi_annually
     next_date = start + delta
     
     logger.info(f"Calculated next rebalance date: {next_date.date()} (frequency={frequency})")
