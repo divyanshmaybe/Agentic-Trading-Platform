@@ -179,10 +179,11 @@ celery_app.conf.update(
     worker_max_tasks_per_child=int(os.getenv("CELERY_MAX_TASKS_PER_CHILD", "50")),  # Recycle workers aggressively to prevent leaks
     worker_prefetch_multiplier=1,  # Only prefetch 1 task per worker (prevents blocking)
     worker_redirect_stdouts=False,
-    worker_send_task_events=True,
+    worker_send_task_events=True,  # Enable Celery event stream for celery-exporter
     worker_hijack_root_logger=False,
     worker_disable_rate_limits=False,
     worker_lost_wait=10,  # Seconds to wait for worker to exit gracefully
+    worker_heartbeat_interval=2,  # Heartbeat interval for worker health monitoring
     # Task settings
     task_reject_on_worker_lost=True,
     task_time_limit=HARD_TIME_LIMIT,  # Global hard limit
@@ -191,6 +192,7 @@ celery_app.conf.update(
     task_store_eager_result=False,
     task_ignore_result=False,  # Store results for debugging
     task_compression="gzip",  # Compress task payloads
+    task_send_sent_event=True,  # Track task 'sent' events for monitoring
     # Broker settings - robust connection handling
     broker_connection_retry_on_startup=True,
     broker_connection_retry=True,
@@ -212,8 +214,6 @@ celery_app.conf.update(
     result_expires=RESULT_TTL,
     result_persistent=True,
     result_extended=True,  # Store additional task metadata
-    # Event settings for monitoring (worker_send_task_events already set above)
-    task_send_sent_event=True,
 )
 
 # Ensure all queues are registered explicitly with proper routing keys and priority support

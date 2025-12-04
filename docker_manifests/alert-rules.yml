@@ -213,12 +213,12 @@ groups:
           description: "Pipeline queue {{ $labels.queue_name }} has {{ $value }} pending tasks."
 
   # ============================================================================
-  # WARNING ALERTS - Worker Health (Legacy + Enhanced)
+  # WARNING ALERTS - Worker Health
   # ============================================================================
   - name: celery_alerts
     interval: 30s
     rules:
-      # Worker Down Alert (original)
+      # Worker Down Alert
       - alert: CeleryWorkerDown
         expr: celery_worker_up == 0
         for: 1m
@@ -229,7 +229,7 @@ groups:
           summary: "Celery worker {{ $labels.worker }} is down"
           description: "Worker {{ $labels.worker }} has been down for more than 1 minute"
           
-      # High Task Failure Rate (original)
+      # High Task Failure Rate
       - alert: HighTaskFailureRate
         expr: |
           (
@@ -245,7 +245,7 @@ groups:
           summary: "High task failure rate on {{ $labels.worker }}"
           description: "Worker {{ $labels.worker }} has a failure rate of {{ $value | humanizePercentage }} over the last 5 minutes"
           
-      # Task Queue Backlog (original)
+      # Task Queue Backlog
       - alert: TaskQueueBacklog
         expr: sum(celery_worker_tasks_active) by (worker) > 50
         for: 10m
@@ -256,7 +256,7 @@ groups:
           summary: "High task backlog on {{ $labels.worker }}"
           description: "Worker {{ $labels.worker }} has {{ $value }} active tasks for more than 10 minutes"
           
-      # Slow Task Execution (original)
+      # Slow Task Execution
       - alert: SlowTaskExecution
         expr: |
           histogram_quantile(0.95, 
@@ -270,7 +270,7 @@ groups:
           summary: "Slow task execution: {{ $labels.task_name }} on {{ $labels.worker }}"
           description: "95th percentile task duration is {{ $value }}s for {{ $labels.task_name }} on {{ $labels.worker }}"
           
-      # High Task Retry Rate (original)
+      # High Task Retry Rate
       - alert: HighTaskRetryRate
         expr: rate(celery_task_retried_total[5m]) > 1
         for: 5m
@@ -281,7 +281,7 @@ groups:
           summary: "High retry rate for {{ $labels.task_name }} on {{ $labels.worker }}"
           description: "Task {{ $labels.task_name }} is retrying at {{ $value }} retries/sec on {{ $labels.worker }}"
           
-      # No Task Activity (original)
+      # No Task Activity
       - alert: NoTaskActivity
         expr: rate(celery_task_received_total[10m]) == 0
         for: 15m
@@ -292,7 +292,7 @@ groups:
           summary: "No task activity on {{ $labels.worker }}"
           description: "Worker {{ $labels.worker }} has not received any tasks in the last 15 minutes"
           
-      # Worker Pool Near Capacity (original)
+      # Worker Pool Near Capacity
       - alert: WorkerPoolNearCapacity
         expr: celery_worker_pool_usage > 0.9
         for: 5m
@@ -309,7 +309,7 @@ groups:
   - name: trading_platform_alerts
     interval: 30s
     rules:
-      # Market Data Pipeline Issues (original + enhanced)
+      # Market Data Pipeline Issues
       - alert: MarketDataPipelineFailure
         expr: rate(celery_task_failed_total{task_name=~".*market.*"}[5m]) > 0.5
         for: 3m
@@ -321,7 +321,7 @@ groups:
           description: "Market data tasks are failing at {{ $value }} failures/sec"
           runbook: "Check AngelOne API status, token validity, rate limits."
           
-      # Trade Execution Delays (original + enhanced)
+      # Trade Execution Delays
       - alert: TradeExecutionDelay
         expr: |
           histogram_quantile(0.95,
@@ -335,7 +335,7 @@ groups:
           summary: "Trade execution delays detected"
           description: "95th percentile trade execution time is {{ $value }}s (threshold: 30s)"
           
-      # NSE Pipeline Processing Issues (original)
+      # NSE Pipeline Processing Issues
       - alert: NSEPipelineStalled
         expr: rate(celery_task_received_total{task_name=~".*nse.*"}[10m]) == 0
         for: 15m
@@ -346,7 +346,7 @@ groups:
           summary: "NSE filing pipeline appears stalled"
           description: "No NSE filing tasks processed in the last 15 minutes"
           
-      # Risk Alert Processing Failure (original)
+      # Risk Alert Processing Failure
       - alert: RiskAlertProcessingFailure
         expr: rate(celery_task_failed_total{task_name=~".*risk.*"}[5m]) > 0
         for: 1m

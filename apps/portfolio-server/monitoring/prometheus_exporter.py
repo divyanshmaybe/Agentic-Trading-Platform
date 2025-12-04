@@ -3,6 +3,10 @@ Prometheus Exporter for Celery Workers
 
 Exposes metrics about Celery task execution, worker health, and queue statistics.
 Each worker pool runs its own Prometheus exporter on a different port.
+
+Note: This exporter provides worker-local metrics. For cluster-wide Celery metrics,
+use danihodovic/celery-exporter which connects to the Redis broker and provides
+comprehensive task lifecycle metrics (sent, received, started, succeeded, failed, etc.)
 """
 
 from __future__ import annotations
@@ -215,6 +219,18 @@ def setup_prometheus_exporter(port: Optional[int] = None):
     # Register Celery signal handlers
     _register_signal_handlers()
     logger.info("📊 Signal handlers registered successfully")
+    
+    # Initialize business metrics
+    try:
+        from monitoring.business_metrics import init_business_metrics, BUSINESS_METRICS_ENABLED
+        if BUSINESS_METRICS_ENABLED:
+            worker_name = _exporter.worker_name
+            # Extract worker pool from name (e.g., "trading@docker" -> "trading")
+            worker_pool = worker_name.split("@")[0] if "@" in worker_name else worker_name
+            init_business_metrics(worker_name, worker_pool)
+            logger.info("📊 Business metrics initialized for worker %s", worker_name)
+    except Exception as e:
+        logger.warning("Failed to initialize business metrics: %s", e)
 
 
 def _register_signal_handlers():

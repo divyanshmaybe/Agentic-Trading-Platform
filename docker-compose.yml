@@ -559,7 +559,7 @@ services:
     networks:
       - agentInvest
 
-  # Flower (Celery monitoring dashboard)
+  # Flower (Celery monitoring dashboard with Prometheus metrics)
   flower:
     image: portfolio_server:latest
     container_name: flower
@@ -569,12 +569,14 @@ services:
       - apps/portfolio-server/docker.env
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
+      FLOWER_PERSISTENT: "true"
+      FLOWER_PURGE_OFFLINE_WORKERS: "60"
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "cp /app/apps/portfolio-server/docker.env /app/apps/portfolio-server/.env 2>/dev/null || true &&
                python -m prisma generate &&
                pip install flower &&
-               celery -A celery_app:celery_app flower --port=5555 --basic_auth=admin:admin123 --broker_api=redis://portfolio_redis:6379/0"
+               celery -A celery_app:celery_app flower --port=5555 --basic_auth=admin:admin123 --broker_api=redis://portfolio_redis:6379/0 --prometheus_enable=True"
     volumes:
       - ./apps/portfolio-server:/app/apps/portfolio-server
       - ./shared:/app/shared
@@ -582,9 +584,44 @@ services:
       - ./scripts:/app/scripts
     ports:
       - "5555:5555"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:5555/healthcheck || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     depends_on:
       portfolio_postgres:
         condition: service_healthy
+      portfolio_redis:
+        condition: service_healthy
+      portfolio_celery_trading:
+        condition: service_started
+    networks:
+      - agentInvest
+    profiles:
+      - monitoring
+
+  # Celery Exporter (Primary Prometheus metrics source for Celery)
+  celery-exporter:
+    image: danihodovic/celery-exporter:latest
+    container_name: celery-exporter
+    restart: unless-stopped
+    environment:
+      CE_BROKER_URL: "redis://portfolio_redis:6379/0"
+      CE_LISTEN_ADDRESS: "0.0.0.0:9540"
+      CE_NAMESPACE: "celery"
+      CE_MAX_TASKS: "10000"
+      CE_RETRY_INTERVAL: "5"
+    ports:
+      - "9540:9540"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:9540/metrics || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    depends_on:
       portfolio_redis:
         condition: service_healthy
       portfolio_celery_trading:

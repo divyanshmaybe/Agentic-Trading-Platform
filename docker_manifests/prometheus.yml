@@ -10,7 +10,52 @@ rule_files:
   - 'alert-rules.yml'
 
 scrape_configs:
+  # ==========================================================================
+  # Celery Exporter (Primary source for Celery cluster metrics)
+  # ==========================================================================
+  - job_name: 'celery-exporter'
+    static_configs:
+      - targets: ['celery-exporter:9540']
+        labels:
+          service: 'celery-exporter'
+          environment: 'docker'
+    metrics_path: /metrics
+    scrape_interval: 15s
+
+  # Celery Exporter (Local development - use host.docker.internal)
+  - job_name: 'celery-exporter-local'
+    static_configs:
+      - targets: ['host.docker.internal:9540']
+        labels:
+          service: 'celery-exporter'
+          environment: 'local'
+    metrics_path: /metrics
+    scrape_interval: 15s
+
+  # ==========================================================================
+  # Flower (Secondary metrics + queue depth)
+  # ==========================================================================
+  - job_name: 'flower'
+    static_configs:
+      - targets: ['flower:5555']
+        labels:
+          service: 'flower'
+          environment: 'docker'
+    metrics_path: /metrics
+    scrape_interval: 30s
+
+  - job_name: 'flower-local'
+    static_configs:
+      - targets: ['host.docker.internal:5555']
+        labels:
+          service: 'flower'
+          environment: 'local'
+    metrics_path: /metrics
+    scrape_interval: 30s
+
+  # ==========================================================================
   # API Servers - HTTP Metrics
+  # ==========================================================================
   - job_name: 'auth-server'
     static_configs:
       - targets: ['host.docker.internal:4000']
@@ -44,7 +89,9 @@ scrape_configs:
           environment: 'docker'
     metrics_path: /metrics
 
+  # ==========================================================================
   # Celery Workers (Local Development - use host.docker.internal from Docker)
+  # ==========================================================================
   - job_name: 'celery-local-trading'
     static_configs:
       - targets: ['host.docker.internal:9101']
