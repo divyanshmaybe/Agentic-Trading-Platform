@@ -108,7 +108,7 @@ class GeminiObjectiveExtractor:
                     model=model_name,
                     google_api_key=self.api_key,
                     temperature=model_config.get("temperature", 0.1),
-                    max_tokens=model_config.get("max_tokens", 1024),
+                    #max_tokens=model_config.get("max_tokens", 1024),
                 )
                 logger.info(f"Initialized Gemini model: {model_name}")
             except ImportError as e:
@@ -132,10 +132,11 @@ class GeminiObjectiveExtractor:
             # Render prompt with transcript
             prompt_template = self.config.get("prompt", "")
             rendered_prompt = _render_prompt(prompt_template, transcript=transcript)
-            
+
             # Call Gemini
             model = self._get_model()
             response = model.invoke(rendered_prompt)
+            print("response", response, type(response))
             llm_response = response.content if hasattr(response, 'content') else str(response)
             
             # Parse and validate
@@ -393,7 +394,7 @@ def extract_from_transcript(transcript: str) -> Dict[str, Any]:
     """
     # Try Gemini extraction first
     result = extract_objectives_with_gemini(transcript)
-    
+    print("result", result)
     if result.success and result.data:
         try:
             return _map_llm_output_to_system_format(result.data)
@@ -402,6 +403,7 @@ def extract_from_transcript(transcript: str) -> Dict[str, Any]:
     
     # Fallback to regex-based extraction
     logger.info("Falling back to regex-based extraction")
+    print("Falling back to regex-based extraction")
     return _extract_from_transcript_regex(transcript)
     
     # Fallback to regex-based extraction
