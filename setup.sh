@@ -311,7 +311,7 @@ setup_celery_exporter() {
         -e CE_RETRY_INTERVAL="5" \
         "${CELERY_EXPORTER_IMAGE}" >/dev/null
     
-    log_success "Celery Exporter is running on http://localhost:9540/metrics"
+    log_success "Celery Exporter is running on http://localhost:9808/metrics"
 }
 
 setup_redis_exporter() {
@@ -352,7 +352,7 @@ usage() {
     echo "  loki            - Grafana Loki log aggregation"
     echo "  prometheus      - Prometheus metrics collection"
     echo "  grafana         - Grafana visualization dashboard"
-    echo "  celery-exporter - Celery Prometheus exporter (port 9540)"
+    echo "  celery-exporter - Celery Prometheus exporter (port 9808)"
     echo "  redis-exporter  - Redis Prometheus exporter (port 9121)"
     echo "  monitoring      - All monitoring services (Loki, Prometheus, Grafana, Celery Exporter, Redis Exporter)"
     echo "  all             - All services (Kafka + monitoring stack)"
@@ -448,7 +448,7 @@ main() {
         echo "  Grafana:         http://localhost:3001 (admin/admin)"
     fi
     if docker ps --format '{{.Names}}' | grep -q "^${CELERY_EXPORTER_CONTAINER_NAME}$"; then
-        echo "  Celery Exporter: http://localhost:9540/metrics"
+        echo "  Celery Exporter: http://localhost:9808/metrics"
     fi
     if docker ps --format '{{.Names}}' | grep -q "^${REDIS_EXPORTER_CONTAINER_NAME}$"; then
         echo "  Redis Exporter:  http://localhost:9121/metrics"

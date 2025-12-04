@@ -64,7 +64,7 @@ scrape_configs:
   # Celery Exporter (Primary Celery Metrics)
   - job_name: 'celery-exporter'
     static_configs:
-      - targets: ['localhost:9540', 'host.docker.internal:9540', 'celery-exporter:9540']
+      - targets: ['localhost:9808', 'host.docker.internal:9808', 'celery-exporter:9808']
         labels:
           environment: 'local'
           
