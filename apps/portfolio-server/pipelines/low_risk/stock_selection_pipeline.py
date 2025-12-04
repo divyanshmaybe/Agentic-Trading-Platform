@@ -248,6 +248,37 @@ class StockSelectionPipeline:
 
         return company_metrics_tool
 
+    def company_metrics_tool_callable(self, tickers: list[str], metrics: list[str]) -> Dict[str, Dict[str, Any]]:
+            """
+            Generate company metrics for all the given tickers.
+            Input:
+            - tickers: List of NIFTY tickers symbol of the company.
+            - metrics: List of metrics to generate.
+            Output:
+            - A dictionary of dictionary containing the company metrics.
+            """
+
+            try:
+                result = {}
+                for ticker in tickers:
+                    res_json = self.pipeline.get_metrics(ticker)
+                    if res_json is None:
+                        logger.warning(f"No metrics found for {ticker}")
+                        # Set all metrics to None if res_json is None
+                        ticker_result = {m: None for m in metrics}
+                    else:
+                        ticker_result = {}
+                        for m in metrics:
+                            ticker_result[m] = res_json.get(m, None)
+                    result[ticker] = ticker_result
+
+                metrics_list = ", ".join(metrics)
+                tickers_list = ", ".join(tickers)
+
+                return result
+            except Exception as e:
+                logger.error(f"Error in company_metrics tool: {e}", exc_info=True)
+
 
     def create_company_report_tool(self, gemini_api_key: str) -> Any:
         """
@@ -759,7 +790,7 @@ class StockSelectionPipeline:
 
         company_metrics_tool = self.create_company_metrics_tool()
         metrics = ["piotroski_fscore", "sloan_ratio", "debt_to_equity", "ev_to_ebitda", "price_to_book", "shareholder_yield", "pe_ratio", "forward_pe", "roic", "roe", "ccc", "revenue_growth", "earnings_growth", "gross_profit_growth", "price_to_ema200", "price_to_ema50", "rsi14", "fifty_two_week_change", "momentum_6_1"]
-        stock_metrics = company_metrics_tool([s["ticker"] for s in final_portfolio], metrics)
+        stock_metrics = self.company_metrics_tool_callable([s["ticker"] for s in final_portfolio], metrics)
 
         publish_to_kafka({"content": res}, user_id=self.user_id, message_type="summary", task_id=self.task_id)
         publish_to_kafka({"industry_metrics": industry_metrics, "stock_metrics": stock_metrics}, user_id=self.user_id, task_id=self.task_id, message_type="metrics")

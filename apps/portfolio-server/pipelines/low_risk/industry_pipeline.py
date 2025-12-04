@@ -316,6 +316,59 @@ def create_industry_metrics_tool(
 
     return industry_metrics
 
+def industry_metrics_callable(industries: List[str], pipeline) -> Dict[str, Dict[str, Any]]:
+    """
+    Get industry-specific metrics for the given industries.
+
+    Input:
+    - industries: list of industries to get metrics for
+
+    Output:
+    dictionary containing metrics for each industry.
+
+    The dictionary has each industry as key and a dictionary of metrics as value.
+    The dictionary of metrics has the following keys:
+    "pct_above_ema50",
+    "pct_above_ema200",
+    "median_rsi",
+    "pct_rsi_overbought",
+    "pct_rsi_oversold",
+    "industry_ret_6m",
+    "benchmark_ret_6m"
+    """
+    try:
+        # Get industry indicators from pipeline
+        df = pipeline.get_industry_indicators(industries)
+
+        if df.is_empty():
+            logger.warning(f"No data found for industries: {industries}")
+            return {}
+
+        # Convert Polars DataFrame to dict format
+        # Get benchmark return from the first row (should be same for all)
+        benchmark_ret_6m = None
+        if "benchmark_ret_6m" in df.columns and not df["benchmark_ret_6m"].is_null().all():
+            benchmark_ret_6m = df["benchmark_ret_6m"][0]
+
+        # Build result dictionary
+        result = {}
+        for row in df.iter_rows(named=True):
+            industry = row.get("industry", "Unknown")
+            result[industry] = {
+                "pct_above_ema50": row.get("pct_above_ema50"),
+                "pct_above_ema200": row.get("pct_above_ema200"),
+                "median_rsi": row.get("median_rsi"),
+                "pct_rsi_overbought": row.get("pct_rsi_overbought"),
+                "pct_rsi_oversold": row.get("pct_rsi_oversold"),
+                "industry_ret_6m": row.get("industry_ret_6m"),
+                "benchmark_ret_6m": benchmark_ret_6m,
+            }
+
+        return result
+    except Exception as e:
+        logger.error(f"Error in industry_metrics tool: {e}", exc_info=True)
+        return {}
+
 
 def create_industry_selection_agent(
     pipeline: IndustryIndicatorsPipeline,
@@ -449,8 +502,7 @@ def industry_selector(
     logger.info(msg + f", total allocation: {sum(item['percentage'] for item in industry_list):.1f}%")
     publish_to_kafka(to_send, user_id=user_id, message_type="industry", task_id=task_id)
 
-    industry_metrics_tool = create_industry_metrics_tool(pipeline)
-    industry_metrics = industry_metrics_tool([i["name"] for i in industry_list])
+    industry_metrics = industry_metrics_callable([i["name"] for i in industry_list], pipeline)
 
     for i in industry_list:
         i["metrics"] = industry_metrics[i["name"]]
