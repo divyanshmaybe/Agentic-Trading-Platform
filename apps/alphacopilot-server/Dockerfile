@@ -26,6 +26,9 @@ RUN pip install -e /app/quant-stream
 # Copy alphacopilot-server
 COPY apps/alphacopilot-server/ /app/apps/alphacopilot-server/
 
+# Create data directory for market data
+RUN mkdir -p /app/data
+
 # Set Python path
 ENV PYTHONPATH=/app:/app/shared/py:/app/quant-stream
 

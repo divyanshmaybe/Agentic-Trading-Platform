@@ -801,6 +801,80 @@ services:
     networks:
       - agentInvest
 
+  # AlphaCopilot Server (FastAPI - AI Trading Copilot with Quant-Stream Library)
+  alphacopilot_server:
+    image: alphacopilot_server:latest
+    container_name: alphacopilot_server
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: apps/alphacopilot-server/Dockerfile
+    env_file:
+      - .env
+    environment:
+      ALPHACOPILOT_HOST: "0.0.0.0"
+      ALPHACOPILOT_PORT: "8069"
+      DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
+      REDIS_HOST: portfolio_redis
+      REDIS_PORT: 6379
+      CELERY_BROKER_URL: redis://portfolio_redis:6379/2
+      CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/3
+      PYTHONPATH: /app:/app/shared/py:/app/quant-stream
+      ALPHACOPILOT_CORS_ORIGINS: http://localhost:3000,http://frontend:3000
+    working_dir: /app
+    command: >
+      python -m uvicorn apps.alphacopilot-server.main:app --host 0.0.0.0 --port 8069
+    ports:
+      - "8069:8069"
+    volumes:
+      - ./apps/alphacopilot-server:/app/apps/alphacopilot-server
+      - ./shared:/app/shared
+      - ./quant-stream:/app/quant-stream
+      - ./data:/app/data
+    depends_on:
+      portfolio_postgres:
+        condition: service_healthy
+      portfolio_redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8069/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - agentInvest
+
+  # AlphaCopilot Celery Worker (Backtest Processing)
+  alphacopilot_celery:
+    image: alphacopilot_server:latest
+    container_name: alphacopilot_celery
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://portfolio_user:portfolio_password@portfolio_postgres:5432/portfolio_db
+      REDIS_HOST: portfolio_redis
+      REDIS_PORT: 6379
+      CELERY_BROKER_URL: redis://portfolio_redis:6379/2
+      CELERY_RESULT_BACKEND: redis://portfolio_redis:6379/3
+      PYTHONPATH: /app:/app/shared/py:/app/quant-stream
+    working_dir: /app/quant-stream
+    command: >
+      celery -A quant_stream.mcp_server.core.celery_app worker --loglevel=info -Q backtest --concurrency=2 --hostname=backtest@%h --max-tasks-per-child=50
+    volumes:
+      - ./apps/alphacopilot-server:/app/apps/alphacopilot-server
+      - ./shared:/app/shared
+      - ./quant-stream:/app/quant-stream
+      - ./data:/app/data
+    depends_on:
+      portfolio_redis:
+        condition: service_healthy
+      alphacopilot_server:
+        condition: service_started
+    networks:
+      - agentInvest
+
   # Optional: Redis Commander (Redis GUI)
   redis-commander:
     image: rediscommander/redis-commander:latest
