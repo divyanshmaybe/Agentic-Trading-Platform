@@ -102,4 +102,3 @@ export function ObjectiveDashboard({ objective }: ObjectiveDashboardProps) {
     </div>
   )
 }
-
