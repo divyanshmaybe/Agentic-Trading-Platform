@@ -57,6 +57,7 @@ model User {
 
   organization        Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   lowRiskEvents       LowRiskEvent[]
+  lowRiskUserSummaries LowRiskUserSummaries[]
 
   @@unique([organization_id, email])
   @@index([email])
@@ -139,4 +140,16 @@ model LowRiskEvent {
   @@index([eventType])
   @@index([createdAt])
   @@map("low_risk_events")
+}
+
+model LowRiskUserSummaries {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  summary   Json     // summary content as JSON
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("low_risk_user_summaries")
 }

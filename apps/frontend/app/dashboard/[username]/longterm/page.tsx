@@ -29,11 +29,13 @@ export default function LongTermPage() {
 	const { user: authUser, loading: authLoading } = useAuth()
 
 	const { data: agentData, loading: agentLoading, isAllocating } = useAgentDashboard("low_risk")
-	const { events, loading: eventsLoading, startStreaming, stopStreaming, streaming, hasSummary } = useLowRiskEvents()
+	const { events, loading: eventsLoading, startStreaming, stopStreaming, streaming, hasSummary, clearEvents } = useLowRiskEvents()
 	const [showAllEvents, setShowAllEvents] = useState(false)
 	const [triggeringPipeline, setTriggeringPipeline] = useState(false)
 	const [pipelineError, setPipelineError] = useState<string | null>(null)
 	const [buyModalOpen, setBuyModalOpen] = useState(false)
+	const [rebalancing, setRebalancing] = useState(false)
+	const [rebalanceError, setRebalanceError] = useState<string | null>(null)
 
 	// Extract summary event data
 	const summaryEvent = useMemo(() => {
@@ -140,6 +142,46 @@ export default function LongTermPage() {
 		stopStreaming()
 	}
 
+	const handleRebalance = async () => {
+		setRebalancing(true)
+		setRebalanceError(null)
+
+		try {
+			// Stop streaming first
+			stopStreaming()
+
+			// Call rebalance API
+			const response = await fetch("/api/notifications/lowrisk/rebalance", {
+				method: "POST",
+				credentials: "include",
+			})
+
+			if (!response.ok) {
+				const data = await response.json().catch(() => ({ error: "Failed to rebalance" }))
+				throw new Error(data.error || data.message || "Failed to rebalance")
+			}
+
+			const data = await response.json()
+
+			if (!data.success) {
+				throw new Error(data.message || "Failed to rebalance")
+			}
+
+			// Clear events from state
+			clearEvents()
+
+			// Start streaming again to receive new events
+			startStreaming()
+		} catch (error) {
+			console.error("[LongTerm Page] Failed to rebalance:", error)
+			setRebalanceError(
+				error instanceof Error ? error.message : "Failed to rebalance. Please try again."
+			)
+		} finally {
+			setRebalancing(false)
+		}
+	}
+
 	const hasEvents = events.length > 0
 
 	// Ensure all events are available (including summary)
@@ -200,10 +242,11 @@ export default function LongTermPage() {
 								) : hasEvents ? (
 									/* Show toggleable events when events exist */
 									<div className={`flex flex-col gap-6 ${industryDoneEvent && industryList.length > 0 && !hasSummary ? 'flex-1' : 'flex-1'}`}>
-										{/* Show error message if pipeline trigger failed */}
-										{pipelineError && (
+										{/* Show error messages */}
+										{(pipelineError || rebalanceError) && (
 											<div className="rounded-lg border border-white/10 bg-white/8 p-4 text-white/70">
-												<p className="text-sm">{pipelineError}</p>
+												{pipelineError && <p className="text-sm">{pipelineError}</p>}
+												{rebalanceError && <p className="text-sm">{rebalanceError}</p>}
 											</div>
 										)}
 
@@ -275,14 +318,22 @@ export default function LongTermPage() {
 												</div>
 											)}
 
-											{/* Buy Stocks Button */}
+											{/* Buy Stocks and Rebalance Buttons */}
 											{hasSummary && finalPortfolio.length > 0 && agentData?.portfolio_id && (
-												<div className="flex justify-center">
+												<div className="flex justify-center gap-4">
 													<button
 														onClick={() => setBuyModalOpen(true)}
-														className="rounded-lg bg-emerald-500 hover:bg-emerald-600 px-6 py-3 text-white font-semibold transition-colors shadow-lg hover:shadow-xl"
+														className="rounded-lg bg-emerald-500 hover:bg-emerald-600 px-6 py-3 text-white font-semibold transition-colors shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
+														disabled={rebalancing || streaming}
 													>
 														Buy Stocks
+													</button>
+													<button
+														onClick={handleRebalance}
+														disabled={rebalancing || streaming}
+														className="rounded-lg bg-blue-500 hover:bg-blue-600 px-6 py-3 text-white font-semibold transition-colors shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
+													>
+														{rebalancing ? "Rebalancing..." : "Rebalance"}
 													</button>
 												</div>
 											)}
