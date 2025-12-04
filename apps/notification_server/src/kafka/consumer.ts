@@ -17,6 +17,7 @@ import {
 	isLowRiskReasoningEvent,
 	isLowRiskSummaryEvent,
 	isLowRiskStageEvent,
+	isLowRiskMetricsEvent,
 	isLowRiskValueEnvelope,
 } from "./validators";
 import { LowRiskNormalized, LowRiskEvent, LowRiskValueEnvelope } from "./types/lowRisk";
@@ -501,7 +502,7 @@ function parseLowRiskKafkaMessage(payload: EachMessagePayload): LowRiskNormalize
 	const normalizedPayload: any = {
 		...innerPayload,
 		userId,
-		kind: innerPayload.type || innerPayload.kind,
+		kind: innerPayload.type || innerPayload.kind || innerPayload.message_type,
 	};
 
 	// Remove old field names and timestamp fields (we use Kafka timestamp only)
@@ -576,6 +577,10 @@ function parseLowRiskKafkaMessage(payload: EachMessagePayload): LowRiskNormalize
 			stage: event.stage,
 			...(result && { result }),
 		};
+	} else if (isLowRiskMetricsEvent(event)) {
+		eventType = null;
+		status = null;
+		content = event.content;
 	}
 
 	return {
@@ -737,6 +742,23 @@ export class NotificationConsumer {
 				}
 
 				// User exists - create DB record with typed fields
+
+				// SPECIAL HANDLING FOR METRICS: Store in LowRiskUserSummaries and STOP (no Redis, no LowRiskEvent)
+				if (normalized.kind === "metrics") {
+					try {
+						await this.prisma.lowRiskUserSummaries.create({
+							data: {
+								userId: normalized.userId,
+								jsonContent: normalized.content,
+							},
+						});
+						console.log(`[DB][LowRisk] Created metrics record for user ${normalized.userId}`);
+					} catch (err) {
+						console.error(`[DB][LowRisk] Failed to create metrics record for user ${normalized.userId}:`, err);
+					}
+					return;
+				}
+
 				// eventTime comes ONLY from Kafka message timestamp (normalized.eventTime is always set)
 				const event = await this.prisma.lowRiskEvent.create({
 					data: {
@@ -759,7 +781,7 @@ export class NotificationConsumer {
 						const summaryRecord = await this.prisma.lowRiskUserSummaries.create({
 							data: {
 								userId: normalized.userId,
-								summary: normalized.content,
+								jsonContent: normalized.content,
 							},
 						});
 						console.log(`[DB][LowRisk] Created summary record ${summaryRecord.id} for user ${normalized.userId}`);

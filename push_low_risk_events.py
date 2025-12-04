@@ -264,6 +264,11 @@ class LowRiskStageEvent(LowRiskBase):
     content: str
     stage: str
 
+class LowRiskMetricsEvent(LowRiskBase):
+    type: Literal["metrics"] = "metrics"
+    message_type: Literal["metrics"] = "metrics"
+    content: dict
+
 # -------------------------------------------------------------------
 # TOPICS
 # -------------------------------------------------------------------
@@ -518,6 +523,18 @@ publish("stage_completion_done", LowRiskStageEvent(
     user_id=user_id, type="stage", status="done",
     content=completion_msg, stage="completion"
 ).model_dump())
+
+# -------------------------------------------------------
+# METRICS EVENT
+# -------------------------------------------------------
+publish("metrics_event", LowRiskMetricsEvent(
+    user_id=user_id,
+    type="metrics",
+    message_type="metrics",
+    content={"some_metric": 123, "another_metric": "value"}
+).model_dump())
+
+sleep_phase(1)
 
 summary_event = LowRiskSummaryEvent(
     user_id=user_id,
