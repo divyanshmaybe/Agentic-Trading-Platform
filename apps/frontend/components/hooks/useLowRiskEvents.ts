@@ -38,6 +38,7 @@ interface UseLowRiskEventsReturn {
   stopStreaming: () => void;
   streaming: boolean;
   hasSummary: boolean;
+  clearEvents: () => void;
 }
 
 export function useLowRiskEvents(): UseLowRiskEventsReturn {
@@ -210,6 +211,13 @@ export function useLowRiskEvents(): UseLowRiskEventsReturn {
     }
   }, []);
 
+  // Clear all events function
+  const clearEvents = useCallback(() => {
+    setEvents([]);
+    // Reset auto-start attempt flag so streaming can start fresh
+    autoStartAttemptedRef.current = false;
+  }, []);
+
   // Calculate if events contain a summary event
   const hasSummary = events.some((event) => event.kind === "summary");
 
@@ -251,6 +259,7 @@ export function useLowRiskEvents(): UseLowRiskEventsReturn {
     stopStreaming,
     streaming,
     hasSummary,
+    clearEvents,
   };
 }
 
