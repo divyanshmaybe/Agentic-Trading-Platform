@@ -106,6 +106,24 @@ class InMemoryModel:
         self.rows.pop(value, None)
 
 
+class FakeTransaction:
+    """Fake transaction context manager that delegates to the same in-memory models."""
+    def __init__(self, prisma: "FakePrisma") -> None:
+        # Share the same models - in-memory doesn't need real transactions
+        self.portfolio = prisma.portfolio
+        self.portfolioallocation = prisma.portfolioallocation
+        self.tradingagent = prisma.tradingagent
+        self.position = prisma.position
+        self.trade = prisma.trade
+        self.tradeexecutionlog = prisma.tradeexecutionlog
+
+    async def __aenter__(self) -> "FakeTransaction":
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        pass  # In-memory doesn't need commit/rollback
+
+
 class FakePrisma:
     def __init__(self) -> None:
         self.portfolio = InMemoryModel("id")
@@ -114,6 +132,10 @@ class FakePrisma:
         self.position = InMemoryModel("id")
         self.trade = InMemoryModel("id")
         self.tradeexecutionlog = InMemoryModel("id")
+
+    def tx(self) -> FakeTransaction:
+        """Return a fake transaction context manager."""
+        return FakeTransaction(self)
 
 
 @dataclass
