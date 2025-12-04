@@ -212,6 +212,8 @@ class FundamentalAnalyzer:
             return float(volatility)
         except:
             return pd.NA
+        
+    
 
     def compute_sloan_ratio(self):
         if not self._fetch_financials():
@@ -621,6 +623,7 @@ class FundamentalAnalyzer:
             "sma50": self.compute_sma50(),
             "sma200": self.compute_sma200(),
             "volatility": self.compute_volatility(),
+            # "price":
         }
 
         # Add all info-based metrics

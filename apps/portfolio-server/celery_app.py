@@ -144,6 +144,7 @@ celery_app = Celery(
         "workers.low_risk_tasks",  # Low-risk pipeline worker
         "workers.alpha_signal_tasks",
         "workers.observability_agent_tasks",  # NSE pipeline loss analysis
+        "workers.low_risk_observability_tasks",  # Low risk drawdown analysis
     ],
 )
 
