@@ -1392,8 +1392,12 @@ class PipelineService:
         client = db_manager.get_client()
         trade_service = TradeExecutionService(logger=self.logger)
 
+        # Maximum open positions allowed per agent for high_risk trading
+        MAX_OPEN_POSITIONS = 3
+
         # Query for active high_risk agents - status=active means auto-trade is enabled
         # No separate auto_trade flag needed - active status IS the flag
+        # Include positions to check open position count
         agents = await client.tradingagent.find_many(
                 where={
                     "agent_type": "high_risk",
@@ -1402,11 +1406,41 @@ class PipelineService:
                 include={
                     "portfolio": True,
                     "allocation": True,
+                    "positions": {
+                        "where": {
+                            "status": "open",
+                        }
+                    },
                 }
             )
         
+        # Filter agents with < MAX_OPEN_POSITIONS open positions
+        eligible_agents = []
+        for agent in agents:
+            open_positions = getattr(agent, "positions", []) or []
+            open_count = len(open_positions)
+            agent_id = str(getattr(agent, "id", "unknown"))
+            
+            if open_count < MAX_OPEN_POSITIONS:
+                eligible_agents.append(agent)
+                self.logger.info(
+                    "✅ Agent %s eligible: %d/%d open positions",
+                    agent_id,
+                    open_count,
+                    MAX_OPEN_POSITIONS,
+                )
+            else:
+                self.logger.info(
+                    "⏭️ Skipping agent %s: %d/%d open positions (max reached)",
+                    agent_id,
+                    open_count,
+                    MAX_OPEN_POSITIONS,
+                )
+        
+        agents = eligible_agents
+        
         if not agents:
-            self.logger.warning("⚠️ No active high_risk trading agents found")
+            self.logger.warning("⚠️ No active high_risk trading agents found (or all have max positions)")
             return {
                 "processed_signals": len(processed_signals),
                 "payloads": 0,
