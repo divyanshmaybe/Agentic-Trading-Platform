@@ -16,13 +16,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY apps/alphacopilot-server/requirements.txt /app/requirements.alphacopilot.txt
 COPY quant-stream/requirements.txt /app/requirements.quantstream.txt
 
-# Filter out editable installs from quant-stream requirements (they'll be installed later)
-RUN grep -v "^-e" /app/requirements.quantstream.txt > /app/requirements.quantstream.filtered.txt || true
+# Filter out editable installs and torch from quant-stream requirements
+# We'll install CPU-only torch separately
+RUN grep -v "^-e" /app/requirements.quantstream.txt | grep -v "^torch" | grep -v "^torchvision" > /app/requirements.quantstream.filtered.txt || true
+RUN grep -v "^torch" /app/requirements.alphacopilot.txt > /app/requirements.alphacopilot.filtered.txt || true
 
-# Install Python dependencies (excluding editable installs)
+# Install CPU-only PyTorch first (saves ~6GB vs GPU version)
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r /app/requirements.alphacopilot.txt \
+    && pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir -r /app/requirements.alphacopilot.filtered.txt \
     && pip install --no-cache-dir -r /app/requirements.quantstream.filtered.txt
+
+# Remove unnecessary GPU-related packages that may have been pulled as dependencies
+RUN pip uninstall -y nvidia-cublas-cu12 nvidia-cuda-cupti-cu12 nvidia-cuda-nvrtc-cu12 \
+    nvidia-cuda-runtime-cu12 nvidia-cudnn-cu12 nvidia-cufft-cu12 nvidia-curand-cu12 \
+    nvidia-cusolver-cu12 nvidia-cusparse-cu12 nvidia-nccl-cu12 nvidia-nvtx-cu12 \
+    nvidia-nvjitlink-cu12 triton cusparselt 2>/dev/null || true \
+    && rm -rf /root/.cache/pip
 
 # Copy only necessary source code (not data files - those are mounted as volumes)
 COPY shared/py /app/shared/py
@@ -50,9 +60,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy installed packages from builder
+# Copy installed packages from builder (excluding GPU libs which were already removed)
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Final cleanup of any remaining GPU packages in runtime
+RUN pip uninstall -y nvidia-cublas-cu12 nvidia-cuda-cupti-cu12 nvidia-cuda-nvrtc-cu12 \
+    nvidia-cuda-runtime-cu12 nvidia-cudnn-cu12 nvidia-cufft-cu12 nvidia-curand-cu12 \
+    nvidia-cusolver-cu12 nvidia-cusparse-cu12 nvidia-nccl-cu12 nvidia-nvtx-cu12 \
+    nvidia-nvjitlink-cu12 triton cusparselt 2>/dev/null || true \
+    && rm -rf /usr/local/lib/python3.11/site-packages/nvidia* \
+    && rm -rf /usr/local/lib/python3.11/site-packages/triton* \
+    && rm -rf /usr/local/lib/python3.11/site-packages/cusparselt* \
+    && rm -rf /root/.cache/pip
 
 # Copy Prisma binaries from builder
 COPY --from=builder /root/.cache/prisma-python /root/.cache/prisma-python

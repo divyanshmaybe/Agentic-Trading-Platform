@@ -29,9 +29,22 @@ RUN python -m venv /opt/venv
 COPY apps/portfolio-server/requirements.txt /tmp/requirements.portfolio.txt
 COPY shared/py/requirements.txt /tmp/requirements.shared.txt
 
+# Filter out torch from requirements (we'll install CPU-only version)
+RUN grep -v "^torch" /tmp/requirements.portfolio.txt > /tmp/requirements.portfolio.filtered.txt || cp /tmp/requirements.portfolio.txt /tmp/requirements.portfolio.filtered.txt
+RUN grep -v "^torch" /tmp/requirements.shared.txt > /tmp/requirements.shared.filtered.txt || cp /tmp/requirements.shared.txt /tmp/requirements.shared.filtered.txt
+
+# Install CPU-only PyTorch first (saves ~5GB vs GPU version)
 RUN pip install --upgrade pip \
-    && pip install --no-cache-dir -r /tmp/requirements.portfolio.txt \
-    && pip install --no-cache-dir -r /tmp/requirements.shared.txt
+    && pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir -r /tmp/requirements.portfolio.filtered.txt \
+    && pip install --no-cache-dir -r /tmp/requirements.shared.filtered.txt
+
+# Remove unnecessary GPU-related packages that may have been pulled as dependencies
+RUN pip uninstall -y nvidia-cublas-cu12 nvidia-cuda-cupti-cu12 nvidia-cuda-nvrtc-cu12 \
+    nvidia-cuda-runtime-cu12 nvidia-cudnn-cu12 nvidia-cufft-cu12 nvidia-curand-cu12 \
+    nvidia-cusolver-cu12 nvidia-cusparse-cu12 nvidia-nccl-cu12 nvidia-nvtx-cu12 \
+    nvidia-nvjitlink-cu12 triton cusparselt 2>/dev/null || true \
+    && rm -rf /root/.cache/pip
 
 # Copy shared libs and application source
 COPY shared/py /app/shared/py
@@ -75,6 +88,11 @@ COPY --from=builder /opt/venv /opt/venv
 COPY --from=builder /app/shared /app/shared
 COPY --from=builder /app/middleware /app/middleware
 COPY --from=builder /app/apps/portfolio-server /app/apps/portfolio-server
+
+# Final cleanup of any remaining GPU packages in runtime
+RUN rm -rf /opt/venv/lib/python3.11/site-packages/nvidia* \
+    && rm -rf /opt/venv/lib/python3.11/site-packages/triton* \
+    && rm -rf /opt/venv/lib/python3.11/site-packages/cusparselt*
 
 WORKDIR /app/apps/portfolio-server
 
