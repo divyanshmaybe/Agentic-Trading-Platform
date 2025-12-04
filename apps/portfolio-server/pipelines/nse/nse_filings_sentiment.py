@@ -83,7 +83,7 @@ STOPLOSS = 0.01  # -1% stoploss
 MARKET_OPEN = (9, 15)
 MARKET_CLOSE = (15, 30)
 MARKET_CLOSE_BUFFER_MINUTES = int(os.getenv("NSE_FILINGS_MARKET_CLOSE_BUFFER_MINUTES", "15"))
-AUTO_SELL_WINDOW_MINUTES = int(os.getenv("NSE_FILINGS_AUTO_SELL_WINDOW_MINUTES", "15"))
+AUTO_SELL_WINDOW_MINUTES = int(os.getenv("NSE_FILINGS_AUTO_SELL_WINDOW_MINUTES", "25"))
 LLM_MODEL = os.getenv("NSE_FILINGS_LLM_MODEL", "gemini-2.5-flash")
 DEMO_MODE = os.getenv("DEMO_MODE", "true").lower() in {"1", "true", "yes"}  # Default: true for 24/7 signal generation
 print(f"[DEBUG] DEMO_MODE environment variable: '{os.getenv('DEMO_MODE', 'NOT_SET')}'")
