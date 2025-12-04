@@ -78,7 +78,7 @@ if not skip_dotenv:
 
 # Configuration
 MAX_TOKENS = 1024
-TARGET = 0.03  # +3% profit target
+TARGET = 0.04  # +4% profit target
 STOPLOSS = 0.01  # -1% stoploss
 MARKET_OPEN = (9, 15)
 MARKET_CLOSE = (15, 30)
