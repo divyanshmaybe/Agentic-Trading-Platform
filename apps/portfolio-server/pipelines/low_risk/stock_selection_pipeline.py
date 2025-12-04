@@ -755,8 +755,14 @@ class StockSelectionPipeline:
                 "utilization_rate": (total_invested / fund_allocated) * 100.0
             }
         }
+        industry_metrics = {i["name"]: i["metrics"] for i in industry_list}
+
+        company_metrics_tool = self.create_company_metrics_tool()
+        metrics = ["piotroski_fscore", "sloan_ratio", "debt_to_equity", "ev_to_ebitda", "price_to_book", "shareholder_yield", "pe_ratio", "forward_pe", "roic", "roe", "ccc", "revenue_growth", "earnings_growth", "gross_profit_growth", "price_to_ema200", "price_to_ema50", "rsi14", "fifty_two_week_change", "momentum_6_1"]
+        stock_metrics = company_metrics_tool([s["ticker"] for s in final_portfolio], metrics)
 
         publish_to_kafka({"content": res}, user_id=self.user_id, message_type="summary", task_id=self.task_id)
+        publish_to_kafka({"industry_metrics": industry_metrics, "stock_metrics": stock_metrics}, user_id=self.user_id, task_id=self.task_id, message_type="metrics")
         return res
 
     def __del__(self):

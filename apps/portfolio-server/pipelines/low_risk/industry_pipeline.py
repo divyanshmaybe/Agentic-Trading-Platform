@@ -449,6 +449,12 @@ def industry_selector(
     logger.info(msg + f", total allocation: {sum(item['percentage'] for item in industry_list):.1f}%")
     publish_to_kafka(to_send, user_id=user_id, message_type="industry", task_id=task_id)
 
+    industry_metrics_tool = create_industry_metrics_tool(pipeline)
+    industry_metrics = industry_metrics_tool([i["name"] for i in industry_list])
+
+    for i in industry_list:
+        i["metrics"] = industry_metrics[i["name"]]
+
     return industry_list
 
 
