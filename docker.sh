@@ -2,12 +2,71 @@
 
 set -e
 
-echo "🐳 Docker Management Script"
-echo "==========================="
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+# Function to print colored output
+print_header() {
+    echo -e "${BLUE}🐳 Docker Management Script${NC}"
+    echo -e "${BLUE}===========================${NC}"
+}
+
+print_success() {
+    echo -e "   ${GREEN}✅ $1${NC}"
+}
+
+print_info() {
+    echo -e "${CYAN}$1${NC}"
+}
+
+print_warning() {
+    echo -e "${YELLOW}⚠️  $1${NC}"
+}
+
+# Function to show help/usage
+show_help() {
+    echo ""
+    echo -e "${BLUE}Usage:${NC} ./docker.sh <command> [options]"
+    echo ""
+    echo -e "${YELLOW}Commands:${NC}"
+    echo "  start           Start all containers (builds if images don't exist)"
+    echo "  stop            Stop all running containers"
+    echo "  restart         Restart all containers (stop + start)"
+    echo "  build           Build/rebuild all Docker images"
+    echo "  logs            Show container logs (use with -f to follow)"
+    echo "  status          Show status of all containers"
+    echo "  clean           Stop containers and remove volumes (full reset)"
+    echo "  clean-redis     Clear Redis locks and timestamps only"
+    echo "  env             Generate docker.env files only"
+    echo "  help            Show this help message"
+    echo ""
+    echo -e "${YELLOW}Options:${NC}"
+    echo "  --no-cache      Use with 'build' to rebuild without Docker cache"
+    echo "  -f, --follow    Use with 'logs' to follow log output"
+    echo ""
+    echo -e "${YELLOW}Examples:${NC}"
+    echo "  ./docker.sh start             # Start all services"
+    echo "  ./docker.sh stop              # Stop all services"
+    echo "  ./docker.sh restart           # Restart all services"
+    echo "  ./docker.sh build             # Rebuild images"
+    echo "  ./docker.sh build --no-cache  # Rebuild without cache"
+    echo "  ./docker.sh logs              # Show logs"
+    echo "  ./docker.sh logs -f           # Follow logs"
+    echo "  ./docker.sh status            # Show container status"
+    echo "  ./docker.sh clean             # Full reset (removes data)"
+    echo "  ./docker.sh clean-redis       # Clear Redis locks only"
+    echo "  ./docker.sh env               # Regenerate env files"
+    echo ""
+}
 
 # Function to generate docker.env files with Docker-specific overrides
 generate_docker_env() {
-    echo "📝 Generating docker.env files..."
+    print_info "📝 Generating docker.env files..."
     
     # Variables to exclude from source .env (we'll add Docker-specific values)
     EXCLUDE_VARS=(
@@ -59,7 +118,7 @@ PORTFOLIO_REDIS_PORT=6379
 KAFKA_BOOTSTRAP_SERVERS=pathway-kafka:9092
 KAFKA_ENABLED=true
 EOF
-    echo "   ✅ docker.env generated"
+    print_success "docker.env generated"
     
     # ========================================
     # Generate AUTH SERVER docker.env
@@ -83,7 +142,7 @@ NODE_ENV=production
 PORT=4000
 CLIENT_URL=http://localhost:3000
 EOF
-    echo "   ✅ apps/auth_server/docker.env generated"
+    print_success "apps/auth_server/docker.env generated"
     
     # ========================================
     # Generate PORTFOLIO SERVER docker.env
@@ -108,7 +167,7 @@ KAFKA_ENABLED=true
 PORTFOLIO_SERVICE_URL=http://portfolio_server:8000
 REDBEAT_REDIS_URL=redis://portfolio_redis:6379/0
 EOF
-    echo "   ✅ apps/portfolio-server/docker.env generated"
+    print_success "apps/portfolio-server/docker.env generated"
     
     # ========================================
     # Generate ALPHACOPILOT SERVER docker.env
@@ -132,7 +191,7 @@ ALPHACOPILOT_HOST=0.0.0.0
 ALPHACOPILOT_PORT=8069
 ALPHACOPILOT_CORS_ORIGINS=http://localhost:3000,http://frontend:3000
 EOF
-    echo "   ✅ apps/alphacopilot-server/docker.env generated"
+    print_success "apps/alphacopilot-server/docker.env generated"
     
     # ========================================
     # Generate NOTIFICATION SERVER docker.env
@@ -154,7 +213,7 @@ NODE_ENV=production
 KAFKA_CLIENT_ID=notification-server
 KAFKA_GROUP_ID=notifications-consumer
 EOF
-    echo "   ✅ apps/notification_server/docker.env generated"
+    print_success "apps/notification_server/docker.env generated"
     
     # ========================================
     # Generate FRONTEND docker.env
@@ -180,155 +239,223 @@ PORT=3000
 NEXT_TELEMETRY_DISABLED=1
 NODE_ENV=production
 EOF
-    echo "   ✅ apps/frontend/docker.env generated"
+    print_success "apps/frontend/docker.env generated"
 }
 
-# Parse arguments
-CLEAR_VOLUMES=false
-CLEAR_REDIS_ONLY=false
-REBUILD=false
-NO_CACHE=false
-STOP_ONLY=false
+# Function to check if images exist
+check_images_exist() {
+    local images=("auth_server" "notification_server" "portfolio_server" "frontend_web" "alphacopilot_server")
+    for img in "${images[@]}"; do
+        if ! docker image inspect "$img:latest" &>/dev/null; then
+            return 1
+        fi
+    done
+    return 0
+}
 
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        -v|--volumes)
-            CLEAR_VOLUMES=true
-            shift
-            ;;
-        -r|--redis)
-            CLEAR_REDIS_ONLY=true
-            shift
-            ;;
-        -b|--build)
-            REBUILD=true
-            shift
-            ;;
-        --no-cache)
-            NO_CACHE=true
-            shift
-            ;;
-        -s|--stop)
-            STOP_ONLY=true
-            shift
-            ;;
-        -h|--help)
-            echo "Usage: ./docker.sh [OPTIONS]"
-            echo ""
-            echo "Options:"
-            echo "  -v, --volumes   Clear all volumes (databases + redis) - full reset"
-            echo "  -r, --redis     Clear only Redis locks and timestamps"
-            echo "  -b, --build     Rebuild images before starting"
-            echo "  --no-cache      Use with --build to rebuild without cache"
-            echo "  -s, --stop      Stop containers only (don't restart)"
-            echo "  -h, --help      Show this help message"
-            echo ""
-            echo "Examples:"
-            echo "  ./docker.sh               # Simple restart"
-            echo "  ./docker.sh -s            # Stop only"
-            echo "  ./docker.sh -r            # Restart + clear Redis locks"
-            echo "  ./docker.sh -v            # Full reset (clears all data)"
-            echo "  ./docker.sh -b            # Rebuild and restart"
-            echo "  ./docker.sh -b --no-cache # Rebuild without cache and restart"
-            echo "  ./docker.sh -v -b         # Full reset with rebuild"
-            exit 0
-            ;;
-        *)
-            echo "Unknown option: $1"
-            echo "Use -h or --help for usage information"
-            exit 1
-            ;;
-    esac
-done
-
-# Stop all containers
-echo ""
-echo "🛑 Stopping all containers..."
-if [ "$CLEAR_VOLUMES" = true ]; then
-    docker compose down -v
-    echo "   ✅ Containers stopped and volumes removed"
-else
-    docker compose down
-    echo "   ✅ Containers stopped"
-fi
-
-# Exit early if stop-only mode
-if [ "$STOP_ONLY" = true ]; then
-    echo ""
-    echo "✅ Docker stop complete!"
-    exit 0
-fi
-
-# Clear Redis locks only (if requested and not doing full volume clear)
-if [ "$CLEAR_REDIS_ONLY" = true ] && [ "$CLEAR_VOLUMES" = false ]; then
-    echo ""
-    echo "🧹 Clearing Redis locks and timestamps..."
-    # Start redis containers temporarily
-    docker compose up -d redis portfolio_redis
-    sleep 3
-    
-    # Clear locks and timestamps
-    docker exec auth_redis redis-cli KEYS '*lock*' | xargs -r docker exec -i auth_redis redis-cli DEL 2>/dev/null || true
-    docker exec auth_redis redis-cli KEYS '*timestamp*' | xargs -r docker exec -i auth_redis redis-cli DEL 2>/dev/null || true
-    docker exec auth_redis redis-cli KEYS 'redbeat:*' | xargs -r docker exec -i auth_redis redis-cli DEL 2>/dev/null || true
-    
-    docker exec portfolio_redis redis-cli KEYS '*lock*' | xargs -r docker exec -i portfolio_redis redis-cli DEL 2>/dev/null || true
-    docker exec portfolio_redis redis-cli KEYS '*timestamp*' | xargs -r docker exec -i portfolio_redis redis-cli DEL 2>/dev/null || true
-    docker exec portfolio_redis redis-cli KEYS 'redbeat:*' | xargs -r docker exec -i portfolio_redis redis-cli DEL 2>/dev/null || true
-    
-    echo "   ✅ Redis locks and timestamps cleared"
-    
-    # Stop redis containers (will be started again with all services)
-    docker compose down
-fi
-
-# Rebuild if requested
-if [ "$REBUILD" = true ]; then
-    echo ""
-    echo "🔨 Rebuilding images..."
-    if [ "$NO_CACHE" = true ]; then
+# Function to build images
+do_build() {
+    local no_cache=$1
+    print_info "🔨 Building Docker images..."
+    if [ "$no_cache" = true ]; then
         echo "   (using --no-cache)"
         docker compose build --no-cache
     else
         docker compose build
     fi
-    echo "   ✅ Images rebuilt"
+    print_success "Images built"
+}
+
+# Function to stop containers
+do_stop() {
+    print_info "🛑 Stopping all containers..."
+    docker compose down
+    print_success "Containers stopped"
+}
+
+# Function to stop containers and remove volumes
+do_clean() {
+    print_info "🧹 Stopping containers and removing volumes..."
+    docker compose down -v
+    print_success "Containers stopped and volumes removed"
+}
+
+# Function to clear Redis locks
+do_clean_redis() {
+    print_info "🧹 Clearing Redis locks and timestamps..."
+    
+    # Check if containers are running
+    if ! docker ps --format '{{.Names}}' | grep -q 'auth_redis'; then
+        print_warning "Redis containers not running. Starting them temporarily..."
+        docker compose up -d redis portfolio_redis
+        sleep 3
+    fi
+    
+    # Clear locks and timestamps from auth_redis
+    docker exec auth_redis redis-cli KEYS '*lock*' | xargs -r docker exec -i auth_redis redis-cli DEL 2>/dev/null || true
+    docker exec auth_redis redis-cli KEYS '*timestamp*' | xargs -r docker exec -i auth_redis redis-cli DEL 2>/dev/null || true
+    docker exec auth_redis redis-cli KEYS 'redbeat:*' | xargs -r docker exec -i auth_redis redis-cli DEL 2>/dev/null || true
+    
+    # Clear locks and timestamps from portfolio_redis
+    docker exec portfolio_redis redis-cli KEYS '*lock*' | xargs -r docker exec -i portfolio_redis redis-cli DEL 2>/dev/null || true
+    docker exec portfolio_redis redis-cli KEYS '*timestamp*' | xargs -r docker exec -i portfolio_redis redis-cli DEL 2>/dev/null || true
+    docker exec portfolio_redis redis-cli KEYS 'redbeat:*' | xargs -r docker exec -i portfolio_redis redis-cli DEL 2>/dev/null || true
+    
+    print_success "Redis locks and timestamps cleared"
+}
+
+# Function to create Kafka topics
+create_kafka_topics() {
+    print_info "📨 Creating Kafka topics..."
+    docker exec pathway-kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic news_pipeline_stock_recomendations --partitions 1 --replication-factor 1 2>/dev/null || true
+    docker exec pathway-kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic news_pipeline_sentiment_articles --partitions 1 --replication-factor 1 2>/dev/null || true
+    docker exec pathway-kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic nse_filings_trading_signal --partitions 1 --replication-factor 1 2>/dev/null || true
+    docker exec pathway-kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic news_pipeline_sector_analysis --partitions 1 --replication-factor 1 2>/dev/null || true
+    docker exec pathway-kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic low_risk_agent_logs --partitions 1 --replication-factor 1 2>/dev/null || true
+    docker exec pathway-kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic risk_agent_alerts --partitions 1 --replication-factor 1 2>/dev/null || true
+    print_success "Kafka topics created"
+}
+
+# Function to start containers
+do_start() {
+    # Generate docker.env files
+    echo ""
+    generate_docker_env
+    
+    # Check if images exist, build if not
+    if ! check_images_exist; then
+        echo ""
+        print_warning "Some images don't exist. Building..."
+        do_build false
+    fi
+    
+    # Start containers
+    echo ""
+    print_info "🚀 Starting all containers..."
+    docker compose up -d
+    print_success "Containers starting..."
+    
+    # Wait for health checks
+    echo ""
+    print_info "⏳ Waiting for services to be healthy..."
+    sleep 5
+    
+    # Create Kafka topics
+    echo ""
+    create_kafka_topics
+    
+    # Show status
+    echo ""
+    do_status
+    
+    echo ""
+    echo -e "${GREEN}✅ Docker start complete!${NC}"
+    echo ""
+    echo "🔍 View logs:"
+    echo "   pnpm docker-logs         # All logs in turbo panels"
+    echo "   ./docker.sh logs -f      # Follow all logs"
+    echo "   docker logs -f <name>    # Follow specific container"
+}
+
+# Function to show status
+do_status() {
+    print_info "📊 Container Status:"
+    docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | head -30
+}
+
+# Function to show logs
+do_logs() {
+    local follow=$1
+    if [ "$follow" = true ]; then
+        docker compose logs -f --tail=100
+    else
+        docker compose logs --tail=100
+    fi
+}
+
+# ========================================
+# MAIN SCRIPT
+# ========================================
+
+print_header
+
+# No arguments - show help
+if [ $# -eq 0 ]; then
+    show_help
+    exit 0
 fi
 
-# Generate docker.env files before starting
-echo ""
-generate_docker_env
+# Parse command
+COMMAND=$1
+shift
 
-# Start all containers
-echo ""
-echo "🚀 Starting all containers..."
-docker compose up -d
-echo "   ✅ Containers starting..."
+# Parse options
+NO_CACHE=false
+FOLLOW=false
 
-# Wait for health checks
-echo ""
-echo "⏳ Waiting for services to be healthy..."
-sleep 5
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --no-cache)
+            NO_CACHE=true
+            shift
+            ;;
+        -f|--follow)
+            FOLLOW=true
+            shift
+            ;;
+        *)
+            echo "Unknown option: $1"
+            show_help
+            exit 1
+            ;;
+    esac
+done
 
-# Create Kafka topics
-echo ""
-echo "📨 Creating Kafka topics..."
-docker exec pathway-kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic news_pipeline_stock_recomendations --partitions 1 --replication-factor 1 2>/dev/null || true
-docker exec pathway-kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic news_pipeline_sentiment_articles --partitions 1 --replication-factor 1 2>/dev/null || true
-docker exec pathway-kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic nse_filings_trading_signal --partitions 1 --replication-factor 1 2>/dev/null || true
-docker exec pathway-kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic news_pipeline_sector_analysis --partitions 1 --replication-factor 1 2>/dev/null || true
-docker exec pathway-kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic low_risk_agent_logs --partitions 1 --replication-factor 1 2>/dev/null || true
-docker exec pathway-kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic risk_agent_alerts --partitions 1 --replication-factor 1 2>/dev/null || true
-echo "   ✅ Kafka topics created"
-
-# Show status
-echo ""
-echo "📊 Container Status:"
-docker ps --format "table {{.Names}}\t{{.Status}}" | head -25
-
-echo ""
-echo "✅ Docker restart complete!"
-echo ""
-echo "🔍 View logs:"
-echo "   pnpm docker-logs    # All logs in turbo panels"
-echo "   docker logs -f <container_name>"
+# Execute command
+case $COMMAND in
+    start)
+        do_start
+        ;;
+    stop)
+        do_stop
+        echo ""
+        echo -e "${GREEN}✅ Docker stop complete!${NC}"
+        ;;
+    restart)
+        do_stop
+        echo ""
+        do_start
+        ;;
+    build)
+        do_build $NO_CACHE
+        echo ""
+        echo -e "${GREEN}✅ Docker build complete!${NC}"
+        ;;
+    logs)
+        do_logs $FOLLOW
+        ;;
+    status)
+        do_status
+        ;;
+    clean)
+        do_clean
+        echo ""
+        echo -e "${GREEN}✅ Docker clean complete! All data removed.${NC}"
+        ;;
+    clean-redis)
+        do_clean_redis
+        ;;
+    env)
+        generate_docker_env
+        echo ""
+        echo -e "${GREEN}✅ Environment files generated!${NC}"
+        ;;
+    help|-h|--help)
+        show_help
+        ;;
+    *)
+        echo -e "${RED}Unknown command: $COMMAND${NC}"
+        show_help
+        exit 1
+        ;;
+esac
