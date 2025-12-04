@@ -388,9 +388,9 @@ class TradeEngine:
             agent = await self.prisma.tradingagent.find_unique(
                 where={"id": position.agent_id}
             )
-            if agent and agent.allocation_id:
+            if agent and agent.portfolio_allocation_id:
                 allocation = await self.prisma.portfolioallocation.find_unique(
-                    where={"id": agent.allocation_id}
+                    where={"id": agent.portfolio_allocation_id}
                 )
 
         # Calculate realized PnL: (sell_price - average_buy_price) * quantity_sold
