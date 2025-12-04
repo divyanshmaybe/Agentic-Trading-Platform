@@ -934,54 +934,54 @@ def allocate_for_objective_task(
                 if weights_raw:
                     weights = _coerce_to_plain_dict(weights_raw)
                     logger.debug(f"Extracted weights from 'weights' field: {weights}")
-                    
-                    # If not found, try weights_json (might be a string)
-                    if not weights:
-                        weights_json_raw = allocation_result.get("weights_json")
-                        if weights_json_raw:
-                            # If it's a string, parse it
-                            if isinstance(weights_json_raw, str):
-                                try:
-                                    weights = json.loads(weights_json_raw)
-                                    logger.debug(f"Parsed weights from 'weights_json' string: {weights}")
-                                except (json.JSONDecodeError, TypeError):
-                                    weights = _coerce_to_plain_dict(weights_json_raw)
-                            else:
+                
+                # If not found, try weights_json (might be a string)
+                if not weights:
+                    weights_json_raw = allocation_result.get("weights_json")
+                    if weights_json_raw:
+                        # If it's a string, parse it
+                        if isinstance(weights_json_raw, str):
+                            try:
+                                weights = json.loads(weights_json_raw)
+                                logger.debug(f"Parsed weights from 'weights_json' string: {weights}")
+                            except (json.JSONDecodeError, TypeError):
                                 weights = _coerce_to_plain_dict(weights_json_raw)
-                            logger.debug(f"Extracted weights from 'weights_json' field: {weights}")
-                    
-                    # If still no weights, log warning but continue with default allocation
-                    if not weights:
+                        else:
+                            weights = _coerce_to_plain_dict(weights_json_raw)
+                        logger.debug(f"Extracted weights from 'weights_json' field: {weights}")
+                
+                # If still no weights, log warning but continue with default allocation
+                if not weights:
+                    logger.warning(
+                        f"No weights found in allocation result for portfolio {portfolio_id}. "
+                        f"Result keys: {list(allocation_result.keys())}. "
+                        f"Result sample: {str(allocation_result)[:500]}. "
+                        f"Using defaults from transcript.py."
+                    )
+                    # Use defaults from transcript.py (single source of truth)
+                    from utils.user_inputs_helper import create_user_inputs
+                    default_user_inputs = create_user_inputs(
+                        investment_horizon_years=15,  # Default value
+                        expected_return_target=0.18,  # Default value
+                        risk_tolerance="medium"  # Default value
+                    )
+                    weights = default_user_inputs.get("allocation_strategy", {
+                        "low_risk": 0.6,
+                        "high_risk": 0.2,
+                        "alpha": 0.2,
+                        "liquid": 0.0
+                    })
+                    logger.info(f"Using default weights from transcript.py: {weights}")
+                
+                # Validate weights sum to approximately 1.0
+                if weights:
+                    weight_sum = sum(weights.values())
+                    if abs(weight_sum - 1.0) > 0.01:
                         logger.warning(
-                            f"No weights found in allocation result for portfolio {portfolio_id}. "
-                            f"Result keys: {list(allocation_result.keys())}. "
-                            f"Result sample: {str(allocation_result)[:500]}. "
-                            f"Using defaults from transcript.py."
+                            f"Weights sum to {weight_sum} instead of 1.0 for portfolio {portfolio_id}. "
+                            f"Normalizing weights."
                         )
-                        # Use defaults from transcript.py (single source of truth)
-                        from utils.user_inputs_helper import create_user_inputs
-                        default_user_inputs = create_user_inputs(
-                            investment_horizon_years=15,  # Default value
-                            expected_return_target=0.18,  # Default value
-                            risk_tolerance="medium"  # Default value
-                        )
-                        weights = default_user_inputs.get("allocation_strategy", {
-                            "low_risk": 0.6,
-                            "high_risk": 0.2,
-                            "alpha": 0.2,
-                            "liquid": 0.0
-                        })
-                        logger.info(f"Using default weights from transcript.py: {weights}")
-                    
-                    # Validate weights sum to approximately 1.0
-                    if weights:
-                        weight_sum = sum(weights.values())
-                        if abs(weight_sum - 1.0) > 0.01:
-                            logger.warning(
-                                f"Weights sum to {weight_sum} instead of 1.0 for portfolio {portfolio_id}. "
-                                f"Normalizing weights."
-                            )
-                            weights = {k: v / weight_sum for k, v in weights.items()}
+                        weights = {k: v / weight_sum for k, v in weights.items()}
     
                 # Ensure downstream consumers receive the resolved weights payload
                 allocation_result["weights"] = weights
