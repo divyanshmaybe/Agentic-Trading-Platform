@@ -23,8 +23,8 @@ from market_data import await_live_price, get_market_data_service  # type: ignor
 from schemas import TradeCreate
 from services.trade_email_service import send_trade_execution_email  # noqa: E402
 
-FEE_RATE = Decimal(os.getenv("TRADE_FEE_RATE", "0.0005"))
-TAX_RATE = Decimal(os.getenv("TRADE_TAX_RATE", "0.00025"))
+FEE_RATE = Decimal(os.getenv("TRADE_FEE_RATE", "0.0003"))
+TAX_RATE = Decimal(os.getenv("TRADE_TAX_RATE", "0"))
 FOUR_DP = Decimal("0.0001")
 
 
