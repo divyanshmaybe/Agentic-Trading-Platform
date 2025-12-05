@@ -7,6 +7,7 @@ All new code should import directly from dbManager.
 
 import sys
 import os
+from fastapi import HTTPException
 
 # Add shared/py to path if not already there
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
@@ -25,7 +26,14 @@ disconnect = lambda: DBManager.get_instance().disconnect()
 # prisma_client function for routes that need direct Prisma access
 def get_prisma_client():
     """Get the Prisma client from DBManager. Must be called after DB is connected."""
-    return DBManager.get_instance().get_client()
+    try:
+        return DBManager.get_instance().get_client()
+    except RuntimeError as e:
+        # Database not connected yet - return a helpful error instead of crashing
+        raise HTTPException(
+            status_code=503,
+            detail="Database connection not ready. Server is starting up, please retry in a moment."
+        )
 
 # For backward compatibility with direct prisma_client import
 prisma_client = get_prisma_client

@@ -419,7 +419,7 @@ class StockSelectionPipeline:
             else:
                 reasoning = ""
                 new_reasoning_message = AIMessage("")
-            msg = reasoning[0].text
+            msg = reasoning[0]["text"]
             to_send = {
                 "status": "thinking",
                 "content": {
