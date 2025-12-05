@@ -130,6 +130,28 @@ class CompanyReportUpdateService:
             self._initialized = True
             logger.debug("✅ CompanyReportUpdateService async resources initialized")
 
+    async def ticker_exists_in_db(self, ticker: str) -> bool:
+        """
+        Check if a ticker exists in the company reports database.
+        
+        Args:
+            ticker: Stock ticker symbol (e.g., "RELIANCE")
+            
+        Returns:
+            True if ticker exists in database, False otherwise
+        """
+        if not self._initialized:
+            await self.initialize()
+        
+        try:
+            report = await self.report_service.get_report_by_ticker(ticker)
+            exists = report is not None
+            logger.debug(f"Ticker {ticker} exists in DB: {exists}")
+            return exists
+        except Exception as e:
+            logger.error(f"Error checking ticker existence for {ticker}: {e}")
+            return False
+
     def _create_llm(self, with_search_tool: bool = False) -> ChatGoogleGenerativeAI:
         """Create LLM instance with optional Google Search tool."""
         model_name = self._nse_prompt_data.get("model", "gemini-2.5-flash")

@@ -209,6 +209,17 @@ def update_company_report_from_nse_filing_url(
     try:
         service = get_company_report_update_service()
         
+        # Check if ticker exists in our database first
+        ticker_exists = _run_async(service.ticker_exists_in_db(ticker))
+        if not ticker_exists:
+            task_logger.info(f"⏭️ Skipping {ticker} - ticker not found in database")
+            return {
+                "status": "skipped",
+                "reason": "ticker_not_in_db",
+                "ticker": ticker,
+                "filing_category": filing_category,
+            }
+        
         # Check if filing is relevant
         if not service.is_relevant_nse_filing(filing_category):
             task_logger.info(f"⏭️ Skipping non-relevant filing category: {filing_category}")
