@@ -619,8 +619,30 @@ def execute_news_sentiment_pipeline(
     technical_snapshot: List[Dict[str, Any]] = []
 
     if gemini_key:
-        log.info("Skipping technical snapshot computation - no hardcoded stock list in production mode")
-        log.info("Stock recommendations will be based on sector analysis only")
+        log.info("Computing technical indicators for Nifty 500 stocks using AngelOne...")
+        
+        # Load Nifty 500 stock list from CSV
+        csv_path = Path(__file__).resolve().parents[3] / "scripts" / "ind_nifty500listbrief.csv"
+        if csv_path.exists():
+            try:
+                import pandas as pd
+                nifty500_df = pd.read_csv(csv_path)
+                log.info(f"Loaded {len(nifty500_df)} stocks from {csv_path.name}")
+                
+                # Compute technical indicators for each stock
+                from .research_pipeline import compute_technical_indicators_for_stocks
+                technical_snapshot = compute_technical_indicators_for_stocks(
+                    nifty500_df,
+                    logger=log,
+                    max_stocks=100  # Limit to avoid rate limits and long processing times
+                )
+                log.info(f"Computed technical indicators for {len(technical_snapshot)} stocks")
+            except Exception as exc:
+                log.exception(f"Failed to compute technical indicators: {exc}")
+                technical_snapshot = []
+        else:
+            log.warning(f"CSV file not found: {csv_path}, skipping technical indicators")
+            technical_snapshot = []
 
         try:
             tech_json = json.dumps(technical_snapshot)  # Empty list

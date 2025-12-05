@@ -475,6 +475,144 @@ def compute_technical_indicators(symbol: str) -> Optional[Dict[str, Optional[flo
     return indicators
 
 
+def compute_technical_indicators_for_stocks(
+    nifty500_df: pd.DataFrame,
+    logger: Optional[Any] = None,
+    max_stocks: int = 100
+) -> List[Dict[str, Any]]:
+    """
+    Compute technical indicators for Nifty 500 stocks using AngelOne candle data.
+    
+    Args:
+        nifty500_df: DataFrame with columns [Symbol, Industry, Company Name]
+        logger: Optional logger for progress tracking
+        max_stocks: Maximum number of stocks to process (to avoid rate limits)
+        
+    Returns:
+        List of dicts with Symbol, Industry, and technical indicators
+    """
+    import time
+    
+    log = logger or logging.getLogger(__name__)
+    results = []
+    
+    # Limit stocks to avoid timeouts
+    stocks_to_process = nifty500_df.head(max_stocks) if max_stocks else nifty500_df
+    total = len(stocks_to_process)
+    
+    log.info(f"Processing {total} stocks for technical indicators...")
+    
+    for idx, row in stocks_to_process.iterrows():
+        symbol = row.get("Symbol", "")
+        industry = row.get("Industry", "Unknown")
+        company_name = row.get("Company Name", "")
+        
+        if not symbol:
+            continue
+            
+        try:
+            indicators = compute_technical_indicators(symbol)
+            
+            if indicators:
+                result = {
+                    "Symbol": symbol,
+                    "CompanyName": company_name,
+                    "Industry": industry,
+                    **indicators
+                }
+                results.append(result)
+                
+                if (idx + 1) % 10 == 0:
+                    log.info(f"Progress: {idx + 1}/{total} stocks processed")
+            else:
+                log.debug(f"No indicators for {symbol} (insufficient data)")
+                
+            # Small delay to avoid rate limiting
+            time.sleep(0.1)
+            
+        except Exception as exc:
+            log.warning(f"Failed to compute indicators for {symbol}: {exc}")
+            continue
+    
+    log.info(f"✅ Successfully computed technical indicators for {len(results)}/{total} stocks")
+    return results
+
+    daily = _fetch_range(start_daily, now, "ONE_DAY")
+    hourly = _fetch_range(start_hourly, now, "ONE_HOUR")
+    if not hourly.empty:
+        today = now.date()
+        hourly_local = hourly.index.tz_convert("Asia/Kolkata")
+        mask = hourly_local.date == today
+        hourly = hourly.loc[mask]
+
+    data = pd.concat([daily, hourly])
+    data = data[~data.index.duplicated(keep="last")]
+
+    if data.empty or len(data) < 20:
+        return None
+
+    def calculate_sma(series: pd.Series, period: int) -> Optional[float]:
+        if series is None or len(series) < period:
+            return None
+        return float(series.rolling(window=period).mean().iloc[-1])
+
+    def calculate_ema(series: pd.Series, period: int) -> Optional[float]:
+        if series is None or len(series) < period:
+            return None
+        return float(series.ewm(span=period, adjust=False).mean().iloc[-1])
+
+    def calculate_rsi(series: pd.Series, period: int = 14) -> Optional[float]:
+        if series is None or len(series) < period + 1:
+            return None
+        delta = series.diff()
+        gain = delta.clip(lower=0).rolling(window=period).mean()
+        loss = (-delta.clip(upper=0)).rolling(window=period).mean()
+        if loss.iloc[-1] == 0:
+            return 100.0
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+        value = rsi.iloc[-1]
+        return float(value) if pd.notna(value) else None
+
+    def calculate_bollinger_bands(series: pd.Series, period: int = 20, std_dev: int = 2) -> tuple[Optional[float], Optional[float]]:
+        if series is None or len(series) < period:
+            return (None, None)
+        sma = series.rolling(window=period).mean()
+        std = series.rolling(window=period).std()
+        upper = sma + (std * std_dev)
+        lower = sma - (std * std_dev)
+        return (
+            float(upper.iloc[-1]) if pd.notna(upper.iloc[-1]) else None,
+            float(lower.iloc[-1]) if pd.notna(lower.iloc[-1]) else None,
+        )
+
+    def calculate_stochastic(high: pd.Series, low: pd.Series, close: pd.Series, k_period: int = 14) -> Optional[float]:
+        if any(series is None or len(series) < k_period for series in (high, low, close)):
+            return None
+        lowest_low = low.rolling(window=k_period).min()
+        highest_high = high.rolling(window=k_period).max()
+        denominator = highest_high - lowest_low
+        if denominator.iloc[-1] == 0:
+            return None
+        stoch_k = 100 * ((close - lowest_low) / denominator)
+        value = stoch_k.iloc[-1]
+        return float(value) if pd.notna(value) else None
+
+    indicators: Dict[str, Optional[float]] = {"Symbol": symbol}
+    indicators["SMA20"] = calculate_sma(data["Close"], 20)
+    indicators["EMA20"] = calculate_ema(data["Close"], 20)
+    indicators["RSI14"] = calculate_rsi(data["Close"], 14)
+    indicators["ADX14"] = None
+
+    bb_upper, bb_lower = calculate_bollinger_bands(data["Close"], 20, 2)
+    indicators["BB_UPPER"] = bb_upper
+    indicators["BB_LOWER"] = bb_lower
+
+    indicators["STOCHK"] = calculate_stochastic(data["High"], data["Low"], data["Close"], 14)
+
+    return indicators
+
+
 @pw.udf
 def get_technical_indicators(symbol: str) -> str:
     try:
@@ -752,6 +890,7 @@ __all__ = [
     "StockSchema",
     "build_news_sentiment_pipeline",
     "compute_technical_indicators",
+    "compute_technical_indicators_for_stocks",
     "get_technical_indicators",
     "news_retriever",
     "sentiment_analyzer",
