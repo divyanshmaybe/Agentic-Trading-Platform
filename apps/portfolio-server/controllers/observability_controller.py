@@ -31,31 +31,42 @@ class ObservabilityController:
     
     def _log_to_response(self, log) -> ObservabilityLogResponse:
         """Convert Prisma model to response model."""
+        # Map sentiment from trading decision
+        sentiment = "neutral"
+        if log.trading_decision:
+            decision = log.trading_decision.upper()
+            if "BUY" in decision:
+                sentiment = "positive"
+            elif "SELL" in decision:
+                sentiment = "negative"
+                
+        metadata = parse_json_field(log.metadata) or {}
+                
         return ObservabilityLogResponse(
             id=log.id,
-            analysis_type=log.analysisType,
+            analysis_type=log.filing_type or "unknown",
             symbol=log.symbol,
-            analysis_period=log.analysisPeriod,
-            prompt=log.prompt,
-            response=log.response,
-            model_name=log.modelName,
-            model_provider=log.modelProvider,
-            token_count=log.tokenCount,
-            latency_ms=log.latencyMs,
-            cost_estimate=float(log.costEstimate) if log.costEstimate else None,
-            summary=log.summary,
-            key_findings=parse_json_field(log.keyFindings),
-            sentiment=log.sentiment,
-            risk_factors=parse_json_field(log.riskFactors),
-            recommendations=parse_json_field(log.recommendations),
-            confidence_score=log.confidenceScore,
-            triggered_by=log.triggeredBy,
-            worker_id=log.workerId,
-            status=log.status,
-            error_message=log.errorMessage,
-            created_at=log.createdAt,
-            context_data=parse_json_field(log.contextData),
-            metadata=parse_json_field(log.metadata),
+            analysis_period=None,
+            prompt=metadata.get("prompt"),
+            response=log.feedback_on_agent_performance,
+            model_name=metadata.get("model_name"),
+            model_provider=metadata.get("model_provider"),
+            token_count=metadata.get("tokens"),
+            latency_ms=metadata.get("latency_ms"),
+            cost_estimate=metadata.get("cost_estimate"),
+            summary=log.reasoning_of_nse_agent,
+            key_findings=metadata.get("key_findings"),
+            sentiment=sentiment,
+            risk_factors=metadata.get("risk_factors"),
+            recommendations=None,
+            confidence_score=log.confidence_score,
+            triggered_by=log.triggered_by,
+            worker_id=None,
+            status="completed", # Default to completed as these are post-analysis logs
+            error_message=None,
+            created_at=log.created_at,
+            context_data=None,
+            metadata=metadata,
         )
     
     async def list_logs(
@@ -142,31 +153,32 @@ class ObservabilityController:
         
         # Get counts
         total = await self.prisma.nseobservabilitylog.count(
-            where={"createdAt": {"gte": cutoff_date}}
+            where={"created_at": {"gte": cutoff_date}}
         )
         
-        completed = await self.prisma.nseobservabilitylog.count(
-            where={"createdAt": {"gte": cutoff_date}, "status": "completed"}
-        )
+        # All logs in this table are effectively "completed" analyses
+        completed = total
+        failed = 0
         
-        failed = await self.prisma.nseobservabilitylog.count(
-            where={"createdAt": {"gte": cutoff_date}, "status": "failed"}
-        )
-        
-        # Get sentiment breakdown
+        # Get sentiment breakdown (approximation based on trading decision)
         positive = await self.prisma.nseobservabilitylog.count(
-            where={"createdAt": {"gte": cutoff_date}, "sentiment": "positive"}
+            where={
+                "created_at": {"gte": cutoff_date},
+                "trading_decision": {"contains": "BUY", "mode": "insensitive"}
+            }
         )
         negative = await self.prisma.nseobservabilitylog.count(
-            where={"createdAt": {"gte": cutoff_date}, "sentiment": "negative"}
+            where={
+                "created_at": {"gte": cutoff_date},
+                "trading_decision": {"contains": "SELL", "mode": "insensitive"}
+            }
         )
-        neutral = await self.prisma.nseobservabilitylog.count(
-            where={"createdAt": {"gte": cutoff_date}, "sentiment": "neutral"}
-        )
+        neutral = total - (positive + negative)
+        if neutral < 0: neutral = 0
         
         # Get unique symbols count
         logs_with_symbols = await self.prisma.nseobservabilitylog.find_many(
-            where={"createdAt": {"gte": cutoff_date}, "symbol": {"not": None}},
+            where={"created_at": {"gte": cutoff_date}},
             distinct=["symbol"],
         )
         symbols_analyzed = len(logs_with_symbols)
@@ -174,17 +186,14 @@ class ObservabilityController:
         # Get recent activity (last 24 hours)
         recent_cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
         recent_count = await self.prisma.nseobservabilitylog.count(
-            where={"createdAt": {"gte": recent_cutoff}}
+            where={"created_at": {"gte": recent_cutoff}}
         )
-        
-        # Calculate average latency
-        avg_latency = await self._calculate_avg_latency(cutoff_date)
         
         return ObservabilityStatsResponse(
             total_analyses=total,
             completed=completed,
             failed=failed,
-            avg_latency_ms=avg_latency,
+            avg_latency_ms=None,
             sentiment_breakdown={
                 "positive": positive,
                 "negative": negative,
@@ -194,26 +203,6 @@ class ObservabilityController:
             recent_activity_count=recent_count,
         )
     
-    async def _calculate_avg_latency(self, cutoff_date: datetime) -> Optional[float]:
-        """Calculate average latency for completed logs."""
-        logs_with_latency = await self.prisma.nseobservabilitylog.find_many(
-            where={
-                "createdAt": {"gte": cutoff_date},
-                "status": "completed",
-                "latencyMs": {"not": None}
-            },
-            select={"latencyMs": True}
-        )
-        
-        if not logs_with_latency:
-            return None
-        
-        latencies = [log.latencyMs for log in logs_with_latency if log.latencyMs]
-        if not latencies:
-            return None
-        
-        return sum(latencies) / len(latencies)
-    
     async def list_symbols(self) -> List[str]:
         """
         Get list of unique symbols that have been analyzed.
@@ -222,9 +211,7 @@ class ObservabilityController:
             Sorted list of unique symbols
         """
         logs = await self.prisma.nseobservabilitylog.find_many(
-            where={"symbol": {"not": None}},
-            distinct=["symbol"],
-            select={"symbol": True}
+            distinct=["symbol"]
         )
         
         symbols = [log.symbol for log in logs if log.symbol]
@@ -238,10 +225,8 @@ class ObservabilityController:
             Sorted list of unique trigger types
         """
         logs = await self.prisma.nseobservabilitylog.find_many(
-            where={"triggeredBy": {"not": None}},
-            distinct=["triggeredBy"],
-            select={"triggeredBy": True}
+            distinct=["triggered_by"]
         )
         
-        triggers = [log.triggeredBy for log in logs if log.triggeredBy]
+        triggers = [log.triggered_by for log in logs if log.triggered_by]
         return sorted(set(triggers))

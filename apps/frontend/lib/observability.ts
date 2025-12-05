@@ -2,6 +2,30 @@ import { z } from "zod"
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
 
+function getClientCookie(name: string): string | null {
+	if (typeof document === "undefined") return null
+	const cookieString = document.cookie
+	if (!cookieString) return null
+	const entry = cookieString
+		.split(";")
+		.map((section) => section.trim())
+		.find((section) => section.startsWith(`${name}=`))
+	if (!entry) return null
+	const [, value] = entry.split("=")
+	return value ? decodeURIComponent(value) : null
+}
+
+function resolveAccessToken(explicitToken?: string) {
+	if (explicitToken) return explicitToken
+	if (typeof window !== "undefined") {
+		const cookieToken = getClientCookie("access_token")
+		if (cookieToken) return cookieToken
+		const stored = localStorage.getItem("access_token")
+		if (stored) return stored
+	}
+	throw new Error("Missing access token. Please log in again.")
+}
+
 export interface ObservabilityLog {
 	id: string
 	analysis_type: string
@@ -63,8 +87,10 @@ export interface FetchLogsParams {
 }
 
 export async function fetchObservabilityLogs(
-	params: FetchLogsParams = {}
+	params: FetchLogsParams = {},
+	accessToken?: string
 ): Promise<ObservabilityLogsResponse> {
+	const token = resolveAccessToken(accessToken)
 	const queryParams = new URLSearchParams()
 	Object.entries(params).forEach(([key, value]) => {
 		if (value !== undefined && value !== null && value !== "") {
@@ -73,7 +99,13 @@ export async function fetchObservabilityLogs(
 	})
 
 	const response = await fetch(
-		`${API_BASE_URL}/api/observability/logs?${queryParams.toString()}`
+		`${API_BASE_URL}/api/observability/logs?${queryParams.toString()}`,
+		{
+			headers: {
+				Authorization: `Bearer ${token}`,
+			},
+			credentials: "include",
+		}
 	)
 
 	if (!response.ok) {
@@ -83,8 +115,14 @@ export async function fetchObservabilityLogs(
 	return response.json()
 }
 
-export async function fetchObservabilityLog(id: string): Promise<ObservabilityLog> {
-	const response = await fetch(`${API_BASE_URL}/api/observability/logs/${id}`)
+export async function fetchObservabilityLog(id: string, accessToken?: string): Promise<ObservabilityLog> {
+	const token = resolveAccessToken(accessToken)
+	const response = await fetch(`${API_BASE_URL}/api/observability/logs/${id}`, {
+		headers: {
+			Authorization: `Bearer ${token}`,
+		},
+		credentials: "include",
+	})
 
 	if (!response.ok) {
 		throw new Error("Failed to fetch observability log")
@@ -93,9 +131,16 @@ export async function fetchObservabilityLog(id: string): Promise<ObservabilityLo
 	return response.json()
 }
 
-export async function fetchObservabilityStats(days: number = 7): Promise<ObservabilityStats> {
+export async function fetchObservabilityStats(days: number = 7, accessToken?: string): Promise<ObservabilityStats> {
+	const token = resolveAccessToken(accessToken)
 	const response = await fetch(
-		`${API_BASE_URL}/api/observability/stats?days=${days}`
+		`${API_BASE_URL}/api/observability/stats?days=${days}`,
+		{
+			headers: {
+				Authorization: `Bearer ${token}`,
+			},
+			credentials: "include",
+		}
 	)
 
 	if (!response.ok) {
@@ -105,8 +150,14 @@ export async function fetchObservabilityStats(days: number = 7): Promise<Observa
 	return response.json()
 }
 
-export async function fetchObservabilitySymbols(): Promise<string[]> {
-	const response = await fetch(`${API_BASE_URL}/api/observability/symbols`)
+export async function fetchObservabilitySymbols(accessToken?: string): Promise<string[]> {
+	const token = resolveAccessToken(accessToken)
+	const response = await fetch(`${API_BASE_URL}/api/observability/symbols`, {
+		headers: {
+			Authorization: `Bearer ${token}`,
+		},
+		credentials: "include",
+	})
 
 	if (!response.ok) {
 		throw new Error("Failed to fetch observability symbols")
@@ -115,8 +166,14 @@ export async function fetchObservabilitySymbols(): Promise<string[]> {
 	return response.json()
 }
 
-export async function fetchObservabilityTriggers(): Promise<string[]> {
-	const response = await fetch(`${API_BASE_URL}/api/observability/triggers`)
+export async function fetchObservabilityTriggers(accessToken?: string): Promise<string[]> {
+	const token = resolveAccessToken(accessToken)
+	const response = await fetch(`${API_BASE_URL}/api/observability/triggers`, {
+		headers: {
+			Authorization: `Bearer ${token}`,
+		},
+		credentials: "include",
+	})
 
 	if (!response.ok) {
 		throw new Error("Failed to fetch observability triggers")

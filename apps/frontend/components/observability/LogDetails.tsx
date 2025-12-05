@@ -47,21 +47,23 @@ export function LogDetails({ log, open, onOpenChange }: LogDetailsProps) {
 								<Brain className="h-3 w-3" />
 								Model
 							</div>
-							<div className="mt-1 font-mono text-sm">{log.model_name}</div>
+							<div className="mt-1 font-mono text-sm">{log.model_name || "N/A"}</div>
 						</div>
 						<div className="rounded-lg border border-white/10 bg-white/5 p-3">
 							<div className="flex items-center gap-2 text-xs text-gray-400">
 								<Zap className="h-3 w-3" />
 								Latency
 							</div>
-							<div className="mt-1 font-mono text-sm">{log.latency_ms}ms</div>
+							<div className="mt-1 font-mono text-sm">{log.latency_ms ? `${log.latency_ms}ms` : "N/A"}</div>
 						</div>
 						<div className="rounded-lg border border-white/10 bg-white/5 p-3">
 							<div className="flex items-center gap-2 text-xs text-gray-400">
 								<DollarSign className="h-3 w-3" />
 								Cost
 							</div>
-							<div className="mt-1 font-mono text-sm">${log.cost_estimate.toFixed(5)}</div>
+							<div className="mt-1 font-mono text-sm">
+								{log.cost_estimate ? `$${log.cost_estimate.toFixed(5)}` : "N/A"}
+							</div>
 						</div>
 						<div className="rounded-lg border border-white/10 bg-white/5 p-3">
 							<div className="flex items-center gap-2 text-xs text-gray-400">
@@ -87,7 +89,7 @@ export function LogDetails({ log, open, onOpenChange }: LogDetailsProps) {
 							<div>
 								<h4 className="mb-2 text-sm font-medium text-gray-400">Key Findings</h4>
 								<ul className="space-y-2 rounded-lg border border-white/10 bg-white/5 p-4 text-sm">
-									{log.key_findings.map((finding, i) => (
+									{(log.key_findings || []).map((finding, i) => (
 										<li key={i} className="flex items-start gap-2">
 											<span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" />
 											<span className="text-gray-300">{finding}</span>
@@ -98,7 +100,7 @@ export function LogDetails({ log, open, onOpenChange }: LogDetailsProps) {
 							<div>
 								<h4 className="mb-2 text-sm font-medium text-gray-400">Risk Factors</h4>
 								<ul className="space-y-2 rounded-lg border border-white/10 bg-white/5 p-4 text-sm">
-									{log.risk_factors.map((risk, i) => (
+									{(log.risk_factors || []).map((risk, i) => (
 										<li key={i} className="flex items-start gap-2">
 											<span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-red-500" />
 											<span className="text-gray-300">{risk}</span>
