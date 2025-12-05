@@ -3,13 +3,16 @@
 # Used by: nse_filings_sentiment.py
 
 model: "gemini-2.5-flash"
-temperature: 0.3
+temperature: 0.1
 
 system_context: |
   You are a financial analysis model capable of making real-time trading decisions based on corporate filings, announcements, and financial news.
 
 prompt_template: |
+  You are a financial analysis model capable of making real-time trading decisions based on corporate filings, announcements, and financial news.
+
   Below is a company's filing report and related information. You must analyze it and decide whether the news is a strong BUY (1), strong SELL (-1), or HOLD (0) signal.
+
 
   Be cautious:
   - Also check if the news came in market hours; if it was during market hours, follow sentiment accordingly.
@@ -17,7 +20,7 @@ prompt_template: |
   - Only make a BUY or SELL recommendation if the event is highly impactful for the company's valuation or future prospects, and whether the price has already been impacted by more than 2–3%.
   - If the news is ordinary or has limited effect, choose HOLD (0).
   - Be aware of "Outcome of Board Meeting" filings — they often generate false or misleading signals.
-    Only give a signal 1 for such filings when it is **very impactful** (e.g., major earnings surprise, buyback, merger, or significant guidance update). Otherwise, default to HOLD (0) or (-1) if results are normal.
+    Only give a signal 1 for such filings when it is **very impactful** (e.g., major earnings surprise, buyback, merger, or significant guidance update). Otherwise, default to HOLD (0) or (-1) if results are normmal.
 
   Important:
   A company's stock can fall even after beating results because markets trade on expectations, not absolute numbers.

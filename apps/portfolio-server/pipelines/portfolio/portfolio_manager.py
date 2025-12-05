@@ -195,9 +195,9 @@ class PortfolioManager:
         self.monitor = monitor
         self.default_weights = {
         'low_risk': 0.6,
-        'high_risk': 0.2,
-        'alpha': 0.2,
-        'liquid': 0
+        'high_risk': 0.15,
+        'alpha': 0.15,
+        'liquid': 0.1
         }
 
         # Initialize current weights from user allocation strategy

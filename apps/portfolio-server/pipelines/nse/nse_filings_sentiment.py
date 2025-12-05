@@ -764,6 +764,7 @@ def generate_trading_signal(
     - Model 1 (gemini-2.5-flash): Generates trading_signal + explanation
       If pdf_filename is provided, attaches the PDF from the nse/docs folder.
     - Model 2 (gemini-2.5-pro): Validates logic and generates confidence_score
+      Has access to google_search tool for verification.
 
     Prompts are loaded from YAML templates in the templates/ folder.
     Uses llm_response_utils for response cleaning and parsing.
@@ -957,16 +958,22 @@ def generate_trading_signal(
                 explanation=explanation
             )
             model2_name = val_config.get('model', 'gemini-2.5-pro')
-            model2_temp = val_config.get('temperature', 0.4)
+            model2_temp = val_config.get('temperature', 0.1)
 
             validator_model = ChatGoogleGenerativeAI(
                 model=model2_name,
                 temperature=model2_temp,
                 api_key=api_key
             )
+            
+            # Bind google_search tool to validator model
+            validator_model_with_search = validator_model.bind_tools([
+                {"google_search": {}}
+            ])
 
-            print(f"[PIPELINE] Model 2 ({model2_name}): Validating signal + generating confidence...")
-            validation_raw = validator_model.invoke(validation_prompt)
+            print(f"[PIPELINE] Model 2 ({model2_name}): Validating signal + generating confidence (with google_search tool)...")
+            val_msg = HumanMessage(content=[{"type": "text", "text": validation_prompt}])
+            validation_raw = validator_model_with_search.invoke([val_msg])
             validation_text = extract_content_from_response(validation_raw)
 
             print(f"[PIPELINE] Model 2 Response: {validation_text[:200]}...")
@@ -1370,8 +1377,7 @@ def create_nse_filings_pipeline(
             pw.this.neg_impact,
             pw.this.stocktechdata,
             GEMINI_API_KEY,
-            pw.this.filename  # Pass filename to attach the PDF
-        )
+            pw.this.filename)
     )
 
     print("[SENTIMENT] Step 5: Parsing trading signals...")
