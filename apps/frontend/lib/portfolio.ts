@@ -127,7 +127,6 @@ export type PortfolioDashboardResponse = {
   total_positions: number
   active_agents: number
   allocations: AllocationDashboardSummary[]
-  recent_trades: RecentTradeSummary[]
 }
 
 export type PortfolioAllocationSummary = {
@@ -353,6 +352,10 @@ export async function fetchMarketCandles(
 export async function getRecentTrades(
   page = 1,
   limit = 10,
+  symbol?: string,
+  side?: string,
+  orderType?: string,
+  status?: string,
   accessToken?: string,
 ): Promise<RecentTradesResponse> {
   const token = resolveAccessToken(accessToken)
@@ -361,6 +364,11 @@ export async function getRecentTrades(
     page: String(page),
     limit: String(limit),
   })
+  
+  if (symbol) params.append("symbol", symbol)
+  if (side) params.append("side", side)
+  if (orderType) params.append("orderType", orderType)
+  if (status) params.append("status", status)
 
   return request<RecentTradesResponse>(`/api/portfolio/recent-trades?${params}`, {
     method: "GET",

@@ -57,8 +57,8 @@ export function resolveHeadline(notification: KafkaNotification): string {
   if (type === "nse-signal" && isRecord(data) && "symbol" in data) {
     return (data.symbol as string) ?? "NSE Signal"
   }
-  if (type === "news-stock-recommendation" && isRecord(data) && "stockName" in data) {
-    return ((data.stockName as string) || (data.sector as string)) ?? "Recommendation Insight"
+  if (type === "news-stock-recommendation" && isRecord(data) && "stock_name" in data) {
+    return ((data.stock_name as string) || (data.sector as string)) ?? "Recommendation Insight"
   }
   if (type === "news-sentiment-article" && isRecord(data) && "title" in data) {
     return ((data.title as string) || (data.stream as string)) ?? "Sentiment Pulse"

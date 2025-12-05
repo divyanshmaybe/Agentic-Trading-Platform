@@ -53,6 +53,42 @@ interface AgentTradesTableProps {
 // SIMPLE TABLE - Used for longterm and intraday pages
 // =====================================================
 function SimpleTradesTable({ trades, loading }: { trades: AgentTrade[]; loading: boolean }) {
+  const [currentPrices, setCurrentPrices] = useState<Map<string, number>>(new Map())
+  const [pricesLoading, setPricesLoading] = useState(false)
+
+  // Fetch current prices for symbols in trades
+  useEffect(() => {
+    if (trades.length === 0) return
+
+    const symbols = [...new Set(trades.map((t) => t.symbol).filter(Boolean))]
+    if (symbols.length === 0) return
+
+    const fetchPrices = async () => {
+      setPricesLoading(true)
+      try {
+        const response = await fetchQuotes(symbols)
+        if (response?.data) {
+          const priceMap = new Map<string, number>()
+          response.data.forEach((quote) => {
+            if (quote?.symbol && quote?.price) {
+              priceMap.set(quote.symbol, parseFloat(quote.price))
+            }
+          })
+          setCurrentPrices(priceMap)
+        }
+      } catch (error) {
+        console.error("Failed to fetch current prices:", error)
+      } finally {
+        setPricesLoading(false)
+      }
+    }
+
+    fetchPrices()
+    // Poll every 10 seconds
+    const interval = setInterval(fetchPrices, 10000)
+    return () => clearInterval(interval)
+  }, [trades])
+
   if (loading) {
     return (
       <Card className="card-glass flex h-full flex-col rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_28px_65px_-38px_rgba(0,0,0,0.9)] backdrop-blur">
@@ -127,6 +163,7 @@ function SimpleTradesTable({ trades, loading }: { trades: AgentTrade[]; loading:
                   <th className="px-4 py-3">Side</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Executed Price</th>
+                  <th className="px-4 py-3">Current Price</th>
                   <th className="px-4 py-3">Net Amount</th>
                   <th className="px-4 py-3">Response Time</th>
                   <th className="px-4 py-3">Source</th>
@@ -177,6 +214,15 @@ function SimpleTradesTable({ trades, loading }: { trades: AgentTrade[]; loading:
                       </td>
                       <td className="px-4 py-3 text-emerald-300">
                         {formatCurrency(trade.executed_price)}
+                      </td>
+                      <td className="px-4 py-3">
+                        {pricesLoading && currentPrices.size === 0 ? (
+                          <span className="text-white/40 text-xs">Loading...</span>
+                        ) : currentPrices.has(trade.symbol) ? (
+                          <span className="text-blue-300">{formatCurrency(currentPrices.get(trade.symbol))}</span>
+                        ) : (
+                          <span className="text-white/40">—</span>
+                        )}
                       </td>
                       <td className={`px-4 py-3 font-semibold ${isPositive ? "text-emerald-300" : "text-rose-300"}`}>
                         {formatCurrency(trade.net_amount)}

@@ -444,7 +444,7 @@ class PortfolioController:
                 llm_delay=f"{llm_delay_ms}ms" if llm_delay_ms is not None else "N/A",
                 trade_delay=f"{trade_delay_ms}ms" if trade_delay_ms is not None else "N/A",
                 agent_id=trade.agent_id,
-                agent_name=trade.agent.name if trade.agent else None,
+                agent_name=trade.agent.agent_name if trade.agent else None,
                 triggered_by=triggered_by,
             ))
 
@@ -594,13 +594,6 @@ class PortfolioController:
             where={"portfolio_id": portfolio.id},
         )
         
-        # Get recent trades (last 10)
-        recent_trades = await self.prisma.trade.find_many(
-            where={"portfolio_id": portfolio.id},
-            order={"created_at": "desc"},
-            take=10,
-        )
-        
         # Build allocation summaries
         allocation_summaries = [
             AllocationDashboardSummary(
@@ -614,35 +607,6 @@ class PortfolioController:
             for alloc in allocations
         ]
         
-        # Build recent trade summaries
-        recent_trade_summaries = []
-        for trade in recent_trades:
-            # Extract llm_delay and trade_delay from metadata
-            metadata = trade.metadata
-            if isinstance(metadata, str):
-                try:
-                    import json
-                    metadata = json.loads(metadata)
-                except:
-                    metadata = {}
-            elif not isinstance(metadata, dict):
-                metadata = {}
-            
-            llm_delay_ms = metadata.get("llm_delay_ms")
-            trade_delay_ms = metadata.get("trade_delay")
-            
-            recent_trade_summaries.append(RecentTradeSummary(
-                id=trade.id,
-                symbol=trade.symbol,
-                side=trade.side,
-                quantity=trade.quantity,
-                executed_price=trade.executed_price,
-                executed_at=trade.execution_time,
-                realized_pnl=getattr(trade, "realized_pnl", None),
-                llm_delay=f"{llm_delay_ms}ms" if llm_delay_ms is not None else "N/A",
-                trade_delay=f"{trade_delay_ms}ms" if trade_delay_ms is not None else "N/A",
-            ))
-        
         return PortfolioDashboardResponse(
             portfolio_id=portfolio.id,
             portfolio_name=portfolio.portfolio_name,
@@ -652,7 +616,6 @@ class PortfolioController:
             total_positions=len(positions),
             active_agents=len(agents),
             allocations=allocation_summaries,
-            recent_trades=recent_trade_summaries,
         )
 
     async def get_agent_dashboard(
@@ -700,27 +663,10 @@ class PortfolioController:
                 detail=f"Agent with type '{agent_type}' not found for your portfolio"
             )
         
-        # Calculate current value from positions using live prices
-        from services.snapshot_service import TradingAgentSnapshotService
+        # Get positions (used by frontend to calculate current value)
         positions = getattr(agent, "positions", []) or []
         
-        snapshot_service = TradingAgentSnapshotService(logger=self.logger)
-        current_value = Decimal("0")
-        if positions:
-            # Get live prices for all position symbols
-            for pos in positions:
-                try:
-                    live_price = await snapshot_service._fetch_live_price(
-                        pos.symbol, pos.exchange, pos.segment
-                    )
-                    if live_price:
-                        current_value += live_price * Decimal(str(pos.quantity))
-                except Exception as e:
-                    self.logger.warning(f"Failed to fetch price for {pos.symbol}: {e}")
-                    # Fallback to average buy price
-                    current_value += pos.average_buy_price * Decimal(str(pos.quantity))
-        
-        # Get realized P&L from agent
+        # Get realized P&L from agent (already calculated from closed trades)
         realized_pnl = getattr(agent, "realized_pnl", Decimal("0")) or Decimal("0")
         
         # Build position summaries
@@ -799,8 +745,8 @@ class PortfolioController:
                 trade_type=trade.trade_type,
                 created_at=trade.created_at,
                 execution_time=trade.execution_time,
-                llm_delay=f"{llm_delay_ms}ms" if llm_delay_ms is not None else "N/A",
-                trade_delay=f"{trade_delay_ms}ms" if trade_delay_ms is not None else "N/A",
+                llm_delay=str(llm_delay_ms) if llm_delay_ms is not None else None,
+                trade_delay=str(trade_delay_ms) if trade_delay_ms is not None else None,
                 agent_id=agent.id,
                 agent_name=agent.agent_name,
                 triggered_by=triggered_by,
@@ -810,14 +756,13 @@ class PortfolioController:
             agent_id=agent.id,
             agent_name=agent.agent_name,
             agent_type=agent.agent_type,
-            portfolio_id=agent.portfolio_id or "",
+            portfolio_id=agent.portfolio_id,
             status=agent.status,
-            current_value=current_value,
             realized_pnl=realized_pnl,
-            positions_count=len(positions),
+            positions_count=len(position_summaries),
             positions=position_summaries,
             allocation=allocation_summary,
-            performance_metrics=self._parse_metadata(agent.performance_metrics),
+            performance_metrics=self._parse_metadata(agent.metadata),
             recent_trades=trade_summaries,
         )
 

@@ -4,13 +4,13 @@ import { useState } from "react"
 import { useParams } from "next/navigation"
 import { Loader2, Play } from "lucide-react"
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader"
-import { IntradayNotifications } from "@/components/intraday"
+import { IntradayNotifications, IntradayTradesTable } from "@/components/intraday"
 import { PortfolioSnapshots } from "@/components/portfolio/PortfolioSnapshots"
 import { Container } from "@/components/shared/Container"
 import { PageHeading } from "@/components/shared/PageHeading"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/hooks/useAuth"
-import { AgentOverview, AgentTradesTable } from "@/components/agent"
+import { AgentOverview } from "@/components/agent"
 import { useAgentDashboard } from "@/hooks/useAgentDashboard"
 
 export default function IntradayCommandCenterPage() {
@@ -109,12 +109,16 @@ export default function IntradayCommandCenterPage() {
         />
 
         <section className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <AgentOverview data={agentData} loading={agentLoading} isAllocating={isAllocating} />
-          <AgentTradesTable trades={agentData?.recent_trades ?? []} loading={agentLoading} />
+          <div>
+            <AgentOverview data={agentData} loading={agentLoading} isAllocating={isAllocating} />
+          </div>
+          <div>
+            <PortfolioSnapshots agentType="high_risk" title="Performance Chart" />
+          </div>
         </section>
 
         <section>
-          <PortfolioSnapshots agentType="high_risk" title="Intraday Strategy Snapshot History" />
+          <IntradayTradesTable />
         </section>
 
         <section>

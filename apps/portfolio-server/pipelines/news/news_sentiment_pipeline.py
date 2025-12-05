@@ -619,10 +619,6 @@ def execute_news_sentiment_pipeline(
     technical_snapshot: List[Dict[str, Any]] = []
 
     if gemini_key:
-        # In production, technical snapshot requires stocks to be identified
-        # from sector analysis or sentiment data. For now, we skip technical
-        # analysis since we don't have a hardcoded stock list.
-        # The stock_recommender will work with sector analysis alone.
         log.info("Skipping technical snapshot computation - no hardcoded stock list in production mode")
         log.info("Stock recommendations will be based on sector analysis only")
 

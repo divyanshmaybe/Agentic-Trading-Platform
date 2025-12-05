@@ -82,8 +82,8 @@ class TradeSummary(BaseModel):
     trade_type: str
     created_at: datetime
     execution_time: Optional[datetime] = None
-    llm_delay: Optional[str] = None  # LLM processing delay in ms or "N/A"
-    trade_delay: Optional[str] = None  # Trade execution delay in ms or "N/A"
+    llm_delay: Optional[str] = None  # LLM processing delay in milliseconds (numeric string)
+    trade_delay: Optional[str] = None  # Trade execution delay in milliseconds (numeric string)
     agent_id: Optional[str] = None  # Trading agent ID
     agent_name: Optional[str] = None  # Trading agent name
     triggered_by: Optional[str] = None  # What triggered the trade (e.g., alpha signal, user)
@@ -154,9 +154,9 @@ class PortfolioAllocationListResponse(BaseModel):
 
 
 class SnapshotResponse(BaseModel):
-    """Single snapshot data point for timeline charts"""
+    """Single snapshot data point for timeline charts - historical data only"""
     snapshot_at: datetime
-    current_value: Decimal
+    current_value: Decimal  # Historical snapshot value
     realized_pnl: Decimal
     unrealized_pnl: Decimal
 
@@ -168,11 +168,11 @@ class SnapshotListResponse(BaseModel):
 
 
 class AllocationSnapshotResponse(BaseModel):
-    """Allocation snapshot for tracking allocation weight and value over time"""
+    """Allocation snapshot for tracking allocation weight and value over time - historical data only"""
     id: str
     portfolio_allocation_id: str
     allocation_type: str
-    current_value: Decimal
+    current_value: Decimal  # Historical snapshot value
     realized_pnl: Decimal
     unrealized_pnl: Decimal
     snapshot_at: datetime
@@ -205,8 +205,8 @@ class RecentTradeSummary(BaseModel):
     executed_price: Optional[Decimal] = None
     executed_at: Optional[datetime] = None
     realized_pnl: Optional[Decimal] = None
-    llm_delay: Optional[str] = None  # LLM processing delay in ms or "N/A"
-    trade_delay: Optional[str] = None  # Trade execution delay in ms or "N/A"
+    llm_delay: Optional[str] = None  # LLM processing delay in milliseconds (numeric string)
+    trade_delay: Optional[str] = None  # Trade execution delay in milliseconds (numeric string)
 
 
 class PortfolioDashboardResponse(BaseModel):
@@ -219,7 +219,6 @@ class PortfolioDashboardResponse(BaseModel):
     total_positions: int
     active_agents: int
     allocations: List[AllocationDashboardSummary]
-    recent_trades: List[RecentTradeSummary]
 
 
 class AgentDashboardResponse(BaseModel):
@@ -229,7 +228,6 @@ class AgentDashboardResponse(BaseModel):
     agent_type: str
     portfolio_id: str
     status: str
-    current_value: Decimal
     realized_pnl: Decimal
     positions_count: int
     positions: List[PositionSummary]

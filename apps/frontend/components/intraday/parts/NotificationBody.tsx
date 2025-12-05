@@ -1,4 +1,5 @@
 import { Fragment, type ReactNode } from "react"
+import { ExternalLink } from "lucide-react"
 
 import {
   deriveSignalLabel,
@@ -13,6 +14,36 @@ import type { KafkaNotification } from "../types"
 import { DetailRow } from "./DetailRow"
 
 type NotificationRenderer = (notification: KafkaNotification) => ReactNode
+
+// Helper function to render text with clickable URLs
+function renderTextWithLinks(text: string): ReactNode {
+  if (!text) return null
+  
+  // Regex to match URLs
+  const urlRegex = /(https?:\/\/[^\s)]+)/g
+  const parts = text.split(urlRegex)
+  
+  return (
+    <>
+      {parts.map((part, idx) => {
+        if (part.match(urlRegex)) {
+          return (
+            <a
+              key={idx}
+              href={part}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="text-blue-400 hover:text-blue-300 underline break-all"
+            >
+              {part}
+            </a>
+          )
+        }
+        return <span key={idx}>{part}</span>
+      })}
+    </>
+  )
+}
 
 export function NotificationBody({ notification }: { notification: KafkaNotification }) {
   const renderer = notificationRenderers[notification.type] ?? renderGenericNotification
@@ -94,12 +125,37 @@ const notificationRenderers: Record<string, NotificationRenderer> = {
     const data = toRecord(notification.data)
     if (!data) return null
 
+    const newsSource = typeof data.news_source === "string" ? data.news_source : null
+    const detailedAnalysis = typeof data.detailed_analysis === "string" ? data.detailed_analysis : null
+
     return (
       <NotificationBodySection>
-        {renderIfPresent(data.detailedAnalysis)}
-        <DetailRow label="Trade Signal" value={String(data.tradeSignal ?? "N/A")} />
-        <DetailRow label="Sector" value={String(data.sector ?? "N/A")} />
-        <DetailRow label="Window" value={String(data.timeWindowInvestment ?? "N/A")} />
+        <div className="space-y-3">
+          {detailedAnalysis && (
+            <p className="text-sm text-white/70 leading-relaxed">
+              {renderTextWithLinks(detailedAnalysis)}
+            </p>
+          )}
+          <DetailRow label="Trade Signal" value={String(data.trade_signal ?? "N/A")} />
+          <DetailRow label="Sector" value={String(data.sector ?? "N/A")} />
+          <DetailRow label="Window" value={String(data.time_window_investment ?? "N/A")} />
+          {newsSource && (
+            <DetailRow
+              label="Source"
+              value={
+                <a
+                  href={newsSource}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="inline-flex items-center gap-1.5 text-blue-400 hover:text-blue-300 underline"
+                >
+                  View Article
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+              }
+            />
+          )}
+        </div>
       </NotificationBodySection>
     )
   },
@@ -120,6 +176,59 @@ const notificationRenderers: Record<string, NotificationRenderer> = {
     const data = toRecord(notification.data)
     if (!data) return null
 
+    // Try to parse as JSON if it's a string
+    let sectorData: Record<string, any> | null = null
+    try {
+      const analysisStr = String(data.analysis ?? "")
+      if (analysisStr.trim().startsWith("{")) {
+        sectorData = JSON.parse(analysisStr)
+      }
+    } catch (e) {
+      // Not JSON, render as text
+    }
+
+    if (sectorData) {
+      return (
+        <div className="space-y-4">
+          {Object.entries(sectorData).map(([sectorKey, sectorInfo]: [string, any]) => {
+            if (!sectorInfo || typeof sectorInfo !== "object") return null
+            
+            const sector = String(sectorInfo.sector || sectorKey)
+            const tradeSignal = String(sectorInfo.trade_signal_generated || sectorInfo.trade_signal || "Hold")
+            const analysis = String(sectorInfo.analysis || "")
+            
+            // Determine signal color
+            const signalColor = 
+              tradeSignal.toLowerCase() === "buy" 
+                ? "text-emerald-400" 
+                : tradeSignal.toLowerCase() === "sell" 
+                  ? "text-rose-400" 
+                  : "text-amber-400"
+            
+            return (
+              <div 
+                key={sectorKey}
+                className="rounded-lg border border-white/10 bg-white/5 p-4 space-y-2"
+              >
+                <div className="flex items-center justify-between">
+                  <h4 className="font-semibold text-[#fafafa]">{sector}</h4>
+                  <span className={`text-xs font-semibold uppercase px-2 py-1 rounded ${signalColor}`}>
+                    {tradeSignal}
+                  </span>
+                </div>
+                {analysis && (
+                  <p className="text-sm text-white/70 leading-relaxed">
+                    {renderTextWithLinks(analysis)}
+                  </p>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )
+    }
+
+    // Fallback to text rendering
     return (
       <NotificationBodySection>
         {renderIfPresent(data.analysis, true)}

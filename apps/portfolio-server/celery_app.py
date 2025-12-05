@@ -277,6 +277,10 @@ celery_app.conf.task_routes = {
 # Task categories with different resource requirements
 STANDARD_TASKS = [
     "portfolio.allocate_for_objective",
+]
+
+# Allocation/Rebalancing tasks - no time limits (can take time for regime detection + LLM)
+ALLOCATION_TASKS = [
     "portfolio.check_regime_and_rebalance",
 ]
 
@@ -331,11 +335,20 @@ celery_app.conf.task_annotations = {
     # Standard tasks - reasonable limits for DB operations
     **{
         task_name: {
-            "soft_time_limit": 300,  # 5 min soft (allocation can take time for LLM calls)
+            "soft_time_limit": 300,  # 5 min soft
             "time_limit": 360,  # 6 min hard
-            "rate_limit": "30/m",  # Max 30 per minute (increased from 10)
+            "rate_limit": "30/m",  # Max 30 per minute
         }
         for task_name in STANDARD_TASKS
+    },
+    # Allocation/Rebalancing tasks - NO TIME LIMITS (regime detection + LLM can take time)
+    **{
+        task_name: {
+            "soft_time_limit": None,  # NO soft limit
+            "time_limit": None,  # NO hard limit
+            "rate_limit": "10/m",  # Max 10 per minute
+        }
+        for task_name in ALLOCATION_TASKS
     },
     # Signal processing - CRITICAL: NO RATE LIMIT, NO TIME LIMITS for real-time trading
     # These must execute immediately when signals come in and run as long as needed

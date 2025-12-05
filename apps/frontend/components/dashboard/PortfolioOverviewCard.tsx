@@ -20,6 +20,7 @@ export function PortfolioOverviewCard({ summary, loading = false }: PortfolioOve
   const hasAllocations = summary.allocation && summary.allocation.length > 0
   const hasEverLoadedPortfolioRef = useRef(false)
   const [currentPortfolioValue, setCurrentPortfolioValue] = useState<number | null>(null)
+  const [unrealizedPnl, setUnrealizedPnl] = useState<number | null>(null)
   const [valueLoading, setValueLoading] = useState(false)
   const [valueError, setValueError] = useState<string | null>(null)
   
@@ -35,6 +36,7 @@ export function PortfolioOverviewCard({ summary, loading = false }: PortfolioOve
   useEffect(() => {
     // Reset state when summary changes
     setCurrentPortfolioValue(null)
+    setUnrealizedPnl(null)
     setValueError(null)
     setValueLoading(false)
 
@@ -103,6 +105,7 @@ export function PortfolioOverviewCard({ summary, loading = false }: PortfolioOve
           // No positions, current value is just available cash
           if (isMounted) {
             setCurrentPortfolioValue(summary.availableCash)
+            setUnrealizedPnl(0)
             setValueLoading(false)
           }
           return
@@ -160,8 +163,8 @@ export function PortfolioOverviewCard({ summary, loading = false }: PortfolioOve
           })
         }
 
-        // Calculate current portfolio value: availableCash + sum(price * quantity)
-        let positionsValue = 0
+        // Calculate unrealized PnL from open positions
+        let totalUnrealizedPnl = 0
         let hasMissingPrices = false
 
         for (const position of allPositions) {
@@ -175,12 +178,25 @@ export function PortfolioOverviewCard({ summary, loading = false }: PortfolioOve
           }
 
           const quantity = position.quantity || 0
+          const avgBuyPrice = parseFloat(position.average_buy_price || "0")
           
-          if (quantity === 0) {
+          if (quantity === 0 || isNaN(avgBuyPrice)) {
             continue
           }
 
-          positionsValue += currentPrice * quantity
+          // Calculate unrealized PnL for this position
+          const positionType = (position.position_type || "LONG").toUpperCase()
+          let positionPnl: number
+          
+          if (positionType === "SHORT") {
+            // SHORT: (average_buy_price - current_price) × quantity
+            positionPnl = (avgBuyPrice - currentPrice) * quantity
+          } else {
+            // LONG: (current_price - average_buy_price) × quantity
+            positionPnl = (currentPrice - avgBuyPrice) * quantity
+          }
+          
+          totalUnrealizedPnl += positionPnl
         }
 
         if (hasMissingPrices && (!quotesResponse.missing || quotesResponse.missing.length === 0)) {
@@ -188,8 +204,26 @@ export function PortfolioOverviewCard({ summary, loading = false }: PortfolioOve
         }
 
         if (isMounted) {
-          const totalValue = summary.availableCash + positionsValue
-          setCurrentPortfolioValue(totalValue)
+          // Current Value = investment_amount + (realized_pnl + unrealized_pnl)
+          // For main portfolio, realized PnL is embedded in summary.changeValue
+          // changeValue represents total PnL (realized + unrealized from backend perspective)
+          // But we calculate fresh unrealized PnL from current prices
+          // So: Current Value = investment amount + all PnL changes
+          const totalValue = summary.investmentAmount + summary.changeValue + (totalUnrealizedPnl - summary.changeValue)
+          
+          // Simplified: Since we're calculating unrealized PnL fresh, use it directly
+          // Current Value = available_cash + (money_in_positions + unrealized_pnl_on_positions)
+          // = available_cash + cost_basis + unrealized_pnl
+          // = investment_amount + unrealized_pnl (since investment_amount = available_cash + cost_basis of positions)
+          
+          // Actually, the cleanest formula:
+          // Current Value = Investment Amount + Total PnL
+          // Where Total PnL includes both realized (from summary) and unrealized (calculated)
+          // But summary doesn't give us realized PnL separately, so we use:
+          const currentValue = summary.investmentAmount + totalUnrealizedPnl
+          
+          setCurrentPortfolioValue(currentValue)
+          setUnrealizedPnl(totalUnrealizedPnl)
         }
       } catch (error) {
         console.error("Error calculating current portfolio value:", error)
@@ -247,22 +281,37 @@ export function PortfolioOverviewCard({ summary, loading = false }: PortfolioOve
   const shouldShowBalancing = !hasEverLoadedPortfolioRef.current && !loading && !hasAllocations
   const allocationChart = useMemo(() => createAllocationChartData(summary.allocation), [summary.allocation])
   const formatted = useMemo(() => {
-    const changePositive = summary.changeValue >= 0
+    // Use current portfolio value if available, otherwise fall back to totalValue from backend
+    const displayValue = currentPortfolioValue !== null ? currentPortfolioValue : summary.totalValue
 
-    // Use current portfolio value if available, otherwise fall back to availableCash
-    const displayValue = currentPortfolioValue !== null ? currentPortfolioValue : summary.availableCash
+    // Calculate total PnL: realized PnL (from backend) + unrealized PnL (from positions)
+    const realizedPnL = summary.changeValue // This is realized PnL from backend
+    const totalPnL = unrealizedPnl !== null ? realizedPnL + unrealizedPnl : realizedPnL
+    const changePositive = totalPnL >= 0
+    
+    // Calculate percentage based on initial investment
+    const totalPnLPct = summary.investmentAmount > 0 
+      ? (totalPnL / summary.investmentAmount) * 100 
+      : 0
 
     return {
       totalValue: formatCurrency(summary.totalValue),
       investmentAmount: formatCurrency(summary.investmentAmount),
       availableCash: formatCurrency(summary.availableCash),
       currentPortfolioValue: formatCurrency(displayValue),
+      realizedPnL: realizedPnL,
+      realizedPnLFormatted: formatCurrency(realizedPnL),
+      unrealizedPnL: unrealizedPnl,
+      unrealizedPnLFormatted: unrealizedPnl !== null ? formatCurrency(unrealizedPnl) : null,
+      totalPnL: Math.abs(totalPnL),
+      totalPnLFormatted: formatCurrency(Math.abs(totalPnL)),
+      totalPnLPct: Math.abs(totalPnLPct).toFixed(2),
       changeValue: Math.abs(summary.changeValue).toLocaleString("en-IN"),
       changePrefix: changePositive ? "+" : "-",
-      changePctPrefix: summary.changePct > 0 ? "+" : summary.changePct < 0 ? "-" : "",
+      changePctPrefix: totalPnL > 0 ? "+" : totalPnL < 0 ? "-" : "",
       riskTolerance: summary.riskTolerance.charAt(0).toUpperCase() + summary.riskTolerance.slice(1),
     }
-  }, [summary, currentPortfolioValue])
+  }, [summary, currentPortfolioValue, unrealizedPnl])
 
   return (
     <Card className="card-glass rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_32px_70px_-45px_rgba(0,0,0,0.95)] backdrop-blur">
@@ -287,7 +336,7 @@ export function PortfolioOverviewCard({ summary, loading = false }: PortfolioOve
         <div className="grid gap-4">
           <div className="grid grid-cols-1 gap-4 text-sm text-white/70 sm:grid-cols-2">
             <div className="rounded-xl border border-white/10 bg-white/8 p-4">
-              <span className="text-xs uppercase tracking-[0.3em] text-white/45">Invested Amount</span>
+              <span className="text-xs uppercase tracking-[0.3em] text-white/45">Initial Investment</span>
               {loading ? (
                 <div className="mt-2 h-6 w-24 animate-pulse rounded bg-white/10" />
               ) : (
@@ -297,20 +346,48 @@ export function PortfolioOverviewCard({ summary, loading = false }: PortfolioOve
               )}
             </div>
             <div className="rounded-xl border border-white/10 bg-white/8 p-4">
-              <span className="text-xs uppercase tracking-[0.3em] text-white/45">Total Return</span>
-              {loading ? (
+              <span className="text-xs uppercase tracking-[0.3em] text-white/45">Total P&L</span>
+              {loading || valueLoading ? (
                 <div className="mt-2 h-6 w-32 animate-pulse rounded bg-white/10" />
               ) : (
                 <p
                   className={cn(
                     "mt-2 text-lg font-semibold",
-                    summary.changeValue >= 0 ? "text-[#22c55e]" : "text-[#ef4444]",
+                    formatted.changePrefix === "+" ? "text-[#22c55e]" : "text-[#ef4444]",
                   )}
                 >
                   {formatted.changePctPrefix}
-                  {Math.abs(summary.changePct).toFixed(2)}% ({formatted.changePrefix}₹
-                  {formatted.changeValue})
+                  {formatted.totalPnLPct}% ({formatted.changePrefix}₹
+                  {formatted.totalPnLFormatted})
                 </p>
+              )}
+            </div>
+            <div className="rounded-xl border border-white/10 bg-white/8 p-4">
+              <span className="text-xs uppercase tracking-[0.3em] text-white/45">Realized P&L</span>
+              {loading ? (
+                <div className="mt-2 h-6 w-24 animate-pulse rounded bg-white/10" />
+              ) : (
+                <p className={cn(
+                  "mt-2 text-lg font-semibold",
+                  formatted.realizedPnL >= 0 ? "text-[#22c55e]" : "text-[#ef4444]",
+                )}>
+                  {formatted.realizedPnLFormatted}
+                </p>
+              )}
+            </div>
+            <div className="rounded-xl border border-white/10 bg-white/8 p-4">
+              <span className="text-xs uppercase tracking-[0.3em] text-white/45">Unrealized P&L</span>
+              {loading || valueLoading ? (
+                <div className="mt-2 h-6 w-24 animate-pulse rounded bg-white/10" />
+              ) : formatted.unrealizedPnL !== null ? (
+                <p className={cn(
+                  "mt-2 text-lg font-semibold",
+                  formatted.unrealizedPnL >= 0 ? "text-[#22c55e]" : "text-[#ef4444]",
+                )}>
+                  {formatted.unrealizedPnLFormatted}
+                </p>
+              ) : (
+                <p className="mt-2 text-lg font-semibold text-white/50">—</p>
               )}
             </div>
           </div>
