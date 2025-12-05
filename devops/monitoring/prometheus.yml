@@ -23,10 +23,10 @@ scrape_configs:
           environment: 'local'
     metrics_path: /metrics
 
-  # Notification Server (Node.js Kafka consumer on port 9101)
+  # Notification Server (Node.js Kafka consumer on port 9201)
   - job_name: 'notification_server'
     static_configs:
-      - targets: ['localhost:9101']
+      - targets: ['localhost:9201']
         labels:
           service: 'notification'
           environment: 'local'

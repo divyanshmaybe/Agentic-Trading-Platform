@@ -7,8 +7,8 @@ import { startMetricsServer, stopMetricsServer } from "./metrics";
 let consumer: NotificationConsumer | null = null;
 let redis: RedisManager | null = null;
 
-// Metrics server port (configurable via env)
-const METRICS_PORT = parseInt(process.env.METRICS_PORT || "9101", 10);
+// Metrics server port (configurable via env, default 9201 to avoid celery worker conflict)
+const METRICS_PORT = parseInt(process.env.METRICS_PORT || "9201", 10);
 
 async function startService() {
   try {

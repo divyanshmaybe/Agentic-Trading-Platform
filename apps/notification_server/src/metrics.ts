@@ -4,8 +4,8 @@
  * Exposes Kafka consumption, processing, and delivery metrics.
  */
 
-import client from "prom-client";
-import http from "http";
+import * as client from "prom-client";
+import * as http from "http";
 
 // Create a Registry
 export const register = new client.Registry();

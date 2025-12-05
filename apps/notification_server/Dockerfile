@@ -72,9 +72,9 @@ WORKDIR /app/apps/notification_server
 
 # Expose main service port and metrics port
 EXPOSE 4001
-EXPOSE 9101
+EXPOSE 9201
 
 # Default metrics port (can be overridden)
-ENV METRICS_PORT=9101
+ENV METRICS_PORT=9201
 
 CMD ["pnpm", "run", "start"]
