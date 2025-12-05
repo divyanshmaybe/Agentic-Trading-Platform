@@ -423,61 +423,147 @@
       "gridPos": {"h": 1, "w": 24, "x": 0, "y": 29},
       "id": 103,
       "panels": [],
-      "title": "📋 Summary Stats",
+      "title": "📋 System Stats",
       "type": "row"
     },
     {
       "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+      "description": "Total tasks completed successfully",
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "thresholds"},
+          "color": {"mode": "fixed", "fixedColor": "green"},
           "mappings": [],
-          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+          "unit": "short"
         },
-        "overrides": [
-          {"matcher": {"id": "byName", "options": "Succeeded"}, "properties": [{"id": "color", "value": {"fixedColor": "green", "mode": "fixed"}}]},
-          {"matcher": {"id": "byName", "options": "Failed"}, "properties": [{"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}}]},
-          {"matcher": {"id": "byName", "options": "Workers"}, "properties": [{"id": "color", "value": {"fixedColor": "blue", "mode": "fixed"}}]},
-          {"matcher": {"id": "byName", "options": "Active"}, "properties": [{"id": "color", "value": {"fixedColor": "orange", "mode": "fixed"}}]}
-        ]
+        "overrides": []
       },
-      "gridPos": {"h": 4, "w": 24, "x": 0, "y": 30},
+      "gridPos": {"h": 6, "w": 6, "x": 0, "y": 30},
       "id": 12,
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
+        "colorMode": "background_solid",
+        "graphMode": "area",
         "justifyMode": "center",
-        "orientation": "horizontal",
+        "orientation": "vertical",
         "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
-        "textMode": "value_and_name"
+        "showPercentChange": false,
+        "textMode": "value",
+        "wideLayout": true
       },
       "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-          "expr": "sum(celery_task_succeeded_total)",
-          "legendFormat": "Succeeded",
+          "expr": "sum(celery_task_succeeded_total) or vector(0)",
+          "legendFormat": "__auto",
           "refId": "A"
+        }
+      ],
+      "title": "✅ Tasks Succeeded",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+      "description": "Total tasks that failed",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "fixed", "fixedColor": "red"},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}]},
+          "unit": "short"
         },
+        "overrides": []
+      },
+      "gridPos": {"h": 6, "w": 6, "x": 6, "y": 30},
+      "id": 13,
+      "options": {
+        "colorMode": "background_solid",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "vertical",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "showPercentChange": false,
+        "textMode": "value",
+        "wideLayout": true
+      },
+      "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-          "expr": "sum(celery_task_failed_total)",
-          "legendFormat": "Failed",
-          "refId": "B"
+          "expr": "sum(celery_task_failed_total) or vector(0)",
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "title": "❌ Tasks Failed",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+      "description": "Number of active Celery workers",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "fixed", "fixedColor": "blue"},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]},
+          "unit": "short"
         },
+        "overrides": []
+      },
+      "gridPos": {"h": 6, "w": 6, "x": 12, "y": 30},
+      "id": 14,
+      "options": {
+        "colorMode": "background_solid",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "vertical",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "showPercentChange": false,
+        "textMode": "value",
+        "wideLayout": true
+      },
+      "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-          "expr": "count(celery_worker_up == 1)",
-          "legendFormat": "Workers",
-          "refId": "C"
+          "expr": "count(celery_worker_up == 1) or vector(0)",
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "title": "👷 Workers Online",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+      "description": "Currently executing tasks",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "fixed", "fixedColor": "orange"},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "orange", "value": null}]},
+          "unit": "short"
         },
+        "overrides": []
+      },
+      "gridPos": {"h": 6, "w": 6, "x": 18, "y": 30},
+      "id": 15,
+      "options": {
+        "colorMode": "background_solid",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "vertical",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "showPercentChange": false,
+        "textMode": "value",
+        "wideLayout": true
+      },
+      "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
           "expr": "sum(celery_worker_tasks_active) or vector(0)",
-          "legendFormat": "Active",
-          "refId": "D"
+          "legendFormat": "__auto",
+          "refId": "A"
         }
       ],
-      "title": "📋 System Summary",
+      "title": "⚡ Active Tasks",
       "type": "stat"
     }
   ],

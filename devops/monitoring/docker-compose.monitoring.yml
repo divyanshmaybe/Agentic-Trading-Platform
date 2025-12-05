@@ -47,7 +47,7 @@ services:
   # ===========================================================================
   grafana:
     image: grafana/grafana:latest
-    container_name: pathway-grafana
+    container_name: grafana
     ports:
       - "3001:3000"
     environment:

@@ -17,7 +17,7 @@ PROMETHEUS_IMAGE="${PROMETHEUS_IMAGE:-prom/prometheus:latest}"
 PROMETHEUS_CONTAINER_NAME="${PROMETHEUS_CONTAINER_NAME:-pathway-prometheus}"
 
 GRAFANA_IMAGE="${GRAFANA_IMAGE:-grafana/grafana:latest}"
-GRAFANA_CONTAINER_NAME="${GRAFANA_CONTAINER_NAME:-pathway-grafana}"
+GRAFANA_CONTAINER_NAME="${GRAFANA_CONTAINER_NAME:-grafana}"
 
 CELERY_EXPORTER_IMAGE="${CELERY_EXPORTER_IMAGE:-danihodovic/celery-exporter:latest}"
 CELERY_EXPORTER_CONTAINER_NAME="${CELERY_EXPORTER_CONTAINER_NAME:-pathway-celery-exporter}"
@@ -223,12 +223,14 @@ setup_grafana() {
     mkdir -p devops/monitoring/grafana/provisioning/dashboards
     
     # Create Grafana datasource config for Prometheus and Loki
+    # Using localhost since we use --network=host mode
     cat > devops/monitoring/grafana/provisioning/datasources/datasources.yml << 'EOF'
 apiVersion: 1
 
 datasources:
   - name: Prometheus
     type: prometheus
+    uid: PBFA97CFB590B2093
     access: proxy
     url: http://localhost:9090
     isDefault: true
