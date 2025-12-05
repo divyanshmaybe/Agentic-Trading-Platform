@@ -102,6 +102,60 @@ RELEVANT_FILE_TYPES = {
     "Change in Director(s)": {"positive": True, "negative": True},
 }
 
+# Filing categories that trigger company report database updates
+# These are categories that provide fundamental/qualitative information about a company
+# Different from RELEVANT_FILE_TYPES which are for trading signals
+REPORT_UPDATE_FILING_CATEGORIES = [
+    "Annual Reports",
+    "Business Responsibility and Sustainability Report",
+    "Corporate Governance",
+    "Related Party Transactions",
+    "Scheme of Arrangements",
+    "Insider Trading",
+    "Qualified Institutional Payments",
+    "Credit Rating",
+    "Corporate Actions",
+    "Board Meetings",
+    "Announcements",
+    "Voting Results",
+    "Foreign Currency Convertible Bonds",
+    "Outcome of Board Meeting",
+    "Press Release",
+    "Acquisition",
+    "Sale or Disposal",
+    "Change in Director(s)",
+    "Appointment",
+    "Updates",
+    "Action(s) initiated or orders passed",
+    "Investor Presentation",
+    "Bagging/Receiving of Orders/Contracts",
+]
+
+
+def _is_relevant_for_report_update(filing_subject: str) -> bool:
+    """
+    Check if a filing subject/category is relevant for company report updates.
+    
+    Args:
+        filing_subject: The subject or category of the filing
+        
+    Returns:
+        True if the filing should trigger a company report update
+    """
+    if not filing_subject:
+        return False
+    
+    subject_lower = filing_subject.lower().strip()
+    
+    # Check against relevant categories
+    for category in REPORT_UPDATE_FILING_CATEGORIES:
+        category_lower = category.lower()
+        # Match if category is in subject or subject contains category keywords
+        if category_lower in subject_lower or subject_lower in category_lower:
+            return True
+    
+    return False
+
 
 # API Keys
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
@@ -361,6 +415,26 @@ def publish_signal_to_kafka(
         except Exception as kafka_exc:
             # Kafka failure doesn't affect trade execution
             print(f"[KAFKA] ⚠️ Failed to publish to Kafka (trade still executing): {kafka_exc}")
+
+        # STEP 3: Queue company report update (non-blocking, background task)
+        # This updates the qualitative fundamentals database based on the filing
+        # ONLY for relevant filing categories (filters out noise)
+        if attachment_url and subject_of_announcement:
+            # Check if filing is relevant for report updates BEFORE queueing
+            if _is_relevant_for_report_update(subject_of_announcement):
+                try:
+                    celery_app.send_task(
+                        "company_report.update_from_nse_filing_url",
+                        args=[symbol, attachment_url, subject_of_announcement, subject_of_announcement, filing_time],
+                        queue="general",  # Route to general queue (not blocking trading)
+                        priority=3,  # Lower priority than trading
+                    )
+                    print(f"[REPORT] ✅ Queued company report update for {symbol} (filing: {subject_of_announcement[:50]})")
+                except Exception as report_exc:
+                    # Report update failure doesn't affect trade execution
+                    print(f"[REPORT] ⚠️ Failed to queue company report update: {report_exc}")
+            else:
+                print(f"[REPORT] ⏭️ Skipped non-relevant filing for {symbol}: {subject_of_announcement[:50]}")
 
         return "published"
 

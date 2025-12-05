@@ -108,7 +108,6 @@ class GeminiObjectiveExtractor:
                     model=model_name,
                     google_api_key=self.api_key,
                     temperature=model_config.get("temperature", 0.1),
-                    #max_tokens=model_config.get("max_tokens", 1024),
                 )
                 logger.info(f"Initialized Gemini model: {model_name}")
             except ImportError as e:

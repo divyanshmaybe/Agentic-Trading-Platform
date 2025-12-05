@@ -145,6 +145,7 @@ celery_app = Celery(
         "workers.alpha_signal_tasks",
         "workers.observability_agent_tasks",  # NSE pipeline loss analysis
         "workers.low_risk_observability_tasks",  # Low risk drawdown analysis
+        "workers.company_report_update_tasks",  # Company report update from NSE/News
     ],
 )
 
@@ -264,6 +265,12 @@ celery_app.conf.task_routes = {
     # Observability agent - uses general queue for loss analysis
     "observability.analyze_losing_trade": {"queue": QUEUE_NAMES["general"], "routing_key": "general"},
     "observability.batch_analyze_losses": {"queue": QUEUE_NAMES["general"], "routing_key": "general"},
+    # Company report update tasks
+    "company_report.update_from_nse_filing": {"queue": QUEUE_NAMES["general"], "routing_key": "general"},
+    "company_report.update_from_nse_filing_url": {"queue": QUEUE_NAMES["general"], "routing_key": "general"},
+    "company_report.update_from_news": {"queue": QUEUE_NAMES["news_pipeline"], "routing_key": "news_pipeline"},
+    "company_report.batch_update_from_news": {"queue": QUEUE_NAMES["news_pipeline"], "routing_key": "news_pipeline"},
+    "company_report.daily_news_update": {"queue": QUEUE_NAMES["news_pipeline"], "routing_key": "news_pipeline"},
 }
 
 # Task categories with different resource requirements
@@ -589,6 +596,24 @@ if ALPHA_SIGNALS_ENABLED:
         "options": {"queue": ALPHA_SIGNALS_QUEUE},
     }
 
+# Company Report News Update - runs daily at market close (3:30 PM IST = 10:00 AM UTC)
+# IST is UTC+5:30, so 3:30 PM IST = 10:00 AM UTC
+COMPANY_REPORT_NEWS_UPDATE_ENABLED = os.getenv("COMPANY_REPORT_NEWS_UPDATE_ENABLED", "true").lower() in {"1", "true", "yes"}
+COMPANY_REPORT_NEWS_UPDATE_HOUR = int(os.getenv("COMPANY_REPORT_NEWS_UPDATE_HOUR", "10"))  # 10:00 AM UTC = 3:30 PM IST
+COMPANY_REPORT_NEWS_UPDATE_MINUTE = int(os.getenv("COMPANY_REPORT_NEWS_UPDATE_MINUTE", "0"))
+COMPANY_REPORT_NEWS_UPDATE_QUEUE = os.getenv("COMPANY_REPORT_NEWS_UPDATE_QUEUE", QUEUE_NAMES["news_pipeline"])
+
+if COMPANY_REPORT_NEWS_UPDATE_ENABLED:
+    celery_app.conf.beat_schedule["company-report-daily-news-update"] = {
+        "task": "company_report.daily_news_update",
+        "schedule": crontab(
+            hour=COMPANY_REPORT_NEWS_UPDATE_HOUR,
+            minute=COMPANY_REPORT_NEWS_UPDATE_MINUTE,
+            day_of_week="mon-fri",
+        ),
+        "options": {"queue": COMPANY_REPORT_NEWS_UPDATE_QUEUE},
+    }
+
 # Lazy import worker modules to avoid circular imports
 # These imports happen when celery worker starts, not when this module is imported
 def _import_tasks():
@@ -606,6 +631,7 @@ def _import_tasks():
         angelone_token_task,
         economic_indicators_tasks,
         alpha_signal_tasks,
+        company_report_update_tasks,  # Company report update from NSE/News
     )
 
 
