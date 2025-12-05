@@ -433,7 +433,7 @@ class StockSelectionPipeline:
                 }
             )
         return reasoning_tool
-
+    
     def check_low_risk_guardrails(self, data):
         report = {
             "passed": True,
@@ -445,43 +445,28 @@ class StockSelectionPipeline:
             report["failed_guardrails"].append(message)
 
         def is_valid(val):
-            if val is None or pd.NA:
-                return False
-            return True
+            return not pd.isna(val)
 
         try:
-            price =      data['current_price']
-            sma200 =     data['sma200']
-            sma50 =      data['sma50']
-            ocf =        data['operating_cash_flow']
-            net_income = data['net_income']
-            rsi =        data['rsi_14']
-            volatility = 0
+            sma200 = data['sma200']
+            sma50 = data['sma50']
+            rsi = data['rsi_14']
+            volatility = data['volatility']
 
             # Guardrail 1
-            if is_valid(price) and is_valid(sma200):
-                if price <= sma200:
-                    fail(f"Guardrail 1 Violation: Current Price({price}) is not greater than SMA200({sma200})")
-
-            # Guardrail 2
             if is_valid(sma50) and is_valid(sma200):
                 if sma50 <= sma200:
-                    fail(f"Guardrail 2 Violation: SMA50 ({sma50}) is not greater than SMA200 ({sma200})")
+                    fail(f"Guardrail_1")
 
-            # # Guardrail 3
-            # if is_valid(ocf) and is_valid(net_income):
-            #     if ocf <= net_income:
-            #         fail(f"Guardrail 3 Violation: Operating Cashflow ({ocf}) is not greater than Net Income ({net_income})")
-
-            # Guardrail 4
+            # Guardrail 2
             if is_valid(rsi):
                 if rsi >= 70:
-                    fail(f"Guardrail 4 Violation: RSI ({rsi}) is >= 70 (Overbought)")
+                    fail(f"Guardrail_2")
 
-            # Guardrail 5
+            # Guardrail 3
             if is_valid(volatility):
                 if volatility >= 0.6:
-                    fail(f"Guardrail 5 Violation: Volatility ({volatility}) is >= 0.6")
+                    fail(f"Guardrail_3")
 
         except Exception as e:
             return {
@@ -489,7 +474,8 @@ class StockSelectionPipeline:
                 "failed_guardrails": [f"error: {str(e)}"]
             }
 
-        return report
+        return report    
+    
 
     def get_company_prompt(self, industry: str, company_df: pd.DataFrame) -> str:
         """Generate a prompt containing company descriptions for an industry."""
