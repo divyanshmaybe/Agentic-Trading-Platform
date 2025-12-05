@@ -278,6 +278,8 @@ YOU MUST OUTPUT IN A STRUCTURED FORMAT AS FOLLOWS:
 <trade signal generated>:<generated trade signal- buy sell or hold>
 <analysis>: <concise explanation of your reasoning for the specific stream>
 
+EVERY FIELD WITHIN THE JSON MUST BE A VALID PYTHON STRING ONLY. NO MARKDOWN, NO MARKDOWN AT ALL.
+
 YOU MUST STRICTLY OUTPUT A JSON OBJECT IN THE ABOVE FORMAT. COMPLETELY AVOID MARKDOWN. THERE SHOULD BE NO MARKDOWN, NO BACKTICKS AT ALL! NO MARKDOWN AT ALL! NO BACKTICKS AT ALL! A VALID JSON OBJECT ONLY
 REMEMBER YOUR OUTPUT WILL DIRECTLY BE USED AS A PYTHON DICTIONARY IN CODE. ANY MISTAKE WILL BREAK THE CODE FLOW AND GENERATE BUGS. BE VERY VERY VERY CAREFUL ABOUT THIS.
 """
@@ -533,6 +535,7 @@ You must return a structured json output in the following format:
  Also for hold signals since investment time window is not valid, instead of simply printing
  'N/A', in the time_investment_window field write a proper message like no time window valid for
  hold signals.
+ Every field within the JSON must be a valid Python STRING ONLY. REMEMBER THIS NO MARKDOWN, NO MARKDOWN AT ALL.
                               
  Also if a url is invalid, starting with https://example.com, then dont include that and leave 
  the url field blank (empty string "") for that particular json object.
