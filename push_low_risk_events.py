@@ -276,7 +276,7 @@ TOPICS = {
     "low_risk_logs": os.getenv("LOW_RISK_AGENT_LOGS_TOPIC", "low_risk_agent_logs"),
 }
 
-user_id = "f02d2e9f-0ed4-4846-ac62-fdac9b16430c"
+user_id = "805219ba-4536-4d2b-8755-2899dde57450"
 
 # -------------------------------------------------------------------
 # Pipeline Simulation
@@ -326,7 +326,7 @@ for i in range(7):
 # Reasoning event after initial info
 publish("reasoning_1", LowRiskReasoningEvent(
     user_id=user_id, type="reasoning", status="thinking",
-    content={"message": "Analyzing macro indicators suggests we're in an overheating regime. Commodity sectors may outperform."}
+    content={"message": "Analyzing macro indicators suggests we're in an **overheating regime**. Commodity sectors may outperform."}
 ).model_dump())
 
 sleep_phase(2)
@@ -395,7 +395,7 @@ publish("industry_fetching", LowRiskIndustryFetchingEvent(
 # Reasoning event before industry analysis
 publish("reasoning_2", LowRiskReasoningEvent(
     user_id=user_id, type="reasoning", status="thinking",
-    content={"message": "Focusing on industries with strong momentum and inflation protection characteristics."}
+    content={"message": "Focusing on industries with **strong momentum** and **inflation protection** characteristics."}
 ).model_dump())
 
 sleep_phase(3)
