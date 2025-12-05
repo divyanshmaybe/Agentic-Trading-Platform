@@ -92,6 +92,8 @@ export function FieldInput({ fieldName, onSubmit, disabled = false }: FieldInput
             disabled={disabled}
             placeholder={`Enter ${displayName.toLowerCase()}...`}
             step={fieldType === "number" ? "any" : undefined}
+            min={fieldName.toLowerCase() === "target_return" ? 1 : undefined}
+            max={fieldName.toLowerCase() === "target_return" ? 999 : undefined}
             className={cn(
               "flex-1 rounded-lg border border-white/15 bg-white/8 px-4 py-2",
               "text-[#fafafa] placeholder:text-white/40",
