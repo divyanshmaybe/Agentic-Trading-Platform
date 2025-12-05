@@ -18,14 +18,14 @@
     },
     {
       "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-      "description": "Average trade task execution time",
+      "description": "P99 trade execution latency from business metrics",
       "fieldConfig": {
         "defaults": {
           "color": {"mode": "thresholds"},
           "mappings": [],
           "max": 10,
           "min": 0,
-          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 2}, {"color": "red", "value": 5}]},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 3}]},
           "unit": "s"
         },
         "overrides": []
@@ -41,12 +41,12 @@
       "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-          "expr": "(sum(celery_task_runtime_sum) / sum(celery_task_runtime_count)) or vector(0)",
-          "legendFormat": "Avg",
+          "expr": "histogram_quantile(0.99, sum(rate(portfolio_trade_execution_latency_seconds_bucket[5m])) by (le)) or (sum(celery_task_runtime_sum{name=~\"trading.*\"}) / sum(celery_task_runtime_count{name=~\"trading.*\"}))",
+          "legendFormat": "P99",
           "refId": "A"
         }
       ],
-      "title": "⏱️ Avg Task Latency",
+      "title": "⏱️ P99 Trade Latency",
       "type": "gauge"
     },
     {
@@ -58,7 +58,7 @@
           "mappings": [],
           "max": 100,
           "min": 0,
-          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 90}, {"color": "green", "value": 98}]},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 95}, {"color": "green", "value": 99}]},
           "unit": "percent"
         },
         "overrides": []
@@ -74,22 +74,22 @@
       "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-          "expr": "(sum(celery_task_succeeded_total) / (sum(celery_task_succeeded_total) + sum(celery_task_failed_total) + 0.001)) * 100",
+          "expr": "(sum(portfolio_trade_executions_total{status=\"success\"}) / (sum(portfolio_trade_executions_total) + 0.001)) * 100 or (sum(celery_task_succeeded_total{name=~\"trading.*\"}) / (sum(celery_task_succeeded_total{name=~\"trading.*\"}) + sum(celery_task_failed_total{name=~\"trading.*\"}) + 0.001)) * 100",
           "legendFormat": "Success %",
           "refId": "A"
         }
       ],
-      "title": "🎯 Success Rate",
+      "title": "🎯 Trade Success Rate",
       "type": "gauge"
     },
     {
       "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-      "description": "Tasks in trading queues",
+      "description": "Tasks in critical trading queues",
       "fieldConfig": {
         "defaults": {
           "color": {"mode": "thresholds"},
           "mappings": [],
-          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 50}, {"color": "red", "value": 100}]}
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 5}, {"color": "red", "value": 20}]}
         },
         "overrides": []
       },
@@ -115,9 +115,15 @@
           "expr": "celery_queue_length{queue_name=\"orders\"} or vector(0)",
           "legendFormat": "Orders",
           "refId": "B"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+          "expr": "celery_queue_length{queue_name=\"risk\"} or vector(0)",
+          "legendFormat": "Risk",
+          "refId": "C"
         }
       ],
-      "title": "📬 Queue Depth",
+      "title": "📬 Critical Queue Depth",
       "type": "stat"
     },
     {
@@ -145,17 +151,17 @@
       "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-          "expr": "(sum(increase(celery_task_received_total[5m])) / 5) or vector(0)",
-          "legendFormat": "Tasks/min",
+          "expr": "(sum(increase(portfolio_trade_executions_total[5m])) / 5) or (sum(increase(celery_task_received_total{name=~\"trading.*\"}[5m])) / 5) or vector(0)",
+          "legendFormat": "Trades/min",
           "refId": "A"
         }
       ],
-      "title": "📈 Throughput",
+      "title": "📈 Trade Throughput",
       "type": "stat"
     },
     {
       "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-      "description": "Task execution latency over time",
+      "description": "Trade execution latency over time by strategy",
       "fieldConfig": {
         "defaults": {
           "color": {"mode": "palette-classic"},
@@ -175,7 +181,7 @@
             "thresholdsStyle": {"mode": "line"}
           },
           "mappings": [],
-          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 5}]},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 2}, {"color": "red", "value": 5}]},
           "unit": "s"
         },
         "overrides": []
@@ -189,17 +195,23 @@
       "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-          "expr": "celery_task_runtime_sum / celery_task_runtime_count",
-          "legendFormat": "{{name}}",
+          "expr": "histogram_quantile(0.95, sum(rate(portfolio_trade_execution_latency_seconds_bucket[5m])) by (le, strategy))",
+          "legendFormat": "P95 {{strategy}}",
           "refId": "A"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+          "expr": "celery_task_runtime_sum{name=~\"trading.*|pipeline.trade_execution.*\"} / celery_task_runtime_count{name=~\"trading.*|pipeline.trade_execution.*\"}",
+          "legendFormat": "Avg {{name}}",
+          "refId": "B"
         }
       ],
-      "title": "⏱️ Task Latency by Type",
+      "title": "⏱️ Trade Latency by Strategy",
       "type": "timeseries"
     },
     {
       "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-      "description": "Tasks executed over time",
+      "description": "Trades by status (last 15m)",
       "fieldConfig": {
         "defaults": {
           "color": {"mode": "palette-classic"},
@@ -221,7 +233,10 @@
           "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
           "unit": "short"
         },
-        "overrides": []
+        "overrides": [
+          {"matcher": {"id": "byRegexp", "options": ".*success.*"}, "properties": [{"id": "color", "value": {"fixedColor": "green", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": ".*fail.*|.*error.*"}, "properties": [{"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}}]}
+        ]
       },
       "gridPos": {"h": 7, "w": 12, "x": 12, "y": 6},
       "id": 6,
@@ -232,12 +247,12 @@
       "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-          "expr": "increase(celery_task_succeeded_total[1m])",
-          "legendFormat": "{{name}}",
+          "expr": "sum(increase(portfolio_trade_executions_total[15m])) by (status)",
+          "legendFormat": "{{status}}",
           "refId": "A"
         }
       ],
-      "title": "📊 Tasks Executed (per minute)",
+      "title": "📊 Trades by Status (15m)",
       "type": "timeseries"
     },
     {
@@ -255,11 +270,11 @@
         "defaults": {
           "color": {"mode": "thresholds"},
           "mappings": [],
-          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 20}, {"color": "red", "value": 50}]}
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 10}, {"color": "red", "value": 30}]}
         },
         "overrides": []
       },
-      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 14},
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 14},
       "id": 7,
       "options": {
         "displayMode": "gradient",
@@ -278,12 +293,57 @@
           "refId": "A"
         }
       ],
-      "title": "📬 All Queue Depths",
+      "title": "�� All Queue Depths",
       "type": "bargauge"
     },
     {
       "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-      "description": "Task failures by type",
+      "description": "Pipeline runs and failures (15m window)",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisCenteredZero": false,
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 70,
+            "gradientMode": "opacity",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {"group": "A", "mode": "none"}
+          },
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
+        },
+        "overrides": [
+          {"matcher": {"id": "byRegexp", "options": ".*success.*"}, "properties": [{"id": "color", "value": {"fixedColor": "green", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": ".*fail.*|.*error.*"}, "properties": [{"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}}]}
+        ]
+      },
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 14},
+      "id": 8,
+      "options": {
+        "legend": {"calcs": ["sum", "lastNotNull"], "displayMode": "table", "placement": "right", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+          "expr": "sum(increase(portfolio_pipeline_runs_total[15m])) by (pipeline_type, status)",
+          "legendFormat": "{{pipeline_type}} {{status}}",
+          "refId": "A"
+        }
+      ],
+      "title": "🔄 Pipeline Runs (15m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+      "description": "Pipeline duration percentiles",
       "fieldConfig": {
         "defaults": {
           "color": {"mode": "palette-classic"},
@@ -299,28 +359,30 @@
             "pointSize": 5,
             "showPoints": "never",
             "spanNulls": true,
-            "stacking": {"group": "A", "mode": "none"}
+            "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "line"}
           },
           "mappings": [],
-          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 300}, {"color": "red", "value": 600}]},
+          "unit": "s"
         },
         "overrides": []
       },
-      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 14},
-      "id": 8,
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 14},
+      "id": 9,
       "options": {
-        "legend": {"calcs": ["sum", "lastNotNull"], "displayMode": "table", "placement": "right", "showLegend": true},
+        "legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "right", "showLegend": true},
         "tooltip": {"mode": "multi", "sort": "desc"}
       },
       "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-          "expr": "increase(celery_task_failed_total[5m])",
-          "legendFormat": "{{name}}",
+          "expr": "histogram_quantile(0.95, sum(rate(portfolio_pipeline_duration_seconds_bucket[15m])) by (le, pipeline_type))",
+          "legendFormat": "P95 {{pipeline_type}}",
           "refId": "A"
         }
       ],
-      "title": "❌ Task Failures (5m window)",
+      "title": "⏱️ Pipeline Duration (P95)",
       "type": "timeseries"
     },
     {
@@ -428,7 +490,7 @@
     },
     {
       "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-      "description": "Total tasks completed successfully",
+      "description": "Total trades executed successfully",
       "fieldConfig": {
         "defaults": {
           "color": {"mode": "fixed", "fixedColor": "green"},
@@ -453,17 +515,17 @@
       "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-          "expr": "sum(celery_task_succeeded_total) or vector(0)",
+          "expr": "sum(portfolio_trade_executions_total{status=\"success\"}) or sum(celery_task_succeeded_total{name=~\"trading.*\"}) or vector(0)",
           "legendFormat": "__auto",
           "refId": "A"
         }
       ],
-      "title": "✅ Tasks Succeeded",
+      "title": "✅ Trades Succeeded",
       "type": "stat"
     },
     {
       "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-      "description": "Total tasks that failed",
+      "description": "Total trades that failed",
       "fieldConfig": {
         "defaults": {
           "color": {"mode": "fixed", "fixedColor": "red"},
@@ -488,12 +550,12 @@
       "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-          "expr": "sum(celery_task_failed_total) or vector(0)",
+          "expr": "sum(portfolio_trade_executions_total{status!=\"success\"}) or sum(celery_task_failed_total{name=~\"trading.*\"}) or vector(0)",
           "legendFormat": "__auto",
           "refId": "A"
         }
       ],
-      "title": "❌ Tasks Failed",
+      "title": "❌ Trades Failed",
       "type": "stat"
     },
     {
@@ -558,7 +620,7 @@
       "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-          "expr": "sum(celery_worker_tasks_active) or vector(0)",
+          "expr": "sum(celery_worker_tasks_active) or sum(portfolio_active_trades) or vector(0)",
           "legendFormat": "__auto",
           "refId": "A"
         }
@@ -570,7 +632,7 @@
   "refresh": "10s",
   "schemaVersion": 38,
   "style": "dark",
-  "tags": ["trading", "kpis"],
+  "tags": ["trading", "kpis", "business"],
   "templating": {"list": []},
   "time": {"from": "now-1h", "to": "now"},
   "timepicker": {},
