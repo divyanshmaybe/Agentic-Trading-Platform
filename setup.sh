@@ -261,13 +261,7 @@ providers:
       path: /etc/grafana/provisioning/dashboards
 EOF
     
-    # Copy Celery dashboards if they exist
-    if [ -f "devops/monitoring/celery-detailed-dashboard.json" ]; then
-        cp devops/monitoring/celery-detailed-dashboard.json devops/monitoring/grafana/provisioning/dashboards/
-    fi
-    if [ -f "devops/monitoring/celery-dashboard.json" ]; then
-        cp devops/monitoring/celery-dashboard.json devops/monitoring/grafana/provisioning/dashboards/
-    fi
+    # Dashboards are already in grafana/provisioning/dashboards/ - no copy needed
     
     # Start Grafana with host network and custom HTTP port
     log_info "Starting Grafana container ${GRAFANA_CONTAINER_NAME}..."
@@ -305,7 +299,7 @@ setup_celery_exporter() {
     docker run -d --name "${CELERY_EXPORTER_CONTAINER_NAME}" \
         --network=host \
         -e CE_BROKER_URL="${redis_url}" \
-        -e CE_LISTEN_ADDRESS="0.0.0.0:9540" \
+        -e CE_LISTEN_ADDRESS="0.0.0.0:9808" \
         -e CE_NAMESPACE="celery" \
         -e CE_MAX_TASKS="10000" \
         -e CE_RETRY_INTERVAL="5" \
