@@ -66,11 +66,11 @@ prompt_template: |
 
   Return your response as a JSON object in the following format:
   ```json
-  {
+  {{
     "final_signal": <Integer -1, 0, or 1>,
     "Confidence": <Float 0.00 to 1.00>,
     "explanation": "<brief reasoning for your validation>"
-  }
+  }}
   ```
   RETURN ONLY THE JSON OBJECT, NO OTHER TEXT.
 
