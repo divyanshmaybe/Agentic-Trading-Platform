@@ -84,6 +84,9 @@ class TradeSummary(BaseModel):
     execution_time: Optional[datetime] = None
     llm_delay: Optional[str] = None  # LLM processing delay in ms or "N/A"
     trade_delay: Optional[str] = None  # Trade execution delay in ms or "N/A"
+    agent_id: Optional[str] = None  # Trading agent ID
+    agent_name: Optional[str] = None  # Trading agent name
+    triggered_by: Optional[str] = None  # What triggered the trade (e.g., alpha signal, user)
 
     class Config:
         from_attributes = True

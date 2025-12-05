@@ -2235,6 +2235,231 @@ class PipelineService:
             redis_client.delete(lock_key)
             self.logger.info("🔓 Market close lock released")
 
+    async def sell_all_alpha_positions(self) -> Dict[str, Any]:
+        """
+        Close all open positions for alpha trading agents at market close (3:20 PM IST).
+        
+        Alpha positions are closed slightly after high_risk positions (3:15 PM) to avoid
+        overwhelming the execution system. All alpha positions are LONG-only and closed
+        via SELL trades.
+        """
+        self.logger.info("🔄 Starting to close all alpha positions before market close (3:20 PM IST)...")
+        
+        # DISTRIBUTED LOCK: Prevent multiple workers from closing positions simultaneously
+        import os
+        from redis import Redis
+        
+        redis_url = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
+        redis_client = Redis.from_url(redis_url)
+        lock_key = "alpha_market_close_worker:lock"
+        lock_ttl = 300  # 5 minutes
+        
+        # Try to acquire lock
+        lock_acquired = redis_client.set(lock_key, str(os.getpid()), nx=True, ex=lock_ttl)
+        if not lock_acquired:
+            self.logger.info("⚠️ Alpha market close worker already running (lock held), skipping")
+            return {
+                "status": "skipped",
+                "reason": "another_worker_running",
+                "agents_checked": 0,
+                "positions_sold": 0,
+                "errors": 0,
+            }
+        
+        try:
+            self.logger.info("✅ Alpha market close lock acquired, proceeding with position closure")
+            
+            db_manager = get_db_manager()
+            
+            async with db_manager.session() as client:
+                # Find all alpha agents
+                agents = await client.tradingagent.find_many(
+                    where={
+                        "agent_type": "alpha",
+                        "status": "active",
+                    },
+                    include={
+                        "portfolio": True,
+                    }
+                )
+                
+                if not agents:
+                    self.logger.info("No active alpha agents found - nothing to close")
+                    return {
+                        "status": "completed",
+                        "agents_checked": 0,
+                        "positions_sold": 0,
+                        "errors": 0,
+                    }
+            
+            self.logger.info("Found %d active alpha agent(s)", len(agents))
+            
+            trade_service = TradeExecutionService(logger=self.logger)
+            positions_sold = 0
+            errors = 0
+            
+            # For each agent, find all open positions and sell them
+            for agent in agents:
+                try:
+                    portfolio_id = str(getattr(agent, "portfolio_id", ""))
+                    if not portfolio_id:
+                        continue
+                    
+                    # Find all open positions for this agent specifically
+                    positions = await client.position.find_many(
+                        where={
+                            "portfolio_id": portfolio_id,
+                            "agent_id": str(getattr(agent, "id", "")),
+                            "status": "open",
+                        }
+                    )
+                    
+                    if not positions:
+                        continue
+                    
+                    self.logger.info(
+                        "Found %d open position(s) for alpha agent %s (portfolio %s)",
+                        len(positions),
+                        getattr(agent, "id", "unknown"),
+                        portfolio_id,
+                    )
+                    
+                    # Close each position via SELL
+                    for position in positions:
+                        try:
+                            symbol = str(getattr(position, "symbol", ""))
+                            quantity = int(getattr(position, "quantity", 0))
+                            
+                            if not symbol or quantity == 0:
+                                continue
+                            
+                            # Get current live price
+                            try:
+                                from market_data import await_live_price  # type: ignore
+                                current_price = await await_live_price(symbol, timeout=5.0)
+                                reference_price = float(current_price)
+                            except Exception as price_exc:
+                                self.logger.warning(
+                                    "Could not fetch live price for %s, using average_buy_price: %s",
+                                    symbol,
+                                    price_exc,
+                                )
+                                reference_price = float(getattr(position, "average_buy_price", 0))
+                            
+                            if reference_price == 0:
+                                self.logger.warning("Skipping %s: invalid price", symbol)
+                                continue
+                            
+                            # Get portfolio to get user_id
+                            portfolio = await client.portfolio.find_unique(where={"id": portfolio_id})
+                            if not portfolio:
+                                continue
+                            
+                            user_id = str(getattr(portfolio, "customer_id", ""))
+                            if not user_id:
+                                continue
+                            
+                            import uuid
+                            import json
+                            from decimal import Decimal
+                            
+                            closing_trade_data = {
+                                "portfolio_id": portfolio_id,
+                                "organization_id": getattr(portfolio, "organization_id", None),
+                                "customer_id": user_id,
+                                "trade_type": "auto",
+                                "symbol": symbol,
+                                "exchange": "NSE",
+                                "segment": "EQUITY",
+                                "side": "SELL",
+                                "order_type": "market",
+                                "quantity": quantity,
+                                "price": Decimal(str(reference_price)),
+                                "status": "pending",
+                                "source": "alpha_market_close_worker",
+                                "agent_id": str(getattr(agent, "id", "")),
+                                "metadata": json.dumps({
+                                    "order_type": "alpha_eod_close",
+                                    "triggered_by": "alpha_market_close_worker",
+                                    "position_id": str(getattr(position, "id", "")),
+                                    "close_reason": "alpha_eod_market_close_3_20_pm",
+                                }),
+                            }
+
+                            closing_trade = await client.trade.create(data=closing_trade_data)
+
+                            # Create trade execution log
+                            closing_log = await client.tradeexecutionlog.create(
+                                data={
+                                    "trade_id": closing_trade.id,
+                                    "request_id": f"alpha_eod_close_{uuid.uuid4().hex[:12]}",
+                                    "status": "pending",
+                                    "order_type": "market",
+                                    "metadata": json.dumps({
+                                        "order_type": "alpha_eod_close",
+                                        "triggered_by": "alpha_market_close_worker",
+                                        "position_id": str(getattr(position, "id", "")),
+                                    }),
+                                },
+                            )
+                            
+                            # Execute the closing trade
+                            result = await trade_service.execute_trade(closing_trade.id, simulate=True)
+                            
+                            if result.get("status") in ["executed", "executed"]:
+                                positions_sold += 1
+                                self.logger.info(
+                                    "✅ Closed alpha position: SELL %s x %d @ ₹%.2f (EOD close 3:20 PM)",
+                                    symbol,
+                                    quantity,
+                                    result.get("executed_price", reference_price),
+                                )
+                            else:
+                                errors += 1
+                                self.logger.error(
+                                    "❌ Failed to sell alpha position %s: %s",
+                                    symbol,
+                                    result,
+                                )
+                        
+                        except Exception as pos_exc:
+                            errors += 1
+                            self.logger.error(
+                                "❌ Error selling alpha position: %s",
+                                pos_exc,
+                                exc_info=True,
+                            )
+                
+                except Exception as agent_exc:
+                    errors += 1
+                    self.logger.error(
+                        "❌ Error processing alpha agent %s: %s",
+                        getattr(agent, "id", "unknown"),
+                        agent_exc,
+                        exc_info=True,
+                    )
+            
+            self.logger.info(
+                "✅ Alpha market close (3:20 PM IST) completed: %d positions sold, %d errors",
+                positions_sold,
+                errors,
+            )
+            
+            return {
+                "status": "completed",
+                "agents_checked": len(agents),
+                "positions_sold": positions_sold,
+                "errors": errors,
+            }
+        
+        except Exception as exc:
+            self.logger.error("❌ Failed to close alpha positions at market close: %s", exc, exc_info=True)
+            raise
+        finally:
+            # Release the distributed lock
+            redis_client.delete(lock_key)
+            self.logger.info("🔓 Alpha market close lock released")
+
     async def _process_signal_for_active_agents(self, signal_payload: Dict[str, Any]) -> None:
         """Process a trading signal for all active high_risk trading agents."""
         

@@ -70,6 +70,9 @@ export interface AgentTrade {
   execution_time: string
   llm_delay?: string
   trade_delay?: string
+  agent_id?: string
+  agent_name?: string
+  triggered_by?: string
 }
 
 export interface AgentDashboard {

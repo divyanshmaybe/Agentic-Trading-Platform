@@ -214,14 +214,75 @@ async def generate_signals_for_alpha_core(
                 "rank": rank,
             })
         
-        # Persist signals to database
+        # Persist signals to database and auto-execute them
         if signals:
-            update_progress("saving_signals", 90, f"Saving {len(signals)} signals to database...")
+            update_progress("saving_signals", 85, f"Saving {len(signals)} signals to database...")
             
             logger.info("Persisting %d signals for alpha %s with batch_id %s", len(signals), alpha.id, batch_id)
             
+            # Get portfolio info for trade execution
+            portfolio = await client.portfolio.find_unique(where={"id": alpha.portfolio_id})
+            if not portfolio:
+                logger.error("Portfolio not found for alpha %s", alpha.id)
+                return {"status": "error", "alpha_id": alpha.id, "error": "Portfolio not found"}
+            
+            # Get or create alpha agent for trade execution
+            agent_id = alpha.agent_id
+            if not agent_id:
+                # Create alpha agent inline
+                existing_agent = await client.tradingagent.find_first(
+                    where={
+                        "portfolio_id": alpha.portfolio_id,
+                        "agent_type": "alpha",
+                        "status": "active",
+                    }
+                )
+                if existing_agent:
+                    agent_id = existing_agent.id
+                else:
+                    # Create allocation for the alpha agent
+                    allocation = await client.portfolioallocation.create(
+                        data={
+                            "portfolio_id": alpha.portfolio_id,
+                            "allocation_type": "alpha",
+                            "target_percentage": 0,
+                            "allocated_cash": float(alpha.allocated_amount),
+                            "available_cash": float(alpha.allocated_amount),
+                            "invested_value": 0,
+                            "metadata": {"created_for": f"alpha_signals:{alpha.name}"},
+                        }
+                    )
+                    # Create the alpha agent
+                    agent = await client.tradingagent.create(
+                        data={
+                            "portfolio_id": alpha.portfolio_id,
+                            "portfolio_allocation_id": allocation.id,
+                            "agent_type": "alpha",
+                            "agent_name": f"Alpha Signal Executor",
+                            "status": "active",
+                            "strategy_config": {"source": "alpha_signals"},
+                            "metadata": {"created_for": alpha.name},
+                        }
+                    )
+                    agent_id = agent.id
+                    logger.info("Created new alpha agent: %s", agent_id)
+                
+                # Link alpha to agent
+                await client.livealpha.update(
+                    where={"id": alpha.id},
+                    data={"agent_id": agent_id}
+                )
+            
+            # Import trade execution service for auto-execution
+            from services.trade_execution_service import TradeExecutionService
+            trade_service = TradeExecutionService(logger=logger)
+            
+            executed_count = 0
+            failed_count = 0
+            
             for sig in signals:
-                await client.alphasignal.create(
+                # Create signal record
+                signal_record = await client.alphasignal.create(
                     data={
                         "live_alpha_id": alpha.id,
                         "batch_id": batch_id,
@@ -238,6 +299,60 @@ async def generate_signals_for_alpha_core(
                         "expires_at": expires_at,
                     }
                 )
+                
+                # Auto-execute the signal
+                try:
+                    job_row = {
+                        "request_id": str(uuid.uuid4()),
+                        "user_id": portfolio.customer_id,
+                        "organization_id": portfolio.organization_id,
+                        "portfolio_id": alpha.portfolio_id,
+                        "customer_id": portfolio.customer_id,
+                        "symbol": sig["symbol"],
+                        "side": sig["signal_type"].upper(),
+                        "quantity": sig["quantity"],
+                        "reference_price": sig["price"],
+                        "exchange": "NSE",
+                        "segment": "EQUITY",
+                        "agent_id": agent_id,
+                        "agent_type": "alpha",
+                        "allocation_id": None,
+                        "triggered_by": f"alpha_signal:{alpha.name}",
+                        "confidence": sig["confidence"],
+                        "allocated_capital": sig["allocated_amount"],
+                        "take_profit_pct": 0.03,
+                        "stop_loss_pct": 0.01,
+                        "explanation": f"Alpha signal: {alpha.name} - {sig['signal_type']} {sig['symbol']} (rank #{sig['rank']})",
+                        "filing_time": "",
+                        "generated_at": now.isoformat(),
+                    }
+                    
+                    events = await trade_service.persist_and_publish([job_row], publish_kafka=False)
+                    
+                    if events and len(events) > 0:
+                        trade_id = events[0].trade_id
+                        result = await trade_service.execute_trade(trade_id, simulate=True)
+                        
+                        # Update signal with trade link
+                        await client.alphasignal.update(
+                            where={"id": signal_record.id},
+                            data={
+                                "status": "executed",
+                                "executed_at": now,
+                                "trade_id": trade_id,
+                            }
+                        )
+                        executed_count += 1
+                        logger.info("✅ Auto-executed signal %s -> trade %s", signal_record.id[:8], trade_id[:8])
+                    else:
+                        failed_count += 1
+                        logger.warning("Failed to create trade for signal %s", signal_record.id)
+                        
+                except Exception as exec_error:
+                    failed_count += 1
+                    logger.error("Failed to execute signal %s: %s", signal_record.id, exec_error)
+            
+            update_progress("completed", 100, f"Executed {executed_count} trades, {failed_count} failed")
             
             # Update alpha's last_signal_at and total_signals
             await client.livealpha.update(
@@ -248,13 +363,16 @@ async def generate_signals_for_alpha_core(
                 }
             )
             
-            logger.info("✅ Successfully persisted %d signals for alpha %s", len(signals), alpha.name)
+            logger.info("✅ Alpha %s: generated %d signals, executed %d trades, %d failed", 
+                       alpha.name, len(signals), executed_count, failed_count)
         
         return {
             "status": "success",
             "alpha_id": alpha.id,
             "alpha_name": alpha.name,
             "signals_generated": len(signals),
+            "signals_executed": executed_count if signals else 0,
+            "signals_failed": failed_count if signals else 0,
             "batch_id": batch_id,
             "strategy_type": strategy_type,
             "topk": topk,

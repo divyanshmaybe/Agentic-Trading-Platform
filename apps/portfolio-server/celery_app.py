@@ -256,8 +256,9 @@ celery_app.conf.task_routes = {
     "risk.alerts.send_email": {"queue": QUEUE_NAMES["risk"], "routing_key": "risk"},
     # Streaming monitor gets its own dedicated queue to not block other tasks
     "risk.streaming_monitor.start": {"queue": QUEUE_NAMES["streaming"], "routing_key": "streaming"},
-    # Market close sell - uses general queue
+    # Market close sell - uses auto_sell queue
     "pipeline.sell_high_risk_before_close": {"queue": QUEUE_NAMES["auto_sell"], "routing_key": "general"},
+    "pipeline.sell_alpha_before_close": {"queue": QUEUE_NAMES["auto_sell"], "routing_key": "general"},
     # Alpha signal tasks - trading queue for signal execution
     "alpha.generate_daily_signals": {"queue": QUEUE_NAMES["pipelines"], "routing_key": "pipelines"},
     "alpha.generate_signals_for_alpha": {"queue": QUEUE_NAMES["trading"], "routing_key": "trading"},
@@ -323,6 +324,7 @@ QUICK_TASKS = [
 # Only market-close sell remains as a scheduled Celery task
 AUTO_SELL_TASKS = [
     "pipeline.sell_high_risk_before_close",
+    "pipeline.sell_alpha_before_close",
 ]
 
 celery_app.conf.task_annotations = {
@@ -510,6 +512,18 @@ if MARKET_CLOSE_SELL_ENABLED:
         "task": "pipeline.sell_high_risk_before_close",
         "schedule": crontab(hour=9, minute=45, day_of_week="mon-fri"),  # 3:15 PM IST = 9:45 AM UTC
         "options": {"queue": MARKET_CLOSE_SELL_QUEUE},
+    }
+
+# Alpha EOD close task - sells all alpha positions at 3:20 PM IST (9:50 AM UTC)
+# Runs 5 minutes after high_risk to avoid overwhelming the execution system
+ALPHA_EOD_CLOSE_ENABLED = os.getenv("ALPHA_EOD_CLOSE_ENABLED", "true").lower() in {"1", "true", "yes"}
+ALPHA_EOD_CLOSE_QUEUE = os.getenv("ALPHA_EOD_CLOSE_QUEUE", QUEUE_NAMES["auto_sell"])
+
+if ALPHA_EOD_CLOSE_ENABLED:
+    celery_app.conf.beat_schedule["sell-alpha-before-close"] = {
+        "task": "pipeline.sell_alpha_before_close",
+        "schedule": crontab(hour=9, minute=50, day_of_week="mon-fri"),  # 3:20 PM IST = 9:50 AM UTC
+        "options": {"queue": ALPHA_EOD_CLOSE_QUEUE},
     }
 
 # Economic Indicators - runs on 21st of each month (configurable, in IST)

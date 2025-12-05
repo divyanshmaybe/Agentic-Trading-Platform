@@ -1,6 +1,6 @@
 "use client"
 
-import { FormEvent, useState } from "react"
+import { FormEvent, useState, useEffect, useCallback } from "react"
 import { createPortal } from "react-dom"
 import { AnimatePresence, motion, type Variants } from "framer-motion"
 import {
@@ -120,12 +120,71 @@ function NewHypothesisModal({
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showAdvanced, setShowAdvanced] = useState(false)
+  const [currentRegime, setCurrentRegime] = useState<string | null>(null)
+  const [regimeLoading, setRegimeLoading] = useState(false)
+
+  // Fetch current regime when modal opens
+  const fetchCurrentRegime = useCallback(async () => {
+    setRegimeLoading(true)
+    try {
+      const PORTFOLIO_API_URL = process.env.NEXT_PUBLIC_PORTFOLIO_API_URL ?? "http://localhost:8000"
+      
+      // Get access token from cookie or localStorage
+      const getAccessToken = (): string | null => {
+        if (typeof window !== "undefined") {
+          const cookies = document.cookie.split("; ")
+          const entry = cookies
+            .map((c) => c.trim())
+            .find((section) => section.startsWith("access_token="))
+          if (entry) {
+            const [, value] = entry.split("=")
+            return value ? decodeURIComponent(value) : null
+          }
+          return localStorage.getItem("access_token")
+        }
+        return null
+      }
+
+      const token = getAccessToken()
+      if (!token) {
+        console.warn("No access token available for regime fetch")
+        return
+      }
+
+      const response = await fetch(`${PORTFOLIO_API_URL}/api/regime/current`, {
+        method: "GET",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        setCurrentRegime(data.regime)
+      } else {
+        console.warn("Failed to fetch current regime:", response.statusText)
+      }
+    } catch (err) {
+      console.error("Error fetching current regime:", err)
+    } finally {
+      setRegimeLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (open) {
+      fetchCurrentRegime()
+    }
+  }, [open, fetchCurrentRegime])
 
   const resetState = () => {
     setForm(defaultHypothesisForm)
     setSubmitting(false)
     setError(null)
     setShowAdvanced(false)
+    setCurrentRegime(null)
   }
 
   const handleClose = () => {
@@ -141,7 +200,13 @@ function NewHypothesisModal({
     setError(null)
 
     try {
-      await onSubmit(form.hypothesis, {
+      // Append current regime to hypothesis if available
+      let hypothesisWithRegime = form.hypothesis.trim()
+      if (currentRegime) {
+        hypothesisWithRegime = `${hypothesisWithRegime}\n\n[Current Market Regime: ${currentRegime}]`
+      }
+
+      await onSubmit(hypothesisWithRegime, {
         max_iterations: form.maxIterations,
         num_runs: form.numRuns,
         model_type: form.modelType,
@@ -202,6 +267,20 @@ function NewHypothesisModal({
               >
                 <X className="size-4" />
               </button>
+            </div>
+
+            {/* Current Market Regime Indicator */}
+            <div className="mt-4 flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+              <TrendingUp className="size-4 text-cyan-400" />
+              <span className="text-xs text-white/60">Current Market Regime:</span>
+              {regimeLoading ? (
+                <Loader2 className="size-3 animate-spin text-white/40" />
+              ) : currentRegime ? (
+                <span className="text-xs font-medium text-cyan-300">{currentRegime}</span>
+              ) : (
+                <span className="text-xs text-white/40">Unable to detect</span>
+              )}
+              <span className="ml-auto text-xs text-white/40">(will be appended to hypothesis)</span>
             </div>
 
             <form onSubmit={handleSubmit} className="mt-6 space-y-4">
@@ -1414,7 +1493,7 @@ export default function AlphasPage() {
             <PortfolioSnapshots agentType="alpha" title="Alpha Portfolio Snapshot History" />
 
             {/* Trades Table */}
-            <AgentTradesTable trades={alphaData?.recent_trades || []} loading={alphaLoading} />
+            <AgentTradesTable trades={alphaData?.recent_trades || []} loading={alphaLoading} mode="advanced" />
 
             {/* Mobile Chat */}
             <div className="lg:hidden">

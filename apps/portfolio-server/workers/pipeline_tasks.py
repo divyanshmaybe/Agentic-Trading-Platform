@@ -390,3 +390,33 @@ def sell_high_risk_before_close(self) -> dict:
     except Exception as exc:
         task_logger.error("Failed to sell high-risk positions: %s", exc, exc_info=True)
         raise
+
+
+@celery_app.task(
+    bind=True,
+    name="pipeline.sell_alpha_before_close",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=60,  # Max backoff 60 seconds
+    retry_kwargs={"max_retries": 3},
+    # Higher priority for market close operations
+    priority=8,
+)
+def sell_alpha_before_close(self) -> dict:
+    """Sell all alpha agent positions before market close (3:20 PM IST).
+    
+    This runs 5 minutes after high_risk positions are closed to avoid
+    overwhelming the trade execution system.
+    """
+    import asyncio
+    
+    server_dir = Path(__file__).resolve().parents[1]
+    service = PipelineService(str(server_dir), logger=task_logger)
+    
+    try:
+        result = asyncio.run(service.sell_all_alpha_positions())
+        task_logger.info("Alpha positions sold before market close: %s", result)
+        return result
+    except Exception as exc:
+        task_logger.error("Failed to sell alpha positions: %s", exc, exc_info=True)
+        raise

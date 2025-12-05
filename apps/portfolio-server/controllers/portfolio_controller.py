@@ -407,6 +407,7 @@ class PortfolioController:
             skip=(page - 1) * limit,
             take=limit,
             order={"created_at": "desc"},
+            include={"agent": True},  # Include agent relation for name
         )
 
         summaries = []
@@ -424,6 +425,7 @@ class PortfolioController:
             
             llm_delay_ms = metadata.get("llm_delay_ms")
             trade_delay_ms = metadata.get("trade_delay")
+            triggered_by = metadata.get("triggered_by", "manual")
             
             summaries.append(PortfolioTradeSummary(
                 id=trade.id,
@@ -441,6 +443,9 @@ class PortfolioController:
                 execution_time=trade.execution_time,
                 llm_delay=f"{llm_delay_ms}ms" if llm_delay_ms is not None else "N/A",
                 trade_delay=f"{trade_delay_ms}ms" if trade_delay_ms is not None else "N/A",
+                agent_id=trade.agent_id,
+                agent_name=trade.agent.name if trade.agent else None,
+                triggered_by=triggered_by,
             ))
 
         return TradeListResponse(items=summaries, page=page, limit=limit, total=total)
@@ -778,6 +783,7 @@ class PortfolioController:
             
             llm_delay_ms = metadata.get("llm_delay_ms")
             trade_delay_ms = metadata.get("trade_delay")
+            triggered_by = metadata.get("triggered_by", "manual")
             
             trade_summaries.append(PortfolioTradeSummary(
                 id=trade.id,
@@ -795,6 +801,9 @@ class PortfolioController:
                 execution_time=trade.execution_time,
                 llm_delay=f"{llm_delay_ms}ms" if llm_delay_ms is not None else "N/A",
                 trade_delay=f"{trade_delay_ms}ms" if trade_delay_ms is not None else "N/A",
+                agent_id=agent.id,
+                agent_name=agent.agent_name,
+                triggered_by=triggered_by,
             ))
         
         return AgentDashboardResponse(
