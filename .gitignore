@@ -70,3 +70,5 @@ trading_signals.jsonl
 # Generated Docker env files
 docker.env
 apps/*/docker.env
+apps/alphacopilot-server/mlruns/
+apps/portfolio-server/flower
