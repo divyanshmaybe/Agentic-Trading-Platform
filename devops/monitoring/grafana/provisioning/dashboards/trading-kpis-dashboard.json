@@ -18,7 +18,7 @@
     },
     {
       "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-      "description": "P99 trade execution latency from business metrics",
+      "description": "P99 trade execution latency from trading tasks",
       "fieldConfig": {
         "defaults": {
           "color": {"mode": "thresholds"},
@@ -41,7 +41,7 @@
       "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-          "expr": "histogram_quantile(0.99, sum(rate(portfolio_trade_execution_latency_seconds_bucket[5m])) by (le)) or (sum(celery_task_runtime_sum{name=~\"trading.*\"}) / sum(celery_task_runtime_count{name=~\"trading.*\"}))",
+          "expr": "histogram_quantile(0.99, sum(rate(celery_task_runtime_bucket{name=~\"trading.*|pipeline.trade_execution.*\"}[5m])) by (le))",
           "legendFormat": "P99",
           "refId": "A"
         }
@@ -74,7 +74,7 @@
       "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-          "expr": "(sum(portfolio_trade_executions_total{status=\"success\"}) / (sum(portfolio_trade_executions_total) + 0.001)) * 100 or (sum(celery_task_succeeded_total{name=~\"trading.*\"}) / (sum(celery_task_succeeded_total{name=~\"trading.*\"}) + sum(celery_task_failed_total{name=~\"trading.*\"}) + 0.001)) * 100",
+          "expr": "(sum(celery_task_succeeded_total{name=~\"trading.*|pipeline.trade_execution.*\"}) / (sum(celery_task_succeeded_total{name=~\"trading.*|pipeline.trade_execution.*\"}) + sum(celery_task_failed_total{name=~\"trading.*|pipeline.trade_execution.*\"}) + 0.001)) * 100",
           "legendFormat": "Success %",
           "refId": "A"
         }
@@ -89,19 +89,28 @@
         "defaults": {
           "color": {"mode": "thresholds"},
           "mappings": [],
-          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 5}, {"color": "red", "value": 20}]}
+          "min": 0,
+          "max": 50,
+          "thresholds": {"mode": "absolute", "steps": [{"color": "#73BF69", "value": null}, {"color": "#FADE2A", "value": 5}, {"color": "#FF9830", "value": 15}, {"color": "#F2495C", "value": 30}]}
         },
-        "overrides": []
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "Trading"}, "properties": [{"id": "displayName", "value": "🔥 Trading"}]},
+          {"matcher": {"id": "byName", "options": "Orders"}, "properties": [{"id": "displayName", "value": "📋 Orders"}]},
+          {"matcher": {"id": "byName", "options": "Risk"}, "properties": [{"id": "displayName", "value": "⚠️ Risk"}]}
+        ]
       },
       "gridPos": {"h": 5, "w": 6, "x": 12, "y": 1},
       "id": 3,
       "options": {
-        "colorMode": "background",
-        "graphMode": "area",
-        "justifyMode": "auto",
+        "displayMode": "lcd",
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "namePlacement": "left",
         "orientation": "horizontal",
         "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
-        "textMode": "value_and_name"
+        "showUnfilled": true,
+        "sizing": "auto",
+        "valueMode": "color"
       },
       "targets": [
         {
@@ -123,8 +132,8 @@
           "refId": "C"
         }
       ],
-      "title": "📬 Critical Queue Depth",
-      "type": "stat"
+      "title": "📬 Queue Depth",
+      "type": "bargauge"
     },
     {
       "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
@@ -151,7 +160,7 @@
       "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-          "expr": "(sum(increase(portfolio_trade_executions_total[5m])) / 5) or (sum(increase(celery_task_received_total{name=~\"trading.*\"}[5m])) / 5) or vector(0)",
+          "expr": "sum(rate(celery_task_succeeded_total{name=~\"trading.*|pipeline.trade_execution.*\"}[5m])) * 60 or vector(0)",
           "legendFormat": "Trades/min",
           "refId": "A"
         }
@@ -195,8 +204,8 @@
       "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-          "expr": "histogram_quantile(0.95, sum(rate(portfolio_trade_execution_latency_seconds_bucket[5m])) by (le, strategy))",
-          "legendFormat": "P95 {{strategy}}",
+          "expr": "histogram_quantile(0.95, sum(rate(celery_task_runtime_bucket{name=~\"trading.*|pipeline.trade_execution.*\"}[5m])) by (le, name))",
+          "legendFormat": "P95 {{name}}",
           "refId": "A"
         },
         {
@@ -234,8 +243,8 @@
           "unit": "short"
         },
         "overrides": [
-          {"matcher": {"id": "byRegexp", "options": ".*success.*"}, "properties": [{"id": "color", "value": {"fixedColor": "green", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": ".*fail.*|.*error.*"}, "properties": [{"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}}]}
+          {"matcher": {"id": "byRegexp", "options": ".*success.*|.*Success.*"}, "properties": [{"id": "color", "value": {"fixedColor": "green", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": ".*fail.*|.*Fail.*|.*error.*"}, "properties": [{"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}}]}
         ]
       },
       "gridPos": {"h": 7, "w": 12, "x": 12, "y": 6},
@@ -247,9 +256,15 @@
       "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-          "expr": "sum(increase(portfolio_trade_executions_total[15m])) by (status)",
-          "legendFormat": "{{status}}",
+          "expr": "sum(increase(celery_task_succeeded_total{name=~\"trading.*|pipeline.trade_execution.*\"}[15m]))",
+          "legendFormat": "Success",
           "refId": "A"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+          "expr": "sum(increase(celery_task_failed_total{name=~\"trading.*|pipeline.trade_execution.*\"}[15m]))",
+          "legendFormat": "Failed",
+          "refId": "B"
         }
       ],
       "title": "📊 Trades by Status (15m)",
@@ -293,7 +308,7 @@
           "refId": "A"
         }
       ],
-      "title": "�� All Queue Depths",
+      "title": "📬 All Queue Depths",
       "type": "bargauge"
     },
     {
@@ -320,8 +335,8 @@
           "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
         },
         "overrides": [
-          {"matcher": {"id": "byRegexp", "options": ".*success.*"}, "properties": [{"id": "color", "value": {"fixedColor": "green", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": ".*fail.*|.*error.*"}, "properties": [{"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}}]}
+          {"matcher": {"id": "byRegexp", "options": ".*success.*|.*Success.*"}, "properties": [{"id": "color", "value": {"fixedColor": "green", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": ".*fail.*|.*Fail.*|.*error.*"}, "properties": [{"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}}]}
         ]
       },
       "gridPos": {"h": 7, "w": 8, "x": 8, "y": 14},
@@ -333,9 +348,15 @@
       "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-          "expr": "sum(increase(portfolio_pipeline_runs_total[15m])) by (pipeline_type, status)",
-          "legendFormat": "{{pipeline_type}} {{status}}",
+          "expr": "sum(increase(celery_task_succeeded_total{name=~\"pipeline.*\"}[15m])) by (name)",
+          "legendFormat": "{{name}} Success",
           "refId": "A"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+          "expr": "sum(increase(celery_task_failed_total{name=~\"pipeline.*\"}[15m])) by (name)",
+          "legendFormat": "{{name}} Failed",
+          "refId": "B"
         }
       ],
       "title": "🔄 Pipeline Runs (15m)",
@@ -377,8 +398,8 @@
       "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-          "expr": "histogram_quantile(0.95, sum(rate(portfolio_pipeline_duration_seconds_bucket[15m])) by (le, pipeline_type))",
-          "legendFormat": "P95 {{pipeline_type}}",
+          "expr": "histogram_quantile(0.95, sum(rate(celery_task_runtime_bucket{name=~\"pipeline.*\"}[15m])) by (le, name))",
+          "legendFormat": "P95 {{name}}",
           "refId": "A"
         }
       ],
@@ -515,7 +536,7 @@
       "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-          "expr": "sum(portfolio_trade_executions_total{status=\"success\"}) or sum(celery_task_succeeded_total{name=~\"trading.*\"}) or vector(0)",
+          "expr": "sum(celery_task_succeeded_total{name=~\"trading.*|pipeline.trade_execution.*\"}) or vector(0)",
           "legendFormat": "__auto",
           "refId": "A"
         }
@@ -550,7 +571,7 @@
       "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-          "expr": "sum(portfolio_trade_executions_total{status!=\"success\"}) or sum(celery_task_failed_total{name=~\"trading.*\"}) or vector(0)",
+          "expr": "sum(celery_task_failed_total{name=~\"trading.*|pipeline.trade_execution.*\"}) or vector(0)",
           "legendFormat": "__auto",
           "refId": "A"
         }
@@ -585,7 +606,7 @@
       "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-          "expr": "count(celery_worker_up == 1) or vector(0)",
+          "expr": "sum(celery_worker_up) or vector(0)",
           "legendFormat": "__auto",
           "refId": "A"
         }
@@ -620,7 +641,7 @@
       "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-          "expr": "sum(celery_worker_tasks_active) or sum(portfolio_active_trades) or vector(0)",
+          "expr": "sum(celery_worker_tasks_active) or vector(0)",
           "legendFormat": "__auto",
           "refId": "A"
         }
