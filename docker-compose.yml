@@ -639,6 +639,13 @@ services:
     build:
       context: .
       dockerfile: apps/frontend/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://auth.agentinvest.space}
+        NEXT_PUBLIC_AUTH_BASE_URL: ${NEXT_PUBLIC_AUTH_BASE_URL:-https://auth.agentinvest.space/api/auth}
+        NEXT_PUBLIC_PORTFOLIO_API_URL: ${NEXT_PUBLIC_PORTFOLIO_API_URL:-https://portfolio.agentinvest.space}
+        NEXT_PUBLIC_PORTFOLIO_SERVER_URL: ${NEXT_PUBLIC_PORTFOLIO_SERVER_URL:-https://portfolio.agentinvest.space}
+        NEXT_PUBLIC_ALPHACOPILOT_URL: ${NEXT_PUBLIC_ALPHACOPILOT_URL:-https://alphacopilot.agentinvest.space}
+        NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://localhost:4001}
     env_file:
       - docker.env
       - apps/frontend/docker.env

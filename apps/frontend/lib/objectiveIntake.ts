@@ -202,7 +202,7 @@ export async function fetchObjectives(
   }
 
   const queryString = params.toString()
-  const path = `/api/objectives${queryString ? `?${queryString}` : ""}`
+  const path = `/api/objectives/${queryString ? `?${queryString}` : ""}`
 
   return request<ObjectiveResponse[]>(path, {
     method: "GET",

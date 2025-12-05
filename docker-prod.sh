@@ -269,6 +269,23 @@ check_images_exist() {
 do_build() {
     local no_cache=$1
     print_info "🔨 Building Docker images..."
+    
+    # Load NEXT_PUBLIC_* environment variables from frontend docker.env for build args
+    if [ -f "apps/frontend/docker.env" ]; then
+        # Export NEXT_PUBLIC_* variables for docker-compose build args
+        while IFS='=' read -r key value; do
+            # Skip comments and empty lines
+            [[ "$key" =~ ^#.*$ ]] && continue
+            [[ -z "$key" ]] && continue
+            # Only export NEXT_PUBLIC_* variables
+            if [[ "$key" =~ ^NEXT_PUBLIC_ ]]; then
+                # Remove quotes if present
+                value=$(echo "$value" | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
+                export "$key=$value"
+            fi
+        done < apps/frontend/docker.env
+    fi
+    
     if [ "$no_cache" = true ]; then
         echo "   (using --no-cache)"
         docker compose build --no-cache
