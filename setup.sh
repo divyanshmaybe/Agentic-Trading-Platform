@@ -94,7 +94,41 @@ setup_kafka() {
         -e CLUSTER_ID=MkU3OEVBNTcwNTJENDM2Qk \
         "${KAFKA_IMAGE}" >/dev/null
     
-    log_success "Kafka is starting up. Use 'docker logs -f ${KAFKA_CONTAINER_NAME}' to monitor readiness."
+    log_info "Waiting for Kafka to be ready..."
+    sleep 10
+    
+    # Create required Kafka topics
+    log_info "Creating Kafka topics..."
+    docker exec "${KAFKA_CONTAINER_NAME}" /opt/kafka/bin/kafka-topics.sh \
+        --create --if-not-exists --bootstrap-server localhost:9092 \
+        --topic news_pipeline_stock_recomendations --partitions 1 --replication-factor 1 2>/dev/null || true
+    docker exec "${KAFKA_CONTAINER_NAME}" /opt/kafka/bin/kafka-topics.sh \
+        --create --if-not-exists --bootstrap-server localhost:9092 \
+        --topic news_pipeline_sentiment_articles --partitions 1 --replication-factor 1 2>/dev/null || true
+    docker exec "${KAFKA_CONTAINER_NAME}" /opt/kafka/bin/kafka-topics.sh \
+        --create --if-not-exists --bootstrap-server localhost:9092 \
+        --topic news_pipeline_sector_analysis --partitions 1 --replication-factor 1 2>/dev/null || true
+    docker exec "${KAFKA_CONTAINER_NAME}" /opt/kafka/bin/kafka-topics.sh \
+        --create --if-not-exists --bootstrap-server localhost:9092 \
+        --topic nse_filings_trading_signal --partitions 1 --replication-factor 1 2>/dev/null || true
+    docker exec "${KAFKA_CONTAINER_NAME}" /opt/kafka/bin/kafka-topics.sh \
+        --create --if-not-exists --bootstrap-server localhost:9092 \
+        --topic low_risk_agent_logs --partitions 1 --replication-factor 1 2>/dev/null || true
+    docker exec "${KAFKA_CONTAINER_NAME}" /opt/kafka/bin/kafka-topics.sh \
+        --create --if-not-exists --bootstrap-server localhost:9092 \
+        --topic risk_agent_alerts --partitions 1 --replication-factor 1 2>/dev/null || true
+    docker exec "${KAFKA_CONTAINER_NAME}" /opt/kafka/bin/kafka-topics.sh \
+        --create --if-not-exists --bootstrap-server localhost:9092 \
+        --topic nse_pipeline_trade_logs --partitions 1 --replication-factor 1 2>/dev/null || true
+    docker exec "${KAFKA_CONTAINER_NAME}" /opt/kafka/bin/kafka-topics.sh \
+        --create --if-not-exists --bootstrap-server localhost:9092 \
+        --topic alpha_signals --partitions 1 --replication-factor 1 2>/dev/null || true
+    docker exec "${KAFKA_CONTAINER_NAME}" /opt/kafka/bin/kafka-topics.sh \
+        --create --if-not-exists --bootstrap-server localhost:9092 \
+        --topic nse_agent_observability_logs --partitions 1 --replication-factor 1 2>/dev/null || true
+    
+    log_success "Kafka topics created successfully"
+    log_success "Kafka is ready. Use 'docker logs -f ${KAFKA_CONTAINER_NAME}' to monitor."
 }
 
 setup_loki() {
