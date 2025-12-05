@@ -37,13 +37,15 @@ from . fundamental_analyzer_pipeline import FundamentalAnalyzerPipeline
 env_path = Path(__file__).parent.parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
-# Extract LANGSMITH_API_KEY
+# Extract LANGSMITH_API_KEY (optional - tracing disabled if not set)
 langsmith_api_key = os.getenv("LANGSMITH_API_KEY", "")
-if not langsmith_api_key:
-    raise ValueError("LANGSMITH_API_KEY not found in .env file")
-os.environ["LANGSMITH_API_KEY"] = langsmith_api_key
-os.environ["LANGSMITH_TRACING_V2"] = "true"
-os.environ["LANGSMITH_PROJECT"] = "portfolio_prod"
+if langsmith_api_key:
+    os.environ["LANGSMITH_API_KEY"] = langsmith_api_key
+    os.environ["LANGSMITH_TRACING_V2"] = "true"
+    os.environ["LANGSMITH_PROJECT"] = "portfolio_prod"
+else:
+    logger.warning("LANGSMITH_API_KEY not found - LangSmith tracing disabled")
+    os.environ["LANGSMITH_TRACING_V2"] = "false"
 
 from utils.low_risk_utils import (
     trade_converter,
