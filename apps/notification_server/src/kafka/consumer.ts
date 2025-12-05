@@ -4,6 +4,12 @@ import { PrismaClient } from "@prisma/client";
 import { notificationConfig } from "../../config";
 import { NotificationPublisher, LowRiskPublisher } from "../redis/publisher";
 import {
+	recordMessageProcessed,
+	recordDelivery,
+	recordError,
+	recordLowRiskEvent,
+} from "../metrics";
+import {
 	isLowRiskEvent,
 	isLowRiskInfoEvent,
 	isLowRiskIndustryEventFetching,
@@ -718,6 +724,7 @@ export class NotificationConsumer {
 	private async processMessage(payload: EachMessagePayload): Promise<void> {
 		const { topic, partition, message } = payload;
 		const offset = message.offset;
+		const startTime = Date.now();
 
 		try {
 			// Handle low-risk events separately with strict validation
@@ -727,6 +734,7 @@ export class NotificationConsumer {
 
 				if (!normalized) {
 					// Parser already logged the reason for dropping
+					recordMessageProcessed(topic, "skipped");
 					return;
 				}
 
@@ -738,6 +746,7 @@ export class NotificationConsumer {
 				if (!user) {
 					console.warn(`[Kafka][LowRisk] Dropped event — user not found (userId=${normalized.userId}, topic=${topic}, partition=${partition}, offset=${offset})`);
 					console.warn(`[Kafka][LowRisk] lowrisk_dropped_user_not_found`);
+					recordMessageProcessed(topic, "skipped");
 					return; // STOP PROCESSING - DO NOT WRITE TO DB, DO NOT PUBLISH
 				}
 
@@ -762,8 +771,14 @@ export class NotificationConsumer {
 							},
 						});
 						console.log(`[DB][LowRisk] Created metrics record for user ${normalized.userId}`);
+						recordDelivery("postgres", "success");
+						recordLowRiskEvent("metrics", "processed");
+						recordMessageProcessed(topic, "processed", Date.now() - startTime);
 					} catch (err) {
 						console.error(`[DB][LowRisk] Failed to create metrics record for user ${normalized.userId}:`, err);
+						recordDelivery("postgres", "failed");
+						recordError(topic, "db_error");
+						recordMessageProcessed(topic, "failed", Date.now() - startTime);
 					}
 					return;
 				}
@@ -783,6 +798,8 @@ export class NotificationConsumer {
 
 				console.log(`[DB][LowRisk] Created event ${event.id} for user ${normalized.userId} kind=${normalized.kind} with eventTime=${normalized.eventTime.toISOString()}`);
 				console.warn(`[Kafka][LowRisk] lowrisk_processed_success`);
+				recordDelivery("postgres", "success");
+				recordLowRiskEvent(normalized.kind, "processed");
 
 				// If this is a summary event, also write to LowRiskUserSummaries table
 				if (normalized.kind === "summary" && normalized.content) {
@@ -817,11 +834,15 @@ export class NotificationConsumer {
 						id: event.id,
 						createdAt: event.createdAt,
 					});
+					recordDelivery("redis", "success");
 				} catch (redisError) {
 					// Redis failures don't block Kafka processing - log and continue
 					console.error(`[Redis][LowRisk] Failed to publish event ${event.id}:`, redisError);
+					recordDelivery("redis", "failed");
+					recordError(topic, "redis_error");
 				}
 
+				recordMessageProcessed(topic, "processed", Date.now() - startTime);
 				return;
 			}
 
@@ -829,6 +850,8 @@ export class NotificationConsumer {
 			let rawPayload: any = parseJsonSafely(message.value);
 			if (!rawPayload) {
 				console.warn(`[Kafka] Failed to parse message value as JSON (topic: ${topic}, partition: ${partition}, offset: ${offset})`);
+				recordMessageProcessed(topic, "failed");
+				recordError(topic, "parse_error");
 				return;
 			}
 
@@ -837,6 +860,7 @@ export class NotificationConsumer {
 			const normalized = normalizeEvent(topic, rawPayload, partition, offset);
 			if (!normalized) {
 				console.warn(`[Kafka] Could not normalize event from topic: ${topic}`);
+				recordMessageProcessed(topic, "skipped");
 				return;
 			}
 
@@ -861,10 +885,15 @@ export class NotificationConsumer {
 			});
 
 			console.log(`[DB] Upserted notification: ${notification.id} (kafkaKey: ${normalized.kafkaKey})`);
+			recordDelivery("postgres", "success");
 
 			await this.publisher.publish(notification);
+			recordDelivery("redis", "success");
+			recordMessageProcessed(topic, "processed", Date.now() - startTime);
 		} catch (error) {
 			console.error(`[Kafka] Error processing message (topic: ${topic}, partition: ${partition}, offset: ${offset}):`, error);
+			recordMessageProcessed(topic, "failed", Date.now() - startTime);
+			recordError(topic, "unknown");
 		}
 	}
 

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 import sys
 import time
 from contextlib import asynccontextmanager
@@ -31,6 +32,7 @@ from schemas import (
     RunStatus,
 )
 from services import RunService
+from metrics import metrics_endpoint, set_service_info
 
 # Configure logging
 logging.basicConfig(
@@ -48,6 +50,12 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info("Database connected")
     logger.info("Using direct library calls (no MCP server required)")
+    
+    # Set service info for metrics
+    set_service_info(
+        version="0.1.0",
+        environment=os.getenv("ENVIRONMENT", "development")
+    )
     
     yield
     
@@ -71,6 +79,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add Prometheus metrics endpoint
+app.add_api_route("/metrics", metrics_endpoint, methods=["GET"], include_in_schema=False)
 
 
 def get_service() -> RunService:

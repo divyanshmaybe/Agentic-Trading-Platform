@@ -10,10 +10,53 @@ rule_files:
   - 'alert-rules.yml'
 
 scrape_configs:
-  # Celery Workers (Local Development)
-  - job_name: 'celery-trading'
+  # ============================================================================
+  # Application Services
+  # ============================================================================
+  
+  # Auth Server (Express.js on port 4000)
+  - job_name: 'auth_server'
+    static_configs:
+      - targets: ['localhost:4000']
+        labels:
+          service: 'auth'
+          environment: 'local'
+    metrics_path: /metrics
+
+  # Notification Server (Node.js Kafka consumer on port 9101)
+  - job_name: 'notification_server'
     static_configs:
       - targets: ['localhost:9101']
+        labels:
+          service: 'notification'
+          environment: 'local'
+    metrics_path: /metrics
+
+  # Portfolio Server (FastAPI on port 8000)
+  - job_name: 'portfolio_server'
+    static_configs:
+      - targets: ['localhost:8000']
+        labels:
+          service: 'portfolio'
+          environment: 'local'
+    metrics_path: /metrics
+
+  # AlphaCopilot Server (FastAPI on port 8069)
+  - job_name: 'alphacopilot_server'
+    static_configs:
+      - targets: ['localhost:8069']
+        labels:
+          service: 'alphacopilot'
+          environment: 'local'
+    metrics_path: /metrics
+
+  # ============================================================================
+  # Celery Workers
+  # ============================================================================
+  
+  - job_name: 'celery-trading'
+    static_configs:
+      - targets: ['localhost:9111']
         labels:
           worker_pool: 'trading'
           environment: 'local'
@@ -45,6 +88,10 @@ scrape_configs:
         labels:
           worker_pool: 'general'
           environment: 'local'
+
+  # ============================================================================
+  # Infrastructure
+  # ============================================================================
 
   # Redis Exporter
   - job_name: 'redis'

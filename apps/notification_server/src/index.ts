@@ -2,13 +2,20 @@ import { getPrismaClient, databaseManager } from "./prisma/client";
 import { RedisManager } from "../../../shared/js/redisManager";
 import { NotificationPublisher, LowRiskPublisher } from "./redis/publisher";
 import { NotificationConsumer } from "./kafka/consumer";
+import { startMetricsServer, stopMetricsServer } from "./metrics";
 
 let consumer: NotificationConsumer | null = null;
 let redis: RedisManager | null = null;
 
+// Metrics server port (configurable via env)
+const METRICS_PORT = parseInt(process.env.METRICS_PORT || "9101", 10);
+
 async function startService() {
   try {
     console.log("[Service] Starting notification ingestion service...");
+
+    // Start Prometheus metrics server
+    startMetricsServer(METRICS_PORT);
 
     await databaseManager.connect();
     console.log("[DB] Connected to database");
@@ -44,6 +51,9 @@ async function shutdown() {
   }
 
   await databaseManager.disconnect();
+
+  // Stop metrics server
+  await stopMetricsServer();
 
   console.log("[Service] Shutdown complete");
   process.exit(0);

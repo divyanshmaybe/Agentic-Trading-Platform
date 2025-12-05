@@ -13,6 +13,14 @@ from typing import Dict, Any, Optional, List
 
 from schemas import RunCreateRequest, RunStatus
 from database import get_prisma_client
+from metrics import (
+    record_run_created,
+    record_run_completed,
+    record_iteration_start,
+    record_iteration_complete,
+    record_factor_validation,
+    record_factor_generated,
+)
 
 # Add quant-stream to path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -159,6 +167,9 @@ class RunService:
             }
         )
         
+        # Record metrics
+        record_run_created(run_id)
+        
         logger.info(f"Created run {run_id} with hypothesis: {request.hypothesis[:50]}...")
         return self._run_to_dict(run)
 
@@ -219,6 +230,8 @@ class RunService:
         
         if status == RunStatus.COMPLETED or status == RunStatus.FAILED:
             update_data["completed_at"] = datetime.utcnow()
+            # Record completion metrics
+            record_run_completed(run_id, status.value.lower(), "full")
         
         run = await client.alphacopilotrun.update(
             where={"id": run_id},

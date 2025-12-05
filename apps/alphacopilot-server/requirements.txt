@@ -35,5 +35,7 @@ asyncio-throttle>=1.0.2
 # Logging
 structlog>=24.1.0
 
+# Observability
+prometheus-client>=0.19.0
 
 
