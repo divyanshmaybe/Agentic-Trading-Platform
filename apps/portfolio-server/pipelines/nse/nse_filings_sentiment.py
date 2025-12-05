@@ -1287,13 +1287,15 @@ def create_nse_filings_pipeline(
 
     print("[SENTIMENT] Step 2: Downloading PDFs...")
 
+    # Download PDFs and get the local filename (with unique suffix)
     filings_with_pdf = relevant_filings.select(
         symbol=pw.this.symbol,
         desc=pw.this.desc,
         filing_type=pw.this.filing_type,
         sort_date=pw.this.sort_date,
         attchmntFile=pw.this.attchmntFile,
-        filename=pw.this.filename,
+        # Download PDF and get local filename (replaces URL-extracted filename)
+        filename=download_and_parse_pdf(pw.this.attchmntFile, pw.this.filename),
         # Carry through XBRL fields
         subject_of_announcement=pw.this.subject_of_announcement,
         attachment_url=pw.this.attachment_url,

@@ -51,11 +51,18 @@ prompt_template: |
   If unsure whether a signal should be -1 or 1, it's safer to generate a 0 (HOLD) instead.
   If the meeting results were really outstanding then only give 1 else 0 or -1
 
-  Strictly adhere to this output format:
-  trading_signal: <1, 0, or -1>
-  explanation: <detailed reasoning for the decision>
-  RETURN EXACTLY THIS STRUCTURED OUTPUT AND NOTHING ELSE.
+  Return your response as a JSON object in the following format:
+  ```json
+  {
+    "final_signal": <1, 0, or -1>,
+    "Confidence": <confidence score between 0 and 1>,
+    "explanation": "<detailed reasoning for the decision>"
+  }
+  ```
+  RETURN ONLY THE JSON OBJECT, NO OTHER TEXT.
 
 output_format:
-  trading_signal: "integer (-1, 0, or 1)"
+  final_signal: "integer (-1, 0, or 1)"
+  Confidence: "float (0.0 to 1.0)"
+  explanation: "string"
   explanation: "string (3-4 sentences)"
