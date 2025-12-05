@@ -50,12 +50,12 @@ show_help() {
     echo -e "${YELLOW}Options:${NC}"
     echo "  --no-cache      Use with 'build' to rebuild without Docker cache"
     echo "  -f, --follow    Use with 'logs' to follow log output"
-    echo "  --with-monitoring  Use with 'start' to include monitoring stack"
+    echo "  --without-monitoring  Use with 'start' to exclude monitoring stack"
     echo ""
     echo -e "${YELLOW}Examples:${NC}"
-    echo "  ./docker.sh start             # Start all services"
-    echo "  ./docker.sh start --with-monitoring  # Start with monitoring"
-    echo "  ./docker.sh stop              # Stop all services"
+    echo "  ./docker.sh start             # Start all services (with monitoring)"
+    echo "  ./docker.sh start --without-monitoring  # Start without monitoring"
+    echo "  ./docker.sh stop              # Stop all services (including monitoring)"
     echo "  ./docker.sh restart           # Restart all services"
     echo "  ./docker.sh build             # Rebuild images"
     echo "  ./docker.sh build --no-cache  # Rebuild without cache"
@@ -272,17 +272,17 @@ do_build() {
     print_success "Images built"
 }
 
-# Function to stop containers
+# Function to stop containers (including monitoring)
 do_stop() {
-    print_info "🛑 Stopping all containers..."
-    docker compose down
+    print_info "🛑 Stopping all containers (including monitoring)..."
+    docker compose --profile monitoring down
     print_success "Containers stopped"
 }
 
-# Function to stop containers and remove volumes
+# Function to stop containers and remove volumes (including monitoring)
 do_clean() {
-    print_info "🧹 Stopping containers and removing volumes..."
-    docker compose down -v
+    print_info "🧹 Stopping containers and removing volumes (including monitoring)..."
+    docker compose --profile monitoring down -v
     print_success "Containers stopped and volumes removed"
 }
 
@@ -351,7 +351,7 @@ create_kafka_topics() {
 
 # Function to start containers
 do_start() {
-    local with_monitoring=$1
+    local without_monitoring=$1
     
     # Generate docker.env files
     echo ""
@@ -366,12 +366,12 @@ do_start() {
     
     # Start containers
     echo ""
-    if [ "$with_monitoring" = true ]; then
+    if [ "$without_monitoring" = true ]; then
+        print_info "🚀 Starting all containers (without monitoring)..."
+        docker compose up -d
+    else
         print_info "🚀 Starting all containers with monitoring stack..."
         docker compose --profile monitoring up -d
-    else
-        print_info "🚀 Starting all containers..."
-        docker compose up -d
     fi
     print_success "Containers starting..."
     
@@ -396,7 +396,7 @@ do_start() {
     echo "   ./docker.sh logs -f      # Follow all logs"
     echo "   docker logs -f <name>    # Follow specific container"
     
-    if [ "$with_monitoring" = true ]; then
+    if [ "$without_monitoring" != true ]; then
         echo ""
         echo "📊 Monitoring URLs:"
         echo "   Prometheus: http://localhost:9090"
@@ -467,7 +467,7 @@ shift
 # Parse options
 NO_CACHE=false
 FOLLOW=false
-WITH_MONITORING=false
+WITHOUT_MONITORING=false
 MONITORING_ACTION=""
 
 while [[ $# -gt 0 ]]; do
@@ -480,8 +480,8 @@ while [[ $# -gt 0 ]]; do
             FOLLOW=true
             shift
             ;;
-        --with-monitoring)
-            WITH_MONITORING=true
+        --without-monitoring)
+            WITHOUT_MONITORING=true
             shift
             ;;
         start|stop)
@@ -500,7 +500,7 @@ done
 # Execute command
 case $COMMAND in
     start)
-        do_start $WITH_MONITORING
+        do_start $WITHOUT_MONITORING
         ;;
     stop)
         do_stop
@@ -510,7 +510,7 @@ case $COMMAND in
     restart)
         do_stop
         echo ""
-        do_start $WITH_MONITORING
+        do_start $WITHOUT_MONITORING
         ;;
     build)
         do_build $NO_CACHE
