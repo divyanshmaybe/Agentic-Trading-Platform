@@ -85,6 +85,9 @@ generate_docker_env() {
         "KAFKA_BOOTSTRAP_SERVERS"
         "AUTH_DATABASE_URL"
         "PORTFOLIO_DATABASE_URL"
+        "NEXT_PUBLIC_PORTFOLIO_API_URL"
+        "NEXT_PUBLIC_PORTFOLIO_SERVER_URL"
+        "PORTFOLIO_SERVICE_URL"
     )
     
     # Build grep pattern to exclude these vars
@@ -239,6 +242,7 @@ PORTFOLIO_SERVICE_URL=https://portfolio.agentinvest.space
 NEXT_PUBLIC_API_URL=https://auth.agentinvest.space
 NEXT_PUBLIC_AUTH_BASE_URL=https://auth.agentinvest.space/api/auth
 NEXT_PUBLIC_PORTFOLIO_API_URL=https://portfolio.agentinvest.space
+NEXT_PUBLIC_PORTFOLIO_SERVER_URL=https://portfolio.agentinvest.space
 NEXT_PUBLIC_ALPHACOPILOT_URL=https://alphacopilot.agentinvest.space
 NEXT_PUBLIC_WS_URL=ws://localhost:4001
 REDIS_HOST=auth_redis
