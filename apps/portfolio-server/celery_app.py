@@ -734,6 +734,8 @@ def task_postrun_handler(sender=None, task_id=None, task=None, retval=None, stat
     
     This is critical for long-running workers that execute many tasks.
     Each task gets a fresh connection from the pool.
+    
+    Uses timeout to prevent blocking on soft time limit exceeded.
     """
     try:
         project_root = Path(__file__).resolve().parents[2]
@@ -747,11 +749,20 @@ def task_postrun_handler(sender=None, task_id=None, task=None, retval=None, stat
         db_manager = DBManager._instance
         if db_manager and db_manager.is_connected():
             try:
-                # Force disconnect to release connection back to pool
-                asyncio.run(db_manager.disconnect())
+                # Use asyncio.wait_for with timeout to prevent blocking on soft time limit
+                async def _disconnect_with_timeout():
+                    await db_manager.disconnect(timeout=3.0)
+                
+                asyncio.run(_disconnect_with_timeout())
                 logging.debug("🔌 Task complete - DB disconnected: %s [%s]", task.name if task else sender, task_id)
             except Exception as disc_exc:
-                logging.warning("⚠️ Failed to disconnect after task %s: %s", task_id, disc_exc)
+                exc_name = type(disc_exc).__name__
+                if exc_name == "SoftTimeLimitExceeded":
+                    logging.warning("⚠️ SoftTimeLimitExceeded during postrun disconnect for task %s", task_id)
+                    # Force reset to ensure clean state for next task
+                    DBManager.reset_instance()
+                else:
+                    logging.warning("⚠️ Failed to disconnect after task %s: %s", task_id, disc_exc)
     except Exception as e:
         logging.debug("Task postrun cleanup error: %s", e)
 
@@ -772,17 +783,25 @@ def task_failure_handler(sender=None, task_id=None, exception=None, **kwargs):
             
             from dbManager import DBManager
             
-            # Force disconnect on timeout
+            # Force reset immediately - don't try to disconnect since we're in a timeout state
+            # The disconnect could block or fail, better to just reset and let connection timeout
             db_manager = DBManager._instance
             if db_manager:
+                # Force cleanup without async disconnect (which could block)
                 try:
-                    asyncio.run(db_manager.disconnect())
-                    logging.info("🔌 Forced DB disconnect on soft timeout: %s", task_id)
+                    # Unregister from Prisma registry synchronously
+                    if db_manager.client:
+                        try:
+                            from prisma._registry import unregister
+                            unregister(db_manager.client)
+                        except Exception:
+                            pass
                 except Exception:
                     pass
                 finally:
                     # Always reset to ensure next task gets fresh connection
                     DBManager.reset_instance()
+                    logging.info("🔌 Forced DB reset on soft timeout: %s", task_id)
         except Exception as e:
             logging.error("Failed to cleanup DB on timeout: %s", e)
 

@@ -305,15 +305,17 @@ class DBManager:
         finally:
             self._connecting = False
 
-    async def disconnect(self, force: bool = False) -> None:
+    async def disconnect(self, force: bool = False, timeout: float = 5.0) -> None:
         """
         Close the Prisma connection if it is active.
         
         Args:
             force: If True, disconnect even if there are active sessions.
                    If False (default), only disconnect if no active sessions.
+            timeout: Maximum time to wait for disconnect operations (default 5s).
         
         Safe to call multiple times. Cleans up connection state.
+        Handles SoftTimeLimitExceeded gracefully in Celery environments.
         """
         # Don't disconnect if there are active sessions (unless forced)
         if not force and DBManager._active_sessions > 0:
@@ -329,18 +331,32 @@ class DBManager:
 
         try:
             if self.client:
-                # Disconnect client
+                # Disconnect client with timeout to prevent blocking on soft time limit
                 if self.client.is_connected():
-                    await self.client.disconnect()
-                    self.logger.info("🔌 Disconnected Prisma client")
+                    try:
+                        await asyncio.wait_for(self.client.disconnect(), timeout=timeout)
+                        self.logger.info("🔌 Disconnected Prisma client")
+                    except asyncio.TimeoutError:
+                        self.logger.warning("⚠️ Prisma disconnect timed out after %.1fs, forcing cleanup", timeout)
+                    except Exception as disc_exc:
+                        # Handle Celery SoftTimeLimitExceeded gracefully
+                        exc_name = type(disc_exc).__name__
+                        if exc_name == "SoftTimeLimitExceeded":
+                            self.logger.warning("⚠️ SoftTimeLimitExceeded during disconnect, forcing cleanup")
+                        else:
+                            self.logger.warning("⚠️ Error during Prisma disconnect: %s", disc_exc)
                 
-                # Force stop engine to ensure DB connections are closed
+                # Force stop engine to ensure DB connections are closed (with timeout)
                 if hasattr(self.client, '_engine') and self.client._engine:
                     try:
-                        await self.client._engine.stop()
+                        await asyncio.wait_for(self.client._engine.stop(), timeout=2.0)
                         self.logger.debug("🔌 Stopped Prisma engine")
+                    except asyncio.TimeoutError:
+                        self.logger.debug("Engine stop timed out, continuing cleanup")
                     except Exception as engine_exc:
-                        self.logger.debug("Engine stop failed: %s", engine_exc)
+                        exc_name = type(engine_exc).__name__
+                        if exc_name != "SoftTimeLimitExceeded":
+                            self.logger.debug("Engine stop failed: %s", engine_exc)
                 
                 # Unregister from global registry
                 try:
@@ -350,7 +366,12 @@ class DBManager:
                     pass
                     
         except Exception as e:
-            self.logger.warning("Error during disconnect: %s", e)
+            # Handle any exception including SoftTimeLimitExceeded
+            exc_name = type(e).__name__
+            if exc_name == "SoftTimeLimitExceeded":
+                self.logger.warning("⚠️ SoftTimeLimitExceeded during disconnect cleanup")
+            else:
+                self.logger.warning("Error during disconnect: %s", e)
         finally:
             self._connected = False
             self._loop = None

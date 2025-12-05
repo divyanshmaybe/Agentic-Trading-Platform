@@ -1666,11 +1666,16 @@ class PipelineService:
             
             dispatched = executed  # All dispatched trades were executed immediately
 
-        # Disconnect Prisma client
+        # Disconnect via DBManager (handles timeouts and SoftTimeLimitExceeded gracefully)
+        # Don't disconnect directly via client - use the manager for proper cleanup
         try:
-            await client.disconnect()
-        except:
-            pass
+            await asyncio.wait_for(db_manager.disconnect(timeout=3.0), timeout=5.0)
+        except asyncio.TimeoutError:
+            self.logger.warning("⚠️ DB disconnect timed out, continuing...")
+        except Exception as disc_exc:
+            exc_name = type(disc_exc).__name__
+            if exc_name != "SoftTimeLimitExceeded":
+                self.logger.debug("DB disconnect error (non-critical): %s", disc_exc)
 
         return {
             "processed_signals": len(processed_signals),
