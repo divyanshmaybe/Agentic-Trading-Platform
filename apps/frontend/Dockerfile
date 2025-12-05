@@ -1,5 +1,4 @@
 # Build from monorepo root: docker build -f apps/frontend/Dockerfile -t frontend .
-# NOT from apps/frontend directory
 
 ARG NODE_VERSION=20.11.1-alpine
 
@@ -11,19 +10,24 @@ ENV PNPM_HOME=/pnpm
 ENV PATH="${PNPM_HOME}:${PATH}"
 
 RUN corepack enable pnpm && corepack prepare pnpm@${PNPM_VERSION} --activate
-
 WORKDIR /app
 
+# -------------------------
+# 1. Dependencies Layer
+# -------------------------
 FROM pnpm-base AS deps
 
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.json turbo.json ./
 COPY packages ./packages
 COPY shared ./shared
 COPY types ./types
-COPY apps/frontend/package.json ./apps/frontend/package.json
+COPY apps/frontend/package.json ./apps/frontend/
 
 RUN pnpm fetch --filter frontend...
 
+# -------------------------
+# 2. Builder
+# -------------------------
 FROM pnpm-base AS builder
 
 COPY --from=deps /pnpm /pnpm
@@ -33,7 +37,7 @@ COPY shared ./shared
 COPY types ./types
 COPY apps/frontend ./apps/frontend
 
-# Remove .env from shared/prisma to avoid conflicts during Docker build
+# Avoid rebuild issues
 RUN rm -f shared/prisma/.env
 
 RUN pnpm install --offline --filter frontend... \
@@ -41,6 +45,9 @@ RUN pnpm install --offline --filter frontend... \
     && pnpm --filter frontend run build \
     && pnpm prune --prod
 
+# -------------------------
+# 3. Runtime (optimize!)
+# -------------------------
 FROM node:${NODE_VERSION} AS runner
 
 ARG PNPM_VERSION=9.10.0
@@ -53,16 +60,17 @@ ENV PORT=3000
 
 RUN corepack enable pnpm && corepack prepare pnpm@${PNPM_VERSION} --activate
 
+# Create user
+RUN addgroup -g 1001 -S nodejs && adduser -S next -G nodejs -u 1001
+
 WORKDIR /app
 
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/packages ./packages
-COPY --from=builder /app/shared ./shared
-COPY --from=builder /app/types ./types
-COPY --from=builder /app/apps/frontend ./apps/frontend
-
-RUN addgroup -g 1001 -S nodejs && adduser -S next -G nodejs -u 1001 && \
-    chown -R next:nodejs /app
+# \u26a1 FASTER: Copy files with correct ownership directly
+COPY --chown=next:nodejs --from=builder /app/node_modules ./node_modules
+COPY --chown=next:nodejs --from=builder /app/packages ./packages
+COPY --chown=next:nodejs --from=builder /app/shared ./shared
+COPY --chown=next:nodejs --from=builder /app/types ./types
+COPY --chown=next:nodejs --from=builder /app/apps/frontend ./apps/frontend
 
 USER next
 
@@ -71,4 +79,3 @@ WORKDIR /app/apps/frontend
 EXPOSE 3000
 
 CMD ["pnpm", "run", "start", "--", "--hostname", "0.0.0.0", "--port", "3000"]
-
