@@ -33,7 +33,7 @@ prompt_template: |
   - Negative impact scenarios: {neg_impact}
 
   Filings data:
-  - NSE filings data: {text}
+  - The NSE filing PDF document is attached below. Please read and analyze the attached PDF.
 
   Instructions:
   1. Read all information carefully.

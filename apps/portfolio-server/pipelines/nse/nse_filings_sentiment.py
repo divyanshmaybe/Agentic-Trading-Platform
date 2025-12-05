@@ -520,17 +520,14 @@ def should_use_negative_impact(filing_type: str) -> bool:
 
 @pw.udf
 def download_and_parse_pdf(url: str, filename: str) -> str:
-    """Download PDF and extract text, then clean up the file"""
+    """Download PDF to docs folder and return the filename only.
+    
+    The PDF will be attached to the LLM in generate_trading_signal and deleted after processing.
+    """
     try:
-        import pdfplumber
         import requests
         import os
-        import warnings
-        import tempfile
         import uuid
-
-        # Suppress pdfplumber warnings about invalid color values
-        warnings.filterwarnings("ignore", message=".*Cannot set gray.*")
 
         if not url or not url.strip():
             print(f"[WARN] Empty PDF URL for {filename}, skipping download")
@@ -538,11 +535,14 @@ def download_and_parse_pdf(url: str, filename: str) -> str:
 
         print(f"[PIPELINE] Downloading PDF: {filename} from {url[:100]}...")
 
-        # Use unique temporary file per worker to avoid race conditions
-        os.makedirs("docs", exist_ok=True)
+        # Use the nse/docs folder for storing PDFs
+        docs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "docs")
+        os.makedirs(docs_dir, exist_ok=True)
+        
+        # Use unique filename to avoid race conditions
         unique_suffix = str(uuid.uuid4())[:8]
-        temp_filename = f"{filename}.{unique_suffix}.tmp"
-        path = os.path.join("docs", temp_filename)
+        temp_filename = f"{filename}.{unique_suffix}.pdf"
+        path = os.path.join(docs_dir, temp_filename)
 
         # Always download fresh (scraper handles deduplication)
         headers = {
@@ -566,7 +566,9 @@ def download_and_parse_pdf(url: str, filename: str) -> str:
                     f.write(chunk)
 
             file_size = os.path.getsize(path)
-            print(f"[PIPELINE] PDF downloaded: {filename} ({file_size} bytes), extracting text...")
+            print(f"[PIPELINE] PDF downloaded: {temp_filename} ({file_size} bytes) to {docs_dir}")
+            # Return only the temp filename (with unique suffix)
+            return temp_filename
         except requests.exceptions.RequestException as e:
             print(f"[ERROR] Failed to download PDF {filename} from {url}: {e}")
             return ""
@@ -574,50 +576,12 @@ def download_and_parse_pdf(url: str, filename: str) -> str:
             print(f"[ERROR] Unexpected error downloading PDF {filename}: {e}")
             return ""
 
-        # Extract text using pdfplumber (suppress warnings)
-        text = ""
-        try:
-            # Suppress pdfplumber warnings by redirecting stderr temporarily
-            import sys
-            import warnings
-            from io import StringIO
-
-            # Suppress all warnings
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-
-                # Also redirect stderr to suppress pdfplumber's direct prints
-                original_stderr = sys.stderr
-                try:
-                    sys.stderr = StringIO()
-                    with pdfplumber.open(path) as pdf:
-                        for page in pdf.pages:
-                            page_text = page.extract_text()
-                            if page_text:
-                                text += page_text + "\n"
-                finally:
-                    # Restore stderr
-                    sys.stderr = original_stderr
-        finally:
-            # Clean up temporary PDF file after extraction
-            try:
-                if os.path.exists(path):
-                    os.remove(path)
-                    print(f"[PIPELINE] Temporary PDF cleaned up: {temp_filename}")
-            except Exception as cleanup_error:
-                print(f"Warning: Could not delete temporary PDF {temp_filename}: {cleanup_error}")
-
-        print(f"[PIPELINE] PDF processed: {filename} ({len(text)} chars extracted)")
-        return text
     except Exception as e:
         print(f"Error processing PDF {filename}: {e}")
-        # Try to clean up on error too (use temp_filename if it was created)
+        # Try to clean up on error too
         try:
-            # Check if temp_filename variable exists (was created before error)
-            if 'temp_filename' in locals():
-                path = os.path.join("docs", temp_filename)
-                if os.path.exists(path):
-                    os.remove(path)
+            if 'path' in locals() and os.path.exists(path):
+                os.remove(path)
         except:
             pass
         return ""
@@ -789,19 +753,22 @@ def get_neg_impact(file_type: str, use_negative: bool, static_data_path: str = "
 
 @pw.udf
 def generate_trading_signal(
-    text: str,
     pos_impact: str,
     neg_impact: str,
     stocktechdata: str,
-    api_key: str
+    api_key: str,
+    pdf_filename: str = ""
 ) -> str:
     """
     Generate trading signal using two-model approach:
     - Model 1 (gemini-2.5-flash): Generates trading_signal + explanation
+      If pdf_filename is provided, attaches the PDF from the nse/docs folder.
     - Model 2 (gemini-2.5-pro): Validates logic and generates confidence_score
 
     Prompts are loaded from YAML templates in the templates/ folder.
     Uses llm_response_utils for response cleaning and parsing.
+
+    After signal processing, the PDF file is deleted from the docs folder.
 
     Includes LLM timing metrics in the response for latency tracking:
     - llm_start_time: ISO timestamp when LLM processing started
@@ -815,7 +782,6 @@ def generate_trading_signal(
     try:
         from utils.low_risk_utils.llm_response_utils import (
             clean_markdown_from_response,
-            extract_json_from_text,
         )
         has_llm_utils = True
     except ImportError:
@@ -831,12 +797,11 @@ def generate_trading_signal(
         api_key = os.getenv("GEMINI_API_KEY", "")
 
     # Validate inputs
-    if not text or not text.strip():
-        print("[WARN] Empty text provided to generate_trading_signal")
-        return "Error: Empty text content"
+    if not pdf_filename or not pdf_filename.strip():
+        print("[WARN] Empty PDF filename provided to generate_trading_signal")
+        return "Error: Empty PDF filename"
 
-    print(f"[PIPELINE] Generating trading signal with two-model approach (text length: {len(text)} chars)...")
-
+    print(f"[PIPELINE] Generating trading signal with two-model approach (PDF filename: {pdf_filename})...")
     # Load prompt templates from YAML files
     templates_dir = Path(__file__).resolve().parents[2] / "templates"
 
@@ -893,10 +858,18 @@ def generate_trading_signal(
         stocktechdata=stocktechdata,
         pos_impact=pos_impact,
         neg_impact=neg_impact,
-        text=text
     )
     model1_name = gen_config.get('model', 'gemini-2.5-flash')
-    model1_temp = gen_config.get('temperature', 0.3)
+    model1_temp = gen_config.get('temperature', 0.1)
+
+    # Determine PDF path from filename (stored in nse/docs folder)
+    pdf_path = None
+    if pdf_filename and pdf_filename.strip():
+        docs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "docs")
+        pdf_path = os.path.join(docs_dir, pdf_filename)
+        if not os.path.exists(pdf_path):
+            print(f"[WARN] PDF file not found at {pdf_path}, proceeding without attachment")
+            pdf_path = None
 
     try:
         # Validate API key
@@ -906,6 +879,9 @@ def generate_trading_signal(
             return f"Error: {error_msg}"
 
         from langchain_google_genai import ChatGoogleGenerativeAI
+        from langchain_core.messages import HumanMessage
+        from PyPDF2 import PdfReader
+        import base64
         import time
 
         # Set GOOGLE_API_KEY env var for langchain
@@ -920,8 +896,44 @@ def generate_trading_signal(
                 api_key=api_key
             )
 
+            # Build message parts for Model 1
+            message_parts = [{"type": "text", "text": user_prompt}]
+
+            # Attach PDF if available and valid
+            attach_pdf = False
+            if pdf_path:
+                try:
+                    # Validate PDF with PyPDF2 (non-strict mode)
+                    reader = PdfReader(pdf_path, strict=False)
+                    page_count = len(reader.pages)
+                    if page_count >= 1:
+                        attach_pdf = True
+                    else:
+                        print(f"[WARN] PDF has zero pages, skipping attachment: {pdf_path}")
+                except Exception as e:
+                    print(f"[WARN] PDF unreadable/corrupted, skipping attachment: {pdf_path} | Error: {e}")
+
+            if attach_pdf:
+                try:
+                    with open(pdf_path, "rb") as f:
+                        pdf_bytes = f.read()
+                    pdf_b64 = base64.standard_b64encode(pdf_bytes).decode("utf-8")
+                    message_parts.append({
+                        "type": "file",
+                        "mime_type": "application/pdf",
+                        "base64": pdf_b64
+                    })
+                    print(f"[INFO] PDF attached successfully: {pdf_path}")
+                except Exception as e:
+                    print(f"[WARN] Failed to attach PDF {pdf_path}: {e}")
+            else:
+                print("[INFO] Proceeding WITHOUT PDF attachment.")
+
+            # Create HumanMessage with multipart content
+            human_msg = HumanMessage(content=message_parts)
+
             print(f"[PIPELINE] Model 1 ({model1_name}): Generating signal + explanation...")
-            decision_raw = trading_model.invoke(user_prompt)
+            decision_raw = trading_model.invoke([human_msg])
             decision_text = extract_content_from_response(decision_raw)
 
             print(f"[PIPELINE] Model 1 Response: {decision_text[:200]}...")
@@ -983,6 +995,15 @@ concise_explanation: {explanation}"""
 
             # Append timing metadata to response for downstream parsing
             timing_suffix = f"\n__LLM_TIMING__:{llm_start_time.isoformat()}Z|{llm_end_time.isoformat()}Z|{llm_delay_ms}"
+
+            # Delete PDF file after signal is processed
+            if pdf_path and os.path.exists(pdf_path):
+                try:
+                    os.remove(pdf_path)
+                    print(f"[CLEANUP] ✅ Deleted PDF file: {pdf_path}")
+                except Exception as e:
+                    print(f"[CLEANUP] ⚠️ Failed to delete PDF file {pdf_path}: {e}")
+
             return response_text + timing_suffix
 
         finally:
@@ -991,10 +1012,27 @@ concise_explanation: {explanation}"""
                 os.environ["GOOGLE_API_KEY"] = original_google_key
             elif "GOOGLE_API_KEY" in os.environ:
                 del os.environ["GOOGLE_API_KEY"]
+            
+            # Cleanup PDF file on any exit (error or success)
+            # This is a fallback in case the cleanup above didn't run
+            if pdf_path and os.path.exists(pdf_path):
+                try:
+                    os.remove(pdf_path)
+                    print(f"[CLEANUP] ✅ Deleted PDF file (finally block): {pdf_path}")
+                except Exception as e:
+                    print(f"[CLEANUP] ⚠️ Failed to delete PDF file {pdf_path}: {e}")
 
     except Exception as e:
         error_msg = str(e)
         print(f"[ERROR] LLM generation failed: {error_msg}")
+
+        # Cleanup PDF file on error
+        if pdf_path and os.path.exists(pdf_path):
+            try:
+                os.remove(pdf_path)
+                print(f"[CLEANUP] ✅ Deleted PDF file (error handler): {pdf_path}")
+            except Exception as cleanup_e:
+                print(f"[CLEANUP] ⚠️ Failed to delete PDF file {pdf_path}: {cleanup_e}")
 
         # Provide helpful error message
         if "credentials" in error_msg.lower() or "api key" in error_msg.lower():
@@ -1289,27 +1327,26 @@ def create_nse_filings_pipeline(
     print("[SENTIMENT] Step 1a: Filtered filings by relevant types...")
     print(f"[SENTIMENT] Relevant filing types: {list(RELEVANT_FILE_TYPES.keys())}")
 
-    print("[SENTIMENT] Step 2: Downloading and parsing PDFs...")
+    print("[SENTIMENT] Step 2: Downloading PDFs...")
 
-    filings_with_text = relevant_filings.select(
+    filings_with_pdf = relevant_filings.select(
         symbol=pw.this.symbol,
         desc=pw.this.desc,
         filing_type=pw.this.filing_type,
         sort_date=pw.this.sort_date,
         attchmntFile=pw.this.attchmntFile,
         filename=pw.this.filename,
-        text=download_and_parse_pdf(pw.this.attchmntFile, pw.this.filename),
         # Carry through XBRL fields
         subject_of_announcement=pw.this.subject_of_announcement,
         attachment_url=pw.this.attachment_url,
         date_time_of_submission=pw.this.date_time_of_submission,
-    ).filter(pw.this.text != "")
+    ).filter(pw.this.filename != "")
 
-    print("[SENTIMENT] Step 2 complete: PDFs parsed, proceeding to sentiment analysis...")
+    print("[SENTIMENT] Step 2 complete: PDFs downloaded, proceeding to sentiment analysis...")
     print("[SENTIMENT] Step 3: Fetching impact scenarios and stock data...")
 
     # Determine which impacts to fetch based on filing type configuration
-    filings_with_impact_flags = filings_with_text.select(
+    filings_with_impact_flags = filings_with_pdf.select(
         *pw.this,
         use_positive=should_use_positive_impact(pw.this.filing_type),
         use_negative=should_use_negative_impact(pw.this.filing_type),
@@ -1329,11 +1366,11 @@ def create_nse_filings_pipeline(
     filings_with_responses = filings_enriched.select(
         *pw.this,
         llm_response=generate_trading_signal(
-            pw.this.text,
             pw.this.pos_impact,
             pw.this.neg_impact,
             pw.this.stocktechdata,
-            GEMINI_API_KEY
+            GEMINI_API_KEY,
+            pw.this.filename  # Pass filename to attach the PDF
         )
     )
 
