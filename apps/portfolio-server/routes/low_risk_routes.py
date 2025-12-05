@@ -5,16 +5,21 @@ Provides REST API endpoints for triggering and monitoring the low-risk
 stock selection pipeline with proper authentication and status tracking.
 """
 
+import os
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import logging
+from prisma import Prisma
 
 from utils.auth import get_authenticated_user
 from workers.low_risk_tasks import run_low_risk_pipeline, get_low_risk_pipeline_status
-from shared.py.dbManager import DBManager
+from db import prisma_client
 
 logger = logging.getLogger(__name__)
+
+# Auth DB URL for fetching LowRiskUserSummaries
+AUTH_DATABASE_URL = os.getenv("AUTH_DATABASE_URL", "postgresql://prisma_user:strongpassword@localhost:5432/prisma_db")
 
 router = APIRouter(prefix="/low-risk", tags=["low-risk-pipeline"])
 
@@ -310,6 +315,238 @@ async def get_pipeline_status(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to get pipeline status: {str(e)}"
+        )
+
+
+class RebalanceTriggerResponse(BaseModel):
+    """Response model for rebalance trigger"""
+    success: bool
+    message: str
+    task_id: Optional[str] = None
+    user_id: str
+    fund_allocated: float
+    summaries_count: int = 0
+
+
+@router.post("/rebalance", response_model=RebalanceTriggerResponse)
+async def trigger_low_risk_rebalance(
+    user: dict = Depends(get_authenticated_user)
+) -> RebalanceTriggerResponse:
+    """
+    Trigger low-risk pipeline rebalance for authenticated user.
+
+    **Authentication Required**
+
+    This endpoint triggers a rebalance of the low-risk portfolio which:
+    1. Checks that no pipeline is currently running
+    2. Verifies that there are NO open positions for low_risk allocation
+    3. Fetches previous summaries from LowRiskUserSummaries
+    4. Triggers the pipeline with rebalance=True and previous summaries
+
+    **Pre-conditions:**
+    - No low-risk pipeline currently running for this user
+    - No open positions in low_risk allocation (all positions must be closed)
+    - Trading agent must be active
+
+    **Returns:**
+    - `success`: Whether rebalance was successfully triggered
+    - `message`: Human-readable status message
+    - `task_id`: Celery task ID for tracking (if successful)
+    - `user_id`: User ID for which rebalance is running
+    - `fund_allocated`: Fund amount allocated
+    - `summaries_count`: Number of previous summaries used
+
+    **Example Success Response:**
+    ```json
+    {
+        "success": true,
+        "message": "Low-risk rebalance started with 3 previous summaries",
+        "task_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "user_id": "user123",
+        "fund_allocated": 500000.0,
+        "summaries_count": 3
+    }
+    ```
+
+    **Example Error Response (Open Positions):**
+    ```json
+    {
+        "success": false,
+        "message": "Cannot rebalance: 5 open positions exist. Close all positions first.",
+        "task_id": null,
+        "user_id": "user123",
+        "fund_allocated": 500000.0,
+        "summaries_count": 0
+    }
+    ```
+    """
+    user_id = user.get("user_id") or user.get("id")
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User ID not found in token")
+
+    logger.info(f"📨 Low-risk rebalance request from user {user_id}")
+
+    # Get portfolio DB client
+    db = prisma_client()
+
+    # 1. Check if pipeline is already running
+    try:
+        status = get_low_risk_pipeline_status.delay(user_id).get(timeout=5)
+        if status.get("running"):
+            elapsed = status.get("elapsed_minutes", 0)
+            return RebalanceTriggerResponse(
+                success=False,
+                message=f"Pipeline already running (for {elapsed} minutes). Wait for completion.",
+                task_id=None,
+                user_id=user_id,
+                fund_allocated=0,
+                summaries_count=0
+            )
+    except Exception as e:
+        logger.warning(f"Failed to check pipeline status: {e}. Proceeding...")
+
+    # 2. Fetch user's portfolio with allocations
+    portfolio = await db.portfolio.find_first(
+        where={"customer_id": user_id},
+        include={
+            "allocations": {
+                "include": {
+                    "tradingAgent": True,
+                    "positions": {
+                        "where": {"status": "open"}
+                    }
+                }
+            }
+        }
+    )
+
+    if not portfolio:
+        raise HTTPException(status_code=404, detail="Portfolio not found for user")
+
+    # 3. Find low_risk allocation
+    low_risk_allocation = None
+    for allocation in portfolio.allocations:
+        if allocation.allocation_type == "low_risk":
+            low_risk_allocation = allocation
+            break
+
+    if not low_risk_allocation:
+        raise HTTPException(
+            status_code=404,
+            detail="Low-risk allocation not found. Please set up portfolio allocations first."
+        )
+
+    # 4. Check for open positions - must be ZERO for rebalance
+    open_positions = getattr(low_risk_allocation, "positions", []) or []
+    if len(open_positions) > 0:
+        return RebalanceTriggerResponse(
+            success=False,
+            message=f"Cannot rebalance: {len(open_positions)} open positions exist. Close all positions first.",
+            task_id=None,
+            user_id=user_id,
+            fund_allocated=float(low_risk_allocation.allocated_amount or 0),
+            summaries_count=0
+        )
+
+    # 5. Check trading agent exists and is active
+    trading_agent = low_risk_allocation.tradingAgent
+
+    if not trading_agent:
+        raise HTTPException(
+            status_code=404,
+            detail="Trading agent not found for low_risk allocation"
+        )
+
+    agent_status = str(trading_agent.status).lower()
+    if agent_status == "paused":
+        raise HTTPException(
+            status_code=400,
+            detail="Trading agent is paused. Please activate the agent before rebalancing."
+        )
+
+    if agent_status not in ["active", "running"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Trading agent status is '{agent_status}'. Expected 'active' or 'running'."
+        )
+
+    # 6. Get allocated cash
+    allocated_cash = float(low_risk_allocation.available_cash or low_risk_allocation.allocated_amount or 0)
+
+    if allocated_cash <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No cash available for rebalancing. Available: ₹{allocated_cash:,.2f}"
+        )
+
+    logger.info(
+        f"✅ Rebalance pre-checks passed | User: {user_id} | Agent: {trading_agent.id} | "
+        f"Available Cash: ₹{allocated_cash:,.2f} | Open Positions: 0"
+    )
+
+    # 7. Fetch previous summaries from Auth DB (LowRiskUserSummaries) using raw SQL
+    prev_summaries = []
+    auth_db = Prisma(datasource={"url": AUTH_DATABASE_URL})
+    try:
+        await auth_db.connect()
+
+        # Use raw SQL query since LowRiskUserSummaries is not in portfolio schema
+        summaries = await auth_db.query_raw(
+            '''
+            SELECT id, "userId", type, "jsonContent", "createdAt"
+            FROM low_risk_user_summaries
+            WHERE "userId" = $1
+            ORDER BY "createdAt" DESC
+            ''',
+            user_id
+        )
+
+        # Convert to list of dicts for the pipeline
+        for summary in summaries:
+            summary_data = {
+                "id": summary.get("id"),
+                "type": summary.get("type"),
+                "content": summary.get("jsonContent"),
+                "created_at": summary.get("createdAt").isoformat() if summary.get("createdAt") else None
+            }
+            prev_summaries.append(summary_data)
+
+        logger.info(f"📋 Found {len(prev_summaries)} previous summaries for user {user_id}")
+
+    except Exception as e:
+        logger.warning(f"Failed to fetch previous summaries: {e}. Proceeding without them...")
+    finally:
+        await auth_db.disconnect()
+
+    # 8. Trigger pipeline with rebalance=True
+    try:
+        result = run_low_risk_pipeline.delay(
+            user_id=user_id,
+            fund_allocated=allocated_cash,
+            rebalance=True,
+            prev_summary={"summaries": prev_summaries, "count": len(prev_summaries)}
+        )
+
+        logger.info(
+            f"✅ Low-risk rebalance triggered for user {user_id}, task_id: {result.id}, "
+            f"with {len(prev_summaries)} previous summaries"
+        )
+
+        return RebalanceTriggerResponse(
+            success=True,
+            message=f"Low-risk rebalance started with {len(prev_summaries)} previous summaries",
+            task_id=result.id,
+            user_id=user_id,
+            fund_allocated=allocated_cash,
+            summaries_count=len(prev_summaries)
+        )
+
+    except Exception as e:
+        logger.error(f"❌ Failed to trigger rebalance for user {user_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to trigger rebalance: {str(e)}"
         )
 
 
