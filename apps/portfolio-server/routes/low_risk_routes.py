@@ -14,7 +14,7 @@ from prisma import Prisma
 
 from utils.auth import get_authenticated_user
 from workers.low_risk_tasks import run_low_risk_pipeline, get_low_risk_pipeline_status
-from db import prisma_client
+from db import prisma_client, DBManager
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +118,7 @@ async def trigger_low_risk_pipeline(
     logger.info(f"📨 Low-risk pipeline trigger request from user {user_id}")
 
     # Initialize DB connection
-    db_manager = DBManager()
+    db_manager = DBManager.get_instance()
     await db_manager.connect()
 
     try:
