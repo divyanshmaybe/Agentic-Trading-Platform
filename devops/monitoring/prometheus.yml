@@ -56,7 +56,7 @@ scrape_configs:
   
   - job_name: 'celery-trading'
     static_configs:
-      - targets: ['localhost:9111']
+      - targets: ['localhost:9101']
         labels:
           worker_pool: 'trading'
           environment: 'local'

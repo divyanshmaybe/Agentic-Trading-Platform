@@ -335,22 +335,22 @@ celery_app.conf.task_annotations = {
         }
         for task_name in STANDARD_TASKS
     },
-    # Signal processing - CRITICAL: NO RATE LIMIT for real-time trading
-    # These must execute immediately when signals come in
+    # Signal processing - CRITICAL: NO RATE LIMIT, NO TIME LIMITS for real-time trading
+    # These must execute immediately when signals come in and run as long as needed
     **{
         task_name: {
-            "soft_time_limit": 300,  # 5 min soft limit (trade execution can take time)
-            "time_limit": 360,  # 6 min hard limit
+            "soft_time_limit": None,  # NO soft limit - run indefinitely
+            "time_limit": None,  # NO hard limit - run indefinitely
             "rate_limit": None,  # NO RATE LIMIT - execute immediately!
             "priority": 9,  # HIGH PRIORITY (0-9, 9 is highest)
         }
         for task_name in SIGNAL_PROCESSING_TASKS
     },
-    # Trade execution - CRITICAL: NO RATE LIMIT
+    # Trade execution - CRITICAL: NO RATE LIMIT, NO TIME LIMITS
     **{
         task_name: {
-            "soft_time_limit": 300,  # 5 min soft limit
-            "time_limit": 360,  # 6 min hard limit
+            "soft_time_limit": None,  # NO soft limit - run indefinitely
+            "time_limit": None,  # NO hard limit - run indefinitely
             "rate_limit": None,  # NO RATE LIMIT - execute immediately!
             "priority": 9,  # HIGH PRIORITY
         }
