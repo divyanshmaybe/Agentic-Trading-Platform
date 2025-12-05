@@ -525,7 +525,7 @@ async def trigger_low_risk_rebalance(
             user_id=user_id,
             fund_allocated=allocated_cash,
             rebalance=True,
-            prev_summary={"summaries": prev_summaries, "count": len(prev_summaries)}
+            prev_summary=prev_summaries[-1] if prev_summaries else None
         )
 
         logger.info(

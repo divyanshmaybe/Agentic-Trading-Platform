@@ -331,7 +331,7 @@ def run_low_risk_pipeline(
             storage=storage,
             task_id=task_id,
         )
-        industry_list = industry_pipeline.run(rebalance=rebalance, prev_summary=prev_summary)
+        industry_list = industry_pipeline.run()
         publish_to_kafka(
             {
                 "content": f"Selected {len(industry_list)} industries",
@@ -384,7 +384,7 @@ def run_low_risk_pipeline(
         )
 
         # Run pipeline and generate trades
-        result = stock_pipeline.run(fund_allocated=fund_allocated, rebalance=rebalance, prev_summary=prev_summary)
+        result = stock_pipeline.run(fund_allocated=fund_allocated)
 
         # Extract summary
         summary = result["summary"]
