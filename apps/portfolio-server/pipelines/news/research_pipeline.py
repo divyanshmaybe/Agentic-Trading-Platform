@@ -293,17 +293,58 @@ REMEMBER YOUR OUTPUT WILL DIRECTLY BE USED AS A PYTHON DICTIONARY IN CODE. ANY M
 
         model = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash",
-            temperature=0.7,
+            temperature=0.2,
             api_key=api_key,
         )
         decision = model.invoke(prompt)
-        return decision.content if hasattr(decision, "content") else str(decision)
+        text = getattr(decision, "content", str(decision)).strip()
+
+        # --- JSON VALIDATION & CLEANING START ---
+        
+        # 1. Log raw response for debugging
+        print(f"[TRADING_AGENT] Raw LLM response (first 500 chars): {text[:500]}...")
+
+        # 2. Strip Markdown code blocks
+        if text.startswith("```"):
+            text = re.sub(r"^```[a-zA-Z0-9]*\n?", "", text)
+            text = re.sub(r"\n?```$", "", text)
+            text = text.strip()
+
+        # 3. Locate JSON boundaries (Curly braces for Dict, Square brackets for List)
+        # The prompt asks for a "JSON OBJECT", so we prioritize {
+        first_char = text.find("{")
+        last_char = text.rfind("}")
+        
+        # Fallback if it output a list of objects
+        if first_char == -1 or last_char == -1:
+            first_char = text.find("[")
+            last_char = text.rfind("]")
+
+        if first_char == -1 or last_char == -1:
+            error_msg = "No JSON object or array found in response"
+            print(f"[TRADING_AGENT] ERROR: {error_msg}")
+            return json.dumps({"error": error_msg, "raw_text": text})
+
+        json_text = text[first_char : last_char + 1]
+
+        # 4. Attempt to parse to ensure validity
+        try:
+            parsed = json.loads(json_text)
+            # If successful, return the CLEANED string so downstream agents get valid JSON text
+            return json.dumps(parsed)
+        except json.JSONDecodeError as exc:
+            print(f"[TRADING_AGENT] ERROR: JSON parse failed: {exc}")
+            print(f"[TRADING_AGENT] Invalid snippet: {json_text[:200]}...")
+            return json.dumps({"error": f"JSON parse failed: {exc}", "raw_text": text})
+            
+        # --- JSON VALIDATION & CLEANING END ---
+
     except Exception as exc:  # pragma: no cover - external errors
         import traceback
 
         error_msg = f"Error generating trading signals: {exc}\n{traceback.format_exc()}"
         print(f"[ERROR] trading_agent_llm: {error_msg}")
-        return f"Error generating trading signals: {exc}"
+        return json.dumps({"error": f"Error generating trading signals: {exc}"})
 
 
 def compute_technical_indicators(symbol: str) -> Optional[Dict[str, Optional[float]]]:
@@ -508,7 +549,7 @@ You must return a structured json output in the following format:
 
         model = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash",
-            temperature=0.7,
+            temperature=0.2,
             api_key=api_key,
         )
         decision = model.invoke(prompt)
