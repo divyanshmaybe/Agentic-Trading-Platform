@@ -189,6 +189,7 @@ def run_low_risk_pipeline(
     Raises:
         Various exceptions if pipeline fails (logged and re-raised for Celery retry)
     """
+    print(rebalance, prev_summary)
     import pandas as pd
     from dotenv import load_dotenv
 
@@ -331,7 +332,7 @@ def run_low_risk_pipeline(
             storage=storage,
             task_id=task_id,
         )
-        industry_list = industry_pipeline.run()
+        industry_list = industry_pipeline.run(rebalance=rebalance, summary=prev_summary)
         publish_to_kafka(
             {
                 "content": f"Selected {len(industry_list)} industries",

@@ -210,7 +210,8 @@ async def trigger_low_risk_pipeline(
     try:
         result = run_low_risk_pipeline.delay(
             user_id=user_id,
-            fund_allocated=allocated_cash
+            fund_allocated=allocated_cash,
+            
         )
 
         logger.info(f"✅ Low-risk pipeline triggered for user {user_id}, task_id: {result.id}")
