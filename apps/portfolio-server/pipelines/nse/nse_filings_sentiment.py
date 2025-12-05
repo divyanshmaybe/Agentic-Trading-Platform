@@ -514,6 +514,14 @@ def should_use_negative_impact(filing_type: str) -> bool:
     return RELEVANT_FILE_TYPES[filing_type].get("negative", False)
 
 
+@pw.udf
+def extract_filename_from_url(url: str) -> str:
+    """Extract filename from URL path."""
+    if not url:
+        return ""
+    return url.split("/")[-1]
+
+
 # ============================================================================
 # PDF DOWNLOAD AND PARSING
 # ============================================================================
@@ -1268,7 +1276,7 @@ def create_nse_filings_pipeline(
     filings_with_types = filings_source.select(
         *pw.this,
         filing_type=map_filing_type(pw.this.desc),
-        filename=pw.apply(lambda url: url.split("/")[-1] if url else "", pw.this.attchmntFile),
+        filename=extract_filename_from_url(pw.this.attchmntFile),
     )
 
     # Filter to only process relevant filing types
