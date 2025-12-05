@@ -44,14 +44,17 @@ show_help() {
     echo "  clean-redis     Clear Redis locks and timestamps only"
     echo "  rmi             Remove all project Docker images"
     echo "  env             Generate docker.env files only"
+    echo "  monitoring      Start/stop monitoring stack (Prometheus, Grafana, Loki)"
     echo "  help            Show this help message"
     echo ""
     echo -e "${YELLOW}Options:${NC}"
     echo "  --no-cache      Use with 'build' to rebuild without Docker cache"
     echo "  -f, --follow    Use with 'logs' to follow log output"
+    echo "  --with-monitoring  Use with 'start' to include monitoring stack"
     echo ""
     echo -e "${YELLOW}Examples:${NC}"
     echo "  ./docker.sh start             # Start all services"
+    echo "  ./docker.sh start --with-monitoring  # Start with monitoring"
     echo "  ./docker.sh stop              # Stop all services"
     echo "  ./docker.sh restart           # Restart all services"
     echo "  ./docker.sh build             # Rebuild images"
@@ -62,7 +65,8 @@ show_help() {
     echo "  ./docker.sh clean             # Full reset (removes data)"
     echo "  ./docker.sh clean-redis       # Clear Redis locks only"
     echo "  ./docker.sh rmi               # Remove all project images"
-    echo "  ./docker.sh env               # Regenerate env files"
+    echo "  ./docker.sh monitoring start  # Start monitoring only"
+    echo "  ./docker.sh monitoring stop   # Stop monitoring only"
     echo ""
 }
 
@@ -347,6 +351,8 @@ create_kafka_topics() {
 
 # Function to start containers
 do_start() {
+    local with_monitoring=$1
+    
     # Generate docker.env files
     echo ""
     generate_docker_env
@@ -360,8 +366,13 @@ do_start() {
     
     # Start containers
     echo ""
-    print_info "🚀 Starting all containers..."
-    docker compose up -d
+    if [ "$with_monitoring" = true ]; then
+        print_info "🚀 Starting all containers with monitoring stack..."
+        docker compose --profile monitoring up -d
+    else
+        print_info "🚀 Starting all containers..."
+        docker compose up -d
+    fi
     print_success "Containers starting..."
     
     # Wait for health checks
@@ -384,6 +395,41 @@ do_start() {
     echo "   pnpm docker-logs         # All logs in turbo panels"
     echo "   ./docker.sh logs -f      # Follow all logs"
     echo "   docker logs -f <name>    # Follow specific container"
+    
+    if [ "$with_monitoring" = true ]; then
+        echo ""
+        echo "📊 Monitoring URLs:"
+        echo "   Prometheus: http://localhost:9090"
+        echo "   Grafana:    http://localhost:3001 (admin/admin)"
+        echo "   Loki:       http://localhost:3100"
+    fi
+}
+
+# Function to start/stop monitoring stack
+do_monitoring() {
+    local action=$1
+    
+    case $action in
+        start)
+            print_info "📊 Starting monitoring stack..."
+            docker compose --profile monitoring up -d prometheus grafana loki redis-exporter celery-exporter postgres-exporter promtail
+            print_success "Monitoring stack started!"
+            echo ""
+            echo "📊 Monitoring URLs:"
+            echo "   Prometheus: http://localhost:9090"
+            echo "   Grafana:    http://localhost:3001 (admin/admin)"
+            echo "   Loki:       http://localhost:3100"
+            ;;
+        stop)
+            print_info "📊 Stopping monitoring stack..."
+            docker compose --profile monitoring stop prometheus grafana loki redis-exporter celery-exporter postgres-exporter promtail
+            print_success "Monitoring stack stopped!"
+            ;;
+        *)
+            echo "Usage: ./docker.sh monitoring [start|stop]"
+            exit 1
+            ;;
+    esac
 }
 
 # Function to show status
@@ -421,6 +467,8 @@ shift
 # Parse options
 NO_CACHE=false
 FOLLOW=false
+WITH_MONITORING=false
+MONITORING_ACTION=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -430,6 +478,15 @@ while [[ $# -gt 0 ]]; do
             ;;
         -f|--follow)
             FOLLOW=true
+            shift
+            ;;
+        --with-monitoring)
+            WITH_MONITORING=true
+            shift
+            ;;
+        start|stop)
+            # For monitoring command
+            MONITORING_ACTION=$1
             shift
             ;;
         *)
@@ -443,7 +500,7 @@ done
 # Execute command
 case $COMMAND in
     start)
-        do_start
+        do_start $WITH_MONITORING
         ;;
     stop)
         do_stop
@@ -453,7 +510,7 @@ case $COMMAND in
     restart)
         do_stop
         echo ""
-        do_start
+        do_start $WITH_MONITORING
         ;;
     build)
         do_build $NO_CACHE
@@ -483,6 +540,13 @@ case $COMMAND in
         generate_docker_env
         echo ""
         echo -e "${GREEN}✅ Environment files generated!${NC}"
+        ;;
+    monitoring)
+        if [ -z "$MONITORING_ACTION" ]; then
+            echo "Usage: ./docker.sh monitoring [start|stop]"
+            exit 1
+        fi
+        do_monitoring $MONITORING_ACTION
         ;;
     help|-h|--help)
         show_help

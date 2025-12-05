@@ -791,6 +791,7 @@ services:
       - "9090:9090"
     volumes:
       - ./docker_manifests/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./devops/monitoring/alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
       - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -814,7 +815,7 @@ services:
       - GF_SERVER_ROOT_URL=http://localhost:3001
     volumes:
       - grafana_data:/var/lib/grafana
-      - ./devops/monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./docker_manifests/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
       - ./devops/monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
       - ./devops/monitoring/celery-dashboard.json:/var/lib/grafana/dashboards/celery-dashboard.json:ro
       - ./devops/monitoring/celery-detailed-dashboard.json:/var/lib/grafana/dashboards/celery-detailed-dashboard.json:ro
