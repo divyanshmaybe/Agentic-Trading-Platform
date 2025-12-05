@@ -298,7 +298,7 @@ setup_celery_exporter() {
     fi
     
     # Get Redis URL from environment or use default
-    local redis_url="${CELERY_BROKER_URL:-redis://localhost:6381/0}"
+    local redis_url="${CELERY_BROKER_URL:-redis://localhost:6379/0}"
     
     # Start Celery Exporter with host network
     log_info "Starting Celery Exporter container ${CELERY_EXPORTER_CONTAINER_NAME}..."
@@ -328,7 +328,7 @@ setup_redis_exporter() {
     fi
     
     # Get Redis address from environment or use default (portfolio_redis port)
-    local redis_addr="${REDIS_ADDR:-redis://localhost:6381}"
+    local redis_addr="${REDIS_ADDR:-redis://localhost:6379}"
     
     # Start Redis Exporter with host network
     log_info "Starting Redis Exporter container ${REDIS_EXPORTER_CONTAINER_NAME}..."
@@ -370,8 +370,8 @@ usage() {
     echo "  GRAFANA_IMAGE, GRAFANA_CONTAINER_NAME"
     echo "  CELERY_EXPORTER_IMAGE, CELERY_EXPORTER_CONTAINER_NAME"
     echo "  REDIS_EXPORTER_IMAGE, REDIS_EXPORTER_CONTAINER_NAME"
-    echo "  CELERY_BROKER_URL           # Redis URL for Celery Exporter (default: redis://localhost:6381/0)"
-    echo "  REDIS_ADDR                  # Redis address for Redis Exporter (default: redis://localhost:6381)"
+  echo "  CELERY_BROKER_URL           # Redis URL for Celery Exporter (default: redis://localhost:6379/0)"
+  echo "  REDIS_ADDR                  # Redis address for Redis Exporter (default: redis://localhost:6379)"
 }
 
 main() {
