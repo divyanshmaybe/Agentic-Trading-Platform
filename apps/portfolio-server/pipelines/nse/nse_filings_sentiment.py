@@ -766,8 +766,8 @@ def generate_trading_signal(
     - Model 2 (gemini-2.5-pro): Validates logic and generates confidence_score
       Has access to google_search tool for verification.
 
-    Prompts are loaded from YAML templates in the templates/ folder.
-    Uses llm_response_utils for response cleaning and parsing.
+    The model returns JSON directly wrapped in ```json...``` block.
+    This function extracts the JSON and returns it with timing metadata.
 
     After signal processing, the PDF file is deleted from the docs folder.
 
@@ -778,16 +778,7 @@ def generate_trading_signal(
     """
     import time
     import yaml
-
-    # Import LLM response utilities
-    try:
-        from utils.low_risk_utils.llm_response_utils import (
-            clean_markdown_from_response,
-        )
-        has_llm_utils = True
-    except ImportError:
-        has_llm_utils = False
-        print("[WARN] llm_response_utils not available, using inline cleaning")
+    import json
 
     # Track LLM processing start time
     llm_start_time = datetime.utcnow()
@@ -800,7 +791,7 @@ def generate_trading_signal(
     # Validate inputs
     if not pdf_filename or not pdf_filename.strip():
         print("[WARN] Empty PDF filename provided to generate_trading_signal")
-        return "Error: Empty PDF filename"
+        return json.dumps({"error": "Empty PDF filename", "final_signal": 0, "Confidence": 0})
 
     print(f"[PIPELINE] Generating trading signal with two-model approach (PDF filename: {pdf_filename})...")
     # Load prompt templates from YAML files
@@ -821,16 +812,7 @@ def generate_trading_signal(
     except Exception as e:
         error_msg = f"Failed to load YAML templates from {templates_dir}: {e}"
         print(f"[ERROR] {error_msg}")
-        return f"Error: {error_msg}"
-
-    def clean_llm_response(response_text: str) -> str:
-        """Clean LLM response using utils or inline fallback."""
-        if has_llm_utils:
-            return clean_markdown_from_response(response_text)
-        # Inline fallback
-        cleaned = re.sub(r"```(?:python|json|yaml|xml|html)?\s*\n?", "", response_text)
-        cleaned = re.sub(r"```\s*$", "", cleaned)
-        return cleaned.strip()
+        return json.dumps({"error": error_msg, "final_signal": 0, "Confidence": 0})
 
     def extract_content_from_response(response) -> str:
         """Extract content string from LLM response object."""
@@ -852,7 +834,28 @@ def generate_trading_signal(
                     text_parts.append(str(block))
             content = '\n'.join(text_parts)
 
-        return clean_llm_response(content)
+        return content
+
+    def extract_json_from_response(response_text: str) -> dict:
+        """Extract JSON from model response (handles ```json...``` blocks)."""
+        # Try to extract JSON from markdown code block
+        json_match = re.search(r"```json\s*(.*?)\s*```", response_text, re.DOTALL)
+        if json_match:
+            json_text = json_match.group(1).strip()
+            try:
+                return json.loads(json_text)
+            except json.JSONDecodeError as e:
+                print(f"[WARN] Failed to parse JSON from code block: {e}")
+        
+        # Try to parse the entire response as JSON
+        try:
+            return json.loads(response_text.strip())
+        except json.JSONDecodeError:
+            pass
+        
+        # Fallback: return empty dict with defaults
+        print(f"[WARN] Could not extract JSON from response: {response_text[:200]}...")
+        return {"final_signal": 0, "Confidence": 0}
 
     # ============ MODEL 1: Generate signal + explanation ============
     user_prompt = gen_config['prompt_template'].format(
@@ -877,13 +880,12 @@ def generate_trading_signal(
         if not api_key or api_key.strip() == "":
             error_msg = "GEMINI_API_KEY is empty or not set. Please check your .env file."
             print(f"[ERROR] {error_msg}")
-            return f"Error: {error_msg}"
+            return json.dumps({"error": error_msg, "final_signal": 0, "Confidence": 0})
 
         from langchain_google_genai import ChatGoogleGenerativeAI
         from langchain_core.messages import HumanMessage
         from PyPDF2 import PdfReader
         import base64
-        import time
 
         # Set GOOGLE_API_KEY env var for langchain
         original_google_key = os.environ.get("GOOGLE_API_KEY", None)
@@ -937,25 +939,19 @@ def generate_trading_signal(
             decision_raw = trading_model.invoke([human_msg])
             decision_text = extract_content_from_response(decision_raw)
 
-            print(f"[PIPELINE] Model 1 Response: {decision_text[:200]}...")
+            print(f"[PIPELINE] Model 1 Response: {decision_text[:300]}...")
 
-            # Extract signal from Model 1
-            sig_match = re.search(r"trading_signal:\s*(-?\d+)", decision_text, re.IGNORECASE)
-            signal = int(sig_match.group(1)) if sig_match else 0
+            # Extract JSON from Model 1 response
+            model1_result = extract_json_from_response(decision_text)
+            signal = model1_result.get("final_signal", model1_result.get("trading_signal", 0))
+            confidence = model1_result.get("Confidence", model1_result.get("confidence", 0))
 
-            # Extract explanation from Model 1
-            exp_match = re.search(r"explanation:\s*(.*)", decision_text, re.DOTALL | re.IGNORECASE)
-            explanation = exp_match.group(1).strip() if exp_match else "No explanation provided"
-
-            # Clean up explanation (remove any trailing markers)
-            explanation = re.sub(r'\n__LLM_TIMING__.*$', '', explanation).strip()
-
-            print(f"[PIPELINE] Model 1 Result: signal={signal}, explanation={explanation[:100]}...")
+            print(f"[PIPELINE] Model 1 Result: signal={signal}, confidence={confidence}")
 
             # -------- MODEL 2: Validate & generate confidence --------
             validation_prompt = val_config['prompt_template'].format(
                 signal=signal,
-                explanation=explanation
+                explanation=json.dumps(model1_result)  # Pass full JSON for validation
             )
             model2_name = val_config.get('model', 'gemini-2.5-pro')
             model2_temp = val_config.get('temperature', 0.1)
@@ -976,18 +972,20 @@ def generate_trading_signal(
             validation_raw = validator_model_with_search.invoke([val_msg])
             validation_text = extract_content_from_response(validation_raw)
 
-            print(f"[PIPELINE] Model 2 Response: {validation_text[:200]}...")
+            print(f"[PIPELINE] Model 2 Response: {validation_text[:300]}...")
 
-            # Extract final_signal from Model 2
-            final_sig_match = re.search(r"final_signal:\s*(-?\d+)", validation_text, re.IGNORECASE)
-            final_signal = int(final_sig_match.group(1)) if final_sig_match else signal
+            # Extract JSON from Model 2 response
+            model2_result = extract_json_from_response(validation_text)
+            final_signal = model2_result.get("final_signal", signal)
+            final_confidence = model2_result.get("Confidence", model2_result.get("confidence", confidence))
 
-            # Extract confidence from Model 2
-            conf_match = re.search(r"confidence(?:_score)?:\s*([0-9]*\.?[0-9]+)", validation_text, re.IGNORECASE)
-            confidence = float(conf_match.group(1)) if conf_match else 0.5
-            confidence = max(0.0, min(1.0, confidence))  # Clamp to [0, 1]
+            # Clamp confidence to [0, 1]
+            if isinstance(final_confidence, (int, float)):
+                final_confidence = max(0.0, min(1.0, float(final_confidence)))
+            else:
+                final_confidence = 0.5
 
-            print(f"[PIPELINE] Model 2 Result: final_signal={final_signal}, confidence={confidence}")
+            print(f"[PIPELINE] Model 2 Result: final_signal={final_signal}, confidence={final_confidence}")
 
             # Calculate LLM delay
             llm_end_time = datetime.utcnow()
@@ -995,13 +993,15 @@ def generate_trading_signal(
 
             print(f"[PIPELINE] ⏱️ Total LLM delay (both models): {llm_delay_ms}ms")
 
-            # Construct final response in expected format
-            response_text = f"""trading_signal: {final_signal}
-confidence_score: {confidence}
-concise_explanation: {explanation}"""
-
-            # Append timing metadata to response for downstream parsing
-            timing_suffix = f"\n__LLM_TIMING__:{llm_start_time.isoformat()}Z|{llm_end_time.isoformat()}Z|{llm_delay_ms}"
+            # Construct final response JSON with timing metadata
+            final_result = {
+                "final_signal": final_signal,
+                "Confidence": final_confidence,
+                "explanation": model2_result.get("explanation", model1_result.get("explanation", "")),
+                "llm_start_time": llm_start_time.isoformat() + "Z",
+                "llm_end_time": llm_end_time.isoformat() + "Z",
+                "llm_delay_ms": llm_delay_ms
+            }
 
             # Delete PDF file after signal is processed
             if pdf_path and os.path.exists(pdf_path):
@@ -1011,7 +1011,7 @@ concise_explanation: {explanation}"""
                 except Exception as e:
                     print(f"[CLEANUP] ⚠️ Failed to delete PDF file {pdf_path}: {e}")
 
-            return response_text + timing_suffix
+            return json.dumps(final_result)
 
         finally:
             # Restore original environment variable if it existed
@@ -1042,158 +1042,98 @@ concise_explanation: {explanation}"""
                 print(f"[CLEANUP] ⚠️ Failed to delete PDF file {pdf_path}: {cleanup_e}")
 
         # Provide helpful error message
+        error_result = {"final_signal": 0, "Confidence": 0, "error": error_msg}
         if "credentials" in error_msg.lower() or "api key" in error_msg.lower():
-            return f"Error: API key issue - {error_msg}. Please check GEMINI_API_KEY in .env file."
-        if "429" in error_msg or "quota" in error_msg.lower():
-            return "Error: Rate limit exceeded. Please reduce scraping frequency or upgrade Gemini API tier."
-        return f"Error generating signal: {error_msg}"
+            error_result["error"] = f"API key issue - {error_msg}. Please check GEMINI_API_KEY in .env file."
+        elif "429" in error_msg or "quota" in error_msg.lower():
+            error_result["error"] = "Rate limit exceeded. Please reduce scraping frequency or upgrade Gemini API tier."
+        return json.dumps(error_result)
 
 
 @pw.udf
 def parse_trading_signal_value(response: str) -> int:
-    """Parse trading signal value (1, 0, or -1) from LLM response using utils."""
+    """Parse trading signal value (1, 0, or -1) from JSON response."""
+    import json
     try:
-        # Check if response is an error message
-        if not response or "error" in response.lower() or "429" in response or "quota" in response.lower():
-            print(f"[WARN] Invalid LLM response (error detected): {response[:200]}")
+        if not response:
             return 0
 
-        # Try to use llm_response_utils
+        # Parse JSON response
         try:
-            from utils.low_risk_utils.llm_response_utils import extract_trading_signal_fields
-            fields = extract_trading_signal_fields(response)
-            signal = fields.get("final_signal") or fields.get("trading_signal", 0)
-            print(f"[PIPELINE] Parsed signal using utils: {signal}")
+            data = json.loads(response)
+            signal = data.get("final_signal", data.get("trading_signal", 0))
+            # Validate signal is in valid range
+            if signal not in [-1, 0, 1]:
+                print(f"[WARN] Invalid signal value {signal}, defaulting to HOLD (0)")
+                return 0
+            print(f"[PIPELINE] Parsed signal from JSON: {signal}")
             return signal
-        except ImportError:
-            pass  # Fall back to inline parsing
+        except json.JSONDecodeError as e:
+            print(f"[WARN] Failed to parse JSON response: {e}")
+            return 0
 
-        # Fallback: Try multiple patterns to match various response formats
-        patterns = [
-            r"trading_signal:\s*(-?\d+)",  # Original format
-            r"trading_signal\s*:\s*(-?\d+)",  # With optional spaces
-            r"signal:\s*(-?\d+)",  # Alternative format
-            r"BUY.*?(\d+)|SELL.*?(-?\d+)|HOLD.*?(\d+)",  # Text format
-            r"(-?\d+)\s*[,\n]?\s*(?:BUY|SELL|HOLD)",  # Number before text
-        ]
-
-        for pattern in patterns:
-            signal_match = re.search(pattern, response, re.IGNORECASE)
-            if signal_match:
-                # Get the first non-None group
-                signal_str = next((g for g in signal_match.groups() if g is not None), None)
-                if signal_str:
-                    signal = int(signal_str)
-                    # Validate signal is in valid range
-                    if signal not in [-1, 0, 1]:
-                        print(f"[WARN] Invalid signal value {signal}, defaulting to HOLD (0)")
-                        return 0
-                    print(f"[PIPELINE] Parsed signal: {signal} from response")
-                    return signal
-
-        # If no pattern matches, print debug info
-        print(f"[WARN] Could not parse signal from response: {response[:300]}")
-        return 0
     except Exception as e:
-        print(f"[ERROR] Error parsing signal: {e}, Response: {response[:200]}")
+        print(f"[ERROR] Error parsing signal: {e}")
         return 0
 
 
 @pw.udf
 def parse_trading_signal_explanation(response: str) -> str:
-    """Parse trading signal explanation from LLM response using utils."""
+    """Parse trading signal explanation from JSON response."""
+    import json
     try:
-        # Try to use llm_response_utils
+        if not response:
+            return "No explanation provided"
+
+        # Parse JSON response
         try:
-            from utils.low_risk_utils.llm_response_utils import extract_trading_signal_fields
-            fields = extract_trading_signal_fields(response)
-            explanation = fields.get("explanation", "")
+            data = json.loads(response)
+            explanation = data.get("explanation", "No explanation provided")
             if explanation:
-                print(f"[PIPELINE] Parsed explanation using utils: {explanation[:100]}...")
-                return explanation
-        except ImportError:
-            pass  # Fall back to inline parsing
+                print(f"[PIPELINE] Parsed explanation from JSON: {explanation[:100]}...")
+            return explanation
+        except json.JSONDecodeError as e:
+            print(f"[WARN] Failed to parse JSON response: {e}")
+            return "No explanation provided"
 
-        # Fallback: Try multiple patterns
-        patterns = [
-            r"concise_explanation:\s*(.+?)(?:\n\n|\n[A-Z]|$)",  # Original format with lookahead
-            r"concise_explanation\s*:\s*(.+?)(?:\n\n|\n[A-Z]|$)",  # With spaces
-            r"explanation:\s*(.+?)(?:\n\n|\n[A-Z]|$)",  # Alternative format
-            r"reasoning:\s*(.+?)(?:\n\n|\n[A-Z]|$)",  # Another alternative
-        ]
-
-        for pattern in patterns:
-            explanation_match = re.search(pattern, response, re.DOTALL | re.IGNORECASE)
-            if explanation_match:
-                explanation = explanation_match.group(1).strip()
-                if explanation:
-                    print(f"[PIPELINE] Parsed explanation: {explanation[:100]}...")
-                    return explanation
-
-        # If no pattern matches, try to extract anything after the signal
-        # Look for text after "concise_explanation" or after the signal line
-        fallback_match = re.search(r"(?:concise_explanation|explanation|reasoning)[:\s]*(.+?)(?:\n\n|$)", response, re.DOTALL | re.IGNORECASE)
-        if fallback_match:
-            explanation = fallback_match.group(1).strip()
-            if explanation and len(explanation) > 10:  # Only if meaningful
-                return explanation
-
-        print(f"[WARN] Could not parse explanation from response: {response[:300]}")
-        return "No explanation provided"
     except Exception as e:
         print(f"[ERROR] Error parsing explanation: {e}")
-        return f"Error: {str(e)}"
+        return "No explanation provided"
 
 
 @pw.udf
 def parse_trading_signal_confidence(response: str) -> float:
-    """Parse confidence score (0-1) from LLM response using utils."""
+    """Parse confidence score (0-1) from JSON response."""
+    import json
     try:
         if not response:
             return 0.0
-        if "error" in response.lower() or "rate limit" in response.lower():
+
+        # Parse JSON response
+        try:
+            data = json.loads(response)
+            # Check for error in response
+            if data.get("error"):
+                return 0.0
+            confidence = data.get("Confidence", data.get("confidence", data.get("confidence_score", 0.5)))
+            # Ensure confidence is a float and clamp to [0, 1]
+            confidence = float(confidence) if confidence is not None else 0.5
+            confidence = max(0.0, min(1.0, confidence))
+            print(f"[PIPELINE] Parsed confidence from JSON: {confidence}")
+            return confidence
+        except json.JSONDecodeError as e:
+            print(f"[WARN] Failed to parse JSON response: {e}")
             return 0.0
 
-        # Try to use llm_response_utils
-        try:
-            from utils.low_risk_utils.llm_response_utils import extract_trading_signal_fields
-            fields = extract_trading_signal_fields(response)
-            confidence = fields.get("confidence_score", 0.5)
-            print(f"[PIPELINE] Parsed confidence using utils: {confidence}")
-            return confidence
-        except ImportError:
-            pass  # Fall back to inline parsing
-
-        match = re.search(r"confidence_score:\s*([0-9]*\.?[0-9]+)", response, re.IGNORECASE)
-        if match:
-            try:
-                value = float(match.group(1))
-            except ValueError:
-                return 0.0
-            if value < 0.0:
-                return 0.0
-            if value > 1.0:
-                return 1.0
-            return value
-
-        # Fallback: look for JSON style "confidence"
-        match_json = re.search(r'"confidence(?:_score)?"\s*:\s*([0-9]*\.?[0-9]+)', response, re.IGNORECASE)
-        if match_json:
-            try:
-                value = float(match_json.group(1))
-            except ValueError:
-                return 0.0
-            return max(0.0, min(1.0, value))
-
-    except Exception as exc:  # pragma: no cover - defensive logging
+    except Exception as exc:
         print(f"[ERROR] Error parsing confidence score: {exc}")
-    return 0.0
+        return 0.0
 
 
 @pw.udf
 def parse_llm_timing(response: str) -> str:
     """
-    Parse LLM timing metadata from response.
+    Parse LLM timing metadata from JSON response.
 
     Returns JSON string with timing info:
     - llm_start_time: ISO timestamp when LLM processing started
@@ -1202,24 +1142,27 @@ def parse_llm_timing(response: str) -> str:
 
     Returns empty string if timing not found.
     """
+    import json
     try:
         if not response:
             return ""
 
-        # Look for timing suffix: __LLM_TIMING__:start_time|end_time|delay_ms
-        timing_match = re.search(r"__LLM_TIMING__:([^|]+)\|([^|]+)\|(\d+)", response)
-        if timing_match:
-            llm_start_time = timing_match.group(1)
-            llm_end_time = timing_match.group(2)
-            llm_delay_ms = int(timing_match.group(3))
+        # Parse JSON response and extract timing fields
+        try:
+            data = json.loads(response)
+            llm_start_time = data.get("llm_start_time", "")
+            llm_end_time = data.get("llm_end_time", "")
+            llm_delay_ms = data.get("llm_delay_ms", 0)
 
-            import json
-            timing_data = {
-                "llm_start_time": llm_start_time,
-                "llm_end_time": llm_end_time,
-                "llm_delay_ms": llm_delay_ms,
-            }
-            return json.dumps(timing_data)
+            if llm_start_time and llm_end_time:
+                timing_data = {
+                    "llm_start_time": llm_start_time,
+                    "llm_end_time": llm_end_time,
+                    "llm_delay_ms": llm_delay_ms,
+                }
+                return json.dumps(timing_data)
+        except json.JSONDecodeError:
+            pass
 
         return ""
     except Exception as exc:
