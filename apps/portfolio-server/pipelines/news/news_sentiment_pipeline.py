@@ -64,80 +64,6 @@ else:
 
 
 # ---------------------------------------------------------------------------
-# Defaults and fallbacks
-# ---------------------------------------------------------------------------
-
-DEFAULT_SAMPLE_ARTICLES: List[Dict[str, Any]] = [
-    {
-        "stream": "Information Technology",
-        "title": "TCS inks multi-year cloud deal with global insurer",
-        "content": "Tata Consultancy Services announced a five-year contract to modernise core insurance systems using hybrid cloud platforms.",
-        "sentiment": "positive",
-        "url": "https://news.example.com/tcs-cloud-contract",
-    },
-    {
-        "stream": "Financial Services",
-        "title": "RBI hints at calibrated rate pause amid moderating inflation",
-        "content": "Policy minutes suggest a data-dependent approach with focus on liquidity absorption and targeted sectoral support.",
-        "sentiment": "neutral",
-        "url": "https://news.example.com/rbi-policy-minutes",
-    },
-    {
-        "stream": "Oil Gas & Consumable Fuels",
-        "title": "Oil marketing companies brace for Brent volatility",
-        "content": "Upstream supply constraints in the Middle East keep margins in focus even as domestic demand remains resilient.",
-        "sentiment": "negative",
-        "url": "https://news.example.com/omc-margins-outlook",
-    },
-]
-
-DEFAULT_SECTOR_ANALYSIS: str = (
-    "Sector sentiment snapshot (placeholder) including IT strength, cautious banking outlook, "
-    "and energy headwinds. Configure NEWS_ORG_API_KEY and GEMINI_API_KEY for live analysis."
-)
-
-DEFAULT_STOCK_RECOMMENDATIONS: List[Dict[str, Any]] = [
-    {
-        "sector": "Information Technology",
-        "stock_name": "TCS",
-        "trade_signal": "buy",
-        "detailed_analysis": "Strong deal momentum and resilient margin profile support near-term upside.",
-        "time_window_investment": "Next 5 trading sessions",
-        "news_source": "https://news.example.com/tcs-cloud-contract",
-    },
-    {
-        "sector": "Financial Services",
-        "stock_name": "HDFCBANK",
-        "trade_signal": "hold",
-        "detailed_analysis": "Credit growth stable; monitor liquidity trends before adding exposure.",
-        "time_window_investment": "No actionable window for hold signal",
-        "news_source": "https://news.example.com/rbi-policy-minutes",
-    },
-    {
-        "sector": "Oil Gas & Consumable Fuels",
-        "stock_name": "RELIANCE",
-        "trade_signal": "sell",
-        "detailed_analysis": "Crack spread pressure and external supply risks limit near-term upside.",
-        "time_window_investment": "Monitor over the next 2 weeks",
-        "news_source": "https://news.example.com/omc-margins-outlook",
-    },
-]
-
-SAMPLE_STOCKS: List[tuple[str, str]] = [
-    ("RELIANCE", "Oil Gas & Consumable Fuels"),
-    ("TCS", "Information Technology"),
-    ("HDFCBANK", "Financial Services"),
-    ("INFY", "Information Technology"),
-    ("ICICIBANK", "Financial Services"),
-    ("HINDUNILVR", "Fast Moving Consumer Goods"),
-    ("SBIN", "Financial Services"),
-    ("BHARTIARTL", "Telecommunication"),
-    ("KOTAKBANK", "Financial Services"),
-    ("LT", "Construction"),
-]
-
-
-# ---------------------------------------------------------------------------
 # Kafka integration for stock recommendations
 # ---------------------------------------------------------------------------
 
@@ -465,44 +391,8 @@ def _aggregate_sentiment(sentiment_path: Path) -> Dict[str, List[Dict[str, Any]]
 
 
 def _fallback_sentiment() -> Dict[str, List[Dict[str, Any]]]:
-    results: Dict[str, List[Dict[str, Any]]] = {}
-    for article in DEFAULT_SAMPLE_ARTICLES:
-        stream = article["stream"]
-        results.setdefault(stream, []).append(article)
-    return results
-
-
-def _compute_technical_snapshot(logger: logging.Logger) -> List[Dict[str, Any]]:
-    import time
-    indicators: List[Dict[str, Any]] = []
-    failed_count = 0
-    for i, (symbol, industry) in enumerate(SAMPLE_STOCKS):
-        logger.debug("Fetching technical indicators for %s", symbol)
-        try:
-            # Add delay between requests to avoid rate limiting (Angel One allows ~10 requests/sec)
-            if i > 0:
-                time.sleep(0.5)  # 500ms delay between requests
-            data = compute_technical_indicators(symbol)
-        except Exception as exc:  # pragma: no cover - network/IO failures
-            logger.warning("Technical indicator fetch failed for %s: %s", symbol, exc)
-            failed_count += 1
-            continue
-        if not data:
-            logger.debug("No technical data returned for %s (likely insufficient data points)", symbol)
-            failed_count += 1
-            continue
-        data["Industry"] = industry
-        indicators.append(data)
-    
-    logger.info("Technical snapshot: %s successful, %s failed out of %s stocks", 
-               len(indicators), failed_count, len(SAMPLE_STOCKS))
-    if len(indicators) == 0:
-        logger.error("❌ Technical snapshot is EMPTY - all %s stocks failed to fetch indicators. Stock recommendations will likely fail.", len(SAMPLE_STOCKS))
-    return indicators
-
-
-def _build_placeholder_recommendations() -> List[Dict[str, Any]]:
-    return DEFAULT_STOCK_RECOMMENDATIONS.copy()
+    # Return empty dict - no fake sentiment data
+    return {}
 
 
 # ---------------------------------------------------------------------------
@@ -649,14 +539,12 @@ def execute_news_sentiment_pipeline(
             log.exception("Article fetching/sentiment failed, using fallback data: %s", exc)
             sentiment_path.unlink(missing_ok=True)
     else:
-        log.warning("NEWS_ORG_API_KEY not configured; using placeholder dataset")
+        log.warning("NEWS_ORG_API_KEY not configured; skipping article fetch (no fake data will be published)")
 
     if sentiment_source == "placeholder":
-        articles = DEFAULT_SAMPLE_ARTICLES
-        sentiment_path.write_text(
-            "\n".join(json.dumps(article) for article in articles),
-            encoding="utf-8",
-        )
+        # Don't write fake data - just create empty file
+        log.info("No real sentiment data available - skipping placeholder data")
+        sentiment_path.write_text("", encoding="utf-8")
 
     sentiment_by_stream = _aggregate_sentiment(sentiment_path)
     if not sentiment_by_stream:
@@ -665,12 +553,16 @@ def execute_news_sentiment_pipeline(
     article_count = sum(len(v) for v in sentiment_by_stream.values())
     log.info("Aggregated %s analysed articles across %s streams", article_count, len(sentiment_by_stream))
 
-    _publish_sentiment_articles_to_kafka(
-        sentiment_by_stream,
-        provider=sentiment_source,
-        generated_at=run_started_at,
-        logger=log,
-    )
+    # Only publish to Kafka if we have real data
+    if article_count > 0 and sentiment_source != "placeholder":
+        _publish_sentiment_articles_to_kafka(
+            sentiment_by_stream,
+            provider=sentiment_source,
+            generated_at=run_started_at,
+            logger=log,
+        )
+    else:
+        log.info("Skipping sentiment Kafka publish - no real articles to publish")
 
     # ------------------------------------------------------------------
     # Stage 2: Gemini trading agent (optional)
@@ -696,10 +588,10 @@ def execute_news_sentiment_pipeline(
             sector_agent_source = "gemini"
         except Exception as exc:  # pragma: no cover - external service issues
             log.exception("Gemini trading agent failed: %s", exc)
-            sector_analysis = DEFAULT_SECTOR_ANALYSIS
+            sector_analysis = ""  # Empty instead of placeholder
     else:
-        log.warning("GEMINI_API_KEY not configured; using placeholder sector analysis")
-        sector_analysis = DEFAULT_SECTOR_ANALYSIS
+        log.warning("GEMINI_API_KEY not configured; skipping sector analysis (no fake data will be published)")
+        sector_analysis = ""
 
     sector_analysis_payload = {
         "generated_at": run_started_at,
@@ -708,12 +600,17 @@ def execute_news_sentiment_pipeline(
         "analysis": sector_analysis,
     }
     _write_json(sector_analysis_path, sector_analysis_payload)
-    _publish_sector_analysis_to_kafka(
-        sector_analysis_payload,
-        provider=sector_agent_source,
-        generated_at=run_started_at,
-        logger=log,
-    )
+    
+    # Only publish to Kafka if we have real analysis
+    if sector_analysis and sector_agent_source != "placeholder":
+        _publish_sector_analysis_to_kafka(
+            sector_analysis_payload,
+            provider=sector_agent_source,
+            generated_at=run_started_at,
+            logger=log,
+        )
+    else:
+        log.info("Skipping sector analysis Kafka publish - no real analysis to publish")
 
     # ------------------------------------------------------------------
     # Stage 3: Stock recommendations (optional Gemini call)
@@ -722,15 +619,15 @@ def execute_news_sentiment_pipeline(
     technical_snapshot: List[Dict[str, Any]] = []
 
     if gemini_key:
-        log.info("Computing technical snapshot for stock recommendations...")
-        technical_snapshot = _compute_technical_snapshot(log)
-        if not technical_snapshot:
-            log.warning("Technical indicators unavailable (empty snapshot); recommendations may be limited or fallback to placeholders")
-        else:
-            log.info("Technical snapshot computed: %s stocks with indicators", len(technical_snapshot))
+        # In production, technical snapshot requires stocks to be identified
+        # from sector analysis or sentiment data. For now, we skip technical
+        # analysis since we don't have a hardcoded stock list.
+        # The stock_recommender will work with sector analysis alone.
+        log.info("Skipping technical snapshot computation - no hardcoded stock list in production mode")
+        log.info("Stock recommendations will be based on sector analysis only")
 
         try:
-            tech_json = json.dumps(technical_snapshot)
+            tech_json = json.dumps(technical_snapshot)  # Empty list
             log.info("Invoking Gemini stock recommender (sector analysis length: %s chars, tech data: %s stocks)...", 
                     len(sector_analysis_payload["analysis"]), len(technical_snapshot))
             
@@ -753,18 +650,17 @@ def execute_news_sentiment_pipeline(
                 log.error("❌ Stock recommender returned error: %s", error_detail)
                 if raw_text:
                     log.error("Raw LLM response (first 500 chars): %s", raw_text[:500])
-                log.warning("Falling back to placeholder recommendations")
-                stock_recommendations = _build_placeholder_recommendations()
+                log.warning("No recommendations generated due to error")
+                stock_recommendations = []  # Empty instead of placeholder
             elif not isinstance(stock_recommendations, list):
                 log.error("❌ Unexpected recommendation payload type: %s (value: %s)", 
                          type(stock_recommendations), str(stock_recommendations)[:200])
-                log.warning("Falling back to placeholder recommendations")
-                stock_recommendations = _build_placeholder_recommendations()
+                log.warning("No recommendations generated due to unexpected response")
+                stock_recommendations = []  # Empty instead of placeholder
             elif len(stock_recommendations) == 0:
                 log.warning("⚠️ Stock recommender returned empty list - no recommendations generated")
                 log.warning("This may indicate: 1) No positive signals in sector analysis, 2) Technical indicators don't support any trades, 3) LLM was too conservative")
-                log.warning("Falling back to placeholder recommendations")
-                stock_recommendations = _build_placeholder_recommendations()
+                # Keep empty list - no fake recommendations
             else:
                 recommendation_provider = "gemini"
                 log.info("✅ Successfully generated %s stock recommendations from Gemini", len(stock_recommendations))
@@ -777,14 +673,25 @@ def execute_news_sentiment_pipeline(
                             first_rec.get("trade_signal", "N/A"))
         except Exception as exc:  # pragma: no cover - external service issues
             log.exception("❌ Gemini stock recommender failed with exception: %s", exc)
-            log.warning("Falling back to placeholder recommendations")
-            stock_recommendations = _build_placeholder_recommendations()
+            log.warning("No recommendations generated due to exception")
+            stock_recommendations = []  # Empty instead of placeholder
     else:
-        log.warning("GEMINI_API_KEY not configured; using placeholder stock recommendations")
-        stock_recommendations = _build_placeholder_recommendations()
+        log.warning("GEMINI_API_KEY not configured; skipping stock recommendations (no fake data will be published)")
+        stock_recommendations = []  # Empty instead of placeholder
 
     _write_json(recommendations_path, stock_recommendations)
     log.info("Wrote %d stock recommendations to %s", len(stock_recommendations), recommendations_path)
+
+    # Publish stock recommendations to Kafka only if we have real data
+    if stock_recommendations and recommendation_provider != "placeholder":
+        _publish_stock_recommendations_to_kafka(
+            stock_recommendations,
+            provider=recommendation_provider,
+            generated_at=run_started_at,
+            logger=log,
+        )
+    else:
+        log.info("Skipping stock recommendations Kafka publish - no real recommendations to publish")
 
     # ------------------------------------------------------------------
     # Final summary
@@ -818,7 +725,5 @@ def execute_news_sentiment_pipeline(
 
 
 __all__ = [
-    "DEFAULT_SAMPLE_ARTICLES",
-    "DEFAULT_STOCK_RECOMMENDATIONS",
     "execute_news_sentiment_pipeline",
 ]
