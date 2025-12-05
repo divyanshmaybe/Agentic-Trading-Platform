@@ -105,6 +105,12 @@ prompt: |
 
   This is the exhaustive list of industries you can use. Use the names only from this list as it is for tool calling or final suggestions. DO NOT use any other names your suggestions will get rejected.
 
+  {% if rebalance is true %}
+  Important information: This is a rebalance trigger, I am going to give you the list of previously selected industries and the reasoning behind it.
+  The previously selected industries were:
+  {{ prev_ind_list }}
+  {% endif %}
+
   Procedure and Tools:
 
   You have access to all the current industry-specific metrics like percent above ema50, Percent above ema200. Median rsi, Percent rsi overbought, Percent rsi oversold, Industry return 6month, relative strength through a tool.

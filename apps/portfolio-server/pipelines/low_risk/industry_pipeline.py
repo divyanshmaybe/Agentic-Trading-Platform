@@ -376,6 +376,8 @@ def create_industry_selection_agent(
     economic_regime: str,
     cpi_val: float,
     pmi_val: float,
+    rebalance: bool = False,
+    prev_ind_list: list[Dict[str, Any]] = []
 ) -> Any:
     """
     Create an LLM agent for industry selection with tools.
@@ -397,6 +399,8 @@ def create_industry_selection_agent(
     prompt_template = load_prompt_from_template("industry_selector_prompt.yaml")
     rendered_prompt = render_prompt_template(
         prompt_template,
+        rebalance=rebalance,
+        prev_ind_list=json.dumps(prev_ind_list, indent=4),
         economic_regime=economic_regime.lower(),
         cpi_val=cpi_val,
         pmi_val=pmi_val,
@@ -404,7 +408,7 @@ def create_industry_selection_agent(
 
     # Create LLM
     gemini2 = ChatGoogleGenerativeAI(
-        model="gemini-2.5-flash",
+        model="gemini-2.5-pro",
         google_api_key=gemini_api_key,
     )
     agent = create_agent(
@@ -423,6 +427,8 @@ def industry_selector(
     gemini_api_key: str,
     user_id: str,
     task_id: Optional[str] = None,
+    rebalance: bool = False,
+    prev_ind_list: list[Dict[str, Any]] = [],
 ) -> List[Dict[str, Any]]:
     """
     Select industries using LLM agent based on economic regime.
@@ -442,7 +448,7 @@ def industry_selector(
     """
     # Create agent
     agent = create_industry_selection_agent(
-        pipeline, gemini_api_key, economic_regime, cpi_val, pmi_val
+        pipeline, gemini_api_key, economic_regime, cpi_val, pmi_val, rebalance, prev_ind_list
     )
 
     # Invoke agent
@@ -556,7 +562,7 @@ class IndustrySelectionPipeline:
                 "IndustryIndicatorsPipeline must have computed data. Call compute() first."
             )
 
-    def run(self) -> List[Dict[str, Any]]:
+    def run(self, rebalance=False, summary={}) -> List[Dict[str, Any]]:
         """
         Run the complete industry selection pipeline.
 
@@ -566,7 +572,7 @@ class IndustrySelectionPipeline:
         """
         msg = "Starting industry selection pipeline..."
         logger.info(msg)
-
+        prev_ind_list = summary.get("industry_list", [])
         # Get PMI
         try:
             pmi_val = get_pmi(self.storage)
@@ -616,6 +622,8 @@ class IndustrySelectionPipeline:
                 self.gemini_api_key,
                 self.user_id,
                 task_id=self.task_id,
+                rebalance=rebalance,
+                prev_ind_list=prev_ind_list
             )
             msg = f"Industry selection complete: {len(industry_list)} industries"
             logger.info(msg)

@@ -48,6 +48,14 @@ prompt: |
   Design an investment portfolio based on the strategies mentioned before. The investment decision should be carefully grounded on strategies and the data extracted through tool usage.
   You have to return a list of stocks/companies that we should invest in and the exact percentage of how much asset we should put in it.
 
+  {% if rebalance is true %}
+
+  IMPORTANT INFORMATION:
+  This is a rebalance trigger. I am going to send you the previously selected stocks, the percentage, and the reasoning behind selecting each one of them
+  {{ prev_stock_list }}
+
+  {% endif %}
+
   Output Format:
   - Your output should be a list of dictionaries
   - Each dictionary should contain the following keys:
@@ -55,5 +63,6 @@ prompt: |
     - percentage: Percentage of portfolio to invest in
     - reasoning: Reason for selection (grounded on strategy and information extracted from tools)
 
+  DO NOT RETURN ANY COMMENTARY IN YOUR OUTPUT. IT SHOULD STRICTLY BE A JSON LIST OF DICTIONARIES.
   The final output should be only the list of dictionaries without any boilerplate text line or code snippet. DO NOT put backticks (```) or the name of language (python etc.). You have to give a dictionary and NOT a codeblock. Your output will be evaluated as it is and since it is in python interpreter.
   DO NOT GENERATE A CODEBLOCK. ONLY GENERATE A PYTHON LIST OF DICTIONARY. DOUBLE VERIFY THAT THERE ARE NO BACKTICKS (`) in your final output.

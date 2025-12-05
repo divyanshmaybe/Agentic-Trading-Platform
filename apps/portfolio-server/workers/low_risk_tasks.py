@@ -40,18 +40,18 @@ task_logger = get_task_logger(__name__)
 
 class PipelineStatus:
     """Pipeline status tracking via Redis"""
-    
+
     def __init__(self, redis_client: Redis, user_id: str):
         self.redis = redis_client
         self.user_id = user_id
         self.status_key = f"pipeline:low_risk:{user_id}:status"
         self.lock_key = f"pipeline:low_risk:{user_id}:lock"
         self.start_time_key = f"pipeline:low_risk:{user_id}:start_time"
-    
+
     def is_running(self) -> tuple[bool, Optional[float]]:
         """
         Check if pipeline is currently running for this user.
-        
+
         Returns:
             Tuple of (is_running, start_timestamp_or_None)
         """
@@ -62,38 +62,38 @@ class PipelineStatus:
                 return True, float(start_time.decode())
             return True, None
         return False, None
-    
+
     def acquire_lock(self, ttl: int = 1800) -> bool:
         """
         Acquire pipeline lock (30 minute default TTL for safety).
-        
+
         Args:
             ttl: Lock time-to-live in seconds (default: 1800 = 30 minutes)
-        
+
         Returns:
             True if lock acquired, False if already locked
         """
         now = time.time()
         # Use SET with NX (only set if not exists) and EX (expiration)
         lock_acquired = self.redis.set(self.lock_key, "locked", nx=True, ex=ttl)
-        
+
         if lock_acquired:
             # Store start time for duration tracking
             self.redis.set(self.start_time_key, str(now), ex=ttl)
             self.redis.set(self.status_key, "running", ex=ttl + 300)  # Status lives 5 min longer
             task_logger.info(f"✅ Low-risk pipeline lock acquired for user {self.user_id}")
             return True
-        
+
         task_logger.warning(f"⚠️ Low-risk pipeline already running for user {self.user_id}")
         return False
-    
+
     def release_lock(self):
         """Release pipeline lock and update status"""
         self.redis.delete(self.lock_key)
         self.redis.delete(self.start_time_key)
         self.redis.set(self.status_key, "completed", ex=3600)  # Keep status for 1 hour
         task_logger.info(f"🔓 Low-risk pipeline lock released for user {self.user_id}")
-    
+
     def set_error(self, error_message: str):
         """Mark pipeline as failed with error message"""
         self.redis.delete(self.lock_key)
@@ -105,28 +105,28 @@ class PipelineStatus:
         })
         self.redis.set(self.status_key, error_data, ex=3600)
         task_logger.error(f"❌ Low-risk pipeline failed for user {self.user_id}: {error_message}")
-    
+
     def get_status(self) -> Dict[str, Any]:
         """
         Get current pipeline status for user.
-        
+
         Returns:
             Dictionary with status information
         """
         is_running, start_time = self.is_running()
-        
+
         if is_running:
             elapsed_minutes = 0
             if start_time:
                 elapsed_minutes = int((time.time() - start_time) / 60)
-            
+
             return {
                 "running": True,
                 "status": "running",
                 "start_time": datetime.fromtimestamp(start_time, tz=timezone.utc).isoformat() if start_time else None,
                 "elapsed_minutes": elapsed_minutes
             }
-        
+
         # Check stored status
         status_data = self.redis.get(self.status_key)
         if status_data:
@@ -144,7 +144,7 @@ class PipelineStatus:
                     "running": False,
                     "status": status_str
                 }
-        
+
         return {
             "running": False,
             "status": "not_started"
@@ -166,40 +166,42 @@ def run_low_risk_pipeline(
     self,
     user_id: str,
     fund_allocated: float = 100000.0,
+    rebalance: bool = False,
+    prev_summary: Dict[str, Any] = {}
 ) -> Dict[str, Any]:
     """
     Execute the low-risk stock selection pipeline for a specific user.
-    
+
     This task:
     1. Acquires a user-specific lock to prevent concurrent executions
     2. Loads required data (company CSV, economic indicators)
     3. Runs industry selection → stock selection → trade generation
     4. Publishes progress updates via Kafka to frontend
     5. Returns summary of trades generated
-    
+
     Args:
         user_id: User ID for pipeline execution and Kafka routing
         fund_allocated: Total fund amount to allocate (default: ₹100,000)
-    
+
     Returns:
         Dictionary with pipeline results and summary
-    
+
     Raises:
         Various exceptions if pipeline fails (logged and re-raised for Celery retry)
     """
     import pandas as pd
     from dotenv import load_dotenv
-    
+
     # Load environment
     load_dotenv()
-    
+
     # Get task_id from Celery request for Kafka tracking
     task_id = self.request.id
-    
+
     # Initialize Redis for status tracking
     redis_client = Redis.from_url(BROKER_URL)
     pipeline_status = PipelineStatus(redis_client, user_id)
-    
+
     # Check if pipeline already running
     is_running, start_time = pipeline_status.is_running()
     if is_running:
@@ -211,14 +213,14 @@ def run_low_risk_pipeline(
             "error": "Pipeline already running",
             "elapsed_minutes": elapsed_minutes
         }
-    
+
     # Acquire lock (2 hour TTL to match task time limit)
     if not pipeline_status.acquire_lock(ttl=7200):
         return {
             "success": False,
             "error": "Failed to acquire pipeline lock"
         }
-    
+
     try:
         # === STAGE 1: Initialization ===
         publish_to_kafka(
@@ -228,7 +230,7 @@ def run_low_risk_pipeline(
             task_id=task_id,
         )
         task_logger.info(f"🚀 Starting low-risk pipeline for user {user_id} with fund: ₹{fund_allocated:,.2f}")
-        
+
         # Import pipeline components
         from pipelines.low_risk.stock_selection_pipeline import StockSelectionPipeline
         from pipelines.low_risk.industry_pipeline import IndustrySelectionPipeline
@@ -237,14 +239,14 @@ def run_low_risk_pipeline(
         from utils.economic_indicators_storage import get_storage
         from market_data import get_market_data_service
         from pipelines.low_risk.angelone_batch_fetcher import create_fetcher_from_market_service
-        
+
         nifty_500_path = PROJECT_ROOT / "scripts" / "ind_nifty500listbrief.csv"
         if not nifty_500_path.exists():
             raise FileNotFoundError(
                 f"Company data not found at {nifty_500_path}. "
                 f"Please ensure ind_nifty500listbrief.csv exists."
             )
-        
+
         publish_to_kafka(
             {"content": f"Loading company data...", "stage": "init", "status": "progress"},
             user_id=user_id,
@@ -253,18 +255,18 @@ def run_low_risk_pipeline(
         )
         task_logger.info(f"📊 Loading company data from {nifty_500_path}")
         company_df = pd.read_csv(nifty_500_path)
-        
+
         if "Company Name" not in company_df.columns or "Industry" not in company_df.columns:
             raise ValueError(
                 f"CSV must contain 'Company Name' and 'Industry' columns. "
                 f"Found: {company_df.columns.tolist()}"
             )
-        
+
         # Get API keys
         gemini_api_key = os.getenv("GEMINI_API_KEY")
         if not gemini_api_key:
             raise ValueError("GEMINI_API_KEY not found in environment")
-        
+
         # Initialize storage
         storage = get_storage()
         publish_to_kafka(
@@ -274,7 +276,7 @@ def run_low_risk_pipeline(
             task_id=task_id,
         )
         task_logger.info("🗄️ Economic indicators storage initialized")
-        
+
         # === STAGE 2: Market Data Service ===
         publish_to_kafka(
             {"content": "Initializing market data service...", "stage": "market_data", "status": "start"},
@@ -291,7 +293,7 @@ def run_low_risk_pipeline(
             message_type="stage",
             task_id=task_id,
         )
-        
+
         # === STAGE 3: Industry Indicators ===
         publish_to_kafka(
             {"content": "Computing industry indicators (fetching ~500 stocks)...", "stage": "industry_indicators", "status": "start"},
@@ -313,7 +315,7 @@ def run_low_risk_pipeline(
             task_id=task_id,
         )
         task_logger.info("✅ Industry indicators computed")
-        
+
         # === STAGE 4: Industry Selection ===
         publish_to_kafka(
             {"content": "Running LLM-based industry selection...", "stage": "industry_selection", "status": "start"},
@@ -329,7 +331,7 @@ def run_low_risk_pipeline(
             storage=storage,
             task_id=task_id,
         )
-        industry_list = industry_pipeline.run()
+        industry_list = industry_pipeline.run(rebalance=rebalance, prev_summary=prev_summary)
         publish_to_kafka(
             {
                 "content": f"Selected {len(industry_list)} industries",
@@ -342,7 +344,7 @@ def run_low_risk_pipeline(
             task_id=task_id,
         )
         task_logger.info(f"✅ Selected {len(industry_list)} industries")
-        
+
         # === STAGE 5: Fundamental Analyzer ===
         publish_to_kafka(
             {"content": "Running fundamental analyzer...", "stage": "fundamental", "status": "start"},
@@ -380,10 +382,10 @@ def run_low_risk_pipeline(
             user_id=user_id,
             task_id=task_id,
         )
-        
+
         # Run pipeline and generate trades
-        result = stock_pipeline.run(fund_allocated=fund_allocated)
-        
+        result = stock_pipeline.run(fund_allocated=fund_allocated, rebalance=rebalance, prev_summary=prev_summary)
+
         # Extract summary
         summary = result["summary"]
         publish_to_kafka(
@@ -403,7 +405,7 @@ def run_low_risk_pipeline(
             f"₹{summary['total_invested']:,.2f} invested "
             f"({summary['utilization_rate']:.2f}% utilization)"
         )
-        
+
         # === STAGE 7: Completion ===
         completion_msg = (
             f"Pipeline completed: {summary['total_stocks']} stocks, "
@@ -417,10 +419,10 @@ def run_low_risk_pipeline(
             message_type="stage",
             task_id=task_id,
         )
-        
+
         # Release lock and mark success
         pipeline_status.release_lock()
-        
+
         return {
             "success": True,
             "user_id": user_id,
@@ -430,7 +432,7 @@ def run_low_risk_pipeline(
             "industries_selected": len(industry_list),
             "completed_at": datetime.now(timezone.utc).isoformat()
         }
-        
+
     except Exception as e:
         # Log error and update status
         error_message = str(e)
@@ -442,7 +444,7 @@ def run_low_risk_pipeline(
             task_id=task_id,
         )
         pipeline_status.set_error(error_message)
-        
+
         # Re-raise for Celery retry mechanism
         raise
 
@@ -451,10 +453,10 @@ def run_low_risk_pipeline(
 def get_low_risk_pipeline_status(user_id: str) -> Dict[str, Any]:
     """
     Get current status of low-risk pipeline for a user.
-    
+
     Args:
         user_id: User ID to check status for
-    
+
     Returns:
         Dictionary with status information
     """

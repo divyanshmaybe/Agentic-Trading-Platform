@@ -551,6 +551,8 @@ class StockSelectionPipeline:
         industry_allocation: float,
         company_df: pd.DataFrame,
         gemini_api_key: str,
+        rebalance: bool = False,
+        prev_stock_list: list[Dict[str, Any]] = [],
     ) -> List[Dict[str, Any]]:
         """Select stocks within a single industry using LLM agent."""
         try:
@@ -572,6 +574,8 @@ class StockSelectionPipeline:
                 company_prompt=company_prompt,
                 strategy_prompt=strategy_prompt,
                 company_metrics_prompt=company_metrics_prompt,
+                rebalance=rebalance,
+                prev_stock_list=prev_stock_list,
             )
 
             # Create LLM
@@ -661,6 +665,8 @@ class StockSelectionPipeline:
         industry_list: List[Dict[str, Any]],
         company_df: pd.DataFrame,
         gemini_api_key: str,
+        rebalance: bool = False,
+        prev_stock_list: list[Dict[str, Any]] = []
     ) -> List[Dict[str, Any]]:
         """Generate complete stock portfolio across all selected industries."""
         msg = f"Generating stock portfolio across {len(industry_list)} industries..."
@@ -683,7 +689,9 @@ class StockSelectionPipeline:
                     industry_name,
                     industry_allocation,
                     company_df,
-                    gemini_api_key
+                    gemini_api_key,
+                    rebalance=rebalance,
+                    prev_stock_list=prev_stock_list
                 )
 
                 # Add to final portfolio
@@ -715,9 +723,10 @@ class StockSelectionPipeline:
 
         return final_portfolio
 
-    def run(self, fund_allocated: float) -> Dict[str, Any]:
+    def run(self, fund_allocated: float, rebalance: bool = False, prev_summary: Dict[str, Any] = {}) -> Dict[str, Any]:
         """Run the complete stock selection and trade generation pipeline."""
         msg = "Starting stock selection pipeline..."
+        prev_stock_list = prev_summary.get("final_portfolio", [])
         logger.info(msg)
         publish_to_kafka({"content": msg}, user_id=self.user_id, message_type="info", task_id=self.task_id)
 
@@ -743,7 +752,9 @@ class StockSelectionPipeline:
             final_portfolio = self.generate_stock_portfolio(
                 industry_list,
                 self.company_df,
-                self.gemini_api_key
+                self.gemini_api_key,
+                rebalance=rebalance,
+                prev_stock_list=prev_stock_list
             )
         except Exception as e:
             logger.error(f"Failed to generate stock portfolio: {e}", exc_info=True)
