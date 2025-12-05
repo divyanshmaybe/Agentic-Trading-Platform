@@ -1276,6 +1276,7 @@ export default function AlphasPage() {
   const [selectedRun, setSelectedRun] = useState<AlphaCopilotRun | null>(null)
   const [selectedResults, setSelectedResults] = useState<AlphaCopilotResult | null>(null)
   const [resultsLoading, setResultsLoading] = useState(false)
+  const [triggeringAgent, setTriggeringAgent] = useState(false)
 
   // Auth
   const { user: authUser, loading: authLoading } = useAuth()
@@ -1347,6 +1348,54 @@ export default function AlphasPage() {
     })
   }
 
+  // Handle triggering alpha agent
+  const handleTriggerAgent = async () => {
+    setTriggeringAgent(true)
+    try {
+      const authServerUrl = process.env.NEXT_PUBLIC_AUTH_BASE_URL 
+        ? process.env.NEXT_PUBLIC_AUTH_BASE_URL.replace("/api/auth", "")
+        : "http://localhost:4000"
+      
+      // Get auth token
+      let token: string | null = null
+      if (typeof window !== "undefined") {
+        const match = document.cookie.match(/(^| )access_token=([^;]+)/)
+        token = match ? match[2] : localStorage.getItem("access_token")
+      }
+
+      const headers: HeadersInit = {
+        "Content-Type": "application/json",
+      }
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`
+      }
+
+      const response = await fetch(`${authServerUrl}/api/user/subscriptions`, {
+        method: "POST",
+        headers,
+        credentials: "include",
+        body: JSON.stringify({
+          action: "subscribe",
+          agent: "alpha",
+        }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.message || data.error || "Failed to trigger alpha agent")
+      }
+
+      // Show success message or handle as needed
+      alert("Alpha agent triggered successfully!")
+    } catch (error) {
+      console.error("Failed to trigger alpha agent:", error)
+      alert(error instanceof Error ? error.message : "Failed to trigger alpha agent")
+    } finally {
+      setTriggeringAgent(false)
+    }
+  }
+
   // Show loading state while auth is being verified
   if (authLoading || !authUser) {
     return (
@@ -1380,6 +1429,23 @@ export default function AlphasPage() {
                     Live Signals
                   </Button>
                 </Link>
+                <Button
+                  onClick={handleTriggerAgent}
+                  disabled={triggeringAgent}
+                  className="border border-emerald-500/40 bg-emerald-500/20 text-emerald-100 hover:bg-emerald-500/30"
+                >
+                  {triggeringAgent ? (
+                    <>
+                      <Loader2 className="mr-2 size-4 animate-spin" />
+                      Triggering...
+                    </>
+                  ) : (
+                    <>
+                      <Play className="mr-2 size-4" />
+                      Trigger Alpha Agent
+                    </>
+                  )}
+                </Button>
                 <Button
                   onClick={() => setHypothesisModalOpen(true)}
                   className="border border-violet-500/40 bg-violet-500/20 text-violet-100 hover:bg-violet-500/30"
