@@ -803,7 +803,7 @@ class StockSelectionPipeline:
         stock_metrics = self.company_metrics_tool_callable([s["ticker"] for s in final_portfolio], metrics)
 
         publish_to_kafka({"content": res}, user_id=self.user_id, message_type="summary", task_id=self.task_id)
-        publish_to_kafka({"industry_metrics": industry_metrics, "stock_metrics": stock_metrics}, user_id=self.user_id, task_id=self.task_id, message_type="metrics")
+        # publish_to_kafka({"industry_metrics": industry_metrics, "stock_metrics": stock_metrics}, user_id=self.user_id, task_id=self.task_id, message_type="metrics")
         return res
 
     def __del__(self):

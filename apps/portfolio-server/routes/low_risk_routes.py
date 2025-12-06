@@ -525,6 +525,8 @@ async def trigger_low_risk_rebalance(
             }
             prev_summaries.append(summary_data)
 
+        to_send_summary = {"industry_list": prev_summaries[-1]["content"]["industry_list"], "final_portfolio": prev_summaries[-1]["content"]["final_portfolio"]}
+
         logger.info(f"📋 Found {len(prev_summaries)} previous summaries for user {user_id}")
 
     except Exception as e:
@@ -550,7 +552,7 @@ async def trigger_low_risk_rebalance(
             user_id=user_id,
             fund_allocated=allocated_cash,
             rebalance=True,
-            prev_summary=prev_summaries[-1] if prev_summaries else None,
+            prev_summary=to_send_summary,
             _skip_lock=True,  # Lock already acquired above
         )
 
