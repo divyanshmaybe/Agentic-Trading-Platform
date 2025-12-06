@@ -549,13 +549,17 @@ class FundamentalAnalyzer:
             if price is not None:
                 return float(price)
 
-            # If not cached, try synchronous fetch
+            # If not cached, try synchronous fetch with better error handling
             try:
+                # This may fail in thread pool executor context
                 price = service.get_or_fetch_price(self.ticker_symbol)
                 return float(price)
-            except RuntimeError:
+            except RuntimeError as e:
                 # Running in async context or price not available
-                pass
+                logger.debug(f"Could not fetch live price for {self.ticker_symbol}: {e}")
+            except Exception as e:
+                # Log other errors but don't fail
+                logger.warning(f"Failed to fetch live price for {self.ticker_symbol}: {e}")
 
             # Fallback: try to get from yfinance info
             if self._info:

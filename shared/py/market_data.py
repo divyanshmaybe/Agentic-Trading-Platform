@@ -327,15 +327,20 @@ class MarketDataService:
             self._ws_task = asyncio.create_task(self._websocket_loop())
     
     async def _websocket_loop(self):
-        """Main WebSocket connection loop"""
+        """Main WebSocket connection loop with proper error handling"""
         ws_url = f"wss://smartapisocket.angelone.in/smart-stream?clientCode={self.client_code}&feedToken={self.feed_token}&apiKey={self.api_key}"
         
+        reconnect_delay = 5
+        max_reconnect_delay = 60
+        
         while True:
+            ws = None
             try:
                 async with websockets.connect(
                     ws_url,
                     ping_interval=30,
                     ping_timeout=10,
+                    close_timeout=10,  # Add close timeout
                 ) as ws:
                     self._ws = ws
                     self._connected = True
@@ -349,14 +354,35 @@ class MarketDataService:
                     async for message in ws:
                         await self._handle_message(message)
                         
-            except ConnectionClosedError:
-                logger.warning("WebSocket closed, reconnecting...")
+            except ConnectionClosedError as e:
+                logger.warning(f"WebSocket closed: {e}, reconnecting in {reconnect_delay}s...")
                 self._connected = False
-                await asyncio.sleep(5)
+                self._ws = None
+                # Gracefully close the connection
+                if ws and not ws.closed:
+                    try:
+                        await asyncio.wait_for(ws.close(), timeout=2.0)
+                    except Exception:
+                        pass
+                await asyncio.sleep(reconnect_delay)
+                # Exponential backoff
+                reconnect_delay = min(reconnect_delay * 2, max_reconnect_delay)
             except Exception as e:
-                logger.error(f"WebSocket error: {e}, reconnecting...")
+                logger.error(f"WebSocket error: {e}, reconnecting in {reconnect_delay}s...")
                 self._connected = False
-                await asyncio.sleep(5)
+                self._ws = None
+                # Gracefully close the connection
+                if ws and not ws.closed:
+                    try:
+                        await asyncio.wait_for(ws.close(), timeout=2.0)
+                    except Exception:
+                        pass
+                await asyncio.sleep(reconnect_delay)
+                # Exponential backoff
+                reconnect_delay = min(reconnect_delay * 2, max_reconnect_delay)
+            else:
+                # Successful connection - reset delay
+                reconnect_delay = 5
     
     async def _subscribe_batch(self, symbols: list, ws=None):
         """Subscribe to batch of symbols"""
@@ -491,19 +517,22 @@ class MarketDataService:
         
         # Need to fetch - try to use existing event loop
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # Event loop is running - we can't block here
-                # Return cached price or raise error
+            # Check if we're in a thread with an event loop
+            try:
+                loop = asyncio.get_running_loop()
+                # We're in an async context with a running loop
+                # Can't block here - return cached price or raise error
                 raise RuntimeError(
                     f"Price for {symbol} not in cache. Use await_price() in async context."
                 )
-            else:
-                # No running loop - we can run async code
-                return loop.run_until_complete(self._get_price_async(normalized, timeout=1.0))
-        except RuntimeError:
-            # No event loop - create one
-            return asyncio.run(self._get_price_async(normalized, timeout=1.0))
+            except RuntimeError:
+                # No running loop - we can create one
+                # This works in sync context (main thread or worker thread)
+                return asyncio.run(self._get_price_async(normalized, timeout=1.0))
+        except Exception as e:
+            # Fallback: return None or raise
+            logger.warning(f"Failed to fetch price for {symbol}: {e}")
+            raise
     
     async def await_price(self, symbol: str, timeout: float = 3.0) -> Decimal:
         """Wait for price (async)"""
