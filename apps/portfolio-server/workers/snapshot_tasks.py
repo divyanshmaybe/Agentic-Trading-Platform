@@ -26,6 +26,8 @@ task_logger = logging.getLogger(__name__)
     autoretry_for=(Exception,),
     retry_backoff=True,
     max_retries=3,
+    soft_time_limit=None,  # No time limit - quick task but scheduled
+    time_limit=None,
 )
 def capture_trading_agent_snapshots(self) -> Dict[str, Any]:
     """
@@ -70,6 +72,8 @@ def capture_trading_agent_snapshots(self) -> Dict[str, Any]:
     autoretry_for=(Exception,),
     retry_backoff=True,
     max_retries=3,
+    soft_time_limit=None,  # No time limit - quick task but scheduled
+    time_limit=None,
 )
 def capture_portfolio_snapshots(self) -> Dict[str, Any]:
     """
