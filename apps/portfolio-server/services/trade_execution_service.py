@@ -2685,7 +2685,7 @@ class TradeExecutionService:
             
             if side.upper() == "BUY":
                 if existing_position:
-                    # ATOMIC UPDATE: Use raw SQL to prevent race conditions
+                    position_type = getattr(existing_position, "position_type", "LONG")
                     old_quantity = int(getattr(existing_position, "quantity", 0))
                     old_avg_price = float(getattr(existing_position, "average_buy_price", 0))
                     position_id = str(existing_position.id)
@@ -2709,6 +2709,79 @@ class TradeExecutionService:
                     position_metadata["trade_ids"] = trade_ids
                     position_metadata["last_updated"] = datetime.utcnow().isoformat()
                     
+                    # Check if this is a SHORT position - BUY should COVER (close) it, not add to it!
+                    if position_type == "SHORT":
+                        # BUY to cover short position
+                        # Calculate realized P&L: (short_entry_price - buy_price) * quantity
+                        realized_pnl = (old_avg_price - executed_price) * quantity
+                        
+                        if quantity >= old_quantity:
+                            # Close short position completely (or flip to long if quantity > old_quantity)
+                            if quantity == old_quantity:
+                                # Exact close
+                                await client.execute_raw(
+                                    '''UPDATE "positions" SET 
+                                        quantity = 0,
+                                        status = 'closed',
+                                        realized_pnl = $1,
+                                        closed_at = NOW(),
+                                        updated_at = NOW(),
+                                        metadata = $2::jsonb
+                                        WHERE id = $3 AND status = 'open'
+                                        RETURNING id''',
+                                    float(realized_pnl),
+                                    json.dumps(position_metadata),
+                                    position_id
+                                )
+                                self.logger.info(
+                                    "✅ CLOSED SHORT position %s: %s BUY %d covered SHORT %d @ ₹%.2f, P&L: ₹%.2f",
+                                    position_id, symbol, quantity, old_quantity, executed_price, realized_pnl
+                                )
+                            else:
+                                # Over-cover: close short and create new long position
+                                remaining_qty = quantity - old_quantity
+                                await client.execute_raw(
+                                    '''UPDATE "positions" SET 
+                                        quantity = 0,
+                                        status = 'closed',
+                                        realized_pnl = $1,
+                                        closed_at = NOW(),
+                                        updated_at = NOW()
+                                        WHERE id = $2 AND status = 'open' ''',
+                                    float(realized_pnl),
+                                    position_id
+                                )
+                                self.logger.info(
+                                    "✅ CLOSED SHORT position and creating LONG: %s BUY %d covered SHORT %d, creating LONG %d",
+                                    symbol, quantity, old_quantity, remaining_qty
+                                )
+                                # Create new LONG position with remaining quantity
+                                # (will be handled by the else block below)
+                                existing_position = None  # Reset to trigger new position creation
+                                quantity = remaining_qty  # Update quantity to remaining
+                        else:
+                            # Partial cover of short position
+                            new_quantity = old_quantity - quantity
+                            await client.execute_raw(
+                                '''UPDATE "positions" SET 
+                                    quantity = $1,
+                                    realized_pnl = realized_pnl + $2,
+                                    updated_at = NOW(),
+                                    metadata = $3::jsonb
+                                    WHERE id = $4 AND status = 'open'
+                                    RETURNING id''',
+                                new_quantity,
+                                float(realized_pnl),
+                                json.dumps(position_metadata),
+                                position_id
+                            )
+                            self.logger.info(
+                                "✅ PARTIAL COVER SHORT position %s: %s BUY %d covered part of SHORT %d→%d, P&L: ₹%.2f",
+                                position_id, symbol, quantity, old_quantity, new_quantity, realized_pnl
+                            )
+                        return  # Early return after handling SHORT cover
+                    
+                    # LONG position or no existing position: Add to position
                     # ATOMIC position update using raw SQL with OPTIMISTIC LOCKING
                     # WHERE clause checks quantity matches expected value to detect concurrent modifications
                     result = await client.execute_raw(
@@ -2718,7 +2791,7 @@ class TradeExecutionService:
                             updated_at = NOW(),
                             metadata = $3::jsonb,
                             agent_id = COALESCE(agent_id, $4)
-                            WHERE id = $5 AND quantity = $6 AND status = 'open'
+                            WHERE id = $5 AND quantity = $6 AND status = 'open' AND position_type = 'LONG'
                             RETURNING id''',
                         quantity,
                         executed_price,

@@ -276,7 +276,11 @@ class TradeEngine:
 
         if payload.side == "BUY":
             await self._apply_buy_execution(payload, execution_price)
-        else:
+        elif payload.side == "SHORT_SELL":
+            # SHORT_SELL is handled by trade_execution_service
+            # No realized P&L for opening short position
+            pass
+        else:  # SELL
             realized_pnl = await self._apply_sell_execution(payload, execution_price)
             # Update trade with realized_pnl
             if realized_pnl is not None:
