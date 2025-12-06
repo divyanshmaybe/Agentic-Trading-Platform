@@ -212,8 +212,8 @@ class FundamentalAnalyzer:
             return float(volatility)
         except:
             return pd.NA
-        
-    
+
+
 
     def compute_sloan_ratio(self):
         if not self._fetch_financials():
@@ -232,7 +232,7 @@ class FundamentalAnalyzer:
             return pd.NA
 
         return float((NI - CFO) / avg_assets)
-    
+
 
     def compute_ccc(self):
         if not self._fetch_financials():
@@ -450,7 +450,7 @@ class FundamentalAnalyzer:
             return float(rsi)
         except:
             return pd.NA
-    
+
     def _compute_sma(self, length: int):
         """Helper to compute Simple Moving Average"""
         try:
@@ -466,7 +466,7 @@ class FundamentalAnalyzer:
             return float(sma_series.iloc[-1])
         except:
             return pd.NA
-        
+
     def compute_sma50(self):
         """Compute 50-day Simple Moving Average"""
         return self._compute_sma(50)
@@ -499,7 +499,7 @@ class FundamentalAnalyzer:
     def compute_ema200(self):
         """Compute 200-day Exponential Moving Average"""
         return self._compute_ema(200)
-    
+
     def compute_price_to_ema50(self):
         """Compute Price-to-50-day EMA Ratio"""
         current_price = self._info.get('currentPrice', self._info.get('regularMarketPrice', pd.NA))
@@ -518,8 +518,8 @@ class FundamentalAnalyzer:
             return pd.NA
 
         return float(current_price / ema200)
-    
-    
+
+
     def compute_gross_profit_growth(self):
         """Compute Gross Profit Growth from income statement"""
         gp = self._get(self._income_stmt, "Gross Profit")
@@ -534,15 +534,15 @@ class FundamentalAnalyzer:
         """Fetch live price from market data service."""
         try:
             from market_data import get_market_data_service
-            
+
             # Get the service and fetch price
             service = get_market_data_service()
-            
+
             # Try to get cached price first (non-blocking)
             price = service.get_latest_price(self.ticker_symbol)
             if price is not None:
                 return float(price)
-            
+
             # If not cached, try synchronous fetch
             try:
                 price = service.get_or_fetch_price(self.ticker_symbol)
@@ -550,13 +550,13 @@ class FundamentalAnalyzer:
             except RuntimeError:
                 # Running in async context or price not available
                 pass
-            
+
             # Fallback: try to get from yfinance info
             if self._info:
                 current_price = self._info.get('currentPrice') or self._info.get('regularMarketPrice')
                 if current_price:
                     return float(current_price)
-            
+
             return pd.NA
         except ImportError:
             # market_data module not available, use yfinance
@@ -568,7 +568,7 @@ class FundamentalAnalyzer:
         except Exception as e:
             logger.warning(f"Failed to fetch live price for {self.ticker_symbol}: {e}")
             return pd.NA
-    
+
 
     def get_valuation_metrics(self):
         """Extract valuation metrics from ticker.info"""
@@ -581,25 +581,25 @@ class FundamentalAnalyzer:
             "ev_to_ebitda": self._info.get("enterpriseToEbitda", pd.NA),
             'pe_ratio': self._info.get('trailingPE', pd.NA),
         }
-    
+
     def get_cash_flow_metrics(self):
         """Extract cash flow metrics from ticker.info"""
         if not self._fetch_financials():
             return {}
-        
+
         return {
             'operating_cashflow': self._info.get('operatingCashflow', pd.NA),
         }
-    
+
     def get_net_income_metrics(self):
         """Extract net income metrics from ticker.info"""
         if not self._fetch_financials():
             return {}
-        
+
         return {
             'net_income': self._get(self._financials, "Net Income", default=pd.NA),
         }
-    
+
 
 
     def get_growth_metrics(self):
@@ -621,16 +621,16 @@ class FundamentalAnalyzer:
         return {
             "debt_to_equity": self._info.get("debtToEquity", pd.NA),
         }
-    
+
     def get_profitability_metrics(self):
         """Extract profitability metrics from ticker.info"""
         if not self._fetch_financials():
             return {}
-        
+
         return {
             'roe': self._info.get('returnOnEquity', pd.NA),
         }
-    
+
 
     def get_price_metrics(self):
         """Extract price-related metrics from ticker.info"""
@@ -687,14 +687,14 @@ class PipelineResult:
 
 class FundamentalAnalyzerPipeline:
     """Run FundamentalAnalyzer across a universe with cached statements.
-    
+
     This pipeline caches both:
     1. Financial statements (balance_sheet, income_statement, cashflow) per ticker
     2. Final computed metrics DataFrame for all tickers
-    
+
     On subsequent runs, if nothing has changed (same tickers, no force_refresh),
     it returns the cached metrics directly without recomputation.
-    
+
     OHLCV data is automatically loaded from the industry candles CSV file at:
     data/market_data/industry_cache/industry_candles_ONE_DAY_365.csv
     """
@@ -717,12 +717,12 @@ class FundamentalAnalyzerPipeline:
         self.max_workers = max_workers
         self.force_refresh = force_refresh
         self._metrics_df: Optional[pd.DataFrame] = None
-        
+
         # Cache paths
         self._cache_dir = self.storage.data_dir
         self._metrics_cache_path = self._cache_dir / METRICS_CACHE_FILE
         self._metrics_metadata_path = self._cache_dir / METRICS_METADATA_FILE
-        
+
         # Load OHLCV data: use provided raw_data, or load from file
         if raw_data is not None:
             self.raw_data = raw_data
@@ -735,11 +735,11 @@ class FundamentalAnalyzerPipeline:
         if not ohlcv_path.exists():
             logger.warning("OHLCV file not found: %s. Technical indicators will be unavailable.", ohlcv_path)
             return None
-        
+
         try:
             logger.info("Loading OHLCV data from %s", ohlcv_path)
             df = pd.read_csv(ohlcv_path)
-            
+
             # Normalize column names to expected format
             df = df.rename(columns={
                 'timestamp': 'Date',
@@ -750,20 +750,20 @@ class FundamentalAnalyzerPipeline:
                 'low': 'Low',
                 'volume': 'Volume'
             })
-            
+
             # Add .NS suffix to stock tickers (but not to index like 'Nifty 500')
             df['Ticker'] = df['Ticker'].apply(
                 lambda x: x if x == 'Nifty 500' else (
                     f'{x}.NS' if not str(x).endswith('.NS') else x
                 )
             )
-            
+
             # Parse dates
             df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-            
+
             logger.info("Loaded OHLCV data: %d rows, %d tickers", len(df), df['Ticker'].nunique())
             return df
-            
+
         except Exception as e:
             logger.warning("Failed to load OHLCV data from %s: %s", ohlcv_path, e)
             return None
@@ -784,7 +784,7 @@ class FundamentalAnalyzerPipeline:
         symbols = symbols[:limit]
         refresh = self.force_refresh if force_refresh is None else force_refresh
         workers = max_workers or self.max_workers
-        
+
         # Ensure workers is at least 1 and doesn't exceed symbol count
         workers = max(1, min(workers, len(symbols)))
 
@@ -795,7 +795,7 @@ class FundamentalAnalyzerPipeline:
                 logger.info("[METRICS CACHE HIT] Returning cached metrics for %d tickers", len(symbols))
                 self._metrics_df = cached_df
                 return PipelineResult(
-                    tickers_analyzed=symbols, 
+                    tickers_analyzed=symbols,
                     dataframe=cached_df,
                     from_cache=True
                 )
@@ -836,17 +836,17 @@ class FundamentalAnalyzerPipeline:
             with ThreadPoolExecutor(max_workers=workers) as executor:
                 # Submit all computation tasks
                 future_to_symbol = {
-                    executor.submit(compute_indicators, item): item[0] 
+                    executor.submit(compute_indicators, item): item[0]
                     for item in analyzers
                 }
-                
+
                 # Collect results as they complete
                 completed = 0
                 for future in as_completed(future_to_symbol):
                     try:
                         symbol, record, error = future.result(timeout=30)  # 30s timeout per computation
                         completed += 1
-                        
+
                         if error:
                             logger.warning("Failed to compute indicators for %s: %s", symbol, error)
                             failures.append(symbol)
@@ -876,26 +876,26 @@ class FundamentalAnalyzerPipeline:
         df = pd.DataFrame(records)
         if failures:
             df.attrs["failed_tickers"] = failures
-        
+
         # Cache the computed metrics
         self._save_cached_metrics(df, symbols)
         self._metrics_df = df
-        
-        logger.info("[COMPLETED] Processed %d tickers (%d successful, %d failed)", 
+
+        logger.info("[COMPLETED] Processed %d tickers (%d successful, %d failed)",
                     len(symbols), len(records), len(failures))
-        
+
         return PipelineResult(
-            tickers_analyzed=symbols, 
+            tickers_analyzed=symbols,
             dataframe=df,
             from_cache=False
         )
 
     def get_metrics(self, ticker: str) -> Optional[Dict[str, Any]]:
         """Get computed metrics for a specific ticker as JSON.
-        
+
         Args:
             ticker: The ticker symbol (with or without .NS suffix)
-            
+
         Returns:
             Dict with all computed metrics for the ticker (NaN replaced with "NOT_AVAILABLE"),
             or None if not found.
@@ -903,15 +903,15 @@ class FundamentalAnalyzerPipeline:
         ticker_fmt = ticker.upper()
         if not ticker_fmt.endswith(".NS"):
             ticker_fmt = f"{ticker_fmt}.NS"
-        
+
         row = None
-        
+
         # Load from memory if available
         if self._metrics_df is not None:
             mask = self._metrics_df["ticker"] == ticker_fmt
             if mask.any():
                 row = self._metrics_df[mask].iloc[0]
-        
+
         # Try loading from cache
         if row is None and self._metrics_cache_path.exists():
             try:
@@ -922,29 +922,29 @@ class FundamentalAnalyzerPipeline:
                     row = df[mask].iloc[0]
             except Exception as e:
                 logger.warning("Failed to load metrics cache: %s", e)
-        
+
         if row is None:
             return None
-        
+
         # Convert to dict, replace NaN with "NOT_AVAILABLE", and round numbers to 3 decimal places
         result = row.to_dict()
         for key, value in result.items():
             if pd.isna(value):
-                result[key] = "NOT_AVAILABLE"
+                result[key] = None
             elif isinstance(value, float):
                 result[key] = round(value, 3)
-        
+
         return result
 
     def get_all_metrics(self) -> Optional[pd.DataFrame]:
         """Get the full metrics DataFrame for all tickers.
-        
+
         Returns:
             pd.DataFrame with all computed metrics, or None if not available.
         """
         if self._metrics_df is not None:
             return self._metrics_df.copy()
-        
+
         # Try loading from cache
         if self._metrics_cache_path.exists():
             try:
@@ -953,7 +953,7 @@ class FundamentalAnalyzerPipeline:
                 return df.copy()
             except Exception as e:
                 logger.warning("Failed to load metrics cache: %s", e)
-        
+
         return None
 
     # ------------------------------------------------------------------
@@ -970,44 +970,44 @@ class FundamentalAnalyzerPipeline:
         if not self._metrics_cache_path.exists() or not self._metrics_metadata_path.exists():
             logger.debug("Metrics cache files not found")
             return None
-        
+
         try:
             # Load and validate metadata
             metadata = json.loads(self._metrics_metadata_path.read_text())
-            
+
             # Check if ticker list matches
             expected_hash = self._compute_tickers_hash(tickers)
             if metadata.get("tickers_hash") != expected_hash:
                 logger.debug("Metrics cache ticker hash mismatch")
                 return None
-            
+
             # Check if underlying statements have been updated
             statements_updated = metadata.get("statements_last_updated", "")
             current_statements_ts = self._get_statements_timestamp()
-            
+
             if current_statements_ts and statements_updated != current_statements_ts:
                 logger.debug("Underlying statements have been updated, recomputing metrics")
                 return None
-            
+
             # Load the cached DataFrame
             df = pd.read_pickle(self._metrics_cache_path)
-            
+
             # Verify all requested tickers are present
             cached_tickers = set(df["ticker"].tolist())
             requested_tickers = set(tickers)
             if not requested_tickers.issubset(cached_tickers):
                 logger.debug("Cached metrics missing some tickers")
                 return None
-            
+
             # Filter to only requested tickers (in case cache has more)
             df = df[df["ticker"].isin(requested_tickers)]
-            
+
             logger.info(
                 "[METRICS CACHE] Loaded from cache (last_updated: %s)",
                 metadata.get("last_updated", "unknown")
             )
             return df
-            
+
         except Exception as e:
             logger.warning("Failed to load metrics cache: %s", e)
             return None
@@ -1017,7 +1017,7 @@ class FundamentalAnalyzerPipeline:
         try:
             # Save DataFrame
             df.to_pickle(self._metrics_cache_path)
-            
+
             # Save metadata
             metadata = {
                 "last_updated": datetime.utcnow().isoformat(),
@@ -1026,7 +1026,7 @@ class FundamentalAnalyzerPipeline:
                 "statements_last_updated": self._get_statements_timestamp(),
             }
             self._metrics_metadata_path.write_text(json.dumps(metadata, indent=2))
-            
+
             logger.info(
                 "[METRICS CACHED] Saved %d tickers to %s (%.2f MB)",
                 len(tickers),
@@ -1055,15 +1055,15 @@ class FundamentalAnalyzerPipeline:
 
     def _load_financials(self, analyzer: FundamentalAnalyzer, *, force_refresh: bool) -> None:
         """Load financial statements for a ticker, using cache if available.
-        
+
         The cache automatically updates when:
         1. force_refresh=True is passed
         2. Cache is older than max_age_days (default 30 days)
         3. Ticker not found in cache
-        
+
         When fetching new data, it also checks for new periods (dates) and
         merges them into the existing cache.
-        
+
         Caches: balance_sheet, income_statement, cashflow, financials, info
         """
         ticker = analyzer.ticker_symbol
@@ -1077,29 +1077,29 @@ class FundamentalAnalyzerPipeline:
                 cash_record = self.storage.get_cashflow(ticker)
                 fin_record = self.storage.get_financials(ticker)
                 cached_info = self.storage.get_info(ticker)
-                
+
                 # If all core statements cached, use them
-                if (not bs_record.dataframe.empty and 
-                    not income_record.dataframe.empty and 
+                if (not bs_record.dataframe.empty and
+                    not income_record.dataframe.empty and
                     not cash_record.dataframe.empty):
-                    
+
                     # Log cache hit with details
                     logger.info(
                         "[CACHE HIT] %s - loaded from cache (updated: %s, source: %s)",
-                        ticker, 
+                        ticker,
                         bs_record.last_updated.strftime("%Y-%m-%d %H:%M"),
                         bs_record.source
                     )
                     logger.debug(
-                        "  Balance sheet periods: %s", 
+                        "  Balance sheet periods: %s",
                         list(bs_record.dataframe.columns[:4])
                     )
-                    
+
                     # Use cached info or fetch fresh if missing
                     info = cached_info if cached_info else (yf_ticker.info or {})
                     # Use cached financials or empty df if missing
                     financials_df = fin_record.dataframe if not fin_record.dataframe.empty else pd.DataFrame()
-                    
+
                     analyzer.populate_financials(
                         balance_sheet=bs_record.dataframe,
                         income_statement=income_record.dataframe,
