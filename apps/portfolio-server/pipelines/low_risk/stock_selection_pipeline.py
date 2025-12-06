@@ -493,7 +493,7 @@ class StockSelectionPipeline:
 
         # failed companies
         failed_companies = []
-
+        count = 0
         # Build company prompt
         for _, row in industry_companies.iterrows():
             company_name = row.get("Company Name", "")
@@ -520,6 +520,7 @@ class StockSelectionPipeline:
                     if company_brief:
                         company_prompt += f" - {company_brief}"
                     company_prompt += "\n"
+                    count+=1;
             else:
                 failed_companies.append({
                     "name": company_name,
@@ -531,6 +532,7 @@ class StockSelectionPipeline:
             failed_names = ', '.join(c['name'] for c in failed_companies)
             publish_to_kafka({"content": f"Rejecting companies due to failed guardrails\n{failed_names}"}, user_id=self.user_id, task_id=self.task_id)
 
+        logger.info(f"{count} passed for {industry}")
         return company_prompt.strip()
 
     def stock_selection_indwise(
