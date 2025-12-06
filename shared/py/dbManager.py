@@ -359,6 +359,9 @@ class DBManager:
                             self.logger.warning("⚠️ SoftTimeLimitExceeded during disconnect, forcing cleanup")
                         else:
                             self.logger.warning("⚠️ Error during Prisma disconnect: %s", disc_exc)
+                else:
+                    # Client exists but is not connected - skip disconnect, just cleanup
+                    self.logger.debug("Prisma client already disconnected, skipping disconnect call")
                 
                 # Force stop engine to ensure DB connections are closed (with timeout)
                 if hasattr(self.client, '_engine') and self.client._engine:

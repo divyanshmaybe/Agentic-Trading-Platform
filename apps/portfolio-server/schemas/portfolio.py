@@ -213,9 +213,18 @@ class PortfolioDashboardResponse(BaseModel):
     """Main portfolio dashboard data"""
     portfolio_id: str
     portfolio_name: str
-    investment_amount: Decimal
-    available_cash: Decimal
-    total_realized_pnl: Decimal
+    investment_amount: Decimal  # Static initial capital
+    available_cash: Decimal  # Dynamic cash balance
+    total_realized_pnl: Decimal  # Accumulated realized P&L
+    
+    # NEW: Computed portfolio metrics (SEBI-compliant)
+    total_position_value: Decimal  # Sum of all position market values
+    total_unrealized_pnl: Decimal  # Sum of unrealized P&L from open positions
+    current_portfolio_value: Decimal  # available_cash + total_position_value (GROUND TRUTH)
+    total_pnl: Decimal  # realized_pnl + unrealized_pnl
+    total_return_pct: Decimal  # ((current_value - investment) / investment) * 100
+    
+    # Existing fields
     total_positions: int
     active_agents: int
     allocations: List[AllocationDashboardSummary]
@@ -234,3 +243,26 @@ class AgentDashboardResponse(BaseModel):
     allocation: Optional[PortfolioAllocationSummary] = None
     performance_metrics: Optional[dict] = None
     recent_trades: List[TradeSummary]
+
+
+class MarginSnapshotResponse(BaseModel):
+    """
+    SEBI-compliant margin and buying power snapshot.
+    
+    Provides real-time margin requirements and available buying power
+    for intraday and delivery trades.
+    """
+    portfolio_id: str
+    available_cash: Decimal  # Liquid cash available
+    margin_used: Decimal  # Total margin blocked in open positions
+    free_margin: Decimal  # Available margin for new trades
+    
+    # Buying power (SEBI-compliant)
+    max_order_size_delivery: Decimal  # Max notional for delivery trades (1x leverage)
+    max_order_size_intraday: Decimal  # Max notional for intraday trades (~5x leverage)
+    
+    # Metadata
+    calculated_at: datetime  # Timestamp of calculation
+    
+    class Config:
+        from_attributes = True

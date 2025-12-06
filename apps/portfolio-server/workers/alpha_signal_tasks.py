@@ -171,7 +171,16 @@ async def generate_signals_for_alpha_core(
     
     try:
         # Import quant-stream
-        from quant_stream.backtest.runner import load_market_data, calculate_factors
+        try:
+            from quant_stream.backtest.runner import load_market_data, calculate_factors
+        except ModuleNotFoundError as import_err:
+            logger.error("❌ quant_stream module not available: %s", import_err)
+            return {
+                "status": "error", 
+                "error": f"quant_stream module not installed: {str(import_err)}",
+                "alpha_id": alpha.id,
+                "alpha_name": alpha.name,
+            }
         
         features_config = workflow_config.get("features", [])
         

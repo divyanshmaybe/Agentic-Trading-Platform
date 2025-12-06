@@ -341,31 +341,32 @@ celery_app.conf.task_annotations = {
         }
         for task_name in STANDARD_TASKS
     },
-    # Allocation/Rebalancing tasks - NO TIME LIMITS (regime detection + LLM can take time)
+    # Allocation/Rebalancing tasks - Very high time limits (regime detection + LLM can take time)
     **{
         task_name: {
-            "soft_time_limit": None,  # NO soft limit
-            "time_limit": None,  # NO hard limit
+            "soft_time_limit": 86400,  # 24 hours (effectively unlimited)
+            "time_limit": 86400,  # 24 hours (effectively unlimited)
             "rate_limit": "10/m",  # Max 10 per minute
         }
         for task_name in ALLOCATION_TASKS
     },
-    # Signal processing - CRITICAL: NO RATE LIMIT, NO TIME LIMITS for real-time trading
+    # Signal processing - CRITICAL: NO RATE LIMIT, VERY HIGH TIME LIMITS for real-time trading
     # These must execute immediately when signals come in and run as long as needed
+    # NOTE: Use very high limits instead of None - Celery doesn't handle None properly
     **{
         task_name: {
-            "soft_time_limit": None,  # NO soft limit - run indefinitely
-            "time_limit": None,  # NO hard limit - run indefinitely
+            "soft_time_limit": 86400,  # 24 hours (effectively unlimited)
+            "time_limit": 86400,  # 24 hours (effectively unlimited)
             "rate_limit": None,  # NO RATE LIMIT - execute immediately!
             "priority": 9,  # HIGH PRIORITY (0-9, 9 is highest)
         }
         for task_name in SIGNAL_PROCESSING_TASKS
     },
-    # Trade execution - CRITICAL: NO RATE LIMIT, NO TIME LIMITS
+    # Trade execution - CRITICAL: NO RATE LIMIT, VERY HIGH TIME LIMITS
     **{
         task_name: {
-            "soft_time_limit": None,  # NO soft limit - run indefinitely
-            "time_limit": None,  # NO hard limit - run indefinitely
+            "soft_time_limit": 86400,  # 24 hours (effectively unlimited)
+            "time_limit": 86400,  # 24 hours (effectively unlimited)
             "rate_limit": None,  # NO RATE LIMIT - execute immediately!
             "priority": 9,  # HIGH PRIORITY
         }

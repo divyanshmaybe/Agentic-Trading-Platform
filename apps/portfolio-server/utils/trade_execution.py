@@ -232,34 +232,33 @@ def prepare_trade_execution_payloads(
             logger.debug("Skipping signal %s with non-positive confidence", signal.signal_id)
             continue
 
-        # Fetch price via HTTP API instead of direct WebSocket connection
+        # Fetch price directly from market data service (more reliable than HTTP API)
         reference_price = 0.0
         try:
-            portfolio_server_url = os.getenv("PORTFOLIO_SERVER_URL", "http://localhost:8000")
-            internal_secret = os.getenv("INTERNAL_SERVICE_SECRET", "agentinvest-secret")
+            from market_data import await_live_price
+            import asyncio
             
-            url = f"{portfolio_server_url}/api/market/quotes"
-            params = {"symbols": signal.symbol}
-            headers = {
-                "X-Internal-Service": "true",
-                "X-Service-Secret": internal_secret,
-            }
+            # Run async price fetch in sync context
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
             
-            with httpx.Client(timeout=price_fetch_timeout) as client:
-                response = client.get(url, params=params, headers=headers)
-                if response.status_code == 200:
-                    data = response.json()
-                    if data.get("data") and len(data["data"]) > 0:
-                        price = data["data"][0].get("price")
-                        if price:
-                            reference_price = _normalise_price(price)
-        except Exception as exc:  # pragma: no cover - defensive logging
-            logger.warning("Failed to fetch price for %s via HTTP API: %s", signal.symbol, exc)
+            price_decimal = loop.run_until_complete(
+                await_live_price(signal.symbol, timeout=price_fetch_timeout)
+            )
+            reference_price = float(price_decimal)
+            logger.info("✅ Fetched live price for %s: ₹%.2f", signal.symbol, reference_price)
+        except RuntimeError as price_error:
+            logger.warning("⚠️ Failed to fetch live price for %s: %s", signal.symbol, price_error)
+            reference_price = 0.0
+        except Exception as exc:
+            logger.warning("⚠️ Unexpected error fetching price for %s: %s", signal.symbol, exc)
             reference_price = 0.0
 
-        # Fallback: Use a default price if fetch fails (for testing/development)
+        # Fallback: Try to extract price from signal metadata if live fetch failed
         if reference_price <= 0:
-            # Try to extract price from signal metadata if available
             signal_meta = dict(signal.metadata or {})
             if "reference_price" in signal_meta:
                 try:
@@ -270,14 +269,23 @@ def prepare_trade_execution_payloads(
             else:
                 logger.warning("⚠️ reference_price NOT found in signal metadata. Keys: %s", list(signal_meta.keys()))
             
-            # If still no price, use a reasonable default for testing
+            # If still no price, use a reasonable default for testing ONLY in demo mode
             if reference_price <= 0:
-                logger.warning(
-                    "No price available for %s, using default price 100.0 for testing. "
-                    "This should be replaced with actual market data in production.",
-                    signal.symbol
-                )
-                reference_price = 100.0  # Default fallback price for testing
+                demo_mode = os.getenv("DEMO_MODE", "false").lower() in {"1", "true", "yes"}
+                if demo_mode:
+                    logger.warning(
+                        "No price available for %s, using default price 100.0 for testing (DEMO_MODE enabled). "
+                        "This should be replaced with actual market data in production.",
+                        signal.symbol
+                    )
+                    reference_price = 100.0  # Default fallback price for testing
+                else:
+                    logger.error(
+                        "❌ No price available for %s and DEMO_MODE is disabled. Skipping this signal. "
+                        "Check market data service connectivity.",
+                        signal.symbol
+                    )
+                    continue  # Skip this signal entirely in production if no price available
 
         for portfolio in eligible_portfolios:
             logger.info(

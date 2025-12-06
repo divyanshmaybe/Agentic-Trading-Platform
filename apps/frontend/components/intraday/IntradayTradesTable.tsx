@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
-import { getRecentTrades } from "@/lib/portfolio"
+import { getRecentTrades, fetchQuotes } from "@/lib/portfolio"
 import { formatCurrency, formatDate } from "@/lib/utils/formatters"
 import type { Trade } from "@/lib/portfolio"
 
@@ -30,6 +30,7 @@ export function IntradayTradesTable({ className }: IntradayTradesTableProps) {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState<typeof PAGE_SIZE_OPTIONS[number]>(10)
   const [total, setTotal] = useState(0)
+  const [livePrices, setLivePrices] = useState<Map<string, number>>(new Map())
   
   // Filters
   const [symbolFilter, setSymbolFilter] = useState("")
@@ -73,6 +74,24 @@ export function IntradayTradesTable({ className }: IntradayTradesTableProps) {
       
       setTrades(filteredTrades)
       setTotal(filteredTrades.length)
+      
+      // Fetch live prices for all unique symbols
+      const symbols = [...new Set(filteredTrades.map(t => t.symbol))]
+      if (symbols.length > 0) {
+        try {
+          const quotesResponse = await fetchQuotes(symbols)
+          const priceMap = new Map<string, number>()
+          quotesResponse.data.forEach((quote) => {
+            if (quote && quote.symbol && quote.price) {
+              priceMap.set(quote.symbol, parseFloat(quote.price))
+            }
+          })
+          setLivePrices(priceMap)
+        } catch (quoteErr) {
+          console.warn("Failed to fetch live prices:", quoteErr)
+          // Continue without live prices
+        }
+      }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Failed to load trades"
       console.error("Failed to fetch trades:", err)
@@ -275,6 +294,7 @@ export function IntradayTradesTable({ className }: IntradayTradesTableProps) {
                   <th className="px-6 py-4 font-medium">Type</th>
                   <th className="px-6 py-4 font-medium">Quantity</th>
                   <th className="px-6 py-4 font-medium">Executed Price</th>
+                  <th className="px-6 py-4 font-medium">Current Price</th>
                   <th className="px-6 py-4 font-medium">Net Amount</th>
                   <th className="px-6 py-4 font-medium">Status</th>
                   <th className="px-6 py-4 font-medium">Time</th>
@@ -323,6 +343,33 @@ export function IntradayTradesTable({ className }: IntradayTradesTableProps) {
                       {trade.executed_price
                         ? formatCurrency(parseFloat(trade.executed_price))
                         : "-"}
+                    </td>
+                    <td className="px-6 py-4">
+                      {(() => {
+                        const currentPrice = livePrices.get(trade.symbol)
+                        const executedPrice = trade.executed_price ? parseFloat(trade.executed_price) : null
+                        
+                        if (!currentPrice || !executedPrice) {
+                          return <span className="text-sm text-white/40">-</span>
+                        }
+                        
+                        const priceDiff = currentPrice - executedPrice
+                        const priceDiffPct = (priceDiff / executedPrice) * 100
+                        const isProfit = trade.side.toLowerCase() === "buy" ? priceDiff > 0 : priceDiff < 0
+                        
+                        return (
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-sm font-medium text-white">
+                              {formatCurrency(currentPrice)}
+                            </span>
+                            {Math.abs(priceDiff) > 0.01 && (
+                              <span className={`text-xs ${isProfit ? "text-emerald-400" : "text-rose-400"}`}>
+                                {isProfit ? "+" : ""}{priceDiffPct.toFixed(2)}%
+                              </span>
+                            )}
+                          </div>
+                        )
+                      })()}
                     </td>
                     <td className="px-6 py-4">
                       <span className="text-sm font-medium text-white">

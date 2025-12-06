@@ -570,7 +570,7 @@ class PortfolioController:
         *,
         target_user_id: Optional[str] = None,
     ) -> PortfolioDashboardResponse:
-        """Get aggregated portfolio dashboard data"""
+        """Get aggregated portfolio dashboard data with comprehensive metrics"""
         user_id = target_user_id or request_user.get("id")
         if not user_id:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User id is required")
@@ -607,12 +607,28 @@ class PortfolioController:
             for alloc in allocations
         ]
         
+        # Calculate comprehensive portfolio metrics using valuation service
+        from services.portfolio_valuation_service import PortfolioValuationService
+        
+        valuation_service = PortfolioValuationService(logger=self.logger)
+        metrics = await valuation_service.calculate_portfolio_metrics(
+            portfolio_id=portfolio.id,
+            client=self.prisma,
+        )
+        
         return PortfolioDashboardResponse(
             portfolio_id=portfolio.id,
             portfolio_name=portfolio.portfolio_name,
             investment_amount=portfolio.investment_amount,
             available_cash=portfolio.available_cash,
             total_realized_pnl=getattr(portfolio, "total_realized_pnl", Decimal("0")) or Decimal("0"),
+            # NEW: Computed metrics from valuation service
+            total_position_value=metrics["total_position_value"],
+            total_unrealized_pnl=metrics["total_unrealized_pnl"],
+            current_portfolio_value=metrics["current_portfolio_value"],
+            total_pnl=metrics["total_pnl"],
+            total_return_pct=metrics["total_return_pct"],
+            # Existing fields
             total_positions=len(positions),
             active_agents=len(agents),
             allocations=allocation_summaries,

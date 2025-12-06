@@ -158,6 +158,7 @@ class TradingAgentSnapshotService:
                     symbol = str(getattr(position, "symbol", ""))
                     quantity = int(getattr(position, "quantity", 0))
                     avg_buy_price = self._as_decimal(getattr(position, "average_buy_price", 0))
+                    position_type = str(getattr(position, "position_type", "long")).lower()
                     
                     if not symbol or quantity == 0:
                         continue
@@ -167,8 +168,17 @@ class TradingAgentSnapshotService:
                     if current_price == Decimal("0"):
                         current_price = avg_buy_price
                     
-                    position_value = current_price * Decimal(str(quantity))
-                    cost_basis = avg_buy_price * Decimal(str(quantity))
+                    # Handle SHORT vs LONG positions correctly
+                    abs_quantity = abs(quantity)
+                    
+                    if position_type == "short":
+                        # SHORT: we OWE shares (liability, negative value)
+                        position_value = -(current_price * Decimal(str(abs_quantity)))
+                        cost_basis = -(avg_buy_price * Decimal(str(abs_quantity)))
+                    else:
+                        # LONG: we OWN shares (asset, positive value)
+                        position_value = current_price * Decimal(str(quantity))
+                        cost_basis = avg_buy_price * Decimal(str(quantity))
                     
                     positions_value += position_value
                     unrealized_pnl += (position_value - cost_basis)

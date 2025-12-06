@@ -121,9 +121,18 @@ export type RecentTradeSummary = {
 export type PortfolioDashboardResponse = {
   portfolio_id: string
   portfolio_name: string
-  investment_amount: string
-  available_cash: string
-  total_realized_pnl: string
+  investment_amount: string  // Static initial capital
+  available_cash: string  // Dynamic cash balance
+  total_realized_pnl: string  // Accumulated realized P&L
+  
+  // NEW: Computed portfolio metrics (SEBI-compliant)
+  total_position_value: string  // Sum of all position market values
+  total_unrealized_pnl: string  // Sum of unrealized P&L from open positions
+  current_portfolio_value: string  // available_cash + total_position_value (GROUND TRUTH)
+  total_pnl: string  // realized_pnl + unrealized_pnl
+  total_return_pct: string  // ((current_value - investment) / investment) * 100
+  
+  // Existing fields
   total_positions: number
   active_agents: number
   allocations: AllocationDashboardSummary[]

@@ -15,7 +15,10 @@ function isPortfolioNotFoundError(error: unknown): boolean {
 
 const emptyPortfolioSummary: PortfolioSummary = {
   portfolioName: "No Portfolio",
-  totalValue: 0,
+  currentValue: 0,
+  totalUnrealizedPnl: 0,
+  totalPnl: 0,
+  totalReturnPct: 0,
   investmentAmount: 0,
   availableCash: 0,
   changePct: 0,
@@ -170,24 +173,26 @@ export function useDashboardData(allocations: { label: string; value: number }[]
         const availableCash = parseFloat(dashboardData.available_cash)
         const totalRealizedPnL = parseFloat(dashboardData.total_realized_pnl)
         
-        // Total value should be calculated in the PortfolioOverviewCard component
-        // by fetching current market prices for all positions and adding to available cash
-        // Here we just pass the initial investment + realized PnL as a fallback
-        const totalValue = investmentAmount + totalRealizedPnL
-        
-        const changePct = investmentAmount > 0 
-          ? (totalRealizedPnL / investmentAmount) * 100 
-          : 0
-        const changeValue = totalRealizedPnL
+        // NEW: Use backend-calculated metrics (GROUND TRUTH from snapshot_service formula)
+        const currentValue = parseFloat(dashboardData.current_portfolio_value)
+        const totalUnrealizedPnl = parseFloat(dashboardData.total_unrealized_pnl)
+        const totalPnl = parseFloat(dashboardData.total_pnl)
+        const totalReturnPct = parseFloat(dashboardData.total_return_pct)
 
         setPortfolioSummary({
           portfolioName: dashboardData.portfolio_name,
-          totalValue: totalValue,
+          // NEW: Backend-calculated values
+          currentValue: currentValue,
+          totalUnrealizedPnl: totalUnrealizedPnl,
+          totalPnl: totalPnl,
+          totalReturnPct: totalReturnPct,
+          // Existing fields
           investmentAmount: investmentAmount,
           availableCash: availableCash,
-          changePct: changePct,
-          changeValue: changeValue,
-          dailyPnL: totalRealizedPnL,
+          // Deprecated (kept for backward compatibility)
+          changePct: totalReturnPct,  // Use totalReturnPct instead
+          changeValue: totalPnl,  // Use totalPnl instead
+          dailyPnL: totalRealizedPnL,  // Use totalPnl instead
           riskTolerance: portfolioData.risk_tolerance,
           expectedReturn: parseFloat(portfolioData.expected_return_target) * 100,
           investmentHorizon: portfolioData.investment_horizon_years,
