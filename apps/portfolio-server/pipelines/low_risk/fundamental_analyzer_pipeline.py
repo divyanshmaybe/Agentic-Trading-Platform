@@ -195,17 +195,23 @@ class FundamentalAnalyzer:
         return int(score)
 
     def compute_volatility(self):
-        """Compute Volatility as the standard deviation of daily returns over the past year."""
+        """Compute Volatility as the standard deviation of daily returns over the past year.
+        
+        Note: Requires at least 90 trading days of data (the tail used for calculation).
+        The annualized volatility is computed as: std(daily_returns) * sqrt(252)
+        """
         try:
             if self.raw is None or self.raw.empty:
                 return pd.NA
 
             stock_data = self.raw[self.raw["Ticker"] == self.ticker_symbol].sort_values("Date")
 
-            if len(stock_data) < 252:
+            # Need at least 90 days for meaningful volatility calculation
+            # (previously required 252, but data files may have ~248 trading days per year)
+            if len(stock_data) < 90:
                 return pd.NA
 
-            stock_data = stock_data.tail(90)
+            stock_data = stock_data.tail(90).copy()
             stock_data['Return'] = stock_data['Close'].pct_change()
             volatility = stock_data['Return'].std() * np.sqrt(252)
 
