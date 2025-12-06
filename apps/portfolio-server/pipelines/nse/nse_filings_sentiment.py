@@ -514,23 +514,28 @@ def should_use_negative_impact(filing_type: str) -> bool:
     return RELEVANT_FILE_TYPES[filing_type].get("negative", False)
 
 
+@pw.udf
+def extract_filename_from_url(url: str) -> str:
+    """Extract filename from URL path."""
+    if not url:
+        return ""
+    return url.split("/")[-1]
+
+
 # ============================================================================
 # PDF DOWNLOAD AND PARSING
 # ============================================================================
 
 @pw.udf
 def download_and_parse_pdf(url: str, filename: str) -> str:
-    """Download PDF and extract text, then clean up the file"""
+    """Download PDF to docs folder and return the filename only.
+    
+    The PDF will be attached to the LLM in generate_trading_signal and deleted after processing.
+    """
     try:
-        import pdfplumber
         import requests
         import os
-        import warnings
-        import tempfile
         import uuid
-
-        # Suppress pdfplumber warnings about invalid color values
-        warnings.filterwarnings("ignore", message=".*Cannot set gray.*")
 
         if not url or not url.strip():
             print(f"[WARN] Empty PDF URL for {filename}, skipping download")
@@ -538,11 +543,14 @@ def download_and_parse_pdf(url: str, filename: str) -> str:
 
         print(f"[PIPELINE] Downloading PDF: {filename} from {url[:100]}...")
 
-        # Use unique temporary file per worker to avoid race conditions
-        os.makedirs("docs", exist_ok=True)
+        # Use the nse/docs folder for storing PDFs
+        docs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "docs")
+        os.makedirs(docs_dir, exist_ok=True)
+        
+        # Use unique filename to avoid race conditions
         unique_suffix = str(uuid.uuid4())[:8]
-        temp_filename = f"{filename}.{unique_suffix}.tmp"
-        path = os.path.join("docs", temp_filename)
+        temp_filename = f"{filename}.{unique_suffix}.pdf"
+        path = os.path.join(docs_dir, temp_filename)
 
         # Always download fresh (scraper handles deduplication)
         headers = {
@@ -566,7 +574,9 @@ def download_and_parse_pdf(url: str, filename: str) -> str:
                     f.write(chunk)
 
             file_size = os.path.getsize(path)
-            print(f"[PIPELINE] PDF downloaded: {filename} ({file_size} bytes), extracting text...")
+            print(f"[PIPELINE] PDF downloaded: {temp_filename} ({file_size} bytes) to {docs_dir}")
+            # Return only the temp filename (with unique suffix)
+            return temp_filename
         except requests.exceptions.RequestException as e:
             print(f"[ERROR] Failed to download PDF {filename} from {url}: {e}")
             return ""
@@ -574,50 +584,12 @@ def download_and_parse_pdf(url: str, filename: str) -> str:
             print(f"[ERROR] Unexpected error downloading PDF {filename}: {e}")
             return ""
 
-        # Extract text using pdfplumber (suppress warnings)
-        text = ""
-        try:
-            # Suppress pdfplumber warnings by redirecting stderr temporarily
-            import sys
-            import warnings
-            from io import StringIO
-
-            # Suppress all warnings
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-
-                # Also redirect stderr to suppress pdfplumber's direct prints
-                original_stderr = sys.stderr
-                try:
-                    sys.stderr = StringIO()
-                    with pdfplumber.open(path) as pdf:
-                        for page in pdf.pages:
-                            page_text = page.extract_text()
-                            if page_text:
-                                text += page_text + "\n"
-                finally:
-                    # Restore stderr
-                    sys.stderr = original_stderr
-        finally:
-            # Clean up temporary PDF file after extraction
-            try:
-                if os.path.exists(path):
-                    os.remove(path)
-                    print(f"[PIPELINE] Temporary PDF cleaned up: {temp_filename}")
-            except Exception as cleanup_error:
-                print(f"Warning: Could not delete temporary PDF {temp_filename}: {cleanup_error}")
-
-        print(f"[PIPELINE] PDF processed: {filename} ({len(text)} chars extracted)")
-        return text
     except Exception as e:
         print(f"Error processing PDF {filename}: {e}")
-        # Try to clean up on error too (use temp_filename if it was created)
+        # Try to clean up on error too
         try:
-            # Check if temp_filename variable exists (was created before error)
-            if 'temp_filename' in locals():
-                path = os.path.join("docs", temp_filename)
-                if os.path.exists(path):
-                    os.remove(path)
+            if 'path' in locals() and os.path.exists(path):
+                os.remove(path)
         except:
             pass
         return ""
@@ -789,19 +761,23 @@ def get_neg_impact(file_type: str, use_negative: bool, static_data_path: str = "
 
 @pw.udf
 def generate_trading_signal(
-    text: str,
     pos_impact: str,
     neg_impact: str,
     stocktechdata: str,
-    api_key: str
+    api_key: str,
+    pdf_filename: str = ""
 ) -> str:
     """
     Generate trading signal using two-model approach:
     - Model 1 (gemini-2.5-flash): Generates trading_signal + explanation
+      If pdf_filename is provided, attaches the PDF from the nse/docs folder.
     - Model 2 (gemini-2.5-pro): Validates logic and generates confidence_score
+      Has access to google_search tool for verification.
 
-    Prompts are loaded from YAML templates in the templates/ folder.
-    Uses llm_response_utils for response cleaning and parsing.
+    The model returns JSON directly wrapped in ```json...``` block.
+    This function extracts the JSON and returns it with timing metadata.
+
+    After signal processing, the PDF file is deleted from the docs folder.
 
     Includes LLM timing metrics in the response for latency tracking:
     - llm_start_time: ISO timestamp when LLM processing started
@@ -810,17 +786,7 @@ def generate_trading_signal(
     """
     import time
     import yaml
-
-    # Import LLM response utilities
-    try:
-        from utils.low_risk_utils.llm_response_utils import (
-            clean_markdown_from_response,
-            extract_json_from_text,
-        )
-        has_llm_utils = True
-    except ImportError:
-        has_llm_utils = False
-        print("[WARN] llm_response_utils not available, using inline cleaning")
+    import json
 
     # Track LLM processing start time
     llm_start_time = datetime.utcnow()
@@ -831,12 +797,11 @@ def generate_trading_signal(
         api_key = os.getenv("GEMINI_API_KEY", "")
 
     # Validate inputs
-    if not text or not text.strip():
-        print("[WARN] Empty text provided to generate_trading_signal")
-        return "Error: Empty text content"
+    if not pdf_filename or not pdf_filename.strip():
+        print("[WARN] Empty PDF filename provided to generate_trading_signal")
+        return json.dumps({"error": "Empty PDF filename", "final_signal": 0, "Confidence": 0})
 
-    print(f"[PIPELINE] Generating trading signal with two-model approach (text length: {len(text)} chars)...")
-
+    print(f"[PIPELINE] Generating trading signal with two-model approach (PDF filename: {pdf_filename})...")
     # Load prompt templates from YAML files
     templates_dir = Path(__file__).resolve().parents[2] / "templates"
 
@@ -855,16 +820,7 @@ def generate_trading_signal(
     except Exception as e:
         error_msg = f"Failed to load YAML templates from {templates_dir}: {e}"
         print(f"[ERROR] {error_msg}")
-        return f"Error: {error_msg}"
-
-    def clean_llm_response(response_text: str) -> str:
-        """Clean LLM response using utils or inline fallback."""
-        if has_llm_utils:
-            return clean_markdown_from_response(response_text)
-        # Inline fallback
-        cleaned = re.sub(r"```(?:python|json|yaml|xml|html)?\s*\n?", "", response_text)
-        cleaned = re.sub(r"```\s*$", "", cleaned)
-        return cleaned.strip()
+        return json.dumps({"error": error_msg, "final_signal": 0, "Confidence": 0})
 
     def extract_content_from_response(response) -> str:
         """Extract content string from LLM response object."""
@@ -886,27 +842,58 @@ def generate_trading_signal(
                     text_parts.append(str(block))
             content = '\n'.join(text_parts)
 
-        return clean_llm_response(content)
+        return content
+
+    def extract_json_from_response(response_text: str) -> dict:
+        """Extract JSON from model response (handles ```json...``` blocks)."""
+        # Try to extract JSON from markdown code block
+        json_match = re.search(r"```json\s*(.*?)\s*```", response_text, re.DOTALL)
+        if json_match:
+            json_text = json_match.group(1).strip()
+            try:
+                return json.loads(json_text)
+            except json.JSONDecodeError as e:
+                print(f"[WARN] Failed to parse JSON from code block: {e}")
+        
+        # Try to parse the entire response as JSON
+        try:
+            return json.loads(response_text.strip())
+        except json.JSONDecodeError:
+            pass
+        
+        # Fallback: return empty dict with defaults
+        print(f"[WARN] Could not extract JSON from response: {response_text[:200]}...")
+        return {"final_signal": 0, "Confidence": 0}
 
     # ============ MODEL 1: Generate signal + explanation ============
     user_prompt = gen_config['prompt_template'].format(
         stocktechdata=stocktechdata,
         pos_impact=pos_impact,
         neg_impact=neg_impact,
-        text=text
     )
     model1_name = gen_config.get('model', 'gemini-2.5-flash')
-    model1_temp = gen_config.get('temperature', 0.3)
+    model1_temp = gen_config.get('temperature', 0.1)
+
+    # Determine PDF path from filename (stored in nse/docs folder)
+    pdf_path = None
+    if pdf_filename and pdf_filename.strip():
+        docs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "docs")
+        pdf_path = os.path.join(docs_dir, pdf_filename)
+        if not os.path.exists(pdf_path):
+            print(f"[WARN] PDF file not found at {pdf_path}, proceeding without attachment")
+            pdf_path = None
 
     try:
         # Validate API key
         if not api_key or api_key.strip() == "":
             error_msg = "GEMINI_API_KEY is empty or not set. Please check your .env file."
             print(f"[ERROR] {error_msg}")
-            return f"Error: {error_msg}"
+            return json.dumps({"error": error_msg, "final_signal": 0, "Confidence": 0})
 
         from langchain_google_genai import ChatGoogleGenerativeAI
-        import time
+        from langchain_core.messages import HumanMessage
+        from PyPDF2 import PdfReader
+        import base64
 
         # Set GOOGLE_API_KEY env var for langchain
         original_google_key = os.environ.get("GOOGLE_API_KEY", None)
@@ -920,55 +907,93 @@ def generate_trading_signal(
                 api_key=api_key
             )
 
+            # Build message parts for Model 1
+            message_parts = [{"type": "text", "text": user_prompt}]
+
+            # Attach PDF if available and valid
+            attach_pdf = False
+            if pdf_path:
+                try:
+                    # Validate PDF with PyPDF2 (non-strict mode)
+                    reader = PdfReader(pdf_path, strict=False)
+                    page_count = len(reader.pages)
+                    if page_count >= 1:
+                        attach_pdf = True
+                    else:
+                        print(f"[WARN] PDF has zero pages, skipping attachment: {pdf_path}")
+                except Exception as e:
+                    print(f"[WARN] PDF unreadable/corrupted, skipping attachment: {pdf_path} | Error: {e}")
+
+            if attach_pdf:
+                try:
+                    with open(pdf_path, "rb") as f:
+                        pdf_bytes = f.read()
+                    pdf_b64 = base64.standard_b64encode(pdf_bytes).decode("utf-8")
+                    message_parts.append({
+                        "type": "file",
+                        "mime_type": "application/pdf",
+                        "base64": pdf_b64
+                    })
+                    print(f"[INFO] PDF attached successfully: {pdf_path}")
+                except Exception as e:
+                    print(f"[WARN] Failed to attach PDF {pdf_path}: {e}")
+            else:
+                print("[INFO] Proceeding WITHOUT PDF attachment.")
+
+            # Create HumanMessage with multipart content
+            human_msg = HumanMessage(content=message_parts)
+
             print(f"[PIPELINE] Model 1 ({model1_name}): Generating signal + explanation...")
-            decision_raw = trading_model.invoke(user_prompt)
+            decision_raw = trading_model.invoke([human_msg])
             decision_text = extract_content_from_response(decision_raw)
 
-            print(f"[PIPELINE] Model 1 Response: {decision_text[:200]}...")
+            print(f"[PIPELINE] Model 1 Response: {decision_text[:300]}...")
 
-            # Extract signal from Model 1
-            sig_match = re.search(r"trading_signal:\s*(-?\d+)", decision_text, re.IGNORECASE)
-            signal = int(sig_match.group(1)) if sig_match else 0
+            # Extract JSON from Model 1 response
+            model1_result = extract_json_from_response(decision_text)
+            signal = model1_result.get("final_signal", model1_result.get("trading_signal", 0))
+            confidence = model1_result.get("Confidence", model1_result.get("confidence", 0))
 
-            # Extract explanation from Model 1
-            exp_match = re.search(r"explanation:\s*(.*)", decision_text, re.DOTALL | re.IGNORECASE)
-            explanation = exp_match.group(1).strip() if exp_match else "No explanation provided"
-
-            # Clean up explanation (remove any trailing markers)
-            explanation = re.sub(r'\n__LLM_TIMING__.*$', '', explanation).strip()
-
-            print(f"[PIPELINE] Model 1 Result: signal={signal}, explanation={explanation[:100]}...")
+            print(f"[PIPELINE] Model 1 Result: signal={signal}, confidence={confidence}")
 
             # -------- MODEL 2: Validate & generate confidence --------
             validation_prompt = val_config['prompt_template'].format(
                 signal=signal,
-                explanation=explanation
+                explanation=json.dumps(model1_result)  # Pass full JSON for validation
             )
             model2_name = val_config.get('model', 'gemini-2.5-pro')
-            model2_temp = val_config.get('temperature', 0.4)
+            model2_temp = val_config.get('temperature', 0.1)
 
             validator_model = ChatGoogleGenerativeAI(
                 model=model2_name,
                 temperature=model2_temp,
                 api_key=api_key
             )
+            
+            # Bind google_search tool to validator model
+            validator_model_with_search = validator_model.bind_tools([
+                {"google_search": {}}
+            ])
 
-            print(f"[PIPELINE] Model 2 ({model2_name}): Validating signal + generating confidence...")
-            validation_raw = validator_model.invoke(validation_prompt)
+            print(f"[PIPELINE] Model 2 ({model2_name}): Validating signal + generating confidence (with google_search tool)...")
+            val_msg = HumanMessage(content=[{"type": "text", "text": validation_prompt}])
+            validation_raw = validator_model_with_search.invoke([val_msg])
             validation_text = extract_content_from_response(validation_raw)
 
-            print(f"[PIPELINE] Model 2 Response: {validation_text[:200]}...")
+            print(f"[PIPELINE] Model 2 Response: {validation_text[:300]}...")
 
-            # Extract final_signal from Model 2
-            final_sig_match = re.search(r"final_signal:\s*(-?\d+)", validation_text, re.IGNORECASE)
-            final_signal = int(final_sig_match.group(1)) if final_sig_match else signal
+            # Extract JSON from Model 2 response
+            model2_result = extract_json_from_response(validation_text)
+            final_signal = model2_result.get("final_signal", signal)
+            final_confidence = model2_result.get("Confidence", model2_result.get("confidence", confidence))
 
-            # Extract confidence from Model 2
-            conf_match = re.search(r"confidence(?:_score)?:\s*([0-9]*\.?[0-9]+)", validation_text, re.IGNORECASE)
-            confidence = float(conf_match.group(1)) if conf_match else 0.5
-            confidence = max(0.0, min(1.0, confidence))  # Clamp to [0, 1]
+            # Clamp confidence to [0, 1]
+            if isinstance(final_confidence, (int, float)):
+                final_confidence = max(0.0, min(1.0, float(final_confidence)))
+            else:
+                final_confidence = 0.5
 
-            print(f"[PIPELINE] Model 2 Result: final_signal={final_signal}, confidence={confidence}")
+            print(f"[PIPELINE] Model 2 Result: final_signal={final_signal}, confidence={final_confidence}")
 
             # Calculate LLM delay
             llm_end_time = datetime.utcnow()
@@ -976,14 +1001,25 @@ def generate_trading_signal(
 
             print(f"[PIPELINE] ⏱️ Total LLM delay (both models): {llm_delay_ms}ms")
 
-            # Construct final response in expected format
-            response_text = f"""trading_signal: {final_signal}
-confidence_score: {confidence}
-concise_explanation: {explanation}"""
+            # Construct final response JSON with timing metadata
+            final_result = {
+                "final_signal": final_signal,
+                "Confidence": final_confidence,
+                "explanation": model2_result.get("explanation", model1_result.get("explanation", "")),
+                "llm_start_time": llm_start_time.isoformat() + "Z",
+                "llm_end_time": llm_end_time.isoformat() + "Z",
+                "llm_delay_ms": llm_delay_ms
+            }
 
-            # Append timing metadata to response for downstream parsing
-            timing_suffix = f"\n__LLM_TIMING__:{llm_start_time.isoformat()}Z|{llm_end_time.isoformat()}Z|{llm_delay_ms}"
-            return response_text + timing_suffix
+            # Delete PDF file after signal is processed
+            if pdf_path and os.path.exists(pdf_path):
+                try:
+                    os.remove(pdf_path)
+                    print(f"[CLEANUP] ✅ Deleted PDF file: {pdf_path}")
+                except Exception as e:
+                    print(f"[CLEANUP] ⚠️ Failed to delete PDF file {pdf_path}: {e}")
+
+            return json.dumps(final_result)
 
         finally:
             # Restore original environment variable if it existed
@@ -991,164 +1027,121 @@ concise_explanation: {explanation}"""
                 os.environ["GOOGLE_API_KEY"] = original_google_key
             elif "GOOGLE_API_KEY" in os.environ:
                 del os.environ["GOOGLE_API_KEY"]
+            
+            # Cleanup PDF file on any exit (error or success)
+            # This is a fallback in case the cleanup above didn't run
+            if pdf_path and os.path.exists(pdf_path):
+                try:
+                    os.remove(pdf_path)
+                    print(f"[CLEANUP] ✅ Deleted PDF file (finally block): {pdf_path}")
+                except Exception as e:
+                    print(f"[CLEANUP] ⚠️ Failed to delete PDF file {pdf_path}: {e}")
 
     except Exception as e:
         error_msg = str(e)
         print(f"[ERROR] LLM generation failed: {error_msg}")
 
+        # Cleanup PDF file on error
+        if pdf_path and os.path.exists(pdf_path):
+            try:
+                os.remove(pdf_path)
+                print(f"[CLEANUP] ✅ Deleted PDF file (error handler): {pdf_path}")
+            except Exception as cleanup_e:
+                print(f"[CLEANUP] ⚠️ Failed to delete PDF file {pdf_path}: {cleanup_e}")
+
         # Provide helpful error message
+        error_result = {"final_signal": 0, "Confidence": 0, "error": error_msg}
         if "credentials" in error_msg.lower() or "api key" in error_msg.lower():
-            return f"Error: API key issue - {error_msg}. Please check GEMINI_API_KEY in .env file."
-        if "429" in error_msg or "quota" in error_msg.lower():
-            return "Error: Rate limit exceeded. Please reduce scraping frequency or upgrade Gemini API tier."
-        return f"Error generating signal: {error_msg}"
+            error_result["error"] = f"API key issue - {error_msg}. Please check GEMINI_API_KEY in .env file."
+        elif "429" in error_msg or "quota" in error_msg.lower():
+            error_result["error"] = "Rate limit exceeded. Please reduce scraping frequency or upgrade Gemini API tier."
+        return json.dumps(error_result)
 
 
 @pw.udf
 def parse_trading_signal_value(response: str) -> int:
-    """Parse trading signal value (1, 0, or -1) from LLM response using utils."""
+    """Parse trading signal value (1, 0, or -1) from JSON response."""
+    import json
     try:
-        # Check if response is an error message
-        if not response or "error" in response.lower() or "429" in response or "quota" in response.lower():
-            print(f"[WARN] Invalid LLM response (error detected): {response[:200]}")
+        if not response:
             return 0
 
-        # Try to use llm_response_utils
+        # Parse JSON response
         try:
-            from utils.low_risk_utils.llm_response_utils import extract_trading_signal_fields
-            fields = extract_trading_signal_fields(response)
-            signal = fields.get("final_signal") or fields.get("trading_signal", 0)
-            print(f"[PIPELINE] Parsed signal using utils: {signal}")
+            data = json.loads(response)
+            signal = data.get("final_signal", data.get("trading_signal", 0))
+            # Validate signal is in valid range
+            if signal not in [-1, 0, 1]:
+                print(f"[WARN] Invalid signal value {signal}, defaulting to HOLD (0)")
+                return 0
+            print(f"[PIPELINE] Parsed signal from JSON: {signal}")
             return signal
-        except ImportError:
-            pass  # Fall back to inline parsing
+        except json.JSONDecodeError as e:
+            print(f"[WARN] Failed to parse JSON response: {e}")
+            return 0
 
-        # Fallback: Try multiple patterns to match various response formats
-        patterns = [
-            r"trading_signal:\s*(-?\d+)",  # Original format
-            r"trading_signal\s*:\s*(-?\d+)",  # With optional spaces
-            r"signal:\s*(-?\d+)",  # Alternative format
-            r"BUY.*?(\d+)|SELL.*?(-?\d+)|HOLD.*?(\d+)",  # Text format
-            r"(-?\d+)\s*[,\n]?\s*(?:BUY|SELL|HOLD)",  # Number before text
-        ]
-
-        for pattern in patterns:
-            signal_match = re.search(pattern, response, re.IGNORECASE)
-            if signal_match:
-                # Get the first non-None group
-                signal_str = next((g for g in signal_match.groups() if g is not None), None)
-                if signal_str:
-                    signal = int(signal_str)
-                    # Validate signal is in valid range
-                    if signal not in [-1, 0, 1]:
-                        print(f"[WARN] Invalid signal value {signal}, defaulting to HOLD (0)")
-                        return 0
-                    print(f"[PIPELINE] Parsed signal: {signal} from response")
-                    return signal
-
-        # If no pattern matches, print debug info
-        print(f"[WARN] Could not parse signal from response: {response[:300]}")
-        return 0
     except Exception as e:
-        print(f"[ERROR] Error parsing signal: {e}, Response: {response[:200]}")
+        print(f"[ERROR] Error parsing signal: {e}")
         return 0
 
 
 @pw.udf
 def parse_trading_signal_explanation(response: str) -> str:
-    """Parse trading signal explanation from LLM response using utils."""
+    """Parse trading signal explanation from JSON response."""
+    import json
     try:
-        # Try to use llm_response_utils
+        if not response:
+            return "No explanation provided"
+
+        # Parse JSON response
         try:
-            from utils.low_risk_utils.llm_response_utils import extract_trading_signal_fields
-            fields = extract_trading_signal_fields(response)
-            explanation = fields.get("explanation", "")
+            data = json.loads(response)
+            explanation = data.get("explanation", "No explanation provided")
             if explanation:
-                print(f"[PIPELINE] Parsed explanation using utils: {explanation[:100]}...")
-                return explanation
-        except ImportError:
-            pass  # Fall back to inline parsing
+                print(f"[PIPELINE] Parsed explanation from JSON: {explanation[:100]}...")
+            return explanation
+        except json.JSONDecodeError as e:
+            print(f"[WARN] Failed to parse JSON response: {e}")
+            return "No explanation provided"
 
-        # Fallback: Try multiple patterns
-        patterns = [
-            r"concise_explanation:\s*(.+?)(?:\n\n|\n[A-Z]|$)",  # Original format with lookahead
-            r"concise_explanation\s*:\s*(.+?)(?:\n\n|\n[A-Z]|$)",  # With spaces
-            r"explanation:\s*(.+?)(?:\n\n|\n[A-Z]|$)",  # Alternative format
-            r"reasoning:\s*(.+?)(?:\n\n|\n[A-Z]|$)",  # Another alternative
-        ]
-
-        for pattern in patterns:
-            explanation_match = re.search(pattern, response, re.DOTALL | re.IGNORECASE)
-            if explanation_match:
-                explanation = explanation_match.group(1).strip()
-                if explanation:
-                    print(f"[PIPELINE] Parsed explanation: {explanation[:100]}...")
-                    return explanation
-
-        # If no pattern matches, try to extract anything after the signal
-        # Look for text after "concise_explanation" or after the signal line
-        fallback_match = re.search(r"(?:concise_explanation|explanation|reasoning)[:\s]*(.+?)(?:\n\n|$)", response, re.DOTALL | re.IGNORECASE)
-        if fallback_match:
-            explanation = fallback_match.group(1).strip()
-            if explanation and len(explanation) > 10:  # Only if meaningful
-                return explanation
-
-        print(f"[WARN] Could not parse explanation from response: {response[:300]}")
-        return "No explanation provided"
     except Exception as e:
         print(f"[ERROR] Error parsing explanation: {e}")
-        return f"Error: {str(e)}"
+        return "No explanation provided"
 
 
 @pw.udf
 def parse_trading_signal_confidence(response: str) -> float:
-    """Parse confidence score (0-1) from LLM response using utils."""
+    """Parse confidence score (0-1) from JSON response."""
+    import json
     try:
         if not response:
             return 0.0
-        if "error" in response.lower() or "rate limit" in response.lower():
+
+        # Parse JSON response
+        try:
+            data = json.loads(response)
+            # Check for error in response
+            if data.get("error"):
+                return 0.0
+            confidence = data.get("Confidence", data.get("confidence", data.get("confidence_score", 0.5)))
+            # Ensure confidence is a float and clamp to [0, 1]
+            confidence = float(confidence) if confidence is not None else 0.5
+            confidence = max(0.0, min(1.0, confidence))
+            print(f"[PIPELINE] Parsed confidence from JSON: {confidence}")
+            return confidence
+        except json.JSONDecodeError as e:
+            print(f"[WARN] Failed to parse JSON response: {e}")
             return 0.0
 
-        # Try to use llm_response_utils
-        try:
-            from utils.low_risk_utils.llm_response_utils import extract_trading_signal_fields
-            fields = extract_trading_signal_fields(response)
-            confidence = fields.get("confidence_score", 0.5)
-            print(f"[PIPELINE] Parsed confidence using utils: {confidence}")
-            return confidence
-        except ImportError:
-            pass  # Fall back to inline parsing
-
-        match = re.search(r"confidence_score:\s*([0-9]*\.?[0-9]+)", response, re.IGNORECASE)
-        if match:
-            try:
-                value = float(match.group(1))
-            except ValueError:
-                return 0.0
-            if value < 0.0:
-                return 0.0
-            if value > 1.0:
-                return 1.0
-            return value
-
-        # Fallback: look for JSON style "confidence"
-        match_json = re.search(r'"confidence(?:_score)?"\s*:\s*([0-9]*\.?[0-9]+)', response, re.IGNORECASE)
-        if match_json:
-            try:
-                value = float(match_json.group(1))
-            except ValueError:
-                return 0.0
-            return max(0.0, min(1.0, value))
-
-    except Exception as exc:  # pragma: no cover - defensive logging
+    except Exception as exc:
         print(f"[ERROR] Error parsing confidence score: {exc}")
-    return 0.0
+        return 0.0
 
 
 @pw.udf
 def parse_llm_timing(response: str) -> str:
     """
-    Parse LLM timing metadata from response.
+    Parse LLM timing metadata from JSON response.
 
     Returns JSON string with timing info:
     - llm_start_time: ISO timestamp when LLM processing started
@@ -1157,24 +1150,27 @@ def parse_llm_timing(response: str) -> str:
 
     Returns empty string if timing not found.
     """
+    import json
     try:
         if not response:
             return ""
 
-        # Look for timing suffix: __LLM_TIMING__:start_time|end_time|delay_ms
-        timing_match = re.search(r"__LLM_TIMING__:([^|]+)\|([^|]+)\|(\d+)", response)
-        if timing_match:
-            llm_start_time = timing_match.group(1)
-            llm_end_time = timing_match.group(2)
-            llm_delay_ms = int(timing_match.group(3))
+        # Parse JSON response and extract timing fields
+        try:
+            data = json.loads(response)
+            llm_start_time = data.get("llm_start_time", "")
+            llm_end_time = data.get("llm_end_time", "")
+            llm_delay_ms = data.get("llm_delay_ms", 0)
 
-            import json
-            timing_data = {
-                "llm_start_time": llm_start_time,
-                "llm_end_time": llm_end_time,
-                "llm_delay_ms": llm_delay_ms,
-            }
-            return json.dumps(timing_data)
+            if llm_start_time and llm_end_time:
+                timing_data = {
+                    "llm_start_time": llm_start_time,
+                    "llm_end_time": llm_end_time,
+                    "llm_delay_ms": llm_delay_ms,
+                }
+                return json.dumps(timing_data)
+        except json.JSONDecodeError:
+            pass
 
         return ""
     except Exception as exc:
@@ -1280,7 +1276,7 @@ def create_nse_filings_pipeline(
     filings_with_types = filings_source.select(
         *pw.this,
         filing_type=map_filing_type(pw.this.desc),
-        filename=pw.apply(lambda url: url.split("/")[-1] if url else "", pw.this.attchmntFile),
+        filename=extract_filename_from_url(pw.this.attchmntFile),
     )
 
     # Filter to only process relevant filing types
@@ -1289,27 +1285,28 @@ def create_nse_filings_pipeline(
     print("[SENTIMENT] Step 1a: Filtered filings by relevant types...")
     print(f"[SENTIMENT] Relevant filing types: {list(RELEVANT_FILE_TYPES.keys())}")
 
-    print("[SENTIMENT] Step 2: Downloading and parsing PDFs...")
+    print("[SENTIMENT] Step 2: Downloading PDFs...")
 
-    filings_with_text = relevant_filings.select(
+    # Download PDFs and get the local filename (with unique suffix)
+    filings_with_pdf = relevant_filings.select(
         symbol=pw.this.symbol,
         desc=pw.this.desc,
         filing_type=pw.this.filing_type,
         sort_date=pw.this.sort_date,
         attchmntFile=pw.this.attchmntFile,
-        filename=pw.this.filename,
-        text=download_and_parse_pdf(pw.this.attchmntFile, pw.this.filename),
+        # Download PDF and get local filename (replaces URL-extracted filename)
+        filename=download_and_parse_pdf(pw.this.attchmntFile, pw.this.filename),
         # Carry through XBRL fields
         subject_of_announcement=pw.this.subject_of_announcement,
         attachment_url=pw.this.attachment_url,
         date_time_of_submission=pw.this.date_time_of_submission,
-    ).filter(pw.this.text != "")
+    ).filter(pw.this.filename != "")
 
-    print("[SENTIMENT] Step 2 complete: PDFs parsed, proceeding to sentiment analysis...")
+    print("[SENTIMENT] Step 2 complete: PDFs downloaded, proceeding to sentiment analysis...")
     print("[SENTIMENT] Step 3: Fetching impact scenarios and stock data...")
 
     # Determine which impacts to fetch based on filing type configuration
-    filings_with_impact_flags = filings_with_text.select(
+    filings_with_impact_flags = filings_with_pdf.select(
         *pw.this,
         use_positive=should_use_positive_impact(pw.this.filing_type),
         use_negative=should_use_negative_impact(pw.this.filing_type),
@@ -1329,12 +1326,11 @@ def create_nse_filings_pipeline(
     filings_with_responses = filings_enriched.select(
         *pw.this,
         llm_response=generate_trading_signal(
-            pw.this.text,
             pw.this.pos_impact,
             pw.this.neg_impact,
             pw.this.stocktechdata,
-            GEMINI_API_KEY
-        )
+            GEMINI_API_KEY,
+            pw.this.filename)
     )
 
     print("[SENTIMENT] Step 5: Parsing trading signals...")

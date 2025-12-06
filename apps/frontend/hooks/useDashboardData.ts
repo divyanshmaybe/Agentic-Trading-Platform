@@ -169,6 +169,10 @@ export function useDashboardData(allocations: { label: string; value: number }[]
         const investmentAmount = parseFloat(dashboardData.investment_amount)
         const availableCash = parseFloat(dashboardData.available_cash)
         const totalRealizedPnL = parseFloat(dashboardData.total_realized_pnl)
+        
+        // Total value should be calculated in the PortfolioOverviewCard component
+        // by fetching current market prices for all positions and adding to available cash
+        // Here we just pass the initial investment + realized PnL as a fallback
         const totalValue = investmentAmount + totalRealizedPnL
         
         const changePct = investmentAmount > 0 

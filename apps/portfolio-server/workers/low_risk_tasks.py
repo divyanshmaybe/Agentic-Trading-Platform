@@ -167,13 +167,14 @@ def run_low_risk_pipeline(
     user_id: str,
     fund_allocated: float = 100000.0,
     rebalance: bool = False,
-    prev_summary: Dict[str, Any] = {}
+    prev_summary: Dict[str, Any] = {},
+    _skip_lock: bool = False,  # Internal flag: lock already acquired in route
 ) -> Dict[str, Any]:
     """
     Execute the low-risk stock selection pipeline for a specific user.
 
     This task:
-    1. Acquires a user-specific lock to prevent concurrent executions
+    1. Acquires a user-specific lock to prevent concurrent executions (if not already acquired)
     2. Loads required data (company CSV, economic indicators)
     3. Runs industry selection → stock selection → trade generation
     4. Publishes progress updates via Kafka to frontend
@@ -182,6 +183,9 @@ def run_low_risk_pipeline(
     Args:
         user_id: User ID for pipeline execution and Kafka routing
         fund_allocated: Total fund amount to allocate (default: ₹100,000)
+        rebalance: Whether this is a rebalance operation
+        prev_summary: Previous summary for rebalancing
+        _skip_lock: Internal flag - set to True if lock already acquired by caller
 
     Returns:
         Dictionary with pipeline results and summary
@@ -189,6 +193,7 @@ def run_low_risk_pipeline(
     Raises:
         Various exceptions if pipeline fails (logged and re-raised for Celery retry)
     """
+    print(rebalance, prev_summary)
     import pandas as pd
     from dotenv import load_dotenv
 
@@ -202,24 +207,29 @@ def run_low_risk_pipeline(
     redis_client = Redis.from_url(BROKER_URL)
     pipeline_status = PipelineStatus(redis_client, user_id)
 
-    # Check if pipeline already running
-    is_running, start_time = pipeline_status.is_running()
-    if is_running:
-        elapsed_minutes = int((time.time() - start_time) / 60) if start_time else 0
-        msg = f"Low-risk pipeline already running (started {elapsed_minutes} minutes ago)"
-        task_logger.warning(msg)
-        return {
-            "success": False,
-            "error": "Pipeline already running",
-            "elapsed_minutes": elapsed_minutes
-        }
+    # Only check/acquire lock if not already acquired by caller
+    if not _skip_lock:
+        # Check if pipeline already running
+        is_running, start_time = pipeline_status.is_running()
+        if is_running:
+            elapsed_minutes = int((time.time() - start_time) / 60) if start_time else 0
+            msg = f"Low-risk pipeline already running (started {elapsed_minutes} minutes ago)"
+            task_logger.warning(msg)
+            return {
+                "success": False,
+                "error": "Pipeline already running",
+                "elapsed_minutes": elapsed_minutes
+            }
 
-    # Acquire lock (2 hour TTL to match task time limit)
-    if not pipeline_status.acquire_lock(ttl=7200):
-        return {
-            "success": False,
-            "error": "Failed to acquire pipeline lock"
-        }
+        # Acquire lock (2 hour TTL to match task time limit)
+        if not pipeline_status.acquire_lock(ttl=7200):
+            return {
+                "success": False,
+                "error": "Failed to acquire pipeline lock"
+            }
+    else:
+        # Lock already acquired, just log it
+        task_logger.info(f"✅ Using pre-acquired lock for user {user_id}")
 
     try:
         # === STAGE 1: Initialization ===
@@ -331,7 +341,7 @@ def run_low_risk_pipeline(
             storage=storage,
             task_id=task_id,
         )
-        industry_list = industry_pipeline.run(rebalance=rebalance, prev_summary=prev_summary)
+        industry_list = industry_pipeline.run(rebalance=rebalance, summary=prev_summary)
         publish_to_kafka(
             {
                 "content": f"Selected {len(industry_list)} industries",
@@ -384,7 +394,7 @@ def run_low_risk_pipeline(
         )
 
         # Run pipeline and generate trades
-        result = stock_pipeline.run(fund_allocated=fund_allocated, rebalance=rebalance, prev_summary=prev_summary)
+        result = stock_pipeline.run(fund_allocated=fund_allocated)
 
         # Extract summary
         summary = result["summary"]

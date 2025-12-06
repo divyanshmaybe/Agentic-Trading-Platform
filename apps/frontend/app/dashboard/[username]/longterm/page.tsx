@@ -2,9 +2,11 @@
 
 import { useState, useMemo, useEffect } from "react"
 import { useParams } from "next/navigation"
+import { Loader2, Play } from "lucide-react"
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader"
 import { Container } from "@/components/shared/Container"
 import { PageHeading } from "@/components/shared/PageHeading"
+import { Button } from "@/components/ui/button"
 import { useAuth } from "@/hooks/useAuth"
 import { AgentOverview, AgentTradesTable } from "@/components/agent"
 import { PortfolioSnapshots } from "@/components/portfolio/PortfolioSnapshots"
@@ -36,6 +38,7 @@ export default function LongTermPage() {
 	const [buyModalOpen, setBuyModalOpen] = useState(false)
 	const [rebalancing, setRebalancing] = useState(false)
 	const [rebalanceError, setRebalanceError] = useState<string | null>(null)
+	const [triggeringAgent, setTriggeringAgent] = useState(false)
 
 	// Extract summary event data
 	const summaryEvent = useMemo(() => {
@@ -182,12 +185,111 @@ export default function LongTermPage() {
 		}
 	}
 
+	// Handle triggering low_risk agent
+	const handleTriggerAgent = async () => {
+		setTriggeringAgent(true)
+		try {
+			const authServerUrl = process.env.NEXT_PUBLIC_AUTH_BASE_URL 
+				? process.env.NEXT_PUBLIC_AUTH_BASE_URL.replace("/api/auth", "")
+				: "http://localhost:4000"
+			
+			// Get auth token
+			let token: string | null = null
+			if (typeof window !== "undefined") {
+				const match = document.cookie.match(/(^| )access_token=([^;]+)/)
+				token = match ? match[2] : localStorage.getItem("access_token")
+			}
+
+			const headers: HeadersInit = {
+				"Content-Type": "application/json",
+			}
+			if (token) {
+				headers["Authorization"] = `Bearer ${token}`
+			}
+
+			const response = await fetch(`${authServerUrl}/api/user/subscriptions`, {
+				method: "POST",
+				headers,
+				credentials: "include",
+				body: JSON.stringify({
+					action: "subscribe",
+					agent: "low_risk",
+				}),
+			})
+
+			const data = await response.json()
+
+			if (!response.ok) {
+				throw new Error(data.message || data.error || "Failed to trigger low_risk agent")
+			}
+
+			// Show success message or handle as needed
+			alert("Low-risk agent triggered successfully!")
+		} catch (error) {
+			console.error("Failed to trigger low_risk agent:", error)
+			alert(error instanceof Error ? error.message : "Failed to trigger low_risk agent")
+		} finally {
+			setTriggeringAgent(false)
+		}
+	}
+
 	const hasEvents = events.length > 0
 
 	// Ensure all events are available (including summary)
 	const allEvents = useMemo(() => {
 		return events // All events including summary
 	}, [events])
+
+	// Check pipeline status on mount and auto-start streaming if running
+	useEffect(() => {
+		const checkPipelineStatus = async () => {
+			try {
+				const portfolioServerUrl = process.env.NEXT_PUBLIC_PORTFOLIO_API_URL || process.env.NEXT_PUBLIC_PORTFOLIO_SERVER_URL || "http://localhost:8000"
+				
+				// Get auth token from cookie or localStorage
+				let token: string | null = null
+				if (typeof window !== "undefined") {
+					const match = document.cookie.match(/(^| )access_token=([^;]+)/)
+					token = match ? match[2] : localStorage.getItem("access_token")
+				}
+
+				const headers: HeadersInit = {
+					"Content-Type": "application/json",
+				}
+				if (token) {
+					headers["Authorization"] = `Bearer ${token}`
+				}
+
+				const response = await fetch(`${portfolioServerUrl}/api/low-risk/status`, {
+					method: "GET",
+					headers,
+					credentials: "include",
+				})
+
+				if (!response.ok) {
+					console.warn('[LongTerm Page] Failed to check pipeline status:', response.statusText)
+					return
+				}
+
+				const data = await response.json()
+				
+				// If pipeline is running, auto-start the SSE stream
+				if (data.running && data.status === "running") {
+					console.log('[LongTerm Page] Pipeline already running, auto-starting stream...', {
+						elapsed_minutes: data.elapsed_minutes
+					})
+					startStreaming()
+				}
+			} catch (error) {
+				console.warn('[LongTerm Page] Failed to check pipeline status:', error)
+			}
+		}
+
+		// Only check on mount if not already streaming
+		if (!streaming && authUser) {
+			checkPipelineStatus()
+		}
+	}, [authUser]) // Only run on mount when authUser is available
 
 	// Console log events on page reload and when events change
 	useEffect(() => {
@@ -217,6 +319,25 @@ export default function LongTermPage() {
 				<PageHeading
 					title="Long-Term Strategy Center"
 					tagline="Monitor your low-risk positions and conservative strategies."
+					action={
+						<Button
+							onClick={handleTriggerAgent}
+							disabled={triggeringAgent}
+							className="border border-emerald-500/40 bg-emerald-500/20 text-emerald-100 hover:bg-emerald-500/30"
+						>
+							{triggeringAgent ? (
+								<>
+									<Loader2 className="mr-2 size-4 animate-spin" />
+									Triggering...
+								</>
+							) : (
+								<>
+									<Play className="mr-2 size-4" />
+									Trigger Low-Risk Agent
+								</>
+							)}
+						</Button>
+					}
 				/>
 
 				<section className="grid grid-cols-1 gap-6 lg:grid-cols-2">

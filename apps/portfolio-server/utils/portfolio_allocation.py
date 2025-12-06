@@ -52,7 +52,7 @@ def prepare_allocation_requests(
         - ``value_history``
         - ``segment_history``
         - ``use_rolling_metrics``
-        - ``lookback_quarters``
+        - ``lookback_semi_annual``
         - ``metadata``
 
     Args:
@@ -77,7 +77,7 @@ def prepare_allocation_requests(
                 value_history=item.get("value_history"),
                 segment_history=item.get("segment_history"),
                 use_rolling_metrics=bool(item.get("use_rolling_metrics", True)),
-                lookback_quarters=int(item.get("lookback_quarters", 4)),
+                lookback_semi_annual=int(item.get("lookback_semi_annual", 4)),
                 metadata=dict(item.get("metadata", {})),
             )
             requests.append(request)

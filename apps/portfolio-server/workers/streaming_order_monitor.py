@@ -1,6 +1,9 @@
 """
 Streaming order monitor worker - Real-time order execution with sub-second response.
 
+⚠️  LEGACY VERSION - Uses PostgreSQL polling (10s refresh interval)
+    For true real-time reactive monitoring, use pathway_order_monitor.py instead.
+
 This worker runs continuously in the background, monitoring all pending orders
 via WebSocket price feeds and executing orders instantly when conditions are met.
 
@@ -13,7 +16,7 @@ Architecture:
 
 Performance:
 - Sub-second response time (price update → order execution)
-- No database polling (only WebSocket price monitoring)
+- Database polling every 10s (can miss events, use Pathway version for true real-time)
 - Efficient batch symbol subscription
 - Connection pooling and automatic retry logic
 
@@ -27,6 +30,12 @@ ENVIRONMENT:
     STREAMING_ORDER_MONITOR_ENABLED - Enable streaming monitor (default: true)
     ORDER_MONITOR_REFRESH_INTERVAL - Refresh orders from DB every N seconds (default: 10)
     ORDER_MONITOR_CHECK_INTERVAL - Check conditions every N seconds (default: 0.5)
+    
+MIGRATION:
+    To use Pathway-based reactive monitoring (recommended):
+    - Set STREAMING_ORDER_MONITOR_ENABLED=false
+    - Set PATHWAY_ORDER_MONITOR_ENABLED=true
+    - Run: pnpm pathway:orders
 """
 
 from __future__ import annotations

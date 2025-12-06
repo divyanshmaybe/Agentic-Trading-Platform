@@ -611,12 +611,12 @@ class PipelineService:
         )
         current_value = self._safe_float(portfolio.available_cash, default=initial_value)
 
-        lookback_quarters = int(metadata_obj.get("lookback_quarters", 4))
+        lookback_semi_annual = int(metadata_obj.get("lookback_semi_annual", 4))
         portfolio_id = str(portfolio.id)
 
         # Fetch value history from portfolio snapshots (fallback to metadata or defaults)
         try:
-            value_history = await get_portfolio_value_history(portfolio_id, lookback_quarters=lookback_quarters)
+            value_history = await get_portfolio_value_history(portfolio_id, lookback_semi_annual=lookback_semi_annual)
             if not value_history:
                 # Fallback to metadata or defaults
                 value_history = metadata_obj.get("value_history")
@@ -634,7 +634,7 @@ class PipelineService:
         # Calculate segment metrics from TradingAgentSnapshots (fallback to metadata or None)
         segment_history: Optional[Dict[str, Any]] = None
         try:
-            segment_metrics = await calculate_segment_metrics_from_db(portfolio_id, lookback_quarters=lookback_quarters)
+            segment_metrics = await calculate_segment_metrics_from_db(portfolio_id, lookback_semi_annual=lookback_semi_annual)
             if segment_metrics:
                 # Convert SegmentMetrics to dict format expected by allocation pipeline
                 segment_history = {
@@ -670,7 +670,7 @@ class PipelineService:
             "current_value": current_value,
             "value_history": value_history,
             "segment_history": segment_history,
-            "lookback_quarters": lookback_quarters,
+            "lookback_semi_annual": lookback_semi_annual,
             "metadata": {
                 "portfolio_id": str(portfolio.id),
                 "organization_id": portfolio.organization_id,

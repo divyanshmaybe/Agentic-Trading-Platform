@@ -31,24 +31,36 @@ interface AgentOverviewProps {
 
 export function AgentOverview({ data, loading, isAllocating = false }: AgentOverviewProps) {
   const [unrealizedPnl, setUnrealizedPnl] = useState<number | null>(null)
+  const [currentValue, setCurrentValue] = useState<number | null>(null)
   const [quotesLoading, setQuotesLoading] = useState(false)
   const [quotesError, setQuotesError] = useState<string | null>(null)
 
-  // Fetch quotes and calculate unrealized PnL when positions data is available
+  // Fetch quotes and calculate unrealized PnL + current value when positions data is available
   useEffect(() => {
     // Reset state when data changes
     setUnrealizedPnl(null)
+    setCurrentValue(null)
     setQuotesError(null)
     setQuotesLoading(false)
 
-    if (!data || !data.positions || data.positions.length === 0) {
+    if (!data) {
+      return
+    }
+
+    // Get available cash from allocation
+    const availableCash = parseFloat(data.allocation?.available_cash || "0")
+
+    if (!data.positions || data.positions.length === 0) {
+      // No positions, current value is just available cash
+      setCurrentValue(availableCash)
+      setUnrealizedPnl(0)
       return
     }
 
     let isMounted = true
     let isInitialFetch = true
 
-    const calculateUnrealizedPnl = async () => {
+    const calculateMetrics = async () => {
       if (!isMounted) return
       
       // Only show loading state on initial fetch, not on subsequent polls
@@ -65,6 +77,7 @@ export function AgentOverview({ data, loading, isAllocating = false }: AgentOver
         // Skip if no valid symbols
         if (symbols.length === 0) {
           if (isMounted) {
+            setCurrentValue(availableCash)
             setUnrealizedPnl(0)
             setQuotesLoading(false)
           }
@@ -101,7 +114,7 @@ export function AgentOverview({ data, loading, isAllocating = false }: AgentOver
           })
         }
 
-        // Calculate unrealized PnL for each position
+        // Calculate unrealized PnL from open positions
         let totalUnrealizedPnl = 0
         let hasMissingPrices = false
 
@@ -115,21 +128,22 @@ export function AgentOverview({ data, loading, isAllocating = false }: AgentOver
             continue // Skip positions without quotes
           }
 
-          const averageBuyPrice = parseFloat(position.average_buy_price || "0")
           const quantity = position.quantity || 0
+          const averageBuyPrice = parseFloat(position.average_buy_price || "0")
           
-          if (isNaN(averageBuyPrice) || quantity === 0) {
+          if (quantity === 0 || isNaN(averageBuyPrice)) {
             continue
           }
 
           const positionType = (position.position_type || "LONG").toUpperCase()
 
+          // Calculate unrealized PnL for this position
           let positionPnl: number
           if (positionType === "SHORT") {
-            // SHORT: (average_buy_price - current_price) * quantity
+            // SHORT: (average_buy_price - current_price) × quantity
             positionPnl = (averageBuyPrice - currentPrice) * quantity
           } else {
-            // LONG or unknown: (current_price - average_buy_price) * quantity
+            // LONG: (current_price - average_buy_price) × quantity
             positionPnl = (currentPrice - averageBuyPrice) * quantity
           }
 
@@ -141,12 +155,37 @@ export function AgentOverview({ data, loading, isAllocating = false }: AgentOver
         }
 
         if (isMounted) {
+          // Current Value = Available Cash + Positions Value
+          // Unrealized PnL = Σ((current_price - avg_buy_price) × quantity)
+          // This matches backend calculation in snapshot_service.py
+          
+          // Calculate total position value
+          let totalPositionValue = 0
+          
+          for (const position of data.positions) {
+            if (!position || !position.symbol) continue
+            
+            const currentPrice = priceMap.get(position.symbol)
+            if (currentPrice === undefined || isNaN(currentPrice)) continue
+            
+            const quantity = position.quantity || 0
+            if (quantity === 0) continue
+            
+            totalPositionValue += currentPrice * quantity
+          }
+          
+          // Current Value = Available Cash + Current Position Values
+          const portfolioCurrentValue = availableCash + totalPositionValue
+          
+          setCurrentValue(portfolioCurrentValue)
           setUnrealizedPnl(totalUnrealizedPnl)
         }
       } catch (error) {
-        console.error("Error fetching quotes for unrealized PnL:", error)
+        console.error("Error fetching quotes:", error)
         if (isMounted) {
           setQuotesError(error instanceof Error ? error.message : "Failed to fetch market quotes")
+          // Fallback to available cash only
+          setCurrentValue(availableCash)
           setUnrealizedPnl(null)
         }
       } finally {
@@ -157,12 +196,12 @@ export function AgentOverview({ data, loading, isAllocating = false }: AgentOver
     }
 
     // Calculate immediately
-    calculateUnrealizedPnl()
+    calculateMetrics()
 
     // Set up polling to recalculate every 10 seconds
     const intervalId = setInterval(() => {
       if (isMounted) {
-        calculateUnrealizedPnl()
+        calculateMetrics()
       }
     }, 10000) // 10 seconds
 
@@ -223,8 +262,13 @@ export function AgentOverview({ data, loading, isAllocating = false }: AgentOver
 
   const pnlValue = parseFloat(data.realized_pnl || "0")
   const isPnlPositive = pnlValue >= 0
-  const allocationPnlValue = parseFloat(data.allocation.pnl || "0")
-  const isAllocationPnlPositive = allocationPnlValue >= 0
+  
+  // Calculate realized PnL percentage from allocation
+  const allocatedAmount = parseFloat(data.allocation.allocated_amount || "0")
+  const realizedPnLPercentage = allocatedAmount > 0 
+    ? (pnlValue / allocatedAmount) * 100 
+    : 0
+  const isRealizedPnLPositive = realizedPnLPercentage >= 0
 
   return (
     <Card className="card-glass flex h-full flex-col rounded-2xl border border-white/10 bg-white/6 text-white/70 shadow-[0_32px_70px_-45px_rgba(0,0,0,0.95)] backdrop-blur">
@@ -253,9 +297,19 @@ export function AgentOverview({ data, loading, isAllocating = false }: AgentOver
             className="rounded-xl border border-white/10 bg-white/5 p-4"
           >
             <p className="text-xs text-white/60">Current Value</p>
-            <p className="mt-1 text-lg font-semibold text-[#fafafa]">
-              {formatCurrencyInteger(data.current_value)}
-            </p>
+            {quotesLoading && currentValue === null ? (
+              <p className="mt-1 text-lg font-semibold text-white/50">Loading...</p>
+            ) : quotesError && currentValue === null ? (
+              <p className="mt-1 text-sm font-semibold text-rose-300" title={quotesError}>
+                Error
+              </p>
+            ) : currentValue !== null ? (
+              <p className="mt-1 text-lg font-semibold text-[#fafafa]">
+                {formatCurrencyInteger(currentValue)}
+              </p>
+            ) : (
+              <p className="mt-1 text-lg font-semibold text-white/50">—</p>
+            )}
           </motion.div>
 
           <motion.div
@@ -350,19 +404,9 @@ export function AgentOverview({ data, loading, isAllocating = false }: AgentOver
             variants={item}
             className="rounded-xl border border-white/10 bg-white/5 p-4"
           >
-            <p className="text-xs text-white/60">PnL</p>
-            <p className={`mt-1 text-lg font-semibold ${isAllocationPnlPositive ? "text-emerald-300" : "text-rose-300"}`}>
-              {formatCurrencyInteger(data.allocation.pnl)}
-            </p>
-          </motion.div>
-
-          <motion.div
-            variants={item}
-            className="rounded-xl border border-white/10 bg-white/5 p-4"
-          >
-            <p className="text-xs text-white/60">PnL %</p>
-            <p className={`mt-1 text-lg font-semibold ${isAllocationPnlPositive ? "text-emerald-300" : "text-rose-300"}`}>
-              {formatPercentageInteger(data.allocation.pnl_percentage)}
+            <p className="text-xs text-white/60">Realized PnL %</p>
+            <p className={`mt-1 text-lg font-semibold ${isRealizedPnLPositive ? "text-emerald-300" : "text-rose-300"}`}>
+              {realizedPnLPercentage >= 0 ? "+" : ""}{realizedPnLPercentage.toFixed(2)}%
             </p>
           </motion.div>
 

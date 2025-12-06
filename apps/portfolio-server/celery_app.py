@@ -277,6 +277,10 @@ celery_app.conf.task_routes = {
 # Task categories with different resource requirements
 STANDARD_TASKS = [
     "portfolio.allocate_for_objective",
+]
+
+# Allocation/Rebalancing tasks - no time limits (can take time for regime detection + LLM)
+ALLOCATION_TASKS = [
     "portfolio.check_regime_and_rebalance",
 ]
 
@@ -331,11 +335,20 @@ celery_app.conf.task_annotations = {
     # Standard tasks - reasonable limits for DB operations
     **{
         task_name: {
-            "soft_time_limit": 300,  # 5 min soft (allocation can take time for LLM calls)
+            "soft_time_limit": 300,  # 5 min soft
             "time_limit": 360,  # 6 min hard
-            "rate_limit": "30/m",  # Max 30 per minute (increased from 10)
+            "rate_limit": "30/m",  # Max 30 per minute
         }
         for task_name in STANDARD_TASKS
+    },
+    # Allocation/Rebalancing tasks - NO TIME LIMITS (regime detection + LLM can take time)
+    **{
+        task_name: {
+            "soft_time_limit": None,  # NO soft limit
+            "time_limit": None,  # NO hard limit
+            "rate_limit": "10/m",  # Max 10 per minute
+        }
+        for task_name in ALLOCATION_TASKS
     },
     # Signal processing - CRITICAL: NO RATE LIMIT, NO TIME LIMITS for real-time trading
     # These must execute immediately when signals come in and run as long as needed
@@ -458,6 +471,17 @@ if NEWS_PIPELINE_ENABLED:
         "options": {"queue": NEWS_PIPELINE_QUEUE},
     }
 
+# Regime model retraining - runs daily at 8:30 AM IST (3:00 AM UTC) before market opens
+REGIME_RETRAIN_ENABLED = os.getenv("REGIME_RETRAIN_ENABLED", "true").lower() in {"1", "true", "yes"}
+REGIME_RETRAIN_QUEUE = os.getenv("REGIME_RETRAIN_QUEUE", DEFAULT_QUEUE)
+
+if REGIME_RETRAIN_ENABLED:
+    celery_app.conf.beat_schedule["regime-model-retrain"] = {
+        "task": "portfolio.retrain_regime_model",
+        "schedule": crontab(hour=3, minute=0, day_of_week="mon-fri"),  # 8:30 AM IST = 3:00 AM UTC
+        "options": {"queue": REGIME_RETRAIN_QUEUE},
+    }
+
 # Regime monitor - runs daily 1h before market open (8:15 AM for 9:15 AM market)
 if REGIME_MONITOR_ENABLED:
     celery_app.conf.beat_schedule["regime-monitor-check"] = {
@@ -495,12 +519,26 @@ if SNAPSHOT_ENABLED:
         "options": {"queue": SNAPSHOT_QUEUE},
     }
 
-# Auto-sell is now handled by the streaming_order_monitor (Pathway-based)
-# The PathwayOrderMonitor in pipelines/orders/streaming_order_monitor_pipeline.py handles:
-# 1. Price-based orders (TP/SL/limit/stop) - checks price conditions
-# 2. Time-based auto-sell - checks auto_sell_at/auto_cover_at timestamps
-# Run with: pnpm streaming:orders
-# No Celery beat schedule needed - streaming monitor runs continuously
+# Auto-sell and order monitoring is now handled by the NEW Pathway order monitor (RECOMMENDED)
+# The NEW PathwayOrderMonitor in pipelines/orders/pathway_order_monitor.py handles:
+# 1. TP/SL orders - reactive monitoring via Redis pub/sub (sub-100ms latency)
+# 2. Limit/stop orders - reactive monitoring via Redis pub/sub
+# 3. Price-based triggers - instant reaction to price changes
+#
+# Run with: python -m workers.pathway_order_monitor
+# Or via pnpm: pnpm pathway:orders
+#
+# The NEW Pathway monitor:
+# - ✅ Zero database polling (Redis pub/sub only)
+# - ✅ Sub-100ms latency (TradeEngine → Redis → Pathway → Execution)
+# - ✅ True reactive architecture (event-driven, no loops)
+# - ✅ Handles all order types: TP, SL, limit, stop, time-based
+#
+# LEGACY: The old streaming_order_monitor.py (polls DB every 10s) is DEPRECATED
+# To use legacy: Set STREAMING_ORDER_MONITOR_ENABLED=true and run pnpm streaming:orders
+# To use NEW Pathway: Set PATHWAY_ORDER_MONITOR_ENABLED=true and run pnpm pathway:orders
+#
+# No Celery beat schedule needed - Pathway monitor runs continuously in its own process
 
 # Market closing task - sells all high_risk positions at 3:15 PM IST (9:45 AM UTC)
 # IST is UTC+5:30, so 3:15 PM IST = 9:45 AM UTC

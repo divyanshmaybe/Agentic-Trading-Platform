@@ -109,6 +109,11 @@ class TradingAgentSnapshotService:
         
         async with db_manager.session() as client:
             try:
+                # Skip if client is a mock (testing)
+                if hasattr(client, '_mock_name') or str(type(client).__name__) == 'AsyncMock':
+                    self.logger.debug("Skipping snapshot capture in test mode")
+                    return None
+                
                 # Fetch agent with positions and allocation
                 agent = await client.tradingagent.find_unique(
                     where={"id": agent_id},

@@ -81,7 +81,6 @@ export interface AgentDashboard {
   agent_type: AgentType
   portfolio_id: string
   status: AgentStatus
-  current_value: string
   realized_pnl: string
   positions_count: number
   positions: AgentPosition[]

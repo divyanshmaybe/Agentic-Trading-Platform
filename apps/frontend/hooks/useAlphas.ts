@@ -179,6 +179,34 @@ export function useAlphas(portfolioId?: string) {
   }
 }
 
+// Helper function to get auth headers for alphacopilot requests
+function getAlphaCopilotAuthHeaders(): HeadersInit {
+  const headers: HeadersInit = {
+    "Content-Type": "application/json",
+  }
+  
+  if (typeof window !== "undefined") {
+    // Get token from cookie first, then localStorage
+    let token: string | null = null
+    const cookies = document.cookie.split("; ")
+    const entry = cookies
+      .map((c) => c.trim())
+      .find((section) => section.startsWith("access_token="))
+    if (entry) {
+      const [, value] = entry.split("=")
+      token = value ? decodeURIComponent(value) : null
+    }
+    if (!token) {
+      token = localStorage.getItem("access_token")
+    }
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`
+    }
+  }
+  
+  return headers
+}
+
 export function useAlphaCopilotRuns() {
   const [runs, setRuns] = useState<AlphaCopilotRun[]>([])
   const [loading, setLoading] = useState(true)
@@ -193,7 +221,11 @@ export function useAlphaCopilotRuns() {
       if (!isPolling || !hasInitialDataRef.current) {
         setLoading(true)
       }
-      const response = await fetch(`${ALPHACOPILOT_URL}/runs`)
+      const response = await fetch(`${ALPHACOPILOT_URL}/runs`, {
+        method: "GET",
+        headers: getAlphaCopilotAuthHeaders(),
+        credentials: "include",
+      })
       if (!response.ok) {
         throw new Error("Failed to fetch runs")
       }
@@ -225,7 +257,8 @@ export function useAlphaCopilotRuns() {
   const createRun = async (hypothesis: string, config: Record<string, unknown> = {}): Promise<AlphaCopilotRun[]> => {
     const response = await fetch(`${ALPHACOPILOT_URL}/runs`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: getAlphaCopilotAuthHeaders(),
+      credentials: "include",
       body: JSON.stringify({
         hypothesis,
         ...config,
@@ -242,7 +275,11 @@ export function useAlphaCopilotRuns() {
   }
 
   const getRunStatus = async (runId: string): Promise<{ status: string; progress_percent: number }> => {
-    const response = await fetch(`${ALPHACOPILOT_URL}/runs/${runId}/status`)
+    const response = await fetch(`${ALPHACOPILOT_URL}/runs/${runId}/status`, {
+      method: "GET",
+      headers: getAlphaCopilotAuthHeaders(),
+      credentials: "include",
+    })
     if (!response.ok) {
       throw new Error("Failed to get run status")
     }
@@ -250,7 +287,11 @@ export function useAlphaCopilotRuns() {
   }
 
   const getRunResults = async (runId: string): Promise<AlphaCopilotResult> => {
-    const response = await fetch(`${ALPHACOPILOT_URL}/runs/${runId}/results`)
+    const response = await fetch(`${ALPHACOPILOT_URL}/runs/${runId}/results`, {
+      method: "GET",
+      headers: getAlphaCopilotAuthHeaders(),
+      credentials: "include",
+    })
     if (!response.ok) {
       throw new Error("Failed to get run results")
     }

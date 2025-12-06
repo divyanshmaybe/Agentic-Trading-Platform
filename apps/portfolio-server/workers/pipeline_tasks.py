@@ -335,6 +335,9 @@ def run_risk_monitor(self) -> dict:
     rate_limit=None,
     # High priority for real-time signal processing
     priority=9,
+    # NO TIME LIMITS - trade execution can take time
+    soft_time_limit=None,
+    time_limit=None,
 )
 def process_trade_signal(self, signal_payload: dict) -> dict:
     """

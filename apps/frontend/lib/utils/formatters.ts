@@ -91,19 +91,69 @@ export function formatDuration(value: string | number | null | undefined, fallba
   const num = typeof value === "number" ? value : parseFloat(String(value))
   if (isNaN(num) || num === 0) return fallback
   
-  // If less than 1 second, show in milliseconds
-  if (num < 1) {
-    return `${(num * 1000).toFixed(0)}ms`
+  // If value is >= 1000, assume it's milliseconds, otherwise seconds
+  let milliseconds: number
+  if (num >= 1000) {
+    // Input is in milliseconds
+    milliseconds = num
+  } else {
+    // Input is in seconds, convert to milliseconds
+    milliseconds = num * 1000
   }
   
+  // If less than 1000ms (1 second), show in milliseconds
+  if (milliseconds < 1000) {
+    return `${milliseconds.toFixed(0)}ms`
+  }
+  
+  // Convert to seconds
+  const seconds = milliseconds / 1000
+  
   // If less than 60 seconds, show in seconds with 2 decimal places
-  if (num < 60) {
-    return `${num.toFixed(2)}s`
+  if (seconds < 60) {
+    return `${seconds.toFixed(2)}s`
   }
   
   // If 60 seconds or more, show in minutes and seconds
-  const minutes = Math.floor(num / 60)
-  const seconds = (num % 60).toFixed(0)
-  return `${minutes}m ${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  const secs = (seconds % 60).toFixed(0)
+  return `${minutes}m ${secs}s`
 }
 
+export function formatDate(value: string | Date | null | undefined, fallback = "—"): string {
+  if (value === null || value === undefined) return fallback
+  
+  try {
+    const date = typeof value === "string" ? new Date(value) : value
+    
+    if (isNaN(date.getTime())) return fallback
+    
+    const now = new Date()
+    const diffMs = now.getTime() - date.getTime()
+    const diffMins = Math.floor(diffMs / 60000)
+    const diffHours = Math.floor(diffMs / 3600000)
+    const diffDays = Math.floor(diffMs / 86400000)
+    
+    // Less than 1 minute
+    if (diffMins < 1) return "Just now"
+    
+    // Less than 1 hour
+    if (diffMins < 60) return `${diffMins}m ago`
+    
+    // Less than 24 hours
+    if (diffHours < 24) return `${diffHours}h ago`
+    
+    // Less than 7 days
+    if (diffDays < 7) return `${diffDays}d ago`
+    
+    // Otherwise show date
+    return new Intl.DateTimeFormat("en-IN", {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(date)
+  } catch {
+    return fallback
+  }
+}

@@ -57,7 +57,7 @@ class PortfolioAllocationRequest:
         value_history: Optional chronological portfolio values (quarterly granularity).
         segment_history: Optional mapping of segment → sequence of metric dicts.
         use_rolling_metrics: Whether to rely on rolling averages (default: True).
-        lookback_quarters: Rolling window size when ``use_rolling_metrics`` is True.
+        lookback_semi_annual: Rolling window size when ``use_rolling_metrics`` is True.
     """
 
     request_id: str
@@ -69,7 +69,7 @@ class PortfolioAllocationRequest:
     value_history: Optional[Sequence[float]] = None
     segment_history: Optional[Mapping[str, Sequence[Mapping[str, Any]]]] = None
     use_rolling_metrics: bool = True
-    lookback_quarters: int = 4
+    lookback_semi_annual: int = 4
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def to_event(self) -> Dict[str, Any]:
@@ -85,7 +85,7 @@ class PortfolioAllocationRequest:
             "value_history": self.value_history,
             "segment_history": self.segment_history,
             "use_rolling_metrics": self.use_rolling_metrics,
-            "lookback_quarters": self.lookback_quarters,
+            "lookback_semi_annual": self.lookback_semi_annual,
             "metadata": self.metadata,
         }
         return {
@@ -188,7 +188,7 @@ def _optimise_allocation(payload_json: str) -> Dict[str, Any]:
     result = manager.rebalance(
         current_regime=payload.get("current_regime", "sideways"),
         use_rolling_metrics=bool(payload.get("use_rolling_metrics", True)),
-        lookback_quarters=int(payload.get("lookback_quarters", 4)),
+        lookback_semi_annual=int(payload.get("lookback_semi_annual", 4)),
     )
     return {
         "weights": result.weights,

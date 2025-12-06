@@ -66,6 +66,10 @@
       "cache": false,
       "persistent": true
     },
+    "pathway:orders": {
+      "cache": false,
+      "persistent": true
+    },
     "studio": {
       "cache": false,
       "persistent": true

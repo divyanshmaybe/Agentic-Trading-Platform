@@ -321,7 +321,7 @@ class StockSelectionPipeline:
                 # Run async workflow on dedicated loop
                 report = self._run_in_background_loop(
                     self.generate_company_report(ticker),
-                    timeout=180.0,
+                    timeout=900.0,
                 )
 
                 # Cache the result
@@ -384,7 +384,7 @@ class StockSelectionPipeline:
         reasoning_prompt = load_prompt_from_template("reasoning_prompt")
         company_metrics_prompt = load_prompt_from_template("company_metrics_prompt")
         # Get company prompt for this industry
-        company_prompt = self.get_company_prompt(industry, company_df)
+        company_prompt = self.get_company_prompt(industry, company_df, push_notif=False)
         @tool
         def reasoning_tool(runtime: ToolRuntime, tool_call_id: Annotated[str, InjectedToolCallId]) -> Command:
             """
@@ -394,7 +394,7 @@ class StockSelectionPipeline:
             Output:
             - A string of reasoning tokens with proper analysis, interpretation, and possible next steps.
             """
-            reasoning_llm = ChatGoogleGenerativeAI(model="gemini-3-pro", thinking_budget=2000)
+            reasoning_llm = ChatGoogleGenerativeAI(model="gemini-3-pro-preview", thinking_budget=2000)
             messages = runtime.state["messages"]
             reasoning_messages = runtime.state["reasoning_messages"]
             if len(reasoning_messages) == 0:
@@ -419,7 +419,7 @@ class StockSelectionPipeline:
             else:
                 reasoning = ""
                 new_reasoning_message = AIMessage("")
-            msg = reasoning[0].text
+            msg = reasoning[0]["text"]
             to_send = {
                 "status": "thinking",
                 "content": {
@@ -435,7 +435,7 @@ class StockSelectionPipeline:
                 }
             )
         return reasoning_tool
-    
+
     def check_low_risk_guardrails(self, data):
         report = {
             "passed": True,
@@ -476,10 +476,10 @@ class StockSelectionPipeline:
                 "failed_guardrails": [f"error: {str(e)}"]
             }
 
-        return report    
-    
+        return report
 
-    def get_company_prompt(self, industry: str, company_df: pd.DataFrame) -> str:
+
+    def get_company_prompt(self, industry: str, company_df: pd.DataFrame, push_notif: bool=True) -> str:
         """Generate a prompt containing company descriptions for an industry."""
         pipeline = self.pipeline
         company_prompt = ""
@@ -526,7 +526,7 @@ class StockSelectionPipeline:
                     "failed_guardrails": guardrail_report["failed_guardrails"]
                 })
 
-        if len(failed_companies) > 0:
+        if len(failed_companies) > 0 and push_notif:
             logger.info("Rejecting companies due to failed guardrails")
             failed_names = ', '.join(c['name'] for c in failed_companies)
             publish_to_kafka({"content": f"Rejecting companies due to failed guardrails\n{failed_names}"}, user_id=self.user_id, task_id=self.task_id)

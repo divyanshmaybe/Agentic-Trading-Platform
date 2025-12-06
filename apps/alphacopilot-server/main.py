@@ -16,7 +16,7 @@ QUANT_STREAM_PATH = PROJECT_ROOT / "quant-stream"
 if str(QUANT_STREAM_PATH) not in sys.path:
     sys.path.insert(0, str(QUANT_STREAM_PATH))
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Query
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Query, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
@@ -33,6 +33,7 @@ from schemas import (
 )
 from services import RunService
 from metrics import metrics_endpoint, set_service_info
+from utils.auth import get_authenticated_user
 
 # Configure logging
 logging.basicConfig(
@@ -93,6 +94,7 @@ def get_service() -> RunService:
 async def create_runs(
     request: RunCreateRequest,
     background_tasks: BackgroundTasks,
+    user: dict = Depends(get_authenticated_user),
 ):
     """Create one or more runs from a hypothesis.
     
@@ -102,9 +104,14 @@ async def create_runs(
     service = get_service()
     runs = []
     
+    # Get customer_id from authenticated user
+    customer_id = user.get("customer_id") or user.get("id")
+    if not customer_id:
+        raise HTTPException(status_code=400, detail="User has no customer_id")
+    
     # Create num_runs independent runs
     for i in range(request.num_runs):
-        run = await service.create_run(request)
+        run = await service.create_run(request, customer_id=customer_id)
         runs.append(run)
         
         # Queue background task for execution
@@ -122,10 +129,22 @@ async def list_runs(
     status: Optional[str] = Query(None, description="Filter by status"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of runs to return"),
     offset: int = Query(0, ge=0, description="Number of runs to skip"),
+    user: dict = Depends(get_authenticated_user),
 ):
-    """List all runs with optional filtering."""
+    """List runs for the authenticated user with optional filtering."""
     service = get_service()
-    runs, total = await service.list_runs(status=status, limit=limit, offset=offset)
+    
+    # Get customer_id from authenticated user
+    customer_id = user.get("customer_id") or user.get("id")
+    if not customer_id:
+        raise HTTPException(status_code=400, detail="User has no customer_id")
+    
+    runs, total = await service.list_runs(
+        customer_id=customer_id,
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
     
     return RunListResponse(
         runs=[RunResponse(**run) for run in runs],
@@ -134,12 +153,20 @@ async def list_runs(
 
 
 @app.get("/runs/{run_id}", response_model=RunResponse)
-async def get_run(run_id: str):
+async def get_run(
+    run_id: str,
+    user: dict = Depends(get_authenticated_user),
+):
     """Get details of a specific run."""
     service = get_service()
     run = await service.get_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+    
+    # Verify ownership
+    customer_id = user.get("customer_id") or user.get("id")
+    if run.get("customer_id") != customer_id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this run")
     
     return RunResponse(**run)
 
@@ -148,6 +175,7 @@ async def get_run(run_id: str):
 async def get_run_status(
     run_id: str,
     timeout: int = Query(DEFAULT_POLL_TIMEOUT, ge=0, le=MAX_POLL_TIMEOUT, description="Long polling timeout in seconds"),
+    user: dict = Depends(get_authenticated_user),
 ):
     """Get run status with optional long polling.
     
@@ -158,6 +186,11 @@ async def get_run_status(
     run = await service.get_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+    
+    # Verify ownership
+    customer_id = user.get("customer_id") or user.get("id")
+    if run.get("customer_id") != customer_id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this run")
     
     initial_status = run["status"]
     initial_iteration = run["current_iteration"]
@@ -205,12 +238,20 @@ async def get_run_status(
 
 
 @app.get("/runs/{run_id}/results", response_model=ResultsResponse)
-async def get_run_results(run_id: str):
+async def get_run_results(
+    run_id: str,
+    user: dict = Depends(get_authenticated_user),
+):
     """Get results for a completed or failed run."""
     service = get_service()
     run = await service.get_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+    
+    # Verify ownership
+    customer_id = user.get("customer_id") or user.get("id")
+    if run.get("customer_id") != customer_id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this run")
     
     # Allow viewing results for COMPLETED and FAILED runs
     allowed_statuses = [RunStatus.COMPLETED.value, RunStatus.FAILED.value]
@@ -236,9 +277,22 @@ async def get_run_results(run_id: str):
 
 
 @app.delete("/runs/{run_id}", status_code=204)
-async def cancel_run(run_id: str):
+async def cancel_run(
+    run_id: str,
+    user: dict = Depends(get_authenticated_user),
+):
     """Cancel a running or pending run."""
     service = get_service()
+    
+    # Verify ownership first
+    run = await service.get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+    
+    customer_id = user.get("customer_id") or user.get("id")
+    if run.get("customer_id") != customer_id:
+        raise HTTPException(status_code=403, detail="Not authorized to cancel this run")
+    
     try:
         await service.cancel_run(run_id)
     except ValueError as e:
@@ -248,7 +302,10 @@ async def cancel_run(run_id: str):
 
 
 @app.get("/runs/{run_id}/logs/stream")
-async def stream_run_logs(run_id: str):
+async def stream_run_logs(
+    run_id: str,
+    user: dict = Depends(get_authenticated_user),
+):
     """Stream logs for a run via Server-Sent Events (SSE).
     
     This endpoint streams logs in real-time as they are generated.
@@ -258,6 +315,11 @@ async def stream_run_logs(run_id: str):
     run = await service.get_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+    
+    # Verify ownership
+    customer_id = user.get("customer_id") or user.get("id")
+    if run.get("customer_id") != customer_id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this run")
     
     async def log_generator():
         """Generate SSE events for logs."""

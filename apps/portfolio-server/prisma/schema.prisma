@@ -388,6 +388,7 @@ model CompanyReport {
 /// --------------------
 model AlphaCopilotRun {
   id                String                 @id @default(uuid())
+  customer_id       String                 // User who created the run
   hypothesis        String
   status            String                 @default("pending") // pending, running, completed, failed
   symbols_file      String?
@@ -404,6 +405,7 @@ model AlphaCopilotRun {
   logs              AlphaCopilotLog[]
   live_alphas       LiveAlpha[]
 
+  @@index([customer_id])
   @@index([status])
   @@index([created_at])
   @@map("alphacopilot_runs")

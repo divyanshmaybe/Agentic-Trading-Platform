@@ -15,7 +15,7 @@ class TradeRequest(BaseModel):
     symbol: str = Field(..., min_length=1, max_length=32)
     exchange: Optional[str] = Field(default=None, max_length=32)
     segment: Optional[str] = Field(default=None, max_length=32)
-    side: Literal["BUY", "SELL"]
+    side: Literal["BUY", "SELL", "SHORT_SELL"]
     order_type: Literal["market", "limit", "stop", "stop_loss", "take_profit"]
     quantity: PositiveInt
     limit_price: Optional[Price] = None
@@ -47,7 +47,7 @@ class TradeCreate(BaseModel):
     symbol: str = Field(..., min_length=1, max_length=32)
     exchange: Optional[str] = Field(default=None, max_length=32)
     segment: Optional[str] = Field(default=None, max_length=32)
-    side: Literal["BUY", "SELL"]
+    side: Literal["BUY", "SELL", "SHORT_SELL"]
     order_type: Literal["market", "limit", "stop", "stop_loss", "take_profit"]
     quantity: PositiveInt
     limit_price: Optional[Price] = None

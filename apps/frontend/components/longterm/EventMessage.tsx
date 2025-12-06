@@ -22,7 +22,7 @@ interface EventMessageProps {
 export function EventMessage({ event, resolvedStatus }: EventMessageProps) {
 	const { kind, status, content } = event
 	const [reportModalOpen, setReportModalOpen] = useState(false)
-		
+
 	const isCompleted = resolvedStatus === "completed"
 	const isInProgress = resolvedStatus === "in_progress"
 	const isError = resolvedStatus === "error"
@@ -43,12 +43,15 @@ export function EventMessage({ event, resolvedStatus }: EventMessageProps) {
 
 	// REASONING event
 	if (kind === "reasoning" && status === "thinking") {
-		const message = content?.message || "Thinking..."
+		const message = (content?.message || "Thinking...") as string
+		const parts = message.split("**")
 		return (
 			<div className="flex items-start gap-3 text-lg mr-4">
 				<Brain className="w-4 h-4 text-purple-400 mt-0.5 shrink-0" />
 				<div className="flex-1 text-white/90">
-					{message}
+					{parts.map((part, index) =>
+						index % 2 === 1 ? <strong key={index} className="font-bold text-white">{part}</strong> : part
+					)}
 				</div>
 			</div>
 		)
@@ -80,10 +83,10 @@ export function EventMessage({ event, resolvedStatus }: EventMessageProps) {
 				<div className={`flex-1 ${isDimmed ? "text-white/60" : "text-white/90"}`}>
 					<div className="mb-1">
 						<span className={
-							finalError 
-								? "text-red-300 font-bold" 
-								: finalCompleted 
-									? "text-emerald-300 font-bold" 
+							finalError
+								? "text-red-300 font-bold"
+								: finalCompleted
+									? "text-emerald-300 font-bold"
 									: finalInProgress
 										? "text-blue-300 font-bold"
 										: "text-cyan-300 font-bold"
@@ -151,7 +154,7 @@ export function EventMessage({ event, resolvedStatus }: EventMessageProps) {
 		const message = content?.message || "Industry analysis complete."
 
 		return (
-			<div className="flex items-start gap-3 text-lg mr-4">	
+			<div className="flex items-start gap-3 text-lg mr-4">
 				<CheckCircle2 className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
 				<div className="flex-1 text-white/90">
 					<div className="mb-2">
