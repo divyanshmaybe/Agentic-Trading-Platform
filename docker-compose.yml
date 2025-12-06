@@ -229,6 +229,7 @@ services:
       - ./shared:/app/shared
       - ./middleware:/app/middleware
       - ./scripts:/app/scripts
+      - ./quant-stream:/app/quant-stream
     depends_on:
       portfolio_postgres:
         condition: service_healthy
@@ -455,7 +456,7 @@ services:
                  echo 'Waiting for Postgres...';
                  sleep 2;
                done &&
-               celery -A celery_app:celery_app worker --loglevel=info -Q general,risk,orders --concurrency=4 --hostname=general@%h --max-tasks-per-child=200 --prefetch-multiplier=1"
+               celery -A celery_app:celery_app worker --loglevel=info -Q general,risk,orders,pipelines --concurrency=4 --hostname=general@%h --max-tasks-per-child=200 --prefetch-multiplier=1"
     ports:
       - "9105:9105"
     volumes:
@@ -463,6 +464,7 @@ services:
       - ./shared:/app/shared
       - ./middleware:/app/middleware
       - ./scripts:/app/scripts
+      - ./quant-stream:/app/quant-stream
     depends_on:
       portfolio_postgres:
         condition: service_healthy

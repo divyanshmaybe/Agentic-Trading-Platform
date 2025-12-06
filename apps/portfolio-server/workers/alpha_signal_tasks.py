@@ -40,6 +40,89 @@ if str(QUANT_STREAM_PATH) not in sys.path:
 
 task_logger = get_task_logger(__name__)
 
+# Market data file path
+MARKET_DATA_CSV = QUANT_STREAM_PATH / ".data" / "indian_stock_market_nifty500.csv"
+
+
+def _check_market_data_freshness() -> bool:
+    """Check if market data CSV has today's data (or last trading day's data)."""
+    if not MARKET_DATA_CSV.exists():
+        return False
+    
+    try:
+        # Read last few rows to check latest date
+        df = pd.read_csv(MARKET_DATA_CSV, usecols=['date'], dtype={'date': str})
+        if df.empty:
+            return False
+        
+        latest_date = pd.to_datetime(df['date']).max().date()
+        today = datetime.now().date()
+        
+        # Get last trading day (skip weekends)
+        last_trading_day = today
+        if today.weekday() == 5:  # Saturday
+            last_trading_day = today - timedelta(days=1)
+        elif today.weekday() == 6:  # Sunday
+            last_trading_day = today - timedelta(days=2)
+        
+        # If before market close (3:30 PM IST = 10:00 AM UTC), use previous trading day
+        now = datetime.now()
+        if now.hour < 16:  # Before 4 PM IST (using some buffer after market close)
+            if last_trading_day.weekday() == 0:  # Monday
+                last_trading_day = last_trading_day - timedelta(days=3)  # Go to Friday
+            else:
+                last_trading_day = last_trading_day - timedelta(days=1)
+            # Skip weekends again
+            while last_trading_day.weekday() >= 5:
+                last_trading_day = last_trading_day - timedelta(days=1)
+        
+        # Data is fresh if it has last trading day's data
+        return latest_date >= last_trading_day
+    except Exception as e:
+        task_logger.warning("Error checking market data freshness: %s", e)
+        return False
+
+
+async def _update_market_data_if_needed(logger) -> bool:
+    """Update market data CSV if it's stale. Returns True if update was successful or not needed."""
+    if _check_market_data_freshness():
+        logger.info("Market data is fresh, skipping update")
+        return True
+    
+    logger.info("Market data is stale, updating...")
+    
+    try:
+        # Import and run the update script
+        import subprocess
+        update_script = QUANT_STREAM_PATH / "update_indian_market_data.py"
+        
+        if not update_script.exists():
+            logger.error("Market data update script not found: %s", update_script)
+            return False
+        
+        # Run the update script as a subprocess
+        result = subprocess.run(
+            [sys.executable, str(update_script)],
+            capture_output=True,
+            text=True,
+            timeout=600,  # 10 minute timeout
+            cwd=str(QUANT_STREAM_PATH)
+        )
+        
+        if result.returncode == 0:
+            logger.info("Market data updated successfully")
+            return True
+        else:
+            logger.error("Market data update failed: %s", result.stderr[-500:] if result.stderr else "No error output")
+            return False
+            
+    except subprocess.TimeoutExpired:
+        logger.error("Market data update timed out after 10 minutes")
+        return False
+    except Exception as e:
+        logger.error("Failed to update market data: %s", e)
+        return False
+
 
 async def generate_signals_for_alpha_core(
     client,
@@ -94,6 +177,10 @@ async def generate_signals_for_alpha_core(
         
         if not features_config:
             return {"status": "skipped", "reason": "No features configured"}
+        
+        # Step 0: Update market data if stale
+        update_progress("updating_data", 5, "Checking market data freshness...")
+        await _update_market_data_if_needed(logger)
         
         # Step 1: Load market data
         update_progress("loading_data", 10, "Loading market data...")
@@ -180,6 +267,36 @@ async def generate_signals_for_alpha_core(
         ranked_df = latest_df.sort_values('predicted_return', ascending=False)
         buy_candidates = ranked_df.head(topk)
         
+        # Fetch live prices for candidate symbols to use current market prices
+        # instead of stale historical data for execution
+        live_prices = {}
+        try:
+            import httpx
+            candidate_symbols = buy_candidates['symbol'].tolist()
+            # Use Docker internal network name for container-to-container communication
+            market_service_url = os.getenv("MARKET_SERVICE_URL", "http://portfolio_server:8001")
+            internal_secret = os.getenv("INTERNAL_SERVICE_SECRET", "agentinvest-secret")
+            
+            async with httpx.AsyncClient(timeout=10.0) as http_client:
+                params = "&".join([f"symbols={s}" for s in candidate_symbols])
+                response = await http_client.get(
+                    f"{market_service_url}/api/market/quotes?{params}",
+                    headers={
+                        "X-Internal-Service": "true",
+                        "X-Service-Secret": internal_secret,
+                    }
+                )
+                if response.status_code == 200:
+                    quotes_data = response.json()
+                    for quote in quotes_data.get("data", []):
+                        if quote.get("symbol") and quote.get("price"):
+                            live_prices[quote["symbol"]] = float(quote["price"])
+                    logger.info("Fetched live prices for %d/%d symbols", len(live_prices), len(candidate_symbols))
+                else:
+                    logger.warning("Failed to fetch live prices (status %d), using historical data", response.status_code)
+        except Exception as price_err:
+            logger.warning("Could not fetch live prices: %s. Using historical data.", price_err)
+        
         # Calculate allocations (equal weight)
         allocation_per_stock = allocated_amount / topk
         
@@ -192,11 +309,13 @@ async def generate_signals_for_alpha_core(
             expires_at = expires_at + timedelta(days=1)
         
         for rank, (_, row) in enumerate(buy_candidates.iterrows(), 1):
-            close_price = float(row.get('close', 100))
-            if close_price <= 0:
+            symbol = row['symbol']
+            # Use live price if available, otherwise fall back to historical close
+            current_price = live_prices.get(symbol, float(row.get('close', 100)))
+            if current_price <= 0:
                 continue
             
-            quantity = int(allocation_per_stock / close_price)
+            quantity = int(allocation_per_stock / current_price)
             if quantity <= 0:
                 continue
             
@@ -204,13 +323,13 @@ async def generate_signals_for_alpha_core(
             confidence = min(1.0, max(0.0, abs(pred_return) * 10))
             
             signals.append({
-                "symbol": row['symbol'],
+                "symbol": symbol,
                 "signal_type": "buy",
                 "quantity": quantity,
                 "predicted_return": pred_return,
                 "confidence": confidence,
-                "price": close_price,
-                "allocated_amount": quantity * close_price,
+                "price": current_price,  # Now uses live price when available
+                "allocated_amount": quantity * current_price,
                 "rank": rank,
             })
         
