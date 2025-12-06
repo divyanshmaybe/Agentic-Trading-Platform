@@ -447,20 +447,23 @@ class StockSelectionPipeline:
             report["failed_guardrails"].append(message)
 
         def is_valid(val):
-            if isinstance(val, str):
+            if val == None:
                 return False
             return not pd.isna(val)
-        def normalize_data(val):
-            if val == "NOT_AVAILABLE":
-                return val
-            else:
-                return float(val)
+
+        def normalize_data(data):
+            for k, v in data.items():
+                try:
+                    data[k] = float(v)
+                except:
+                    data[k] = None
 
         try:
-            sma200 = normalize_data(data['sma200'])
-            sma50 = normalize_data(data['sma50'])
-            rsi_14 = normalize_data(data['rsi_14'])
-            volatility = normalize_data(data['volatility'])
+            data = normalize_data(data)
+            sma50 = data.get("sma50", None)
+            sma200 = data.get("sma200", None)
+            rsi_14 = data.get("rsi_14", None)
+            volatility = data.get("volatility", None)
 
             # Guardrail 1
             if is_valid(sma50) and is_valid(sma200):
