@@ -455,17 +455,102 @@ async def trigger_low_risk_rebalance(
             detail="Low-risk allocation not found. Please set up portfolio allocations first."
         )
 
-    # # 4. Check for open positions - must be ZERO for rebalance
-    # open_positions = getattr(low_risk_allocation, "positions", []) or []
-    # if len(open_positions) > 0:
-    #     return RebalanceTriggerResponse(
-    #         success=False,
-    #         message=f"Cannot rebalance: {len(open_positions)} open positions exist. Close all positions first.",
-    #         task_id=None,
-    #         user_id=user_id,
-    #         fund_allocated=float(low_risk_allocation.allocated_amount or 0),
-    #         summaries_count=0
-    #     )
+    # Get allocated cash early (needed for error messages)
+    allocated_cash = float(low_risk_allocation.available_cash or low_risk_allocation.allocated_amount or 0)
+
+    # 3a. Check 6-month cooldown FIRST (before other validations)
+    prev_summaries = []
+    to_send_summary = {}
+    auth_db = Prisma(datasource={"url": AUTH_DATABASE_URL})
+    try:
+        await auth_db.connect()
+
+        # Use raw SQL query since LowRiskUserSummaries is not in portfolio schema
+        summaries = await auth_db.query_raw(
+            '''
+            SELECT id, "userId", type, "jsonContent", "createdAt"
+            FROM low_risk_user_summaries
+            WHERE "userId" = $1
+            ORDER BY "createdAt" DESC
+            ''',
+            user_id
+        )
+
+        # Convert to list of dicts for the pipeline
+        from datetime import datetime, timezone, timedelta
+        for summary in summaries:
+            created_at = summary.get("createdAt")
+            # Handle both datetime objects and strings
+            if isinstance(created_at, str):
+                created_at_str = created_at
+            elif hasattr(created_at, 'isoformat'):
+                created_at_str = created_at.isoformat()
+            else:
+                created_at_str = None
+                
+            summary_data = {
+                "id": summary.get("id"),
+                "type": summary.get("type"),
+                "content": summary.get("jsonContent"),
+                "created_at": created_at_str,
+                "created_at_obj": created_at
+            }
+            prev_summaries.append(summary_data)
+
+        logger.info(f"📋 Found {len(prev_summaries)} previous summaries for user {user_id}")
+        
+        # Check if latest summary is less than 6 months old
+        if prev_summaries:
+            latest_summary = prev_summaries[0]  # Already sorted DESC
+            latest_created = latest_summary.get("created_at_obj")
+            
+            if latest_created:
+                # Convert to datetime if needed
+                if isinstance(latest_created, str):
+                    from dateutil import parser
+                    latest_created = parser.parse(latest_created)
+                
+                # Make timezone-aware if needed
+                if latest_created.tzinfo is None:
+                    latest_created = latest_created.replace(tzinfo=timezone.utc)
+                
+                now = datetime.now(timezone.utc)
+                time_diff = now - latest_created
+                six_months = timedelta(days=180)  # Approximately 6 months
+                
+                if time_diff < six_months:
+                    days_remaining = (six_months - time_diff).days
+                    return RebalanceTriggerResponse(
+                        success=False,
+                        message=f"Low-risk pipeline cannot be re-triggered before 6 months. Last run was {time_diff.days} days ago. Please wait {days_remaining} more days.",
+                        task_id=None,
+                        user_id=user_id,
+                        fund_allocated=allocated_cash,
+                        summaries_count=len(prev_summaries)
+                    )
+            
+            # Prepare summary data for pipeline
+            to_send_summary = {
+                "industry_list": prev_summaries[0]["content"]["industry_list"], 
+                "final_portfolio": prev_summaries[0]["content"]["final_portfolio"]
+            }
+
+    except Exception as e:
+        logger.warning(f"Failed to fetch previous summaries: {e}. Proceeding without them...")
+    finally:
+        await auth_db.disconnect()
+   
+    # 4. Check for open positions - must be ZERO for rebalance
+    open_positions = getattr(low_risk_allocation, "positions", []) or []
+    if len(open_positions) > 0:
+        return RebalanceTriggerResponse(
+            success=False,
+            message=f"Cannot rebalance: {len(open_positions)} open positions exist. Close all positions first.",
+            task_id=None,
+            user_id=user_id,
+            fund_allocated=float(low_risk_allocation.allocated_amount or 0),
+            summaries_count=0
+        )
 
     # 5. Check trading agent exists and is active
     trading_agent = low_risk_allocation.tradingAgent
@@ -504,41 +589,7 @@ async def trigger_low_risk_rebalance(
     )
 
     # 7. Fetch previous summaries from Auth DB (LowRiskUserSummaries) using raw SQL
-    prev_summaries = []
-    auth_db = Prisma(datasource={"url": AUTH_DATABASE_URL})
-    try:
-        await auth_db.connect()
-
-        # Use raw SQL query since LowRiskUserSummaries is not in portfolio schema
-        summaries = await auth_db.query_raw(
-            '''
-            SELECT id, "userId", type, "jsonContent", "createdAt"
-            FROM low_risk_user_summaries
-            WHERE "userId" = $1
-            ORDER BY "createdAt" DESC
-            ''',
-            user_id
-        )
-
-        # Convert to list of dicts for the pipeline
-        for summary in summaries:
-            summary_data = {
-                "id": summary.get("id"),
-                "type": summary.get("type"),
-                "content": summary.get("jsonContent"),
-                "created_at": summary.get("createdAt") if summary.get("createdAt") else None
-            }
-            prev_summaries.append(summary_data)
-
-        to_send_summary = {"industry_list": prev_summaries[-1]["content"]["industry_list"], "final_portfolio": prev_summaries[-1]["content"]["final_portfolio"]}
-
-        logger.info(f"📋 Found {len(prev_summaries)} previous summaries for user {user_id}")
-
-    except Exception as e:
-        logger.warning(f"Failed to fetch previous summaries: {e}. Proceeding without them...")
-    finally:
-        await auth_db.disconnect()
-
+   
     # 8. Acquire lock BEFORE queuing rebalance task
     if not pipeline_status.acquire_lock(ttl=7200):  # 2 hour lock
         logger.warning(f"⚠️ Failed to acquire rebalance lock for user {user_id}")
