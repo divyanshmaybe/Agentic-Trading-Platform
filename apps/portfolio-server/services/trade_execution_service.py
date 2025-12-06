@@ -491,6 +491,44 @@ class TradeExecutionService:
                 existing_side = str(getattr(existing_trade, "side", "")).upper()
                 existing_qty = int(getattr(existing_trade, "quantity", 0))
                 
+                # Block COVER if SHORT_SELL is pending (can't cover a position that doesn't exist yet)
+                if existing_side == "SHORT_SELL" and trade_side == "COVER":
+                    self.logger.warning(
+                        "⚠️ COVER TRADE BLOCKED: Cannot COVER while SHORT_SELL %s is still pending for %s in portfolio %s.",
+                        existing_trade.id,
+                        symbol,
+                        portfolio_id,
+                    )
+                    # Return the existing SHORT_SELL trade
+                    existing_log = await client.tradeexecutionlog.find_first(
+                        where={"trade_id": existing_trade.id},
+                    )
+                    if existing_log:
+                        return TradeExecutionRecord(
+                            id=existing_log.id,
+                            request_id=existing_log.request_id,
+                            status=existing_log.status,
+                            broker_order_id=getattr(existing_log, "broker_order_id", None),
+                        )
+                    else:
+                        # Create a minimal log if none exists
+                        self.logger.warning("Creating fallback TradeExecutionLog for existing trade %s", existing_trade.id)
+                        fallback_log = await client.tradeexecutionlog.create(
+                            data={
+                                "trade_id": existing_trade.id,
+                                "request_id": job_row["request_id"],
+                                "status": "pending",
+                                "order_type": "market",
+                                "metadata": json.dumps({"deduplication": "cover_blocked_pending_short"}),
+                            }
+                        )
+                        return TradeExecutionRecord(
+                            id=fallback_log.id,
+                            request_id=fallback_log.request_id,
+                            status=fallback_log.status,
+                            broker_order_id=None,
+                        )
+                
                 # Only block if it's the exact same side AND similar quantity (within 20%)
                 qty_tolerance = 0.2  # 20% tolerance
                 is_similar_qty = abs(existing_qty - trade_quantity) / max(existing_qty, trade_quantity, 1) <= qty_tolerance
@@ -558,7 +596,8 @@ class TradeExecutionService:
         if recent_trades:
             for recent_trade in recent_trades:
                 recent_side = str(getattr(recent_trade, "side", "")).upper()
-                recent_qty = int(getattr(recent_trade, "quantity", 0))
+                recent_qty_raw = getattr(recent_trade, "quantity", 0)
+                recent_qty = int(recent_qty_raw) if recent_qty_raw is not None else 0
                 current_side = trade_side.upper()
                 
                 # Check if side is different - allow if flipping position

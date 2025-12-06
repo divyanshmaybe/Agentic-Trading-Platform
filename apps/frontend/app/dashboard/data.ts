@@ -69,7 +69,10 @@ export const notificationItems: NotificationItem[] = [
 
 export const portfolioSummary: PortfolioSummary = {
   portfolioName: "Managed Portfolio",
-  totalValue: 1245000,
+  currentValue: 1245000,
+  totalUnrealizedPnl: 22840,
+  totalPnl: 45000,
+  totalReturnPct: 3.75,
   investmentAmount: 1200000,
   availableCash: 50000,
   changePct: 1.86,
