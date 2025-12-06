@@ -136,6 +136,7 @@ class StockSelectionPipeline:
             model = ChatGoogleGenerativeAI(
                 model="gemini-2.5-pro",
                 google_api_key=self.gemini_api_key,
+                temperature=0.5
             )
             model_with_search = model.bind_tools([{"google_search": {}}])
 
@@ -394,7 +395,7 @@ class StockSelectionPipeline:
             Output:
             - A string of reasoning tokens with proper analysis, interpretation, and possible next steps.
             """
-            reasoning_llm = ChatGoogleGenerativeAI(model="gemini-3-pro-preview", thinking_budget=2000)
+            reasoning_llm = ChatGoogleGenerativeAI(model="gemini-3-pro-preview", thinking_budget=2000, temperature=0.5)
             messages = runtime.state["messages"]
             reasoning_messages = runtime.state["reasoning_messages"]
             if len(reasoning_messages) == 0:
@@ -581,6 +582,7 @@ class StockSelectionPipeline:
             llm = ChatGoogleGenerativeAI(
                 model="gemini-2.5-pro",
                 google_api_key=gemini_api_key,
+                temperature=0.5,
             )
 
             # Create company report tool

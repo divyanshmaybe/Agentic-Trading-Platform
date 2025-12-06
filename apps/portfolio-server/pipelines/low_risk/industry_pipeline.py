@@ -410,6 +410,7 @@ def create_industry_selection_agent(
     gemini2 = ChatGoogleGenerativeAI(
         model="gemini-2.5-flash",
         google_api_key=gemini_api_key,
+        temperature=0.5,
     )
     agent = create_agent(
         model=gemini2,
