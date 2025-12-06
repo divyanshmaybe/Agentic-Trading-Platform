@@ -652,7 +652,7 @@ spec:
               done && \
               exec celery -A celery_app:celery_app worker \
                 --loglevel=${CELERY_LOG_LEVEL:-info} \
-                --queues=general,risk,orders \
+                --queues=general,risk,orders,pipelines \
                 --concurrency=${CELERY_CONCURRENCY_GENERAL:-4} \
                 --prefetch-multiplier=1 \
                 --hostname=general@%h \
@@ -844,21 +844,32 @@ spec:
     spec:
       containers:
         - name: exporter
-          image: ovalmoney/celery-exporter:latest
+          image: danihodovic/celery-exporter:latest
           imagePullPolicy: IfNotPresent
           env:
-            - name: CELERY_BROKER_URL
+            - name: CE_BROKER_URL
               valueFrom:
                 secretKeyRef:
                   name: portfolio-env-secret
                   key: CELERY_BROKER_URL
-            - name: WORKER_TIMEOUT
-              value: "10"
-            - name: SCRAPE_INTERVAL
-              value: "15"
+            - name: CE_LISTEN_ADDRESS
+              value: "0.0.0.0:9808"
+            - name: CE_NAMESPACE
+              value: "celery"
+            - name: CE_MAX_TASKS
+              value: "10000"
+            - name: CE_RETRY_INTERVAL
+              value: "5"
           ports:
             - name: metrics
               containerPort: 9808
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
 ---
 apiVersion: v1
 kind: Service
@@ -954,4 +965,122 @@ spec:
     - name: controller
       port: 9093
       targetPort: 9093
+---
+# =============================================================================
+# AlphaCopilot Server (AI Trading Copilot)
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: alphacopilot-server
+  namespace: agent-invest
+  labels:
+    app: alphacopilot-server
+spec:
+  selector:
+    app: alphacopilot-server
+  ports:
+    - name: http
+      port: 8069
+      targetPort: 8069
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alphacopilot-server
+  namespace: agent-invest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alphacopilot-server
+  template:
+    metadata:
+      labels:
+        app: alphacopilot-server
+    spec:
+      containers:
+        - name: alphacopilot-server
+          image: punhaniabhishek/agent-invest-alphacopilot-server:latest
+          imagePullPolicy: Always
+          env:
+            - name: PYTHONPATH
+              value: "/app:/app/shared/py:/app/quant-stream:/app/apps/alphacopilot-server"
+          envFrom:
+            - secretRef:
+                name: portfolio-env-secret
+          ports:
+            - containerPort: 8069
+              name: http
+          command:
+            - sh
+            - -c
+            - |
+              python -m uvicorn main:app --host 0.0.0.0 --port 8069
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "2Gi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 40
+            periodSeconds: 30
+---
+# =============================================================================
+# AlphaCopilot Celery Worker (Backtest Processing)
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alphacopilot-celery
+  namespace: agent-invest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alphacopilot-celery
+  template:
+    metadata:
+      labels:
+        app: alphacopilot-celery
+    spec:
+      containers:
+        - name: worker
+          image: punhaniabhishek/agent-invest-alphacopilot-server:latest
+          imagePullPolicy: Always
+          env:
+            - name: PYTHONPATH
+              value: "/app:/app/shared/py:/app/quant-stream:/app/apps/alphacopilot-server"
+          envFrom:
+            - secretRef:
+                name: portfolio-env-secret
+          command:
+            - sh
+            - -c
+            - |
+              cd /app/quant-stream && \
+              celery -A quant_stream.mcp_server.core.celery_config worker \
+                --loglevel=info \
+                --queues=backtest \
+                --concurrency=2 \
+                --hostname=backtest@%h \
+                --max-tasks-per-child=50
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
 

@@ -69,7 +69,7 @@ data:
   CELERY_QUEUE_NEWS_PIPELINE: news_pipeline,pipelines
   CELERY_QUEUE_LOW_RISK: low_risk_pipeline
   CELERY_QUEUE_MARKET: market,tokens
-  CELERY_QUEUE_GENERAL: general,risk,orders
+  CELERY_QUEUE_GENERAL: general,risk,orders,pipelines
   CELERY_QUEUE_STREAMING: streaming
   CELERY_WORKER_PREFETCH_MULTIPLIER: "1"
   CELERY_VISIBILITY_TIMEOUT: "900"
@@ -124,31 +124,144 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
+  name: prometheus-alert-rules
+  namespace: agent-invest
+data:
+  alert-rules.yml: |
+    groups:
+      - name: celery_alerts
+        interval: 30s
+        rules:
+          - alert: CeleryWorkerDown
+            expr: celery_worker_up == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Celery worker {{ $labels.worker }} is down"
+              description: "Celery worker {{ $labels.worker }} has been down for more than 2 minutes"
+          
+          - alert: CeleryTaskFailureRate
+            expr: rate(celery_task_failed_total[5m]) > 0.1
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High task failure rate on {{ $labels.queue }}"
+              description: "Task failure rate is {{ $value }} on queue {{ $labels.queue }}"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards-provisioning
+  namespace: agent-invest
+data:
+  dashboards.yml: |
+    apiVersion: 1
+    providers:
+      - name: 'default'
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        updateIntervalSeconds: 10
+        allowUiUpdates: true
+        options:
+          path: /var/lib/grafana/dashboards
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: promtail-config
+  namespace: agent-invest
+data:
+  promtail.yml: |
+    server:
+      http_listen_port: 3101
+    
+    positions:
+      filename: /tmp/positions.yaml
+    
+    clients:
+      - url: http://loki:3100/loki/api/v1/push
+    
+    scrape_configs:
+      - job_name: kubernetes-pods
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            target_label: app
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
   name: prometheus-config
 data:
   prometheus.yml: |
     global:
       scrape_interval: 15s
+      evaluation_interval: 15s
+    
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets: []
+    
+    rule_files:
+      - /etc/prometheus/alert-rules.yml
+    
     scrape_configs:
       - job_name: 'prometheus'
         static_configs:
           - targets: ['localhost:9090']
+      
       - job_name: 'auth-server'
         static_configs:
           - targets: ['auth-server:4000']
         metrics_path: '/health'
         scrape_interval: 30s
+      
       - job_name: 'portfolio-server'
         static_configs:
           - targets: ['portfolio-server:8000']
         metrics_path: '/health'
         scrape_interval: 30s
+      
+      - job_name: 'alphacopilot-server'
+        static_configs:
+          - targets: ['alphacopilot-server:8069']
+        metrics_path: '/health'
+        scrape_interval: 30s
+      
       - job_name: 'frontend'
         static_configs:
           - targets: ['frontend:3000']
-      - job_name: 'celery-workers'
+        scrape_interval: 30s
+      
+      - job_name: 'celery-exporter'
         static_configs:
           - targets: ['celery-metrics:9808']
+        scrape_interval: 15s
+      
+      - job_name: 'redis-exporter'
+        static_configs:
+          - targets: ['redis-exporter:9121']
+        scrape_interval: 30s
+      
+      - job_name: 'postgres-exporter'
+        static_configs:
+          - targets: ['postgres-exporter:9187']
+        scrape_interval: 30s
+      
+      - job_name: 'flower'
+        static_configs:
+          - targets: ['portfolio-celery-flower:5555']
+        scrape_interval: 30s
 ---
 apiVersion: v1
 kind: ConfigMap
