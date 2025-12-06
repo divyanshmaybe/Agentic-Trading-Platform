@@ -588,7 +588,7 @@ class FundamentalAnalyzer:
             return {}
         
         return {
-            'operating_cash_flow': self._info.get('operatingCashflow', pd.NA),
+            'operating_cashflow': self._info.get('operatingCashflow', pd.NA),
         }
     
     def get_net_income_metrics(self):

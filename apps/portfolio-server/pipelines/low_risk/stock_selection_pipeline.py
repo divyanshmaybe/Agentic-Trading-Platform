@@ -447,13 +447,20 @@ class StockSelectionPipeline:
             report["failed_guardrails"].append(message)
 
         def is_valid(val):
+            if isinstance(val, str):
+                return False
             return not pd.isna(val)
+        def normalize_data(val):
+            if val == "NOT_AVAILABLE":
+                return val
+            else:
+                return float(val)
 
         try:
-            sma200 = data['sma200']
-            sma50 = data['sma50']
-            rsi = data['rsi_14']
-            volatility = data['volatility']
+            sma200 = normalize_data(data['sma200'])
+            sma50 = normalize_data(data['sma50'])
+            rsi_14 = normalize_data(data['rsi_14'])
+            volatility = normalize_data(data['volatility'])
 
             # Guardrail 1
             if is_valid(sma50) and is_valid(sma200):
@@ -461,8 +468,8 @@ class StockSelectionPipeline:
                     fail(f"Guardrail_1")
 
             # Guardrail 2
-            if is_valid(rsi):
-                if rsi >= 70:
+            if is_valid(rsi_14):
+                if rsi_14 >= 70:
                     fail(f"Guardrail_2")
 
             # Guardrail 3
@@ -471,10 +478,13 @@ class StockSelectionPipeline:
                     fail(f"Guardrail_3")
 
         except Exception as e:
+            logger.error(e)
             return {
                 "passed": False,
                 "failed_guardrails": [f"error: {str(e)}"]
             }
+        if report["passed"] == False:
+            logger.info("company failed")
 
         return report
 
@@ -502,7 +512,7 @@ class StockSelectionPipeline:
             # CHECKING GUARDRAILS
             ticker = row.get("Symbol", "")
             res_json = pipeline.get_metrics(ticker)
-            metrics = ["current_price", 'sma200', 'sma50','operating_cashflow', 'net_income', 'rsi']
+            metrics = ["current_price", 'sma200', 'sma50', 'operating_cashflow', 'net_income', 'rsi_14', "volatility"]
             if res_json is None:
                 logger.warning(f"No metrics found for {ticker}")
                 # Set all metrics to None if res_json is None
