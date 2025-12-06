@@ -18,15 +18,6 @@ export async function POST(request: NextRequest) {
   const prisma = getPrismaClient();
 
   try {
-    // Delete all low-risk events for this user
-    const result = await prisma.lowRiskEvent.deleteMany({
-      where: { userId },
-    });
-
-    console.log(
-      `[LowRisk Rebalance] Deleted ${result.count} events for user ${userId}`
-    );
-
     // Get portfolio server URL from environment
     const portfolioServerUrl =
       process.env.NEXT_PUBLIC_PORTFOLIO_API_URL ||
@@ -40,7 +31,7 @@ export async function POST(request: NextRequest) {
     // Default fund allocation: ₹100,000
     const fundAllocated = 100000.0;
 
-    // Call trigger API to start the pipeline
+    // Call REBALANCE API (not trigger) to re-trigger the pipeline with cooldown check
     const headers: HeadersInit = {
       "Content-Type": "application/json",
     };
@@ -48,8 +39,8 @@ export async function POST(request: NextRequest) {
       headers["Authorization"] = `Bearer ${accessToken}`;
     }
 
-    const triggerResponse = await fetch(
-      `${portfolioServerUrl}/api/low-risk/trigger`,
+    const rebalanceResponse = await fetch(
+      `${portfolioServerUrl}/api/low-risk/rebalance`,
       {
         method: "POST",
         headers,
@@ -59,34 +50,58 @@ export async function POST(request: NextRequest) {
       }
     );
 
-    let triggerData: any = null;
-    let triggerSuccess = false;
-
-    if (triggerResponse.ok) {
-      const contentType = triggerResponse.headers.get("content-type");
-      if (contentType && contentType.includes("application/json")) {
-        triggerData = await triggerResponse.json();
-        triggerSuccess = triggerData.success || false;
-      } else {
-        const text = await triggerResponse.text();
-        console.warn(
-          `[LowRisk Rebalance] Trigger API returned non-JSON: ${text.substring(0, 100)}`
-        );
-      }
-    } else {
-      const errorText = await triggerResponse.text().catch(() => "");
+    // Parse response
+    const contentType = rebalanceResponse.headers.get("content-type");
+    if (!contentType || !contentType.includes("application/json")) {
+      const text = await rebalanceResponse.text();
       console.error(
-        `[LowRisk Rebalance] Trigger API failed: ${triggerResponse.status} - ${errorText}`
+        `[LowRisk Rebalance] API returned non-JSON: ${text.substring(0, 100)}`
+      );
+      return new Response(
+        JSON.stringify({
+          success: false,
+          message: "Invalid response from rebalance API",
+        }),
+        {
+          status: 500,
+          headers: { "content-type": "application/json" },
+        }
       );
     }
+
+    const rebalanceData = await rebalanceResponse.json();
+
+    // Check if rebalance was successful
+    if (!rebalanceResponse.ok || !rebalanceData.success) {
+      // Return the error (including 6-month cooldown errors)
+      return new Response(
+        JSON.stringify({
+          success: false,
+          message: rebalanceData.message || "Failed to rebalance",
+          error: rebalanceData.message || "Failed to rebalance",
+        }),
+        {
+          status: rebalanceResponse.status,
+          headers: { "content-type": "application/json" },
+        }
+      );
+    }
+
+    // Only delete events if rebalance was successful
+    const result = await prisma.lowRiskEvent.deleteMany({
+      where: { userId },
+    });
+
+    console.log(
+      `[LowRisk Rebalance] Deleted ${result.count} events for user ${userId}`
+    );
 
     return new Response(
       JSON.stringify({
         success: true,
         deletedCount: result.count,
-        message: `Successfully cleared ${result.count} event(s) and triggered pipeline`,
-        triggerSuccess,
-        triggerMessage: triggerData?.message || null,
+        message: `Successfully cleared ${result.count} event(s) and triggered rebalance`,
+        task_id: rebalanceData.task_id,
       }),
       {
         status: 200,
@@ -97,7 +112,9 @@ export async function POST(request: NextRequest) {
     console.error("[LowRisk Rebalance] Error:", error);
     return new Response(
       JSON.stringify({
+        success: false,
         error: error instanceof Error ? error.message : "Internal server error",
+        message: error instanceof Error ? error.message : "Internal server error",
       }),
       {
         status: 500,

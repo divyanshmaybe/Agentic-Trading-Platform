@@ -401,30 +401,7 @@ async def trigger_low_risk_rebalance(
     # Get portfolio DB client (with auto-reconnection)
     db = await prisma_client()
 
-    # Initialize Redis and pipeline status
-    redis_client = Redis.from_url(BROKER_URL)
-    pipeline_status = PipelineStatus(redis_client, user_id)
-
-    # 1. Check if pipeline is already running (check lock directly)
-    is_running, start_time = pipeline_status.is_running()
-    if is_running:
-        import time
-        elapsed = int((time.time() - start_time) / 60) if start_time else 0
-        
-        # Check queue length to show position
-        queue_length = redis_client.llen("low_risk_pipeline")
-        queue_msg = f" ({queue_length} tasks queued)" if queue_length > 0 else ""
-        
-        return RebalanceTriggerResponse(
-            success=False,
-            message=f"Pipeline already running (for {elapsed} minutes){queue_msg}. Wait for completion.",
-            task_id=None,
-            user_id=user_id,
-            fund_allocated=0,
-            summaries_count=0
-        )
-
-    # 2. Fetch user's portfolio with allocations
+    # 1. Fetch user's portfolio with allocations FIRST (needed for allocated cash)
     portfolio = await db.portfolio.find_first(
         where={"customer_id": user_id},
         include={
@@ -442,7 +419,7 @@ async def trigger_low_risk_rebalance(
     if not portfolio:
         raise HTTPException(status_code=404, detail="Portfolio not found for user")
 
-    # 3. Find low_risk allocation
+    # 2. Find low_risk allocation
     low_risk_allocation = None
     for allocation in portfolio.allocations:
         if allocation.allocation_type == "low_risk":
@@ -458,12 +435,16 @@ async def trigger_low_risk_rebalance(
     # Get allocated cash early (needed for error messages)
     allocated_cash = float(low_risk_allocation.available_cash or low_risk_allocation.allocated_amount or 0)
 
-    # 3a. Check 6-month cooldown FIRST (before other validations)
+    # 3. Check 6-month cooldown FIRST (highest priority business rule)
     prev_summaries = []
     to_send_summary = {}
     auth_db = Prisma(datasource={"url": AUTH_DATABASE_URL})
+    
+    # This is a critical business rule check, so we handle it carefully
+    cooldown_check_failed = False
     try:
         await auth_db.connect()
+        logger.info(f"🔍 Checking 6-month cooldown for user {user_id}")
 
         # Use raw SQL query since LowRiskUserSummaries is not in portfolio schema
         summaries = await auth_db.query_raw(
@@ -504,6 +485,8 @@ async def trigger_low_risk_rebalance(
             latest_summary = prev_summaries[0]  # Already sorted DESC
             latest_created = latest_summary.get("created_at_obj")
             
+            logger.info(f"⏰ Latest summary created at: {latest_created}")
+            
             if latest_created:
                 # Convert to datetime if needed
                 if isinstance(latest_created, str):
@@ -518,8 +501,12 @@ async def trigger_low_risk_rebalance(
                 time_diff = now - latest_created
                 six_months = timedelta(days=180)  # Approximately 6 months
                 
+                logger.info(f"⏱️ Time since last run: {time_diff.days} days (cooldown: 180 days)")
+                
                 if time_diff < six_months:
                     days_remaining = (six_months - time_diff).days
+                    logger.warning(f"🚫 COOLDOWN ACTIVE: {time_diff.days} days elapsed, {days_remaining} days remaining")
+                    await auth_db.disconnect()
                     return RebalanceTriggerResponse(
                         success=False,
                         message=f"Low-risk pipeline cannot be re-triggered before 6 months. Last run was {time_diff.days} days ago. Please wait {days_remaining} more days.",
@@ -528,19 +515,53 @@ async def trigger_low_risk_rebalance(
                         fund_allocated=allocated_cash,
                         summaries_count=len(prev_summaries)
                     )
+                else:
+                    logger.info(f"✅ Cooldown period passed ({time_diff.days} days > 180 days)")
             
             # Prepare summary data for pipeline
             to_send_summary = {
                 "industry_list": prev_summaries[0]["content"]["industry_list"], 
                 "final_portfolio": prev_summaries[0]["content"]["final_portfolio"]
             }
+        else:
+            logger.info(f"ℹ️ No previous summaries found - first run for user {user_id}")
 
     except Exception as e:
-        logger.warning(f"Failed to fetch previous summaries: {e}. Proceeding without them...")
+        logger.error(f"❌ Failed to check 6-month cooldown: {e}", exc_info=True)
+        cooldown_check_failed = True
     finally:
         await auth_db.disconnect()
+    
+    # If cooldown check failed due to database error, we should not proceed
+    if cooldown_check_failed:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to verify 6-month cooldown period. Please try again."
+        )
    
-    # 4. Check for open positions - must be ZERO for rebalance
+    # 4. Check if pipeline is already running (after cooldown check)
+    redis_client = Redis.from_url(BROKER_URL)
+    pipeline_status = PipelineStatus(redis_client, user_id)
+    
+    is_running, start_time = pipeline_status.is_running()
+    if is_running:
+        import time
+        elapsed = int((time.time() - start_time) / 60) if start_time else 0
+        
+        # Check queue length to show position
+        queue_length = redis_client.llen("low_risk_pipeline")
+        queue_msg = f" ({queue_length} tasks queued)" if queue_length > 0 else ""
+        
+        return RebalanceTriggerResponse(
+            success=False,
+            message=f"Pipeline already running (for {elapsed} minutes){queue_msg}. Wait for completion.",
+            task_id=None,
+            user_id=user_id,
+            fund_allocated=allocated_cash,
+            summaries_count=len(prev_summaries)
+        )
+   
+    # 5. Check for open positions - must be ZERO for rebalance
     open_positions = getattr(low_risk_allocation, "positions", []) or []
     if len(open_positions) > 0:
         return RebalanceTriggerResponse(
@@ -552,7 +573,7 @@ async def trigger_low_risk_rebalance(
             summaries_count=0
         )
 
-    # 5. Check trading agent exists and is active
+    # 6. Check trading agent exists and is active
     trading_agent = low_risk_allocation.tradingAgent
 
     if not trading_agent:
@@ -574,9 +595,7 @@ async def trigger_low_risk_rebalance(
             detail=f"Trading agent status is '{agent_status}'. Expected 'active' or 'running'."
         )
 
-    # 6. Get allocated cash
-    allocated_cash = float(low_risk_allocation.available_cash or low_risk_allocation.allocated_amount or 0)
-
+    # 7. Validate allocated cash (already fetched earlier)
     if allocated_cash <= 0:
         raise HTTPException(
             status_code=400,
@@ -588,8 +607,6 @@ async def trigger_low_risk_rebalance(
         f"Available Cash: ₹{allocated_cash:,.2f} | Open Positions: 0"
     )
 
-    # 7. Fetch previous summaries from Auth DB (LowRiskUserSummaries) using raw SQL
-   
     # 8. Acquire lock BEFORE queuing rebalance task
     if not pipeline_status.acquire_lock(ttl=7200):  # 2 hour lock
         logger.warning(f"⚠️ Failed to acquire rebalance lock for user {user_id}")
