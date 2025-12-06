@@ -187,10 +187,10 @@ class DBManager:
     async def connect(self) -> None:
         """
         Establish a connection to the database via Prisma.
-        
+
         Handles event loop changes by recreating the client if needed.
         Safe to call multiple times - will reuse existing connection if still valid.
-        
+
         Raises:
             PrismaError: If connection fails after retries.
         """
@@ -202,10 +202,24 @@ class DBManager:
                 "Use asyncio.run() or ensure you're in an async function."
             )
 
-        # If already connected to the same event loop, return
+        # If already connected to the same event loop, verify connection is still healthy
         if self._connected and self._loop is loop:
-            self.logger.debug("Already connected to database (same event loop)")
-            return
+            # Verify connection is still alive with a quick health check
+            try:
+                if self.client and self.client.is_connected():
+                    # Quick ping to verify connection is responsive
+                    await asyncio.wait_for(self.client.query_raw("SELECT 1"), timeout=2.0)
+                    self.logger.debug("Already connected to database (same event loop, connection healthy)")
+                    return
+                else:
+                    # Connection appears dead, force reconnection
+                    self.logger.warning("⚠️ Connection marked as connected but Prisma client is not connected - forcing reconnect")
+                    self._connected = False
+            except (asyncio.TimeoutError, Exception) as e:
+                # Health check failed - connection is stale, force reconnection
+                self.logger.warning("⚠️ Connection health check failed: %s - forcing reconnect", e)
+                self._connected = False
+                # Fall through to reconnection logic below
 
         # If already connecting, wait for it to complete
         if self._connecting:

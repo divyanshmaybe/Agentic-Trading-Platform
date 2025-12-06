@@ -388,8 +388,8 @@ async def trigger_low_risk_rebalance(
 
     logger.info(f"📨 Low-risk rebalance request from user {user_id}")
 
-    # Get portfolio DB client
-    db = prisma_client()
+    # Get portfolio DB client (with auto-reconnection)
+    db = await prisma_client()
 
     # 1. Check if pipeline is already running
     try:
