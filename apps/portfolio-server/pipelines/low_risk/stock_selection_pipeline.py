@@ -508,6 +508,7 @@ class StockSelectionPipeline:
             # CHECKING GUARDRAILS
             ticker = row.get("Symbol", "")
             res_json = pipeline.get_metrics(ticker)
+            logger.info(f"res_json for {company_name}: {res_json}")
             metrics = ["current_price", 'sma200', 'sma50', 'operating_cashflow', 'net_income', 'rsi_14', "volatility"]
             if res_json is None:
                 logger.warning(f"No metrics found for {ticker}")
@@ -518,7 +519,9 @@ class StockSelectionPipeline:
                 for m in metrics:
                     ticker_result[m] = res_json.get(m, None)
 
+            logger.info(f"ticker_result for {company_name}: {ticker_result}")
             guardrail_report = self.check_low_risk_guardrails(ticker_result)
+            print("guardrail_report", guardrail_report)
 
             if guardrail_report["passed"]:
                 if company_name:
@@ -526,7 +529,7 @@ class StockSelectionPipeline:
                     if company_brief:
                         company_prompt += f" - {company_brief}"
                     company_prompt += "\n"
-                    count+=1;
+                    count+=1
             else:
                 failed_companies.append({
                     "name": company_name,

@@ -922,6 +922,7 @@ class FundamentalAnalyzerPipeline:
         if row is None and self._metrics_cache_path.exists():
             try:
                 df = pd.read_pickle(self._metrics_cache_path)
+                df.to_csv("metrics_cache.csv")
                 mask = df["ticker"] == ticker_fmt
                 if mask.any():
                     self._metrics_df = df  # Cache in memory
