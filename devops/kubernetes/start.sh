@@ -10,7 +10,8 @@ INGRESS_MANIFEST="${INGRESS_MANIFEST:-https://raw.githubusercontent.com/kubernet
 CERT_MANAGER_MANIFEST="${CERT_MANAGER_MANIFEST:-https://github.com/cert-manager/cert-manager/releases/download/v1.15.3/cert-manager.yaml}"
 ARGOCD_MANIFEST="${ARGOCD_MANIFEST:-${REPO_ROOT}/devops/argocd/argocd.yml}"
 KUSTOMIZE_DIR="${KUSTOMIZE_DIR:-${SCRIPT_DIR}}"
-IMAGES="${IMAGES:-punhaniabhishek/agent-invest-frontend:latest punhaniabhishek/agent-invest-auth-server:latest punhaniabhishek/agent-invest-portfolio-server:latest punhaniabhishek/agent-invest-notification-server:latest}"
+# Set IMAGES environment variable with your DockerHub username
+IMAGES="${IMAGES:-your-dockerhub-username/agent-invest-frontend:latest your-dockerhub-username/agent-invest-auth-server:latest your-dockerhub-username/agent-invest-portfolio-server:latest your-dockerhub-username/agent-invest-notification-server:latest}"
 ARGOCD_PASSWORD=""
 
 log() {

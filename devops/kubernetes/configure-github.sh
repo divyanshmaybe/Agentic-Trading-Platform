@@ -78,7 +78,8 @@ fi
 
 if [[ -z "${repo_url}" ]]; then
   log "Warning: Could not determine repository URL. Using default from argocd.yml"
-  repo_url="https://github.com/Abhishek-Punhani/Agentic-Trading-Platform-Pathway.git"
+  # Replace YOUR_GITHUB_USERNAME with your GitHub username
+  repo_url="https://github.com/YOUR_GITHUB_USERNAME/Agentic-Trading-Platform-Pathway.git"
 fi
 
 log "Configuring repository: ${repo_url}"

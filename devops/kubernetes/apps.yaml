@@ -1,3 +1,4 @@
+# Replace {{DOCKERHUB_USERNAME}} with your DockerHub username in all image references below
 apiVersion: v1
 kind: Service
 metadata:
@@ -30,7 +31,7 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: punhaniabhishek/agent-invest-frontend:latest
+          image: {{DOCKERHUB_USERNAME}}/agent-invest-frontend:latest
           imagePullPolicy: Always
           envFrom:
             - configMapRef:
@@ -83,7 +84,7 @@ spec:
     spec:
       containers:
         - name: auth-server
-          image: punhaniabhishek/agent-invest-auth-server:latest
+          image: {{DOCKERHUB_USERNAME}}/agent-invest-auth-server:latest
           imagePullPolicy: Always
           envFrom:
             - configMapRef:
@@ -133,7 +134,7 @@ spec:
     spec:
       containers:
         - name: notification-server
-          image: punhaniabhishek/agent-invest-notification-server:latest
+          image: {{DOCKERHUB_USERNAME}}/agent-invest-notification-server:latest
           imagePullPolicy: Always
           envFrom:
             - configMapRef:
@@ -188,7 +189,7 @@ spec:
     spec:
       containers:
         - name: portfolio-server
-          image: punhaniabhishek/agent-invest-portfolio-server:latest
+          image: {{DOCKERHUB_USERNAME}}/agent-invest-portfolio-server:latest
           imagePullPolicy: Always
           env:
             - name: PYTHONPATH
@@ -265,7 +266,7 @@ spec:
               app: portfolio-celery-allocations
       containers:
         - name: worker
-          image: punhaniabhishek/agent-invest-portfolio-server:latest
+          image: {{DOCKERHUB_USERNAME}}/agent-invest-portfolio-server:latest
           imagePullPolicy: Always
           envFrom:
             - configMapRef:
@@ -353,7 +354,7 @@ spec:
               app: portfolio-celery-trading
       containers:
         - name: worker
-          image: punhaniabhishek/agent-invest-portfolio-server:latest
+          image: {{DOCKERHUB_USERNAME}}/agent-invest-portfolio-server:latest
           imagePullPolicy: Always
           envFrom:
             - configMapRef:
@@ -414,7 +415,7 @@ spec:
     spec:
       containers:
         - name: worker
-          image: punhaniabhishek/agent-invest-portfolio-server:latest
+          image: {{DOCKERHUB_USERNAME}}/agent-invest-portfolio-server:latest
           imagePullPolicy: Always
           envFrom:
             - configMapRef:
@@ -467,7 +468,7 @@ spec:
     spec:
       containers:
         - name: worker
-          image: punhaniabhishek/agent-invest-portfolio-server:latest
+          image: {{DOCKERHUB_USERNAME}}/agent-invest-portfolio-server:latest
           imagePullPolicy: Always
           envFrom:
             - configMapRef:
@@ -520,7 +521,7 @@ spec:
     spec:
       containers:
         - name: worker
-          image: punhaniabhishek/agent-invest-portfolio-server:latest
+          image: {{DOCKERHUB_USERNAME}}/agent-invest-portfolio-server:latest
           imagePullPolicy: Always
           envFrom:
             - configMapRef:
@@ -573,7 +574,7 @@ spec:
     spec:
       containers:
         - name: worker
-          image: punhaniabhishek/agent-invest-portfolio-server:latest
+          image: {{DOCKERHUB_USERNAME}}/agent-invest-portfolio-server:latest
           imagePullPolicy: Always
           envFrom:
             - configMapRef:
@@ -626,7 +627,7 @@ spec:
     spec:
       containers:
         - name: worker
-          image: punhaniabhishek/agent-invest-portfolio-server:latest
+          image: {{DOCKERHUB_USERNAME}}/agent-invest-portfolio-server:latest
           imagePullPolicy: Always
           envFrom:
             - configMapRef:
@@ -679,7 +680,7 @@ spec:
     spec:
       containers:
         - name: worker
-          image: punhaniabhishek/agent-invest-portfolio-server:latest
+          image: {{DOCKERHUB_USERNAME}}/agent-invest-portfolio-server:latest
           imagePullPolicy: Always
           envFrom:
             - configMapRef:
@@ -731,7 +732,7 @@ spec:
     spec:
       containers:
         - name: beat
-          image: punhaniabhishek/agent-invest-portfolio-server:latest
+          image: {{DOCKERHUB_USERNAME}}/agent-invest-portfolio-server:latest
           imagePullPolicy: Always
           envFrom:
             - configMapRef:
@@ -1001,7 +1002,7 @@ spec:
     spec:
       containers:
         - name: alphacopilot-server
-          image: punhaniabhishek/agent-invest-alphacopilot-server:latest
+          image: {{DOCKERHUB_USERNAME}}/agent-invest-alphacopilot-server:latest
           imagePullPolicy: Always
           env:
             - name: PYTHONPATH
@@ -1057,7 +1058,7 @@ spec:
     spec:
       containers:
         - name: worker
-          image: punhaniabhishek/agent-invest-alphacopilot-server:latest
+          image: {{DOCKERHUB_USERNAME}}/agent-invest-alphacopilot-server:latest
           imagePullPolicy: Always
           env:
             - name: PYTHONPATH

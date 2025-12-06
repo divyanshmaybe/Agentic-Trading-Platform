@@ -35,7 +35,8 @@ print_header() {
 }
 
 # Configuration
-DOCKERHUB_USERNAME="${DOCKERHUB_USERNAME:-punhaniabhishek}"
+# Set DOCKERHUB_USERNAME environment variable to your DockerHub username
+DOCKERHUB_USERNAME="${DOCKERHUB_USERNAME:-your-dockerhub-username}"
 PROJECT_NAME="agent-invest"
 TAG="${TAG:-latest}"
 

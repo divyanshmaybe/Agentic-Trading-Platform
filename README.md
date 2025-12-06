@@ -1,6 +1,4 @@
 # AgentInvest Platform
-
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/Abhishek-Punhani/Agentic-Trading-Platform-Pathway/actions)
 [![Pathway](https://img.shields.io/badge/streaming-Pathway-5b4bff)](https://pathway.com)
 [![Docker](https://img.shields.io/badge/containerized-Docker-2496ed)](https://docker.com)
 [![Next.js](https://img.shields.io/badge/frontend-Next.js-black)](https://nextjs.org)
@@ -59,7 +57,8 @@ Powered by Pathway's low-latency ETL core, the system streams market data, regul
 
 ```bash
 # Clone the repository
-git clone https://github.com/Abhishek-Punhani/Agentic-Trading-Platform-Pathway.git
+# Replace YOUR_GITHUB_USERNAME with your GitHub username
+git clone https://github.com/YOUR_GITHUB_USERNAME/Agentic-Trading-Platform-Pathway.git
 cd Agentic-Trading-Platform-Pathway
 
 # Install JavaScript dependencies

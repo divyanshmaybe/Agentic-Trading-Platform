@@ -11,7 +11,8 @@ spec:
   # Sync resources from devops/kubernetes directory
   # ArgoCD will automatically track and prune resources it created from this path
   source:
-    repoURL: https://github.com/Abhishek-Punhani/Agentic-Trading-Platform-Pathway.git
+    # Replace {{GITHUB_USERNAME}} with your GitHub username
+    repoURL: https://github.com/{{GITHUB_USERNAME}}/Agentic-Trading-Platform-Pathway.git
     targetRevision: main
     path: devops/kubernetes
     kustomize:
