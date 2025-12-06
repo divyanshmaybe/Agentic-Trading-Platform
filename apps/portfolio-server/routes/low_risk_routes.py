@@ -548,6 +548,12 @@ async def trigger_low_risk_rebalance(
 
     # 9. Trigger pipeline with rebalance=True
     try:
+        # Extract the actual summary content from the latest summary
+        latest_summary_content = {}
+        if prev_summaries:
+            latest_summary_content = prev_summaries[-1].get("content", {})
+            logger.info(f"📋 Using latest summary with keys: {list(latest_summary_content.keys())}")
+        
         result = run_low_risk_pipeline.delay(
             user_id=user_id,
             fund_allocated=allocated_cash,

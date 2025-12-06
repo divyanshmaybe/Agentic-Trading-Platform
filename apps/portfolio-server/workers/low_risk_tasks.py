@@ -154,10 +154,8 @@ class PipelineStatus:
 @celery_app.task(
     bind=True,
     name="pipeline.low_risk.run",
-    autoretry_for=(Exception,),
-    retry_backoff=True,
-    retry_kwargs={"max_retries": 2},
-    acks_late=True,
+    # DO NOT use autoretry_for - it causes task duplication on success
+    acks_late=False,  # Acknowledge immediately to prevent re-queuing
     reject_on_worker_lost=True,
     soft_time_limit=3600*2,  # 2 hours (no SoftTimeLimitExceeded interruption)
     time_limit=3600*2,  # 2 hours hard limit
@@ -191,9 +189,11 @@ def run_low_risk_pipeline(
         Dictionary with pipeline results and summary
 
     Raises:
-        Various exceptions if pipeline fails (logged and re-raised for Celery retry)
+        Various exceptions if pipeline fails (logged and returned as error)
     """
-    print(rebalance, prev_summary)
+    # Log parameters instead of print (print can cause serialization issues)
+    task_logger.info(f"Starting pipeline: rebalance={rebalance}, prev_summary keys: {list(prev_summary.keys()) if prev_summary else 'None'}")
+    
     import pandas as pd
     from dotenv import load_dotenv
 
@@ -454,9 +454,18 @@ def run_low_risk_pipeline(
             task_id=task_id,
         )
         pipeline_status.set_error(error_message)
+        
+        # CRITICAL: Release lock on error to prevent deadlock
+        pipeline_status.release_lock()
 
-        # Re-raise for Celery retry mechanism
-        raise
+        # Return error instead of raising (no autoretry configured)
+        return {
+            "success": False,
+            "error": error_message,
+            "user_id": user_id,
+            "fund_allocated": fund_allocated,
+            "failed_at": datetime.now(timezone.utc).isoformat()
+        }
 
 
 @celery_app.task(name="pipeline.low_risk.get_status")
