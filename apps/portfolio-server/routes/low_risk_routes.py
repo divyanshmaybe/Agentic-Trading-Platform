@@ -117,74 +117,67 @@ async def trigger_low_risk_pipeline(
 
     logger.info(f"📨 Low-risk pipeline trigger request from user {user_id}")
 
-    # Initialize DB connection
-    db_manager = DBManager.get_instance()
-    await db_manager.connect()
+    # Get DB client with auto-reconnection (singleton - do NOT disconnect)
+    db = await prisma_client()
 
-    try:
-        db = db_manager.get_client()
+    # 1. Fetch user's portfolio
+    portfolio = await db.portfolio.find_first(
+        where={"customer_id": user_id},
+        include={"allocations": {"include": {"tradingAgent": True}}}
+    )
 
-        # 1. Fetch user's portfolio
-        portfolio = await db.portfolio.find_first(
-            where={"customer_id": user_id},
-            include={"allocations": {"include": {"tradingAgent": True}}}
+    if not portfolio:
+        raise HTTPException(status_code=404, detail="Portfolio not found for user")
+
+    # 2. Find low_risk allocation
+    low_risk_allocation = None
+    for allocation in portfolio.allocations:
+        if allocation.allocation_type == "low_risk":
+            low_risk_allocation = allocation
+            break
+
+    if not low_risk_allocation:
+        raise HTTPException(
+            status_code=404,
+            detail="Low-risk allocation not found. Please set up portfolio allocations first."
         )
 
-        if not portfolio:
-            raise HTTPException(status_code=404, detail="Portfolio not found for user")
+    # 3. Check trading agent exists and is active
+    trading_agent = low_risk_allocation.tradingAgent
 
-        # 2. Find low_risk allocation
-        low_risk_allocation = None
-        for allocation in portfolio.allocations:
-            if allocation.allocation_type == "low_risk":
-                low_risk_allocation = allocation
-                break
-
-        if not low_risk_allocation:
-            raise HTTPException(
-                status_code=404,
-                detail="Low-risk allocation not found. Please set up portfolio allocations first."
-            )
-
-        # 3. Check trading agent exists and is active
-        trading_agent = low_risk_allocation.tradingAgent
-
-        if not trading_agent:
-            raise HTTPException(
-                status_code=404,
-                detail="Trading agent not found for low_risk allocation"
-            )
-
-        agent_status = str(trading_agent.status).lower()
-        if agent_status == "paused":
-            raise HTTPException(
-                status_code=400,
-                detail=f"Trading agent is paused. Please activate the agent before running pipeline."
-            )
-
-        if agent_status not in ["active", "running"]:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Trading agent status is '{agent_status}'. Expected 'active' or 'running'."
-            )
-
-        # 4. Get allocated cash from low_risk allocation
-        allocated_cash = float(low_risk_allocation.allocated_amount or 0)
-        available_cash = float(low_risk_allocation.available_cash or 0)
-
-        if allocated_cash <= 0:
-            raise HTTPException(
-                status_code=400,
-                detail=f"No cash allocated to low_risk strategy. Allocated: ₹{allocated_cash:,.2f}"
-            )
-
-        logger.info(
-            f"✅ Low-risk agent validated | User: {user_id} | Agent: {trading_agent.id} | "
-            f"Status: {agent_status} | Allocated: ₹{allocated_cash:,.2f} | Available: ₹{available_cash:,.2f}"
+    if not trading_agent:
+        raise HTTPException(
+            status_code=404,
+            detail="Trading agent not found for low_risk allocation"
         )
 
-    finally:
-        await db_manager.disconnect()
+    agent_status = str(trading_agent.status).lower()
+    if agent_status == "paused":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Trading agent is paused. Please activate the agent before running pipeline."
+        )
+
+    if agent_status not in ["active", "running"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Trading agent status is '{agent_status}'. Expected 'active' or 'running'."
+        )
+
+    # 4. Get allocated cash from low_risk allocation
+    allocated_cash = float(low_risk_allocation.allocated_amount or 0)
+    available_cash = float(low_risk_allocation.available_cash or 0)
+
+    if allocated_cash <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No cash allocated to low_risk strategy. Allocated: ₹{allocated_cash:,.2f}"
+        )
+
+    logger.info(
+        f"✅ Low-risk agent validated | User: {user_id} | Agent: {trading_agent.id} | "
+        f"Status: {agent_status} | Allocated: ₹{allocated_cash:,.2f} | Available: ₹{available_cash:,.2f}"
+    )
 
     # Check current pipeline status
     # Check current pipeline status
