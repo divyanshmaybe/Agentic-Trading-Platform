@@ -816,23 +816,22 @@ def allocate_for_objective_task(
     Returns:
         Allocation result dictionary
     """
-    logger.info(f"🚀 allocate_for_objective_task RECEIVED: portfolio={portfolio_id}, objective={objective_id}, user={user_id}, triggered_by={triggered_by}")
+    import time
     import asyncio
+    
+    task_start = time.time()
+    logger.info(f"🚀 allocate_for_objective_task RECEIVED: portfolio={portfolio_id}, objective={objective_id}, user={user_id}, triggered_by={triggered_by}")
     
     async def _allocate():
         try:
-            logger.info(
-                f"Starting allocation for portfolio {portfolio_id} triggered by {triggered_by} "
-                f"(objective={objective_id}, user={user_id})"
-            )
+            logger.info(f"Starting allocation for portfolio {portfolio_id} triggered by {triggered_by}")
             
             # Get current regime from regime service
-            logger.info(f"Fetching current market regime for portfolio {portfolio_id}...")
+            regime_start = time.time()
             current_regime = await _get_current_regime()
-            logger.info(f"Current regime: {current_regime}")
+            logger.info(f"Regime fetch took {time.time() - regime_start:.2f}s: {current_regime}")
             
             # Build allocation request
-            logger.debug(f"Building allocation request for portfolio {portfolio_id}...")
             request = {
                 "request_id": f"{triggered_by}_{portfolio_id}_{datetime.utcnow().isoformat()}",
                 "user_id": user_id,
@@ -847,28 +846,19 @@ def allocate_for_objective_task(
                     "timestamp": datetime.utcnow().isoformat(),
                 }
             }
-            logger.debug(f"Allocation request built for portfolio {portfolio_id}")
             
             # Update portfolio status to processing
-            logger.info(f"Connecting to database for portfolio {portfolio_id}...")
-            # Use DBManager singleton pattern with session context manager
             from dbManager import DBManager
-            
             db_manager = DBManager.get_instance()
             
+            db_start = time.time()
             async with db_manager.session() as db:
-                logger.info(f"Database connected for portfolio {portfolio_id}")
-                
-                logger.info(f"Fetching user subscriptions for user {user_id}...")
                 user_subscriptions = await _get_user_subscriptions(db, user_id)
-                logger.info(f"User subscriptions retrieved: {user_subscriptions}")
-                
-                logger.info(f"Updating portfolio {portfolio_id} status to 'processing'...")
                 await db.portfolio.update(
                     where={"id": portfolio_id},
                     data={"allocation_status": "processing"}
                 )
-                logger.info(f"Portfolio {portfolio_id} status updated to 'processing'")
+                logger.info(f"DB operations took {time.time() - db_start:.2f}s")
             
                 # Execute Pathway allocation pipeline in a thread pool to avoid event loop conflicts
                 # Use asyncio.to_thread to run the synchronous pipeline without blocking the event loop
@@ -877,14 +867,9 @@ def allocate_for_objective_task(
                 
                 loop = asyncio.get_event_loop()
                 
-                # Log request details for debugging
-                logger.info(f"🔍 Allocation request details: user_id={request.get('user_id')}, "
-                           f"initial_value={request.get('initial_value')}, "
-                           f"user_inputs_keys={list(request.get('user_inputs', {}).keys())}, "
-                           f"current_regime={request.get('current_regime')}")
-                
                 # Run the synchronous pipeline in a thread pool executor with timeout
-                logger.info(f"Executing allocation pipeline for portfolio {portfolio_id}...")
+                pipeline_start = time.time()
+                logger.info(f"Starting Pathway allocation pipeline for portfolio {portfolio_id}")
                 with ThreadPoolExecutor(max_workers=1) as executor:
                     try:
                         results = await asyncio.wait_for(
@@ -897,33 +882,19 @@ def allocate_for_objective_task(
                                     audit_path=f"/tmp/portfolio_allocations_{portfolio_id}_{objective_id}.jsonl"
                                 )
                             ),
-                            timeout=300.0  # 5 minute timeout
+                            timeout=60.0  # 60 second timeout (reduced from 5 minutes)
                         )
-                        logger.info(f"✅ Allocation pipeline completed for portfolio {portfolio_id}. "
-                                  f"Results type: {type(results)}, Length: {len(results) if results else 'NONE/EMPTY'}, "
-                                  f"Results: {results[:500] if results else 'EMPTY'}")
+                        pipeline_duration = time.time() - pipeline_start
+                        logger.info(f"✅ Pathway pipeline completed in {pipeline_duration:.2f}s")
                     except asyncio.TimeoutError:
-                        logger.error(f"Allocation pipeline timed out after 5 minutes for portfolio {portfolio_id}")
+                        logger.error(f"Allocation pipeline timed out after 60s for portfolio {portfolio_id}")
                         raise TimeoutError(f"Allocation pipeline timed out for portfolio {portfolio_id}")
-                
-                logger.info(f"🔍 Checking results validity...")
                 
                 if not results:
                     logger.error("Allocation pipeline returned no results")
                     raise ValueError("Allocation pipeline returned no results")
                 
-                logger.info(f"📦 Extracting allocation_result from results[0]...")
                 allocation_result = results[0]
-                logger.info(f"✅ Got allocation_result, type={type(allocation_result)}")
-            
-                # Log allocation result for debugging
-                logger.info(
-                    f"Allocation result for portfolio {portfolio_id}: "
-                    f"has_weights={bool(allocation_result.get('weights'))}, "
-                    f"has_weights_json={bool(allocation_result.get('weights_json'))}, "
-                    f"success={allocation_result.get('success', 'N/A')}, "
-                    f"keys={list(allocation_result.keys())}"
-                )
                 
                 # Check for weights directly instead of relying on "success" field
                 # Try multiple ways to extract weights
@@ -933,7 +904,6 @@ def allocate_for_objective_task(
                 weights_raw = allocation_result.get("weights")
                 if weights_raw:
                     weights = _coerce_to_plain_dict(weights_raw)
-                    logger.debug(f"Extracted weights from 'weights' field: {weights}")
                 
                 # If not found, try weights_json (might be a string)
                 if not weights:
@@ -943,21 +913,14 @@ def allocate_for_objective_task(
                         if isinstance(weights_json_raw, str):
                             try:
                                 weights = json.loads(weights_json_raw)
-                                logger.debug(f"Parsed weights from 'weights_json' string: {weights}")
                             except (json.JSONDecodeError, TypeError):
                                 weights = _coerce_to_plain_dict(weights_json_raw)
                         else:
                             weights = _coerce_to_plain_dict(weights_json_raw)
-                        logger.debug(f"Extracted weights from 'weights_json' field: {weights}")
                 
                 # If still no weights, log warning but continue with default allocation
                 if not weights:
-                    logger.warning(
-                        f"No weights found in allocation result for portfolio {portfolio_id}. "
-                        f"Result keys: {list(allocation_result.keys())}. "
-                        f"Result sample: {str(allocation_result)[:500]}. "
-                        f"Using defaults from transcript.py."
-                    )
+                    logger.warning(f"No weights found for portfolio {portfolio_id}, using defaults")
                     # Use defaults from transcript.py (single source of truth)
                     from utils.user_inputs_helper import create_user_inputs
                     default_user_inputs = create_user_inputs(
@@ -1200,10 +1163,11 @@ def allocate_for_objective_task(
                     },
                 )
                 
+                total_duration = time.time() - task_start
                 logger.info(
-                    f"✅ Successfully allocated portfolio {portfolio_id} for objective {objective_id}: "
-                    f"{len(allocations_created)} allocations, {len(trading_agents_created)} trading agents "
-                    f"(weights: {weights}, next rebalance: {rebalancing_date})"
+                    f"✅ Portfolio {portfolio_id} allocated in {total_duration:.2f}s | "
+                    f"{len(allocations_created)} allocations, {len(trading_agents_created)} agents | "
+                    f"Weights: {weights}"
                 )
                 
                 return {
@@ -1216,6 +1180,7 @@ def allocate_for_objective_task(
                     "rebalancing_date": rebalancing_date.isoformat() if rebalancing_date else None,
                     "last_rebalanced_at": datetime.utcnow().isoformat(),
                     "next_rebalance_at": rebalancing_date.isoformat() if rebalancing_date else None,
+                    "duration_seconds": total_duration,
                 }
             
         except Exception as exc:
@@ -1261,7 +1226,13 @@ def allocate_for_objective_task(
             pass
 
 
-@celery_app.task(name="portfolio.check_regime_and_rebalance", bind=True)
+@celery_app.task(
+    name="portfolio.check_regime_and_rebalance",
+    bind=True,
+    soft_time_limit=600,  # 10 minutes soft limit
+    time_limit=660,  # 11 minutes hard limit
+    acks_late=False,  # Acknowledge immediately to prevent re-queue
+)
 def check_regime_and_rebalance_task(self) -> Dict[str, Any]:
     """
     Daily Celery beat task that runs 1 hour before market open (8:15 AM for 9:15 AM market).

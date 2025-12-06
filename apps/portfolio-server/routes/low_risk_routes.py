@@ -410,9 +410,14 @@ async def trigger_low_risk_rebalance(
     if is_running:
         import time
         elapsed = int((time.time() - start_time) / 60) if start_time else 0
+        
+        # Check queue length to show position
+        queue_length = redis_client.llen("low_risk_pipeline")
+        queue_msg = f" ({queue_length} tasks queued)" if queue_length > 0 else ""
+        
         return RebalanceTriggerResponse(
             success=False,
-            message=f"Pipeline already running (for {elapsed} minutes). Wait for completion.",
+            message=f"Pipeline already running (for {elapsed} minutes){queue_msg}. Wait for completion.",
             task_id=None,
             user_id=user_id,
             fund_allocated=0,
@@ -450,17 +455,17 @@ async def trigger_low_risk_rebalance(
             detail="Low-risk allocation not found. Please set up portfolio allocations first."
         )
 
-    # 4. Check for open positions - must be ZERO for rebalance
-    open_positions = getattr(low_risk_allocation, "positions", []) or []
-    if len(open_positions) > 0:
-        return RebalanceTriggerResponse(
-            success=False,
-            message=f"Cannot rebalance: {len(open_positions)} open positions exist. Close all positions first.",
-            task_id=None,
-            user_id=user_id,
-            fund_allocated=float(low_risk_allocation.allocated_amount or 0),
-            summaries_count=0
-        )
+    # # 4. Check for open positions - must be ZERO for rebalance
+    # open_positions = getattr(low_risk_allocation, "positions", []) or []
+    # if len(open_positions) > 0:
+    #     return RebalanceTriggerResponse(
+    #         success=False,
+    #         message=f"Cannot rebalance: {len(open_positions)} open positions exist. Close all positions first.",
+    #         task_id=None,
+    #         user_id=user_id,
+    #         fund_allocated=float(low_risk_allocation.allocated_amount or 0),
+    #         summaries_count=0
+    #     )
 
     # 5. Check trading agent exists and is active
     trading_agent = low_risk_allocation.tradingAgent
@@ -521,7 +526,7 @@ async def trigger_low_risk_rebalance(
                 "id": summary.get("id"),
                 "type": summary.get("type"),
                 "content": summary.get("jsonContent"),
-                "created_at": summary.get("createdAt").isoformat() if summary.get("createdAt") else None
+                "created_at": summary.get("createdAt") if summary.get("createdAt") else None
             }
             prev_summaries.append(summary_data)
 
@@ -562,14 +567,25 @@ async def trigger_low_risk_rebalance(
             _skip_lock=True,  # Lock already acquired above
         )
 
+        # Check queue length after queuing to inform user
+        queue_length = redis_client.llen("low_risk_pipeline")
+        
         logger.info(
             f"✅ Low-risk rebalance triggered for user {user_id}, task_id: {result.id}, "
-            f"with {len(prev_summaries)} previous summaries"
+            f"queue_position: {queue_length}, summaries: {len(prev_summaries)}"
         )
+        
+        # Build status message based on queue
+        if queue_length > 1:
+            status_msg = f"Rebalance queued (position {queue_length} in queue). Will start when current task completes."
+        elif queue_length == 1:
+            status_msg = f"Rebalance starting now with {len(prev_summaries)} previous summaries."
+        else:
+            status_msg = f"Rebalance started with {len(prev_summaries)} previous summaries."
 
         return RebalanceTriggerResponse(
             success=True,
-            message=f"Low-risk rebalance started with {len(prev_summaries)} previous summaries",
+            message=status_msg,
             task_id=result.id,
             user_id=user_id,
             fund_allocated=allocated_cash,
