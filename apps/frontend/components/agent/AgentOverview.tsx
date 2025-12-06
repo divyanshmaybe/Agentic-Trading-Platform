@@ -155,10 +155,27 @@ export function AgentOverview({ data, loading, isAllocating = false }: AgentOver
         }
 
         if (isMounted) {
-          // Current Value = allocated_amount + (realized_pnl + unrealized_pnl)
-          const allocatedAmount = parseFloat(data.allocation?.allocated_amount || "0")
-          const realizedPnl = parseFloat(data.realized_pnl || "0")
-          const portfolioCurrentValue = allocatedAmount + realizedPnl + totalUnrealizedPnl
+          // Current Value = Available Cash + Positions Value
+          // Unrealized PnL = Σ((current_price - avg_buy_price) × quantity)
+          // This matches backend calculation in snapshot_service.py
+          
+          // Calculate total position value
+          let totalPositionValue = 0
+          
+          for (const position of data.positions) {
+            if (!position || !position.symbol) continue
+            
+            const currentPrice = priceMap.get(position.symbol)
+            if (currentPrice === undefined || isNaN(currentPrice)) continue
+            
+            const quantity = position.quantity || 0
+            if (quantity === 0) continue
+            
+            totalPositionValue += currentPrice * quantity
+          }
+          
+          // Current Value = Available Cash + Current Position Values
+          const portfolioCurrentValue = availableCash + totalPositionValue
           
           setCurrentValue(portfolioCurrentValue)
           setUnrealizedPnl(totalUnrealizedPnl)

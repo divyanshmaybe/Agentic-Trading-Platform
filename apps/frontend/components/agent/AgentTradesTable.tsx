@@ -149,9 +149,9 @@ function SimpleTradesTable({ trades, loading }: { trades: AgentTrade[]; loading:
         </CardDescription>
       </CardHeader>
       <CardContent className="flex-1 overflow-hidden">
-        {trades.length === 0 ? (
+        {trades.filter(t => t.status === "executed").length === 0 ? (
           <div className="flex h-full min-h-[300px] w-full items-center justify-center rounded-xl border border-dashed border-white/10 bg-black/20 text-sm text-white/50">
-            No trades yet
+            No executed trades yet
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -164,6 +164,7 @@ function SimpleTradesTable({ trades, loading }: { trades: AgentTrade[]; loading:
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Executed Price</th>
                   <th className="px-4 py-3">Current Price</th>
+                  <th className="px-4 py-3">Quantity</th>
                   <th className="px-4 py-3">Net Amount</th>
                   <th className="px-4 py-3">Response Time</th>
                   <th className="px-4 py-3">Source</th>
@@ -171,7 +172,7 @@ function SimpleTradesTable({ trades, loading }: { trades: AgentTrade[]; loading:
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/10">
-                {trades.map((trade, index) => {
+                {trades.filter(trade => trade.status === "executed").map((trade, index) => {
                   const netAmount = parseFloat(trade.net_amount || "0")
                   const isPositive = netAmount >= 0
                   
@@ -223,6 +224,9 @@ function SimpleTradesTable({ trades, loading }: { trades: AgentTrade[]; loading:
                         ) : (
                           <span className="text-white/40">—</span>
                         )}
+                      </td>
+                      <td className="px-4 py-3 text-white/80">
+                        {trade.executed_quantity || trade.quantity || "—"}
                       </td>
                       <td className={`px-4 py-3 font-semibold ${isPositive ? "text-emerald-300" : "text-rose-300"}`}>
                         {formatCurrency(trade.net_amount)}
