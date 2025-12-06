@@ -299,6 +299,12 @@ class TradeEngine:
         # Publish to Redis for Pathway monitoring (if TP/SL set)
         trade_dict = trade.dict()
         if trade_dict.get("take_profit_price") or trade_dict.get("stop_loss_price"):
+            exec_time = trade_dict.get("execution_time")
+            if exec_time:
+                exec_time_str = exec_time.isoformat() if hasattr(exec_time, 'isoformat') else str(exec_time)
+            else:
+                exec_time_str = datetime.utcnow().isoformat()
+            
             await self._publish_trade_event("trades:executed", {
                 "trade_id": trade_dict["id"],
                 "symbol": trade_dict["symbol"],
@@ -309,7 +315,7 @@ class TradeEngine:
                 "stop_loss_price": float(trade_dict["stop_loss_price"]) if trade_dict.get("stop_loss_price") else None,
                 "portfolio_id": trade_dict["portfolio_id"],
                 "customer_id": trade_dict["customer_id"],
-                "execution_time": trade_dict.get("execution_time", datetime.utcnow()).isoformat() if trade_dict.get("execution_time") else datetime.utcnow().isoformat(),
+                "execution_time": exec_time_str,
             })
 
         return trade.dict()
