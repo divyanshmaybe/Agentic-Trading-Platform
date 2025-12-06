@@ -457,6 +457,7 @@ class StockSelectionPipeline:
                     data[k] = float(v)
                 except:
                     data[k] = None
+            return data
 
         try:
             data = normalize_data(data)
