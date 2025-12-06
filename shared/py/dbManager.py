@@ -353,12 +353,10 @@ class DBManager:
                     except asyncio.TimeoutError:
                         self.logger.warning("⚠️ Prisma disconnect timed out after %.1fs, forcing cleanup", timeout)
                     except Exception as disc_exc:
-                        # Handle Celery SoftTimeLimitExceeded gracefully
+                        # Handle Celery SoftTimeLimitExceeded gracefully - silently
                         exc_name = type(disc_exc).__name__
-                        if exc_name == "SoftTimeLimitExceeded":
-                            self.logger.warning("⚠️ SoftTimeLimitExceeded during disconnect, forcing cleanup")
-                        else:
-                            self.logger.warning("⚠️ Error during Prisma disconnect: %s", disc_exc)
+                        if exc_name != "SoftTimeLimitExceeded":
+                            self.logger.debug("Prisma disconnect error: %s", disc_exc)
                 else:
                     # Client exists but is not connected - skip disconnect, just cleanup
                     self.logger.debug("Prisma client already disconnected, skipping disconnect call")
@@ -383,12 +381,10 @@ class DBManager:
                     pass
                     
         except Exception as e:
-            # Handle any exception including SoftTimeLimitExceeded
+            # Handle any exception including SoftTimeLimitExceeded - silently
             exc_name = type(e).__name__
-            if exc_name == "SoftTimeLimitExceeded":
-                self.logger.warning("⚠️ SoftTimeLimitExceeded during disconnect cleanup")
-            else:
-                self.logger.warning("Error during disconnect: %s", e)
+            if exc_name != "SoftTimeLimitExceeded":
+                self.logger.debug("Error during disconnect cleanup: %s", e)
         finally:
             self._connected = False
             self._loop = None
