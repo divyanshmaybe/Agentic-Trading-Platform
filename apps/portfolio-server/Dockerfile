@@ -87,6 +87,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgcc-s1 \
     libstdc++6 \
     libc6 \
+    libgomp1 \
     git \
     curl \
     bash \
