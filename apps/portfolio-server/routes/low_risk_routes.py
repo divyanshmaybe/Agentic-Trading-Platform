@@ -11,10 +11,12 @@ from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
 import logging
 from prisma import Prisma
+from redis import Redis
 
 from utils.auth import get_authenticated_user
-from workers.low_risk_tasks import run_low_risk_pipeline, get_low_risk_pipeline_status
+from workers.low_risk_tasks import run_low_risk_pipeline, get_low_risk_pipeline_status, PipelineStatus
 from db import prisma_client, DBManager
+from celery_app import BROKER_URL
 
 logger = logging.getLogger(__name__)
 
@@ -179,32 +181,43 @@ async def trigger_low_risk_pipeline(
         f"Status: {agent_status} | Allocated: ₹{allocated_cash:,.2f} | Available: ₹{available_cash:,.2f}"
     )
 
-    # Check current pipeline status
-    # Check current pipeline status
-    try:
-        status = get_low_risk_pipeline_status.delay(user_id).get(timeout=5)
+    # Initialize Redis and pipeline status BEFORE checking
+    redis_client = Redis.from_url(BROKER_URL)
+    pipeline_status = PipelineStatus(redis_client, user_id)
 
-        if status.get("running"):
-            elapsed = status.get("elapsed_minutes", 0)
-            message = f"Pipeline already running. Selecting stocks... (running for {elapsed} minutes)"
-            logger.warning(f"⚠️ Pipeline already running for user {user_id} ({elapsed} minutes)")
+    # Check if pipeline already running (check lock directly)
+    is_running, start_time = pipeline_status.is_running()
+    if is_running:
+        import time
+        elapsed = int((time.time() - start_time) / 60) if start_time else 0
+        message = f"Pipeline already running. Selecting stocks... (running for {elapsed} minutes)"
+        logger.warning(f"⚠️ Pipeline already running for user {user_id} ({elapsed} minutes)")
 
-            return PipelineTriggerResponse(
-                success=False,
-                message=message,
-                task_id=None,
-                user_id=user_id,
-                fund_allocated=allocated_cash
-            )
-    except Exception as e:
-        logger.warning(f"Failed to check pipeline status: {e}. Proceeding with trigger...")
+        return PipelineTriggerResponse(
+            success=False,
+            message=message,
+            task_id=None,
+            user_id=user_id,
+            fund_allocated=allocated_cash
+        )
+
+    # Acquire lock BEFORE queuing task to prevent race condition
+    if not pipeline_status.acquire_lock(ttl=7200):  # 2 hour lock
+        logger.warning(f"⚠️ Failed to acquire lock for user {user_id}")
+        return PipelineTriggerResponse(
+            success=False,
+            message="Pipeline lock already acquired. Please wait...",
+            task_id=None,
+            user_id=user_id,
+            fund_allocated=allocated_cash
+        )
 
     # Trigger pipeline asynchronously with allocated cash
     try:
         result = run_low_risk_pipeline.delay(
             user_id=user_id,
             fund_allocated=allocated_cash,
-            
+            _skip_lock=True,  # Lock already acquired in route
         )
 
         logger.info(f"✅ Low-risk pipeline triggered for user {user_id}, task_id: {result.id}")
@@ -218,6 +231,8 @@ async def trigger_low_risk_pipeline(
         )
 
     except Exception as e:
+        # Release lock if task queueing failed
+        pipeline_status.release_lock()
         logger.error(f"❌ Failed to trigger low-risk pipeline for user {user_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
@@ -292,8 +307,10 @@ async def get_pipeline_status(
     logger.debug(f"📊 Status check for user {user_id}")
 
     try:
-        # Get status from Celery task (runs quickly)
-        status = get_low_risk_pipeline_status.delay(user_id).get(timeout=1000)
+        # Check Redis directly instead of queuing Celery task
+        redis_client = Redis.from_url(BROKER_URL)
+        pipeline_status = PipelineStatus(redis_client, user_id)
+        status = pipeline_status.get_status()
 
         return PipelineStatusResponse(
             running=status.get("running", False),
@@ -384,21 +401,23 @@ async def trigger_low_risk_rebalance(
     # Get portfolio DB client (with auto-reconnection)
     db = await prisma_client()
 
-    # 1. Check if pipeline is already running
-    try:
-        status = get_low_risk_pipeline_status.delay(user_id).get(timeout=5)
-        if status.get("running"):
-            elapsed = status.get("elapsed_minutes", 0)
-            return RebalanceTriggerResponse(
-                success=False,
-                message=f"Pipeline already running (for {elapsed} minutes). Wait for completion.",
-                task_id=None,
-                user_id=user_id,
-                fund_allocated=0,
-                summaries_count=0
-            )
-    except Exception as e:
-        logger.warning(f"Failed to check pipeline status: {e}. Proceeding...")
+    # Initialize Redis and pipeline status
+    redis_client = Redis.from_url(BROKER_URL)
+    pipeline_status = PipelineStatus(redis_client, user_id)
+
+    # 1. Check if pipeline is already running (check lock directly)
+    is_running, start_time = pipeline_status.is_running()
+    if is_running:
+        import time
+        elapsed = int((time.time() - start_time) / 60) if start_time else 0
+        return RebalanceTriggerResponse(
+            success=False,
+            message=f"Pipeline already running (for {elapsed} minutes). Wait for completion.",
+            task_id=None,
+            user_id=user_id,
+            fund_allocated=0,
+            summaries_count=0
+        )
 
     # 2. Fetch user's portfolio with allocations
     portfolio = await db.portfolio.find_first(
@@ -513,13 +532,26 @@ async def trigger_low_risk_rebalance(
     finally:
         await auth_db.disconnect()
 
-    # 8. Trigger pipeline with rebalance=True
+    # 8. Acquire lock BEFORE queuing rebalance task
+    if not pipeline_status.acquire_lock(ttl=7200):  # 2 hour lock
+        logger.warning(f"⚠️ Failed to acquire rebalance lock for user {user_id}")
+        return RebalanceTriggerResponse(
+            success=False,
+            message="Pipeline lock already acquired. Please wait...",
+            task_id=None,
+            user_id=user_id,
+            fund_allocated=allocated_cash,
+            summaries_count=len(prev_summaries)
+        )
+
+    # 9. Trigger pipeline with rebalance=True
     try:
         result = run_low_risk_pipeline.delay(
             user_id=user_id,
             fund_allocated=allocated_cash,
             rebalance=True,
-            prev_summary=prev_summaries[-1] if prev_summaries else None
+            prev_summary=prev_summaries[-1] if prev_summaries else None,
+            _skip_lock=True,  # Lock already acquired above
         )
 
         logger.info(
@@ -537,6 +569,8 @@ async def trigger_low_risk_rebalance(
         )
 
     except Exception as e:
+        # Release lock if task queueing failed
+        pipeline_status.release_lock()
         logger.error(f"❌ Failed to trigger rebalance for user {user_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
