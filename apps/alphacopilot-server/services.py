@@ -146,7 +146,7 @@ class RunService:
             self._client = await get_prisma_client()
         return self._client
 
-    async def create_run(self, request: RunCreateRequest) -> Dict[str, Any]:
+    async def create_run(self, request: RunCreateRequest, customer_id: str) -> Dict[str, Any]:
         """Create a new run record in the database."""
         client = await self._get_client()
         
@@ -157,6 +157,7 @@ class RunService:
         run = await client.alphacopilotrun.create(
             data={
                 "id": run_id,
+                "customer_id": customer_id,
                 "hypothesis": request.hypothesis,
                 "status": RunStatus.PENDING.value,
                 "metadata": json.dumps(config),
@@ -183,14 +184,15 @@ class RunService:
 
     async def list_runs(
         self,
+        customer_id: str,
         status: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
     ) -> tuple[List[Dict[str, Any]], int]:
-        """List runs with optional filtering."""
+        """List runs for a specific user with optional filtering."""
         client = await self._get_client()
         
-        where_clause = {}
+        where_clause = {"customer_id": customer_id}
         if status:
             where_clause["status"] = status.upper()
         
@@ -685,6 +687,7 @@ class RunService:
         
         return {
             "id": run.id,
+            "customer_id": run.customer_id,
             "hypothesis": run.hypothesis,
             "status": run.status,
             "config": metadata,  # Keep as 'config' for API compatibility
