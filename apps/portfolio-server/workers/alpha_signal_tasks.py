@@ -50,12 +50,33 @@ def _check_market_data_freshness() -> bool:
         return False
     
     try:
-        # Read last few rows to check latest date
-        df = pd.read_csv(MARKET_DATA_CSV, usecols=['date'], dtype={'date': str})
-        if df.empty:
+        # Use tail command to read only the last 100 lines (much faster than reading entire file)
+        import subprocess
+        result = subprocess.run(
+            ['tail', '-100', str(MARKET_DATA_CSV)],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode != 0:
             return False
         
-        latest_date = pd.to_datetime(df['date']).max().date()
+        # Parse just the last lines to find max date
+        lines = result.stdout.strip().split('\n')
+        max_date = None
+        for line in lines:
+            parts = line.split(',')
+            if len(parts) >= 2 and parts[1] != 'date':  # Skip header if present
+                try:
+                    date = datetime.strptime(parts[1], '%Y-%m-%d').date()
+                    if max_date is None or date > max_date:
+                        max_date = date
+                except ValueError:
+                    continue
+        
+        if max_date is None:
+            return False
+        
         today = datetime.now().date()
         
         # Get last trading day (skip weekends)
@@ -77,7 +98,7 @@ def _check_market_data_freshness() -> bool:
                 last_trading_day = last_trading_day - timedelta(days=1)
         
         # Data is fresh if it has last trading day's data
-        return latest_date >= last_trading_day
+        return max_date >= last_trading_day
     except Exception as e:
         task_logger.warning("Error checking market data freshness: %s", e)
         return False
@@ -283,7 +304,7 @@ async def generate_signals_for_alpha_core(
             import httpx
             candidate_symbols = buy_candidates['symbol'].tolist()
             # Use Docker internal network name for container-to-container communication
-            market_service_url = os.getenv("MARKET_SERVICE_URL", "http://portfolio_server:8001")
+            market_service_url = os.getenv("MARKET_SERVICE_URL", "http://portfolio_server:8000")
             internal_secret = os.getenv("INTERNAL_SERVICE_SECRET", "agentinvest-secret")
             
             async with httpx.AsyncClient(timeout=10.0) as http_client:

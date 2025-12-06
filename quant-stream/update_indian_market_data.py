@@ -35,10 +35,10 @@ NIFTY500_FILE = DATA_DIR / "nifty500.txt"
 TOTP_TOKEN = "eyJraWQiOiJaTUtjVXciLCJhbGciOiJFUzI1NiJ9.eyJleHAiOjI1NTI4MTI4NTEsImlhdCI6MTc2NDQxMjg1MSwibmJmIjoxNzY0NDEyODUxLCJzdWIiOiJ7XCJ0b2tlblJlZklkXCI6XCI5NDc3MDFjNS1mNzU5LTQyNWQtYjJiMC1jZDQyNmFkNjI2Y2FcIixcInZlbmRvckludGVncmF0aW9uS2V5XCI6XCJlMzFmZjIzYjA4NmI0MDZjODg3NGIyZjZkODQ5NTMxM1wiLFwidXNlckFjY291bnRJZFwiOlwiMjM5NTFmNGItNjJjYy00YWY3LThiYzEtYTk0MDYxYTdkMTZkXCIsXCJkZXZpY2VJZFwiOlwiMTMzNTQ4YjktNTdlYi01NGI1LWE4ZDktZjk3YThkZjQwMmRkXCIsXCJzZXNzaW9uSWRcIjpcImI4MWQwN2Q0LTI1Y2YtNDM4Zi1iNDY1LWJmM2ExMDEwYTEyY1wiLFwiYWRkaXRpb25hbERhdGFcIjpcIno1NC9NZzltdjE2WXdmb0gvS0EwYlByYXUvaXozZTNGTllyUFV3YkV1RlZSTkczdTlLa2pWZDNoWjU1ZStNZERhWXBOVi9UOUxIRmtQejFFQisybTdRPT1cIixcInJvbGVcIjpcImF1dGgtdG90cFwiLFwic291cmNlSXBBZGRyZXNzXCI6XCIxMDMuMTUxLjIwOS4xMjgsMTcyLjY4LjIxNC44OCwzNS4yNDEuMjMuMTIzXCIsXCJ0d29GYUV4cGlyeVRzXCI6MjU1MjgxMjg1MTY2OX0iLCJpc3MiOiJhcGV4LWF1dGgtcHJvZC1hcHAifQ.niExGxUB-JhgvXFfPEMwkwYQuGXK6ckW-llNB0ofzrgYZ-mmQTwV8qljOUs5y_liorMvC5JkZ8WFpaCxwG7wWQ"
 TOTP_SECRET = "4V6HXJYVL54QE5SYDDL4UDICJKFKHYZV"
 
-# Rate limiting: 10 requests/second, 300 requests/minute
-MAX_REQUESTS_PER_SECOND = 10
-MAX_REQUESTS_PER_MINUTE = 300
-MIN_INTERVAL_BETWEEN_REQUESTS = 1.0 / MAX_REQUESTS_PER_SECOND  # 0.1 seconds
+# Rate limiting: 5 requests/second, 150 requests/minute (conservative for new API)
+MAX_REQUESTS_PER_SECOND = 5
+MAX_REQUESTS_PER_MINUTE = 150
+MIN_INTERVAL_BETWEEN_REQUESTS = 1.0 / MAX_REQUESTS_PER_SECOND  # 0.2 seconds
 
 # Groww API constants
 INTERVAL_DAILY = 1440  # Daily candles (24 hours * 60 minutes)
@@ -168,20 +168,25 @@ def fetch_historical_data_chunk(
     start_date: datetime,
     end_date: datetime
 ) -> Optional[list]:
-    """Fetch historical candle data for a single chunk from Groww API with rate limiting."""
+    """Fetch historical candle data for a single chunk from Groww API with rate limiting.
+    
+    Uses the newer get_historical_candles method which returns more up-to-date data.
+    Response format: [date_str, open(None), high, low, close, volume, adj_close(None)]
+    """
     rate_limiter.wait()  # Apply rate limiting
     
     try:
         start_time_str = start_date.strftime("%Y-%m-%d 09:15:00")  # Market open time
         end_time_str = end_date.strftime("%Y-%m-%d 15:30:00")  # Market close time
+        groww_symbol = f"NSE-{symbol}"  # New API requires NSE-SYMBOL format
         
-        response = groww.get_historical_candle_data(
-            trading_symbol=symbol,
+        response = groww.get_historical_candles(
             exchange=groww.EXCHANGE_NSE,
             segment=groww.SEGMENT_CASH,
+            groww_symbol=groww_symbol,
             start_time=start_time_str,
             end_time=end_time_str,
-            interval_in_minutes=INTERVAL_DAILY
+            candle_interval=groww.CANDLE_INTERVAL_DAY
         )
         
         if response and 'candles' in response:
@@ -250,23 +255,39 @@ def fetch_historical_data(
 
 
 def candles_to_dataframe(symbol: str, candles: list) -> pd.DataFrame:
-    """Convert candle data from API response to DataFrame matching CSV format."""
+    """Convert candle data from API response to DataFrame matching CSV format.
+    
+    New API format: [date_str, open(None), high, low, close, volume, adj_close(None)]
+    Example: ['2025-12-05T00:00:00', None, 1545.6, 1520.6, 1540.6, 10183266, None]
+    """
     if not candles:
         return pd.DataFrame()
     
     data = []
     for candle in candles:
         if len(candle) >= 6:
-            timestamp = candle[0]  # epoch seconds
-            open_price = candle[1]
+            date_str_raw = candle[0]  # ISO format like '2025-12-05T00:00:00'
+            # open_price = candle[1]  # Often None in new API
             high_price = candle[2]
             low_price = candle[3]
             close_price = candle[4]
             volume = candle[5]
             
-            # Convert timestamp to date string
-            date_obj = datetime.fromtimestamp(timestamp)
-            date_str = date_obj.strftime("%Y-%m-%d")
+            # Parse ISO date string to get date and timestamp
+            if isinstance(date_str_raw, str):
+                # Parse ISO format date
+                date_obj = datetime.fromisoformat(date_str_raw.replace('Z', '+00:00').split('+')[0])
+                date_str = date_obj.strftime("%Y-%m-%d")
+                # Generate timestamp (epoch seconds at market close 15:30 IST = 10:00 UTC)
+                timestamp = int(date_obj.replace(hour=18, minute=30).timestamp())  # 18:30 UTC = 00:00 IST next day - 5:30
+            else:
+                # Fallback for epoch timestamp (old API format)
+                date_obj = datetime.fromtimestamp(date_str_raw)
+                date_str = date_obj.strftime("%Y-%m-%d")
+                timestamp = date_str_raw
+            
+            # Use close as open if open is None (common in new API)
+            open_price = candle[1] if candle[1] is not None else close_price
             
             data.append({
                 'symbol': symbol,
@@ -444,12 +465,42 @@ def pre_populate_from_old_csv(nifty500_symbols: set) -> bool:
         return False
 
 
+def get_all_last_dates_from_csv() -> Dict[str, datetime]:
+    """Get the last date for all symbols in the CSV file in a single read.
+    
+    This is MUCH faster than calling get_last_date_in_csv() for each symbol,
+    which would read the 70MB CSV file 500 times.
+    """
+    if not CSV_FILE.exists():
+        return {}
+    
+    try:
+        print("  Reading CSV to get last dates for all symbols (single pass)...")
+        # Read only the symbol and date columns to be memory efficient
+        df = pd.read_csv(CSV_FILE, usecols=['symbol', 'date'], dtype={'symbol': str, 'date': str})
+        df['date'] = pd.to_datetime(df['date'])
+        
+        # Group by symbol and get max date for each
+        last_dates = df.groupby('symbol')['date'].max().to_dict()
+        
+        # Convert to datetime objects
+        result = {symbol: date.to_pydatetime() for symbol, date in last_dates.items()}
+        print(f"  Found last dates for {len(result)} symbols")
+        return result
+    except (pd.errors.EmptyDataError, KeyError, ValueError) as e:
+        print(f"Warning: Error reading CSV for last dates: {e}")
+        return {}
+
+
 def update_nifty500_file(symbols_data: Dict[str, Tuple[str, str]]):
     """Update nifty500.txt file with new end dates."""
     lines = []
     
+    # Get all last dates in a single CSV read (instead of 500 separate reads!)
+    all_last_dates = get_all_last_dates_from_csv()
+    
     for symbol, (start_date, _) in sorted(symbols_data.items()):
-        last_date = get_last_date_in_csv(symbol)
+        last_date = all_last_dates.get(symbol)
         if last_date:
             end_date = last_date.strftime("%Y-%m-%d")
         else:
@@ -497,10 +548,33 @@ def main():
     print(f"Last market close date: {last_market_close.strftime('%Y-%m-%d')}")
     print()
     
-    # Prepare symbols for parallel processing
-    symbols_to_process = []
+    # Check if data is already up to date (single CSV read for all symbols)
+    print("Checking if data is up to date...")
+    all_last_dates = get_all_last_dates_from_csv()
+    symbols_needing_update = []
     for symbol, (start_date_str, end_date_str) in sorted(symbols_data.items()):
-        symbols_to_process.append((symbol, start_date_str, end_date_str))
+        last_date = all_last_dates.get(symbol)
+        if last_date is None:
+            # No data exists, needs full fetch
+            symbols_needing_update.append((symbol, start_date_str, end_date_str))
+        elif last_date.date() < last_market_close.date():
+            # Data is stale, needs update
+            symbols_needing_update.append((symbol, start_date_str, end_date_str))
+        # else: symbol is already up to date, skip
+    
+    if not symbols_needing_update:
+        print(f"✓ All {len(symbols_data)} symbols are already up to date (last date: {last_market_close.strftime('%Y-%m-%d')})")
+        print()
+        print("=" * 80)
+        print("No update needed!")
+        print("=" * 80)
+        return
+    
+    print(f"Found {len(symbols_needing_update)} symbols needing update (out of {len(symbols_data)} total)")
+    print()
+    
+    # Process only symbols that need updating
+    symbols_to_process = symbols_needing_update
     
     # Process symbols in parallel
     print("Processing symbols in parallel (with rate limiting)...")
