@@ -1715,3 +1715,54 @@ def check_regime_and_rebalance_task(self) -> Dict[str, Any]:
             loop.close()
         except:
             pass
+
+
+@celery_app.task(name="portfolio.retrain_regime_model", bind=True)
+def retrain_regime_model_task(self):
+    """
+    Retrain the HMM-based regime classification model with fresh historical data.
+    
+    This task runs daily at 8:30 AM IST (before market opens at 9:15 AM) to ensure
+    the regime model is updated with the latest market data for optimal predictions.
+    
+    The model is trained on 2+ years of historical NSE (Nifty 50) data using yfinance
+    to avoid Angel One rate limits.
+    
+    Returns:
+        Dictionary with training results including success status, regime names, and sample count
+    """
+    logger.info("🔄 Starting daily regime model retraining task...")
+    
+    try:
+        from services.regime_service import RegimeService
+        from datetime import datetime
+        
+        # Get RegimeService singleton
+        regime_service = RegimeService.get_instance()
+        
+        # Retrain model with data from 2020 to present
+        result = regime_service.retrain_model(
+            start_date="2020-01-01",
+            end_date=None,  # Use current date
+            n_regimes=4
+        )
+        
+        if result.get("success"):
+            logger.info(
+                f"✅ Regime model retrained successfully | "
+                f"Samples: {result.get('training_samples', 0)} | "
+                f"Regimes: {list(result.get('regimes', {}).values())}"
+            )
+        else:
+            logger.error(f"❌ Regime model retraining failed: {result.get('message')}")
+        
+        return result
+        
+    except Exception as exc:
+        logger.error(f"❌ Regime model retraining task failed: {exc}", exc_info=True)
+        return {
+            "success": False,
+            "message": f"Task execution failed: {str(exc)}",
+            "regimes": {},
+            "training_samples": 0
+        }

@@ -21,6 +21,7 @@
 		"celery:beat": "CELERY_WORKER_RUNNING=1 PYTHONPATH=../..:../../shared/py:../../middleware:../../middleware/py:../../quant-stream celery -A celery_app:celery_app beat --loglevel=info",
 		"streaming:risk": "PYTHONPATH=../..:../../shared/py:../../middleware:../../middleware/py python -m workers.streaming_risk_monitor",
 		"streaming:orders": "PYTHONPATH=../..:../../shared/py:../../middleware:../../middleware/py python -m workers.streaming_order_monitor",
+		"pathway:orders": "PYTHONPATH=../..:../../shared/py:../../middleware:../../middleware/py python -m workers.pathway_order_monitor",
 		"test": "python -c \"import sys; sys.path.insert(0, '../../shared/py'); sys.path.insert(0, '../../middleware/py'); sys.path.insert(0, '../..'); import pytest; pytest.main(['tests/', '-v', '--tb=short'])\"",
 		"test:cov": "python -c \"import sys; sys.path.insert(0, '../../shared/py'); sys.path.insert(0, '../../middleware/py'); sys.path.insert(0, '../..'); import pytest; pytest.main(['tests/', '-v', '--tb=short', '--cov=.', '--cov-report=term-missing', '--cov-report=html'])\"",
 		"test:watch": "python -c \"import sys; sys.path.insert(0, '../../shared/py'); sys.path.insert(0, '../../middleware/py'); sys.path.insert(0, '../..'); import pytest; pytest.main(['tests/', '-v', '--tb=short', '--watch'])\"",

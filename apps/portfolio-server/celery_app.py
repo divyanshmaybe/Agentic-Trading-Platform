@@ -471,6 +471,17 @@ if NEWS_PIPELINE_ENABLED:
         "options": {"queue": NEWS_PIPELINE_QUEUE},
     }
 
+# Regime model retraining - runs daily at 8:30 AM IST (3:00 AM UTC) before market opens
+REGIME_RETRAIN_ENABLED = os.getenv("REGIME_RETRAIN_ENABLED", "true").lower() in {"1", "true", "yes"}
+REGIME_RETRAIN_QUEUE = os.getenv("REGIME_RETRAIN_QUEUE", DEFAULT_QUEUE)
+
+if REGIME_RETRAIN_ENABLED:
+    celery_app.conf.beat_schedule["regime-model-retrain"] = {
+        "task": "portfolio.retrain_regime_model",
+        "schedule": crontab(hour=3, minute=0, day_of_week="mon-fri"),  # 8:30 AM IST = 3:00 AM UTC
+        "options": {"queue": REGIME_RETRAIN_QUEUE},
+    }
+
 # Regime monitor - runs daily 1h before market open (8:15 AM for 9:15 AM market)
 if REGIME_MONITOR_ENABLED:
     celery_app.conf.beat_schedule["regime-monitor-check"] = {
