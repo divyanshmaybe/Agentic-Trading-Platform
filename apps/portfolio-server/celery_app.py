@@ -519,12 +519,26 @@ if SNAPSHOT_ENABLED:
         "options": {"queue": SNAPSHOT_QUEUE},
     }
 
-# Auto-sell is now handled by the streaming_order_monitor (Pathway-based)
-# The PathwayOrderMonitor in pipelines/orders/streaming_order_monitor_pipeline.py handles:
-# 1. Price-based orders (TP/SL/limit/stop) - checks price conditions
-# 2. Time-based auto-sell - checks auto_sell_at/auto_cover_at timestamps
-# Run with: pnpm streaming:orders
-# No Celery beat schedule needed - streaming monitor runs continuously
+# Auto-sell and order monitoring is now handled by the NEW Pathway order monitor (RECOMMENDED)
+# The NEW PathwayOrderMonitor in pipelines/orders/pathway_order_monitor.py handles:
+# 1. TP/SL orders - reactive monitoring via Redis pub/sub (sub-100ms latency)
+# 2. Limit/stop orders - reactive monitoring via Redis pub/sub
+# 3. Price-based triggers - instant reaction to price changes
+#
+# Run with: python -m workers.pathway_order_monitor
+# Or via pnpm: pnpm pathway:orders
+#
+# The NEW Pathway monitor:
+# - ✅ Zero database polling (Redis pub/sub only)
+# - ✅ Sub-100ms latency (TradeEngine → Redis → Pathway → Execution)
+# - ✅ True reactive architecture (event-driven, no loops)
+# - ✅ Handles all order types: TP, SL, limit, stop, time-based
+#
+# LEGACY: The old streaming_order_monitor.py (polls DB every 10s) is DEPRECATED
+# To use legacy: Set STREAMING_ORDER_MONITOR_ENABLED=true and run pnpm streaming:orders
+# To use NEW Pathway: Set PATHWAY_ORDER_MONITOR_ENABLED=true and run pnpm pathway:orders
+#
+# No Celery beat schedule needed - Pathway monitor runs continuously in its own process
 
 # Market closing task - sells all high_risk positions at 3:15 PM IST (9:45 AM UTC)
 # IST is UTC+5:30, so 3:15 PM IST = 9:45 AM UTC
