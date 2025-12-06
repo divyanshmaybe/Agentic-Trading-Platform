@@ -273,7 +273,7 @@ def check_take_profit(
     side: str
 ) -> bool:
     """Check if take-profit condition is met"""
-    if take_profit_price is None:
+    if take_profit_price is None or current_price is None:
         return False
     
     if side == "BUY":
@@ -292,7 +292,7 @@ def check_stop_loss(
     side: str
 ) -> bool:
     """Check if stop-loss condition is met"""
-    if stop_loss_price is None:
+    if stop_loss_price is None or current_price is None:
         return False
     
     if side == "BUY":
@@ -339,13 +339,13 @@ def create_tpsl_monitoring_pipeline(
     ).select(
         trade_id=pw.this.trade_id,
         symbol=pw.this.symbol,
-        action=pw.const("execute_tp"),
+        action="execute_tp",
         trigger_price=pw.this.take_profit_price,
         current_price=pw.this.current_price,
         quantity=pw.this.quantity,
         side=pw.apply(lambda s: "SELL" if s == "BUY" else "BUY", pw.this.side),
         portfolio_id=pw.this.portfolio_id,
-        execution_reason=pw.const("take_profit_triggered"),
+        execution_reason="take_profit_triggered",
     )
     
     # Check SL condition
@@ -359,13 +359,13 @@ def create_tpsl_monitoring_pipeline(
     ).select(
         trade_id=pw.this.trade_id,
         symbol=pw.this.symbol,
-        action=pw.const("execute_sl"),
+        action="execute_sl",
         trigger_price=pw.this.stop_loss_price,
         current_price=pw.this.current_price,
         quantity=pw.this.quantity,
         side=pw.apply(lambda s: "SELL" if s == "BUY" else "BUY", pw.this.side),
         portfolio_id=pw.this.portfolio_id,
-        execution_reason=pw.const("stop_loss_triggered"),
+        execution_reason="stop_loss_triggered",
     )
     
     # Combine TP and SL signals
