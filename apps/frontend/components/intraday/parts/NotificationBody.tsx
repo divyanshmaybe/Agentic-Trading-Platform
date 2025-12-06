@@ -64,14 +64,16 @@ const notificationRenderers: Record<string, NotificationRenderer> = {
     const signalLabel = deriveSignalLabel(signal)
     const confidence = normalizePercent(data.confidence)
 
-    // Style signal strength: green for 1 (bullish), red for others
+    // Style signal strength: green for 1 (bullish), yellow for 0 (neutral), red for others
     const signalStrengthValue = signal != null ? signal.toFixed(2) : "N/A"
     const signalStrengthClassName =
       signal === 1
         ? "text-emerald-400 font-bold"
-        : signal != null && signal !== 1
-          ? "text-red-400 font-bold"
-          : "text-white/80"
+        : signal === 0
+          ? "text-amber-400 font-bold"
+          : signal != null && signal !== 1 && signal !== 0
+            ? "text-red-400 font-bold"
+            : "text-white/80"
 
     // Extract new fields from rawPayload (available via data object)
     const attachmentUrlRaw = data.attachment_url || data.url
@@ -81,13 +83,15 @@ const notificationRenderers: Record<string, NotificationRenderer> = {
       typeof subjectOfAnnouncementRaw === "string" ? subjectOfAnnouncementRaw : null
     const filingTime = data.filing_time || data.date_time_of_submission || data.generated_at
 
-    // Determine link color based on signal: green for 1 (bullish), red for others
+    // Determine link color based on signal: green for 1 (bullish), yellow for 0 (neutral), red for others
     const linkColorClassName =
       signal === 1
         ? "text-emerald-400 hover:text-emerald-300"
-        : signal != null && signal !== 1
-          ? "text-red-400 hover:text-red-300"
-          : "text-emerald-400 hover:text-emerald-300"
+        : signal === 0
+          ? "text-amber-400 hover:text-amber-300"
+          : signal != null && signal !== 1 && signal !== 0
+            ? "text-red-400 hover:text-red-300"
+            : "text-emerald-400 hover:text-emerald-300"
 
     return (
       <NotificationBodySection>

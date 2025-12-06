@@ -92,24 +92,30 @@ export function NotificationItemCard({
   const bgColorClass =
     signal === 1
       ? "bg-emerald-950/40 border-emerald-500/30"
-      : signal != null && signal !== 1
-        ? "bg-red-950/40 border-red-500/30"
-        : "bg-black/30 border-white/12"
+      : signal === 0
+        ? "bg-amber-950/40 border-amber-500/30"
+        : signal != null && signal !== 1 && signal !== 0
+          ? "bg-red-950/40 border-red-500/30"
+          : "bg-black/30 border-white/12"
 
   // Determine icon and badge colors based on signal
   const iconWrapperClass =
     signal === 1
       ? "border-emerald-400/40 bg-emerald-500/20 text-emerald-200 shadow-[0_8px_24px_-14px_rgba(16,185,129,0.65)]"
-      : signal != null && signal !== 1
-        ? "border-red-400/40 bg-red-500/20 text-red-200 shadow-[0_8px_24px_-14px_rgba(248,113,113,0.65)]"
-        : styles.icon
+      : signal === 0
+        ? "border-amber-400/40 bg-amber-500/20 text-amber-200 shadow-[0_8px_24px_-14px_rgba(250,204,21,0.65)]"
+        : signal != null && signal !== 1 && signal !== 0
+          ? "border-red-400/40 bg-red-500/20 text-red-200 shadow-[0_8px_24px_-14px_rgba(248,113,113,0.65)]"
+          : styles.icon
 
   const badgeClass =
     signal === 1
       ? "text-emerald-300"
-      : signal != null && signal !== 1
-        ? "text-red-300"
-        : styles.badge
+      : signal === 0
+        ? "text-amber-300"
+        : signal != null && signal !== 1 && signal !== 0
+          ? "text-red-300"
+          : styles.badge
 
   return (
     <article
