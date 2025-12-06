@@ -454,18 +454,24 @@ class StockSelectionPipeline:
 
             # Guardrail 1
             if sma50 and sma200:
+                logger.error("sma50 sma 200 exists")
                 if sma50*1.1 <= sma200:
                     fail(f"Guardrail_1")
+                    logger.error("guardrail 1 failed")
 
             # Guardrail 2
             if rsi_14:
+                logger.error("rsi exists")
                 if rsi_14 >= 70:
                     fail(f"Guardrail_2")
+                    logger.error("guardrail 2 failed")
 
             # Guardrail 3
             if volatility:
+                logger.error("volatility exists")
                 if volatility >= 0.7:
                     fail(f"Guardrail_3")
+                    logger.error("guardrail 3 failed")
 
         except Exception as e:
             logger.error(e)
