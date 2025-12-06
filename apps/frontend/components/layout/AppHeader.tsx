@@ -10,7 +10,7 @@ type AppHeaderProps = {
 	onLogout?: () => void
 }
 
-export function AppHeader({ className, title = "AlphaPilot", subtitle, onLogout }: AppHeaderProps) {
+export function AppHeader({ className, title = "AgentInvest", subtitle, onLogout }: AppHeaderProps) {
 	return (
 		<header
 			className={cn(

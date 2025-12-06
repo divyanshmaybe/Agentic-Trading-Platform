@@ -8,23 +8,23 @@ const playfair = Playfair_Display({ subsets: ["latin"], variable: "--font-playfa
 
 export const metadata: Metadata = {
   title: {
-    default: "AlphaPilot — AI-powered portfolio management",
-    template: "%s — AlphaPilot",
+    default: "AgentInvest — AI-powered portfolio management",
+    template: "%s — AgentInvest",
   },
   description:
     "Agentic portfolio management for institutions: realtime signals, policy-safe automation, and explainable decisions.",
-  metadataBase: new URL("https://alphapilot.example.com"),
+  metadataBase: new URL("https://agentinvest.example.com"),
   openGraph: {
-    title: "AlphaPilot — AI-powered portfolio management",
+    title: "AgentInvest — AI-powered portfolio management",
     description:
       "Agentic portfolio management for institutions: realtime signals, policy-safe automation, and explainable decisions.",
-    url: "https://alphapilot.example.com",
-    siteName: "AlphaPilot",
+    url: "https://agentinvest.example.com",
+    siteName: "AgentInvest",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "AlphaPilot — AI-powered portfolio management",
+    title: "AgentInvest — AI-powered portfolio management",
     description:
       "Agentic portfolio management for institutions: realtime signals, policy-safe automation, and explainable decisions.",
   },

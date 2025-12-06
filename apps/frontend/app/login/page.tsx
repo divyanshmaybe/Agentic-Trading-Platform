@@ -62,7 +62,7 @@ export default function LoginPage() {
 
 	return (
 		<AuthLayout
-			title="Log in to AlphaPilot"
+			title="Log in to AgentInvest"
 			backLink={{ href: "/", label: "Back to Home" }}
 			footer={
 				<>

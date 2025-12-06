@@ -1,5 +1,5 @@
 export const brand = {
-  name: "AlphaPilot",
+  name: "AgentInvest",
   blue: "#2563EB",
   blueHover: "#1D4ED8",
 };
