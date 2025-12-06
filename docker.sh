@@ -172,6 +172,7 @@ KAFKA_BOOTSTRAP_SERVERS=pathway-kafka:9092
 KAFKA_ENABLED=true
 PORTFOLIO_SERVICE_URL=http://portfolio_server:8000
 REDBEAT_REDIS_URL=redis://portfolio_redis:6379/0
+AUTH_DATABASE_URL=postgresql://auth_user:auth_password@auth_postgres:5432/auth_db
 EOF
     print_success "apps/portfolio-server/docker.env generated"
     

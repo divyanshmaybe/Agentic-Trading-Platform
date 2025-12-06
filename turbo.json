@@ -58,6 +58,10 @@
       "cache": false,
       "persistent": true
     },
+    "celery:regime": {
+      "cache": false,
+      "persistent": true
+    },
     "celery:beat": {
       "cache": false,
       "persistent": true

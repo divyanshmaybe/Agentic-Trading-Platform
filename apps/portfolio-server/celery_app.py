@@ -113,6 +113,7 @@ QUEUE_NAMES: Dict[str, str] = {
     "tokens": os.getenv("CELERY_QUEUE_TOKENS", "tokens"),
     "streaming": os.getenv("CELERY_QUEUE_STREAMING", "streaming"),  # Dedicated queue for long-running streaming tasks
     "auto_sell": os.getenv("CELERY_QUEUE_AUTO_SELL", "general"),  # Auto-sell uses general queue to not block trading
+    "regime": os.getenv("CELERY_QUEUE_REGIME", "regime"),  # Dedicated queue for regime sweeps
 }
 
 
@@ -219,7 +220,19 @@ celery_app.conf.update(
 
 # Ensure all queues are registered explicitly with proper routing keys and priority support
 _all_queues = [Queue(DEFAULT_QUEUE, routing_key=DEFAULT_QUEUE)]
-for queue_name in ["allocations", "trading", "nse_pipeline", "news_pipeline", "low_risk_pipeline", "risk", "orders", "market", "tokens", "streaming"]:
+for queue_name in [
+    "allocations",
+    "trading",
+    "nse_pipeline",
+    "news_pipeline",
+    "low_risk_pipeline",
+    "risk",
+    "orders",
+    "market",
+    "tokens",
+    "streaming",
+    "regime",
+]:
     if not any(q.name == queue_name for q in _all_queues):
         # Trading queue gets priority support for real-time signal execution
         if queue_name == "trading":
@@ -235,7 +248,7 @@ celery_app.conf.task_queues = _all_queues
 celery_app.conf.task_routes = {
     # Allocation + trading queues
     "portfolio.allocate_for_objective": {"queue": QUEUE_NAMES["allocations"], "routing_key": "allocations"},
-    "portfolio.check_regime_and_rebalance": {"queue": QUEUE_NAMES["allocations"], "routing_key": "allocations"},
+    "portfolio.check_regime_and_rebalance": {"queue": QUEUE_NAMES["regime"], "routing_key": QUEUE_NAMES["regime"]},
     "trading.execute_trade_job": {"queue": QUEUE_NAMES["trading"], "routing_key": "trading"},
     # Signal processing goes to trading queue (not pipelines - that's blocked by streaming pipeline)
     "pipeline.trade_execution.process_signal": {"queue": QUEUE_NAMES["trading"], "routing_key": "trading"},

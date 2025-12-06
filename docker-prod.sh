@@ -175,6 +175,7 @@ KAFKA_BOOTSTRAP_SERVERS=pathway-kafka:9092
 KAFKA_ENABLED=true
 PORTFOLIO_SERVICE_URL=https://portfolio.agentinvest.space
 REDBEAT_REDIS_URL=redis://portfolio_redis:6379/0
+AUTH_DATABASE_URL=postgresql://auth_user:auth_password@auth_postgres:5432/auth_db
 ALLOWED_ORIGINS=https://agentinvest.space,http://localhost:3000,http://localhost:3001
 EOF
     print_success "apps/portfolio-server/docker.env generated"

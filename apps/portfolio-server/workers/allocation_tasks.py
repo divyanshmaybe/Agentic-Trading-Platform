@@ -11,6 +11,7 @@ import logging
 import math
 import os
 import sys
+import uuid
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -1256,6 +1257,51 @@ def check_regime_and_rebalance_task(self) -> Dict[str, Any]:
     
     async def _check_and_rebalance():
         try:
+            redis_client = None
+            lock_acquired = False
+            lock_owner = None
+            lock_key = os.getenv("REGIME_TASK_LOCK_KEY", "locks:regime:check")
+            lock_ttl = int(os.getenv("REGIME_TASK_LOCK_TTL", "900"))
+
+            redis_url = os.getenv("REGIME_LOCK_REDIS_URL") or os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
+            try:
+                import redis
+
+                redis_client = redis.Redis.from_url(redis_url, decode_responses=True)
+            except Exception as redis_exc:
+                logger.warning(
+                    f"Regime lock disabled - Redis unavailable ({redis_url}): {redis_exc}"
+                )
+                redis_client = None
+
+            if redis_client:
+                host = os.getenv("HOSTNAME") or getattr(os, "uname", lambda: type("U", (), {"nodename": "unknown"})())().nodename  # type: ignore[misc]
+                lock_owner = f"{host}:{os.getpid()}:{uuid.uuid4()}"
+                try:
+                    lock_acquired = bool(
+                        redis_client.set(lock_key, lock_owner, nx=True, ex=lock_ttl)
+                    )
+                except Exception as lock_exc:
+                    logger.warning(f"Failed to acquire regime lock: {lock_exc}")
+                    lock_acquired = False
+
+                if not lock_acquired:
+                    logger.info(
+                        f"Skipping regime check; lock '{lock_key}' already held by {redis_client.get(lock_key) if redis_client else 'unknown'}"
+                    )
+                    return {
+                        "success": True,
+                        "skipped": True,
+                        "reason": "regime_check_in_progress",
+                        "portfolios_checked": 0,
+                        "pending_allocated": 0,
+                        "due_date_rebalanced": 0,
+                        "regime_change_rebalanced": 0,
+                        "regime_changed": False,
+                        "current_regime": None,
+                        "previous_regime": None,
+                    }
+
             # Use DBManager with session context manager for proper connection handling
             from dbManager import DBManager
             db_manager = DBManager.get_instance()
@@ -1271,19 +1317,17 @@ def check_regime_and_rebalance_task(self) -> Dict[str, Any]:
                 
                 # Get previous regime from cache/database
                 try:
-                    # Check if we have a stored regime from last run
-                    import redis
-                    redis_client = redis.Redis.from_url(
-                        os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0"),
-                        decode_responses=True
-                    )
+                    if redis_client is None:
+                        raise RuntimeError("Redis unavailable for regime cache")
+
                     previous_regime = redis_client.get("market:regime:current")
-                    regime_changed = (previous_regime is not None and previous_regime != current_regime)
-                    
-                    # Update stored regime
+                    regime_changed = (
+                        previous_regime is not None and previous_regime != current_regime
+                    )
+
                     redis_client.set("market:regime:current", current_regime)
                     redis_client.set("market:regime:last_updated", datetime.utcnow().isoformat())
-                    
+
                     if regime_changed:
                         logger.warning(
                             f"🚨 REGIME CHANGE DETECTED: {previous_regime} → {current_regime}. "
@@ -1674,6 +1718,15 @@ def check_regime_and_rebalance_task(self) -> Dict[str, Any]:
                 "success": False,
                 "error": str(exc),
             }
+        finally:
+            if redis_client and lock_acquired and lock_owner:
+                try:
+                    current_holder = redis_client.get(lock_key)
+                    if current_holder == lock_owner:
+                        redis_client.delete(lock_key)
+                        logger.debug(f"Released regime lock {lock_key}")
+                except Exception as release_exc:
+                    logger.warning(f"Failed to release regime lock {lock_key}: {release_exc}")
     
     # Create a fresh event loop for this task execution to avoid loop closure issues
     loop = asyncio.new_event_loop()

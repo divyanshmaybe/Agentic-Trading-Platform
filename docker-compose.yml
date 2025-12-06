@@ -512,6 +512,45 @@ services:
     networks:
       - agentInvest
 
+  # Celery Worker - Regime Queue (Regime detection & rebalancing sweeps)
+  portfolio_celery_regime:
+    image: portfolio_server:latest
+    container_name: portfolio_celery_regime
+    restart: unless-stopped
+    env_file:
+      - docker.env
+      - apps/portfolio-server/docker.env
+    environment:
+      PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
+      CELERY_WORKER_RUNNING: "1"
+      PROMETHEUS_ENABLED: "true"
+      PROMETHEUS_PORT: "9109"
+      WORKER_NAME: regime@docker
+      KAFKA_CLIENT_ID: portfolio-celery-regime
+    working_dir: /app/apps/portfolio-server
+    command: >
+      bash -c "cp /app/apps/portfolio-server/docker.env /app/apps/portfolio-server/.env 2>/dev/null || true &&
+               python -m prisma generate &&
+               until python -m prisma db push --accept-data-loss; do
+                 echo 'Waiting for Postgres...';
+                 sleep 2;
+               done &&
+               celery -A celery_app:celery_app worker --loglevel=info -Q regime --concurrency=1 --hostname=regime@%h --max-tasks-per-child=10 --prefetch-multiplier=1"
+    ports:
+      - "9109:9109"
+    volumes:
+      - ./apps/portfolio-server:/app/apps/portfolio-server
+      - ./shared:/app/shared
+      - ./middleware:/app/middleware
+      - ./scripts:/app/scripts
+    depends_on:
+      portfolio_postgres:
+        condition: service_healthy
+      portfolio_redis:
+        condition: service_healthy
+    networks:
+      - agentInvest
+
   # Celery Beat (Scheduler for periodic tasks)
   portfolio_celery_beat:
     image: portfolio_server:latest
@@ -557,6 +596,8 @@ services:
       portfolio_celery_general:
         condition: service_started
       portfolio_celery_streaming:
+        condition: service_started
+      portfolio_celery_regime:
         condition: service_started
     networks:
       - agentInvest
