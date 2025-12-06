@@ -7,6 +7,7 @@ import type { PortfolioSummary } from "@/lib/dashboardTypes"
 import { formatCurrency } from "@/lib/dashboardData"
 import { cn } from "@/lib/utils"
 import { AllocationLoadingState } from "@/components/shared/AllocationLoadingState"
+import { NoAllocationsState } from "./NoAllocationsState"
 
 import { allocationChartOptions, createAllocationChartData, pieDepthPlugin } from "./chartConfig"
 
@@ -185,9 +186,7 @@ export function PortfolioOverviewCard({ summary, loading = false }: PortfolioOve
             </div>
           ) : (
             // If we've had allocations before but they're empty now, show empty state instead of "Balancing Portfolio"
-            <div className="w-full max-w-xs flex items-center justify-center">
-              <div className="text-white/50 text-sm">No allocations available</div>
-            </div>
+            <NoAllocationsState />
           )}
         </div>
       </CardContent>
