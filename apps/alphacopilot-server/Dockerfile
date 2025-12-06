@@ -36,6 +36,7 @@ RUN pip uninstall -y nvidia-cublas-cu12 nvidia-cuda-cupti-cu12 nvidia-cuda-nvrtc
 
 # Copy only necessary source code (not data files - those are mounted as volumes)
 COPY shared/py /app/shared/py
+COPY middleware/py /app/middleware/py
 COPY quant-stream/alphacopilot /app/quant-stream/alphacopilot
 COPY quant-stream/quant_stream /app/quant-stream/quant_stream
 COPY quant-stream/pyproject.toml /app/quant-stream/pyproject.toml
@@ -84,7 +85,7 @@ COPY --from=builder /app /app
 RUN mkdir -p /app/data /app/quant-stream/.data
 
 # Set Python path
-ENV PYTHONPATH=/app:/app/shared/py:/app/quant-stream:/app/apps/alphacopilot-server
+ENV PYTHONPATH=/app:/app/shared/py:/app/middleware/py:/app/quant-stream:/app/apps/alphacopilot-server
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 

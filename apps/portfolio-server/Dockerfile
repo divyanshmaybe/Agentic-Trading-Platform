@@ -28,16 +28,19 @@ RUN python -m venv /opt/venv
 
 COPY apps/portfolio-server/requirements.txt /tmp/requirements.portfolio.txt
 COPY shared/py/requirements.txt /tmp/requirements.shared.txt
+COPY quant-stream/requirements.txt /tmp/requirements.quantstream.txt
 
-# Filter out torch from requirements (we'll install CPU-only version)
-RUN grep -v "^torch" /tmp/requirements.portfolio.txt > /tmp/requirements.portfolio.filtered.txt || cp /tmp/requirements.portfolio.txt /tmp/requirements.portfolio.filtered.txt
-RUN grep -v "^torch" /tmp/requirements.shared.txt > /tmp/requirements.shared.filtered.txt || cp /tmp/requirements.shared.txt /tmp/requirements.shared.filtered.txt
+# Filter out torch and editable installs from requirements (we'll install CPU-only version)
+RUN grep -v "^torch" /tmp/requirements.portfolio.txt | grep -v "^-e" > /tmp/requirements.portfolio.filtered.txt || cp /tmp/requirements.portfolio.txt /tmp/requirements.portfolio.filtered.txt
+RUN grep -v "^torch" /tmp/requirements.shared.txt | grep -v "^-e" > /tmp/requirements.shared.filtered.txt || cp /tmp/requirements.shared.txt /tmp/requirements.shared.filtered.txt
+RUN grep -v "^torch" /tmp/requirements.quantstream.txt | grep -v "^-e" > /tmp/requirements.quantstream.filtered.txt || true
 
 # Install CPU-only PyTorch first (saves ~5GB vs GPU version)
 RUN pip install --upgrade pip \
     && pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
     && pip install --no-cache-dir -r /tmp/requirements.portfolio.filtered.txt \
-    && pip install --no-cache-dir -r /tmp/requirements.shared.filtered.txt
+    && pip install --no-cache-dir -r /tmp/requirements.shared.filtered.txt \
+    && pip install --no-cache-dir -r /tmp/requirements.quantstream.filtered.txt || true
 
 # Remove unnecessary GPU-related packages that may have been pulled as dependencies
 RUN pip uninstall -y nvidia-cublas-cu12 nvidia-cuda-cupti-cu12 nvidia-cuda-nvrtc-cu12 \
@@ -51,6 +54,14 @@ COPY shared/py /app/shared/py
 COPY middleware /app/middleware
 COPY apps/portfolio-server /app/apps/portfolio-server
 
+# Copy quant-stream for factor calculation in Celery workers
+COPY quant-stream/quant_stream /app/quant-stream/quant_stream
+COPY quant-stream/alphacopilot /app/quant-stream/alphacopilot
+COPY quant-stream/pyproject.toml /app/quant-stream/pyproject.toml
+
+# Install quant-stream as editable package
+RUN pip install -e /app/quant-stream
+
 WORKDIR /app/apps/portfolio-server
 
 RUN python -m prisma generate
@@ -60,7 +71,7 @@ FROM python:${PYTHON_VERSION} AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:${PATH}" \
-    PYTHONPATH="/app:/app/apps/portfolio-server:/app/shared/py:/app/middleware:/app/middleware/py" \
+    PYTHONPATH="/app:/app/apps/portfolio-server:/app/shared/py:/app/middleware:/app/middleware/py:/app/quant-stream" \
     PORT=8000 \
     DATABASE_URL="postgresql://auth_user:auth_password@postgres:5432/auth_db"
 
@@ -88,6 +99,7 @@ COPY --from=builder /opt/venv /opt/venv
 COPY --from=builder /app/shared /app/shared
 COPY --from=builder /app/middleware /app/middleware
 COPY --from=builder /app/apps/portfolio-server /app/apps/portfolio-server
+COPY --from=builder /app/quant-stream /app/quant-stream
 
 # Final cleanup of any remaining GPU packages in runtime
 RUN rm -rf /opt/venv/lib/python3.11/site-packages/nvidia* \

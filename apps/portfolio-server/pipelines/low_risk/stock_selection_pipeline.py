@@ -457,7 +457,7 @@ class StockSelectionPipeline:
 
             # Guardrail 1
             if is_valid(sma50) and is_valid(sma200):
-                if sma50 <= sma200:
+                if sma50*1.1 <= sma200:
                     fail(f"Guardrail_1")
 
             # Guardrail 2
@@ -467,7 +467,7 @@ class StockSelectionPipeline:
 
             # Guardrail 3
             if is_valid(volatility):
-                if volatility >= 0.6:
+                if volatility >= 0.7:
                     fail(f"Guardrail_3")
 
         except Exception as e:
