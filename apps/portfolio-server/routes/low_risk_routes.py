@@ -300,7 +300,7 @@ async def get_pipeline_status(
 
     try:
         # Get status from Celery task (runs quickly)
-        status = get_low_risk_pipeline_status.delay(user_id).get(timeout=5)
+        status = get_low_risk_pipeline_status.delay(user_id).get(timeout=1000)
 
         return PipelineStatusResponse(
             running=status.get("running", False),

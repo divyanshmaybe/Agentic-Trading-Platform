@@ -240,6 +240,57 @@ export default function LongTermPage() {
 		return events // All events including summary
 	}, [events])
 
+	// Check pipeline status on mount and auto-start streaming if running
+	useEffect(() => {
+		const checkPipelineStatus = async () => {
+			try {
+				const portfolioServerUrl = process.env.NEXT_PUBLIC_PORTFOLIO_API_URL || process.env.NEXT_PUBLIC_PORTFOLIO_SERVER_URL || "http://localhost:8000"
+				
+				// Get auth token from cookie or localStorage
+				let token: string | null = null
+				if (typeof window !== "undefined") {
+					const match = document.cookie.match(/(^| )access_token=([^;]+)/)
+					token = match ? match[2] : localStorage.getItem("access_token")
+				}
+
+				const headers: HeadersInit = {
+					"Content-Type": "application/json",
+				}
+				if (token) {
+					headers["Authorization"] = `Bearer ${token}`
+				}
+
+				const response = await fetch(`${portfolioServerUrl}/api/low-risk/status`, {
+					method: "GET",
+					headers,
+					credentials: "include",
+				})
+
+				if (!response.ok) {
+					console.warn('[LongTerm Page] Failed to check pipeline status:', response.statusText)
+					return
+				}
+
+				const data = await response.json()
+				
+				// If pipeline is running, auto-start the SSE stream
+				if (data.running && data.status === "running") {
+					console.log('[LongTerm Page] Pipeline already running, auto-starting stream...', {
+						elapsed_minutes: data.elapsed_minutes
+					})
+					startStreaming()
+				}
+			} catch (error) {
+				console.warn('[LongTerm Page] Failed to check pipeline status:', error)
+			}
+		}
+
+		// Only check on mount if not already streaming
+		if (!streaming && authUser) {
+			checkPipelineStatus()
+		}
+	}, [authUser]) // Only run on mount when authUser is available
+
 	// Console log events on page reload and when events change
 	useEffect(() => {
 		console.log('[LongTerm Page] Events fetched/updated:', {
