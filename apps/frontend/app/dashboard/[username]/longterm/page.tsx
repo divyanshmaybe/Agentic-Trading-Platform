@@ -19,7 +19,8 @@ import {
 	PortfolioAllocationChart,
 	EmptyStateMessage,
 	StreamingEventsView,
-	BuyTradeModal
+	BuyTradeModal,
+	CooldownModal
 } from "@/components/longterm"
 import "@/lib/chart"
 
@@ -39,6 +40,12 @@ export default function LongTermPage() {
 	const [rebalancing, setRebalancing] = useState(false)
 	const [rebalanceError, setRebalanceError] = useState<string | null>(null)
 	const [triggeringAgent, setTriggeringAgent] = useState(false)
+	const [cooldownModalOpen, setCooldownModalOpen] = useState(false)
+	const [cooldownData, setCooldownData] = useState<{
+		daysElapsed: number
+		daysRemaining: number
+		message: string
+	} | null>(null)
 
 	// Extract summary event data
 	const summaryEvent = useMemo(() => {
@@ -177,9 +184,28 @@ export default function LongTermPage() {
 			startStreaming()
 		} catch (error) {
 			console.error("[LongTerm Page] Failed to rebalance:", error)
-			setRebalanceError(
-				error instanceof Error ? error.message : "Failed to rebalance. Please try again."
-			)
+			const errorMessage = error instanceof Error ? error.message : "Failed to rebalance. Please try again."
+			
+			// Check if this is a 6-month cooldown error
+			if (errorMessage.includes("6 months") || errorMessage.includes("cooldown")) {
+				// Parse the error message to extract days elapsed and days remaining
+				// Expected format: "Last run was X days ago. Please wait Y more days."
+				const daysElapsedMatch = errorMessage.match(/(\d+)\s+days ago/)
+				const daysRemainingMatch = errorMessage.match(/wait\s+(\d+)\s+more days/)
+				
+				const daysElapsed = daysElapsedMatch ? parseInt(daysElapsedMatch[1], 10) : 0
+				const daysRemaining = daysRemainingMatch ? parseInt(daysRemainingMatch[1], 10) : 0
+				
+				setCooldownData({
+					daysElapsed,
+					daysRemaining,
+					message: errorMessage,
+				})
+				setCooldownModalOpen(true)
+			} else {
+				// For non-cooldown errors, show the regular error message
+				setRebalanceError(errorMessage)
+			}
 		} finally {
 			setRebalancing(false)
 		}
@@ -562,6 +588,17 @@ export default function LongTermPage() {
 					tradeList={tradeList}
 					portfolioId={agentData.portfolio_id}
 					allocationId={agentData.allocation?.id}
+				/>
+			)}
+
+			{/* Cooldown Modal */}
+			{cooldownData && (
+				<CooldownModal
+					open={cooldownModalOpen}
+					onOpenChange={setCooldownModalOpen}
+					daysElapsed={cooldownData.daysElapsed}
+					daysRemaining={cooldownData.daysRemaining}
+					message={cooldownData.message}
 				/>
 			)}
 		</div>
