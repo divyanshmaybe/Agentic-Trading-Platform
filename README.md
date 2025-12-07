@@ -114,6 +114,10 @@ cp docker.env.example docker.env
 cp apps/portfolio-server/docker.env.example apps/portfolio-server/docker.env
 cp apps/auth_server/docker.env.example apps/auth_server/docker.env
 cp apps/alphacopilot-server/docker.env.example apps/alphacopilot-server/docker.env
+cp apps/notification_server/.env.example apps/notification_server/.env
+cp apps/frontend/.env.example apps/frontend/.env
+cp shared/prisma/.env.example shared/prisma/.env
+cp quant-stream/alphacopilot/.env.example quant-stream/alphacopilot/.env
 ```
 
 Edit these files with your:
@@ -121,6 +125,15 @@ Edit these files with your:
 - Database credentials
 - Email service credentials (SendGrid)
 - JWT secrets
+- Optional pipeline/risk/observability toggles live in `apps/portfolio-server/.env.example` (news & NSE pipelines, auto-sell queues, monitoring, market-data aliases). Keep defaults unless enabling those features.
+
+**API keys to gather (with links)**
+- Google Gemini: https://aistudio.google.com/app/apikey
+- LangSmith (tracing): https://smith.langchain.com/ → Settings → API keys
+- Angel One SmartAPI (broker): https://smartapi.angelone.in/ → My Apps (get API key), client code/password/TOTP
+- Groww API (broker access): https://groww.in → Developer/Broker portal (obtain client API credentials and TOTP)
+- NewsAPI/NewsOrg: https://newsapi.org/
+- SendGrid (email): https://app.sendgrid.com/settings/api_keys
 
 ### 3. Start All Services
 

@@ -76,7 +76,6 @@ echo "Portfolio Server Variables:"
 check_var "GEMINI_API_KEY"
 check_var "NEWS_ORG_API_KEY"
 check_var "SERP_API_KEY"
-check_var "GROQ_API_KEY"
 check_var "ANGELONE_CLIENT_CODE"
 check_var "ANGELONE_API_KEY"
 check_var "ANGELONE_PASSWORD"
@@ -130,7 +129,6 @@ kubectl create secret generic portfolio-env-secret \
   --from-literal=OPENAI_API_KEY="${OPENAI_API_KEY}" \
   --from-literal=NEWS_ORG_API_KEY="${NEWS_ORG_API_KEY}" \
   --from-literal=SERP_API_KEY="${SERP_API_KEY}" \
-  --from-literal=GROQ_API_KEY="${GROQ_API_KEY}" \
   --from-literal=ANGELONE_CLIENT_CODE="${ANGELONE_CLIENT_CODE}" \
   --from-literal=ANGELONE_API_KEY="${ANGELONE_API_KEY}" \
   --from-literal=ANGELONE_PASSWORD="${ANGELONE_PASSWORD}" \

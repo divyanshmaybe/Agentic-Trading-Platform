@@ -22,6 +22,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 import pyotp
 from growwapi import GrowwAPI
+import os
+from dotenv import load_dotenv
 
 # File paths
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -29,11 +31,13 @@ DATA_DIR = SCRIPT_DIR / ".data"
 CSV_FILE = DATA_DIR / "indian_stock_market_nifty500.csv"  # New file for Nifty 500 only
 OLD_CSV_FILE = DATA_DIR / "indian_market_data.csv"  # Original CSV to pre-populate from
 NIFTY500_FILE = DATA_DIR / "nifty500.txt"
+# Load environment variables from alphacopilot/.env
+load_dotenv(SCRIPT_DIR / "alphacopilot" / ".env")
+TOTP_TOKEN = os.getenv("TOTP_TOKEN")
+TOTP_SECRET = os.getenv("TOTP_SECRET")
 
-# API Configuration - TOTP Flow
-# TOTP credentials for Groww API authentication
-TOTP_TOKEN = "eyJraWQiOiJaTUtjVXciLCJhbGciOiJFUzI1NiJ9.eyJleHAiOjI1NTI4MTI4NTEsImlhdCI6MTc2NDQxMjg1MSwibmJmIjoxNzY0NDEyODUxLCJzdWIiOiJ7XCJ0b2tlblJlZklkXCI6XCI5NDc3MDFjNS1mNzU5LTQyNWQtYjJiMC1jZDQyNmFkNjI2Y2FcIixcInZlbmRvckludGVncmF0aW9uS2V5XCI6XCJlMzFmZjIzYjA4NmI0MDZjODg3NGIyZjZkODQ5NTMxM1wiLFwidXNlckFjY291bnRJZFwiOlwiMjM5NTFmNGItNjJjYy00YWY3LThiYzEtYTk0MDYxYTdkMTZkXCIsXCJkZXZpY2VJZFwiOlwiMTMzNTQ4YjktNTdlYi01NGI1LWE4ZDktZjk3YThkZjQwMmRkXCIsXCJzZXNzaW9uSWRcIjpcImI4MWQwN2Q0LTI1Y2YtNDM4Zi1iNDY1LWJmM2ExMDEwYTEyY1wiLFwiYWRkaXRpb25hbERhdGFcIjpcIno1NC9NZzltdjE2WXdmb0gvS0EwYlByYXUvaXozZTNGTllyUFV3YkV1RlZSTkczdTlLa2pWZDNoWjU1ZStNZERhWXBOVi9UOUxIRmtQejFFQisybTdRPT1cIixcInJvbGVcIjpcImF1dGgtdG90cFwiLFwic291cmNlSXBBZGRyZXNzXCI6XCIxMDMuMTUxLjIwOS4xMjgsMTcyLjY4LjIxNC44OCwzNS4yNDEuMjMuMTIzXCIsXCJ0d29GYUV4cGlyeVRzXCI6MjU1MjgxMjg1MTY2OX0iLCJpc3MiOiJhcGV4LWF1dGgtcHJvZC1hcHAifQ.niExGxUB-JhgvXFfPEMwkwYQuGXK6ckW-llNB0ofzrgYZ-mmQTwV8qljOUs5y_liorMvC5JkZ8WFpaCxwG7wWQ"
-TOTP_SECRET = "4V6HXJYVL54QE5SYDDL4UDICJKFKHYZV"
+if not TOTP_TOKEN or not TOTP_SECRET:
+    raise ValueError("TOTP_TOKEN and TOTP_SECRET must be set in environment variables")
 
 # Rate limiting: 5 requests/second, 150 requests/minute (conservative for new API)
 MAX_REQUESTS_PER_SECOND = 5
