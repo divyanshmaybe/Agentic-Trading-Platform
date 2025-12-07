@@ -45,7 +45,7 @@ async function validateToken(
   }
 }
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Protect admin routes - require authentication AND admin role
@@ -99,7 +99,7 @@ export async function middleware(request: NextRequest) {
 
     // Check if accessing username-specific route
     const usernameMatch = pathname.match(/^\/dashboard\/([^\/]+)/);
-    
+
     if (usernameMatch) {
       const requestedUsername = usernameMatch[1];
       const user = validation.user;
@@ -145,4 +145,3 @@ export const config = {
     "/((?!api|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };
-
