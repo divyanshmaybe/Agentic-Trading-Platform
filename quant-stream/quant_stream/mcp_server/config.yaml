@@ -7,8 +7,6 @@ server:
 
 quantstream:
   # Use absolute path or path relative to project root
-  data_path: "/Users/criticic/Projects/COPS/2025/pathway-scratchpad/quant-stream/.data/indian_stock_market_nifty500.csv"
-  mlruns_path: "sqlite:////Users/criticic/Projects/COPS/2025/pathway-scratchpad/quant-stream/mlruns.db"
   max_workers: 4
 
 redis:
