@@ -270,17 +270,30 @@ function NewHypothesisModal({
             </div>
 
             {/* Current Market Regime Indicator */}
-            <div className="mt-4 flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2">
-              <TrendingUp className="size-4 text-cyan-400" />
-              <span className="text-xs text-white/60">Current Market Regime:</span>
-              {regimeLoading ? (
-                <Loader2 className="size-3 animate-spin text-white/40" />
-              ) : currentRegime ? (
-                <span className="text-xs font-medium text-cyan-300">{currentRegime}</span>
-              ) : (
-                <span className="text-xs text-white/40">Unable to detect</span>
+            <div className="mt-4 space-y-2">
+              <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+                <TrendingUp className="size-4 text-cyan-400" />
+                <span className="text-xs text-white/60">Current Market Regime:</span>
+                {regimeLoading ? (
+                  <Loader2 className="size-3 animate-spin text-white/40" />
+                ) : currentRegime ? (
+                  <span className="text-xs font-medium text-cyan-300">{currentRegime}</span>
+                ) : (
+                  <span className="text-xs text-white/40">Unable to detect</span>
+                )}
+                <span className="ml-auto text-xs text-white/40">(will be appended to hypothesis)</span>
+              </div>
+              
+              {/* Sideways Market Warning */}
+              {currentRegime && currentRegime.toLowerCase().includes("sideways") && (
+                <div className="flex items-start gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2">
+                  <X className="mt-0.5 size-4 shrink-0 text-rose-400" />
+                  <p className="text-xs text-rose-300">
+                    <span className="font-semibold">Warning:</span> Alphas are not suitable for sideways markets. 
+                    Consider waiting for a trending market regime for better performance.
+                  </p>
+                </div>
               )}
-              <span className="ml-auto text-xs text-white/40">(will be appended to hypothesis)</span>
             </div>
 
             <form onSubmit={handleSubmit} className="mt-6 space-y-4">
