@@ -14,6 +14,7 @@ export const authConfig = {
   JWT_SECRET_REFRESH: process.env.JWT_SECRET_REFRESH || "",
   JWT_SECRET_EMAIL: process.env.JWT_SECRET_EMAIL || "",
   INTERNAL_SERVICE_SECRET: process.env.INTERNAL_SERVICE_SECRET || "",
+  ALLOW_SIGNUP: process.env.ALLOW_SIGNUP === "false" ? false : true,
 };
 
 export const allowedOrigins = [
