@@ -14,6 +14,10 @@ An institutional-grade multi-agent investment platform that orchestrates autonom
 - Prometheus: https://prometheus.agentinvest.space
 - Flower (Celery): https://flower.agentinvest.space
 
+**Access (admin user for both Grafana & Flower)**
+- Grafana: user `admin` / pass `agentinvest-pathway`
+- Flower: user `admin` / pass `admin123`
+
 **Demo testing accounts** (restricted; for QA only)
 - user1@demo.com / User1DemoPassword1@3$
 - user2@demo.com / User2DemoPassword##2@!
@@ -505,6 +509,9 @@ The platform is currently deployed on a cloud VM for production use.
 - **Monitoring Dashboard**: https://grafana.agentinvest.space
 - **Prometheus**: https://prometheus.agentinvest.space
 - **Celery/Flower**: https://flower.agentinvest.space
+- **Credentials (admin user)**
+  - Grafana: `admin` / `agentinvest-pathway`
+  - Flower: `admin` / `admin123`
 
 ### Access Restrictions
 
