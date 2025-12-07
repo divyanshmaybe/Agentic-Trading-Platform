@@ -12,11 +12,18 @@ An institutional-grade multi-agent investment platform that orchestrates autonom
 
 The platform implements a hierarchical agent architecture with specialized components:
 
-- **AlphaCopilot Agent**: AI-powered hypothesis generation and backtesting system
-- **Fund Allocator**: Central agent routing capital according to client objectives and risk limits
-- **Strategic Agents**: Long-horizon optimizers maintaining portfolio alignment with investment mandates
-- **Trading Agents**: Short-term agents processing NSE filings with LLM reasoning and quantitative signals
-- **Execution Pipeline**: Automated trade execution with real-time risk monitoring and compliance
+- **AlphaCopilot Agent**: AI-powered hypothesis generation and backtesting system that continuously scans for new alpha sources.
+- **Fund Allocator**: Central agent routing capital according to client objectives and risk limits.
+- **Strategic Agents**: Long-horizon optimizers maintaining portfolio alignment with investment mandates.
+- **Trading Agents**: Short-term agents processing NSE filings with LLM reasoning and quantitative signals.
+- **Execution Pipeline**: Automated trade execution with real-time risk monitoring, compliance checks, and smart order routing.
+
+The system is powered by several dedicated pipelines:
+- **NSE Pipeline**: Processes regulatory filings in real-time to generate trading signals based on sentiment and fundamental analysis.
+- **Low Risk Pipeline**: Monitors conservative assets and executes low-volatility strategies for capital preservation.
+- **Regime Detection Pipeline**: Analyzes market conditions to dynamically adjust strategy parameters based on the current market regime (bull, bear, volatile).
+- **Real-time Monitoring**: A dedicated risk engine that tracks positions tick-by-tick, automatically triggering Take Profit (TP), Stop Loss (SL), or emergency auto-sell protocols if risk thresholds are breached.
+
 
 All agents communicate through Kafka event streams and are monitored via Prometheus/Grafana for production observability.
 
@@ -42,15 +49,18 @@ All agents communicate through Kafka event streams and are monitored via Prometh
 - **[Angel One Setup](docs/ANGELONE_SETUP.md)** - Broker integration guide
 
 ## 🏗️ Monorepo Structure
-
 ```
 ├── apps/
 │   ├── portfolio-server/     # FastAPI service with Pathway pipelines
-│   ├── auth_server/         # Express.js authentication & email service
+│   ├── auth_server/          # Express.js authentication & email service
+│   ├── notification-server/  # Node.js Kafka consumer for real-time notifications
+│   ├── alphacopilot-server/  # FastAPI AI hypothesis generation and backtesting
 │   └── frontend/             # Next.js investor dashboard
+├── quant-stream/             # Quantitative analysis library for strategy development
 ├── shared/                   # Cross-language utilities (Python/TypeScript)
 ├── pw-scripts/               # Research-grade Pathway pipelines
 ├── devops/                   # Kubernetes manifests & Terraform
+├── docker-manifest/          # Docker Compose configurations and container orchestration
 ├── packages/                 # Reusable TypeScript toolchain
 └── scripts/                  # Automation helpers
 ```
@@ -133,6 +143,7 @@ pnpm docker-logs
 | **Portfolio Server** | http://localhost:8000 | Trading & Portfolio API |
 | **Notification Server** | http://localhost:8099 | Notification ingestion |
 | **AlphaCopilot Server** | http://localhost:8069 | AI Copilot API |
+| **Flower** | http://localhost:5555 | Celery task monitoring |
 | **Grafana** | http://localhost:3001 | Monitoring dashboards (admin/admin) |
 | **Prometheus** | http://localhost:9090 | Metrics collection |
 
@@ -207,20 +218,23 @@ Run the setup script to initialize Kafka and databases:
 ./setup.sh redis      # Start Redis only
 ./setup.sh monitoring # Start Prometheus, Grafana, Loki
 ```
-
-### 4. Setup PostgreSQL with Docker
+### 4. Setup PostgreSQL and Redis with Docker
 
 ```bash
-# Start PostgreSQL containers
-docker-compose up -d postgres portfolio_postgres
+# Start PostgreSQL and Redis containers
+docker-compose up -d postgres portfolio_postgres redis portfolio_redis
 
 # Verify databases are running
-docker ps | grep postgres
+docker ps | grep -E "postgres|redis"
 ```
 
 **Database URLs:**
 - Auth DB: `postgresql://auth_user:auth_password@localhost:5432/auth_db`
 - Portfolio DB: `postgresql://portfolio_user:portfolio_password@localhost:5434/portfolio_db`
+
+**Redis URLs:**
+- Auth Redis: `redis://localhost:6379`
+- Portfolio Redis: `redis://localhost:6381`
 
 ### 5. Configure Environment Variables
 
@@ -332,16 +346,18 @@ This starts:
 - Notification Server on port 8099
 - AlphaCopilot Server on port 8069
 
-#### Terminal 3: Prisma Studio (Optional)
+#### Terminal 3: Prisma Studio & Kafka UI (Optional)
 ```bash
 pnpm studio
 ```
 
-Opens Prisma Studio for database inspection:
+Opens Prisma Studio for database inspection and Kafka UI for stream monitoring:
 - Auth DB: http://localhost:5555
 - Portfolio DB: http://localhost:5556
+- Kafka UI: http://localhost:8501/
 
 ---
+
 
 ## 📊 Monitoring & Observability
 
@@ -464,21 +480,23 @@ pnpm check-types
 
 ---
 
+// ...existing code...
 ## 🌐 Current Deployment
 
 The platform is currently deployed on a cloud VM for production use.
 
-### Production URLs
+### Production Access
 
-**Note:** Access credentials will be provided separately.
+**Note:** Access credentials and endpoints are provided separately to authorized users.
 
-- **Frontend**: [URL_TO_BE_ADDED]
-- **API Gateway**: [URL_TO_BE_ADDED]
-- **Monitoring Dashboard**: [URL_TO_BE_ADDED]
+- **Frontend Application**: Accessible via secure production URL
+- **API Gateway**: Protected by JWT authentication
+- **Monitoring Dashboard**: Restricted to admin access
 
 ### Access Restrictions
 
 For testing and demonstration purposes, the platform currently has **restricted access** with three hardcoded user accounts. This limitation exists due to:
+// ...existing code...
 
 - Limited availability of LLM API tokens
 - Controlled testing environment
@@ -522,23 +540,6 @@ Complete Kubernetes manifests are available in the `devops/kubernetes/` director
 - **Audit Logging**: Comprehensive logging of all trading activities
 - **Regulatory Compliance**: Built-in compliance checks for Indian market regulations
 - **Secret Management**: Environment-based configuration with secure secret storage
-
----
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-### Development Standards
-
-- **Code Quality**: ESLint, Prettier, Black, and MyPy enforced
-- **Testing**: Minimum 80% test coverage required
-- **Documentation**: All public APIs must be documented
-- **Security**: Regular dependency updates and security audits
 
 ---
 
