@@ -58,6 +58,8 @@ COPY apps/portfolio-server /app/apps/portfolio-server
 COPY quant-stream/quant_stream /app/quant-stream/quant_stream
 COPY quant-stream/alphacopilot /app/quant-stream/alphacopilot
 COPY quant-stream/pyproject.toml /app/quant-stream/pyproject.toml
+COPY quant-stream/update_indian_market_data.py /app/quant-stream/update_indian_market_data.py
+COPY quant-stream/.data/indian_stock_market_nifty500.csv /app/quant-stream/.data/indian_stock_market_nifty500.csv
 
 # Install quant-stream as editable package
 RUN pip install -e /app/quant-stream

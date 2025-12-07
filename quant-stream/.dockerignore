@@ -18,6 +18,8 @@ data/
 *.pickle
 *.h5
 *.hdf5
+# Allow the lightweight Nifty500 CSV used in runtime market checks
+!/.data/indian_stock_market_nifty500.csv
 
 # =====================
 # Model files

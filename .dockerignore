@@ -189,6 +189,8 @@ setup.sh
 *.hdf5
 *.sqlite
 *.db
+# Explicitly include the small Nifty500 sample CSV needed at runtime
+!quant-stream/.data/indian_stock_market_nifty500.csv
 
 # =====================
 # Large model files / ML artifacts
