@@ -141,7 +141,7 @@ scrape_configs:
   # Celery Flower (task monitoring)
   - job_name: 'celery-flower'
     static_configs:
-      - targets: ['portfolio_flower:5555']
+      - targets: ['flower:5555']
         labels:
           environment: 'docker'
     metrics_path: /metrics
