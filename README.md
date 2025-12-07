@@ -1,24 +1,45 @@
-# AgentInvest Platform
+# Agentic Trading Platform
 [![Pathway](https://img.shields.io/badge/streaming-Pathway-5b4bff)](https://pathway.com)
 [![Docker](https://img.shields.io/badge/containerized-Docker-2496ed)](https://docker.com)
 [![Next.js](https://img.shields.io/badge/frontend-Next.js-black)](https://nextjs.org)
 [![FastAPI](https://img.shields.io/badge/api-FastAPI-05998b)](https://fastapi.tiangolo.com)
 [![Celery](https://img.shields.io/badge/workers-Celery-37814a)](https://docs.celeryproject.org)
 [![Kafka](https://img.shields.io/badge/event%20bus-Kafka-000000)](https://kafka.apache.org)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**AgentInvest** is an institutional-grade multi-agent investment platform that orchestrates autonomous financial agents for real-time portfolio automation. Built for modern wealth management teams, it synthesizes regulatory filings, market microstructure, and client preferences through a coordinated ecosystem of specialized agents.
+An institutional-grade multi-agent investment platform that orchestrates autonomous financial agents for real-time portfolio automation. Built with Pathway's streaming data processing framework, the platform synthesizes regulatory filings, market microstructure, and quantitative signals through a coordinated ecosystem of specialized agents.
 
-## Architecture Overview
+## 🏗️ Architecture Overview
 
-The platform implements a hierarchical agent architecture:
+The platform implements a hierarchical agent architecture with specialized components:
 
-- **Fund Allocator**: Central agent that routes capital according to client objectives and risk limits
+- **AlphaCopilot Agent**: AI-powered hypothesis generation and backtesting system
+- **Fund Allocator**: Central agent routing capital according to client objectives and risk limits
 - **Strategic Agents**: Long-horizon optimizers maintaining portfolio alignment with investment mandates
 - **Trading Agents**: Short-term agents processing NSE filings with LLM reasoning and quantitative signals
 - **Execution Pipeline**: Automated trade execution with real-time risk monitoring and compliance
 
-Powered by Pathway's low-latency ETL core, the system streams market data, regulatory events, and model outputs to ensure allocations, orders, and compliance artifacts remain explainable, auditable, and personalized.
+All agents communicate through Kafka event streams and are monitored via Prometheus/Grafana for production observability.
+
+### System Components
+
+| Component | Technology | Purpose |
+|-----------|------------|---------|
+| **Portfolio Server** | FastAPI + Pathway | Risk monitoring, trade execution, Pathway pipelines |
+| **Auth Server** | Express.js + Prisma | Identity management, subscriptions, email workflows |
+| **Notification Server** | Node.js + Kafka | Real-time notification ingestion and distribution |
+| **AlphaCopilot Server** | FastAPI + Quant-Stream | AI hypothesis generation and backtesting |
+| **Frontend** | Next.js + TypeScript | Investor analytics, signal visualization, admin tools |
+| **Celery Workers** | Python | Async task processing, pipeline execution |
+| **Kafka** | Apache Kafka 3.8.0 | Event streaming and inter-service communication |
+| **PostgreSQL** | PostgreSQL 16 | Relational data storage |
+| **Redis** | Redis 7 | Caching, session storage, task queuing |
+
+## 📚 Documentation
+
+- **[Complete Documentation](docs/README.md)** - Comprehensive platform documentation
+- **[Architecture Overview](docs/ARCHITECTURE.md)** - System design and data flows
+- **[NSE Automated Trading](docs/NSE_AUTOMATED_TRADING.md)** - Filings-driven trading stack
+- **[Angel One Setup](docs/ANGELONE_SETUP.md)** - Broker integration guide
 
 ## 🏗️ Monorepo Structure
 
@@ -34,220 +55,465 @@ Powered by Pathway's low-latency ETL core, the system streams market data, regul
 └── scripts/                  # Automation helpers
 ```
 
-### Service Components
-
-| Component | Technology | Purpose |
-|-----------|------------|---------|
-| **Portfolio Server** | FastAPI + Pathway | Risk monitoring, trade execution, Prisma ORM |
-| **Auth Server** | Express.js + Prisma | Identity management, subscriptions, email workflows |
-| **Frontend** | Next.js + TypeScript | Investor analytics, signal visualization, admin tools |
-| **Shared Libraries** | Python/TypeScript | Kafka schemas, market data adapters, DB utilities |
-| **Research Pipelines** | Pathway | Risk agents, NSE filings, news sentiment analysis |
-
 ## 🚀 Quick Start
 
 ### Prerequisites
 
-- **Docker & Docker Compose** for containerized services
-- **Node.js 18+** and **pnpm** for JavaScript/TypeScript
-- **Python 3.10+** with **pyenv** for Python services
-- **PostgreSQL** and **Redis** databases
+- **Docker & Docker Compose** (v20.10+)
+- **Node.js 18+** and **pnpm** (v9.0+)
+- **Python 3.10+**
+- **PostgreSQL 16** and **Redis 7**
 
-### 1. Environment Setup
+---
+
+## 🐳 Option 1: Docker Setup (Recommended)
+
+Docker setup provides a fully containerized environment with all services, databases, and monitoring stack.
+
+### 1. Clone Repository
 
 ```bash
-# Clone the repository
-# Replace YOUR_GITHUB_USERNAME with your GitHub username
-git clone https://github.com/YOUR_GITHUB_USERNAME/Agentic-Trading-Platform-Pathway.git
+git clone https://github.com/YOUR_USERNAME/Agentic-Trading-Platform-Pathway.git
 cd Agentic-Trading-Platform-Pathway
+```
 
-# Install JavaScript dependencies
+### 2. Configure Environment
+
+Create environment files for each service. See `.env.example` files in respective service directories:
+
+```bash
+# Root level docker.env
+cp docker.env.example docker.env
+
+# Service-specific configurations
+cp apps/portfolio-server/docker.env.example apps/portfolio-server/docker.env
+cp apps/auth_server/docker.env.example apps/auth_server/docker.env
+cp apps/alphacopilot-server/docker.env.example apps/alphacopilot-server/docker.env
+```
+
+Edit these files with your:
+- API keys (Gemini, NewsAPI, broker APIs)
+- Database credentials
+- Email service credentials (SendGrid)
+- JWT secrets
+
+### 3. Start All Services
+
+```bash
+# Start all services with monitoring stack (Recommended)
+./docker.sh start
+
+# Or start without monitoring
+./docker.sh start --without-monitoring
+```
+
+**What this does:**
+- Builds all Docker images (first run)
+- Starts PostgreSQL, Redis, Kafka
+- Launches all application servers (Auth, Portfolio, Notification, AlphaCopilot, Frontend)
+- Starts Celery workers for all queues
+- Initializes Prometheus, Grafana, and Loki (with monitoring profile)
+
+### 4. Monitor Logs
+
+```bash
+# View logs from all containers
+./docker.sh logs -f
+
+# Or use the pnpm command for organized logs
+pnpm docker-logs
+```
+
+### 5. Access Services
+
+| Service | URL | Description |
+|---------|-----|-------------|
+| **Frontend** | http://localhost:3000 | Main application UI |
+| **Auth Server** | http://localhost:4000 | Authentication API |
+| **Portfolio Server** | http://localhost:8000 | Trading & Portfolio API |
+| **Notification Server** | http://localhost:8099 | Notification ingestion |
+| **AlphaCopilot Server** | http://localhost:8069 | AI Copilot API |
+| **Grafana** | http://localhost:3001 | Monitoring dashboards (admin/admin) |
+| **Prometheus** | http://localhost:9090 | Metrics collection |
+
+### 6. Other Docker Commands
+
+```bash
+# Stop all services
+./docker.sh stop
+
+# Restart all services
+./docker.sh restart
+
+# Rebuild images (after code changes)
+./docker.sh build
+./docker.sh build --no-cache  # Force complete rebuild
+
+# View service status
+./docker.sh status
+
+# Clean Redis locks and timestamps
+./docker.sh clean-redis
+
+# Complete cleanup (removes all data volumes)
+./docker.sh clean
+
+# Start/stop monitoring stack separately
+./docker.sh monitoring start
+./docker.sh monitoring stop
+```
+
+---
+
+## 💻 Option 2: Local Development Setup
+
+For active development with hot-reloading and direct debugging.
+
+### 1. Clone Repository
+
+```bash
+git clone https://github.com/YOUR_USERNAME/Agentic-Trading-Platform-Pathway.git
+cd Agentic-Trading-Platform-Pathway
+```
+
+### 2. Install Dependencies
+
+```bash
+# Install Node.js dependencies
 pnpm install
 
-# Set up Python environments
-pyenv install 3.10.14
-pyenv local 3.10.14
-```
-
-### 2. Start Infrastructure
-
-```bash
-# Start Kafka (required for event streaming)
-./kafka.sh
-
-# Start PostgreSQL and Redis (via Docker Compose)
-docker-compose up -d postgres redis
-```
-
-The `kafka.sh` script launches Apache Kafka 3.8.0 in KRaft mode (no ZooKeeper) on port 9092. See the [Kafka Management](#kafka-management) section for details.
-
-### 3. Configure Environment
-
-Create `.env` files in each service directory with required credentials:
-
-```bash
-# Database connections, API keys, broker credentials
-# See individual service READMEs for complete configuration
-```
-
-## 📋 Service Configuration
-
-### Portfolio Server (`apps/portfolio-server`)
-
-**Technology Stack**: FastAPI, Pathway, Prisma, Celery, Kafka
-
-```bash
-cd apps/portfolio-server
-
-# Install dependencies
+# Install Python dependencies (recommended: use virtualenv)
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
-# Database setup
-prisma db push && prisma generate
-
-# Start API server
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
-
-# Start Celery workers
-celery -A celery_app:celery_app worker -l info
-
-# Start pipeline scheduler
-celery -A celery_app:celery_app beat -l info
+# Install quant-stream library
+cd quant-stream
+pip install -e .
+cd ..
 ```
 
-**Key Features**:
-- Real-time NSE filings processing
-- Automated trade execution with TP/SL orders
-- Portfolio risk monitoring
-- Kafka event streaming
+### 3. Setup Infrastructure
 
-### Auth Server (`apps/auth_server`)
-
-**Technology Stack**: Express.js, Prisma, BullMQ, SendGrid
+Run the setup script to initialize Kafka and databases:
 
 ```bash
-# Install and setup
-pnpm --filter auth_server install
-pnpm --filter auth_server prisma:migrate
-pnpm --filter auth_server prisma:generate
+# Setup all infrastructure (Kafka, PostgreSQL, Redis, Monitoring)
+./setup.sh all
 
-# Start development server
-pnpm --filter auth_server dev
-
-# Start email worker
-pnpm --filter auth_server tsx workers/emailWorker.ts
+# Or setup individual components
+./setup.sh kafka      # Start Kafka only
+./setup.sh postgres   # Start PostgreSQL only
+./setup.sh redis      # Start Redis only
+./setup.sh monitoring # Start Prometheus, Grafana, Loki
 ```
 
-**Key Features**:
-- User authentication & authorization
-- Subscription management
-- Email notifications & templates
-- API rate limiting
-
-### Frontend (`apps/frontend`)
-
-**Technology Stack**: Next.js, TypeScript, Tailwind CSS
+### 4. Setup PostgreSQL with Docker
 
 ```bash
-# Install and start
-pnpm --filter frontend install
-pnpm --filter frontend dev  # → http://localhost:3000
+# Start PostgreSQL containers
+docker-compose up -d postgres portfolio_postgres
+
+# Verify databases are running
+docker ps | grep postgres
 ```
 
-**Key Features**:
-- Real-time portfolio analytics
-- Trading signal visualization
-- Administrative controls
-- Responsive design
+**Database URLs:**
+- Auth DB: `postgresql://auth_user:auth_password@localhost:5432/auth_db`
+- Portfolio DB: `postgresql://portfolio_user:portfolio_password@localhost:5434/portfolio_db`
+
+### 5. Configure Environment Variables
+
+Create `.env` files in each service directory:
+
+#### Auth Server (`apps/auth_server/.env`)
+```env
+NODE_ENV=development
+PORT=4000
+DATABASE_URL=postgresql://auth_user:auth_password@localhost:5432/auth_db
+SHADOW_DATABASE_URL=postgresql://auth_user:auth_password@localhost:5432/auth_db_shadow
+JWT_SECRET_ACCESS=your-secret-access-key
+JWT_SECRET_REFRESH=your-secret-refresh-key
+JWT_SECRET_EMAIL=your-secret-email-key
+INTERNAL_SERVICE_SECRET=your-internal-secret
+CLIENT_URL=http://localhost:3000
+AUTH_SERVER_URL=http://localhost:4000
+SENDGRID_API_KEY=your-sendgrid-key
+SENDER_EMAIL_ADDRESS=your-sender-email
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_URL=redis://localhost:6379
+```
+
+#### Portfolio Server (`apps/portfolio-server/.env`)
+```env
+PORT=8000
+DATABASE_URL=postgresql://portfolio_user:portfolio_password@localhost:5434/portfolio_db
+INTERNAL_SERVICE_SECRET=your-internal-secret
+GEMINI_API_KEY=your-gemini-api-key
+NEWSAPI_KEY=your-newsapi-key
+REDIS_HOST=localhost
+REDIS_PORT=6381
+CELERY_BROKER_URL=redis://localhost:6381/0
+CELERY_RESULT_BACKEND=redis://localhost:6381/1
+KAFKA_BOOTSTRAP_SERVERS=localhost:9092
+MARKET_DATA_PROVIDER=angelone
+ANGEL_ONE_API_KEY=your-angelone-key
+ANGEL_ONE_CLIENT_CODE=your-client-code
+ANGEL_ONE_PASSWORD=your-password
+ANGEL_ONE_TOTP_SECRET=your-totp-secret
+```
+
+#### Frontend (`apps/frontend/.env`)
+```env
+NEXT_PUBLIC_AUTH_SERVER_URL=http://localhost:4000
+NEXT_PUBLIC_PORTFOLIO_SERVER_URL=http://localhost:8000
+NEXT_PUBLIC_KAFKA_BOOTSTRAP_SERVERS=localhost:9092
+```
+
+#### AlphaCopilot Server (`apps/alphacopilot-server/.env`)
+```env
+PORT=8069
+HOST=0.0.0.0
+DATABASE_URL=postgresql://portfolio_user:portfolio_password@localhost:5434/portfolio_db
+REDIS_URL=redis://localhost:6381
+CELERY_BROKER_URL=redis://localhost:6381/0
+CELERY_RESULT_BACKEND=redis://localhost:6381/1
+MLFLOW_TRACKING_URI=./mlruns
+INTERNAL_SERVICE_SECRET=your-internal-secret
+```
+
+### 6. Run Database Migrations
+
+```bash
+# Auth Server (uses shared Prisma schema)
+cd apps/auth_server
+pnpm prisma:generate
+pnpm prisma:migrate
+cd ../..
+
+# Portfolio Server
+cd apps/portfolio-server
+prisma generate
+prisma db push
+cd ../..
+
+### 7. Start Services
+
+Open multiple terminal windows/tabs:
+
+#### Terminal 1: Celery Workers
+```bash
+pnpm celery
+```
+
+This starts all Celery workers:
+- Trading agent worker
+- NSE filings worker
+- News sentiment worker
+- Low-risk alerts worker
+- Portfolio allocation worker
+- Market data worker
+- General worker
+- Streaming risk monitor
+- Regime detection worker
+- Celery beat scheduler
+- Order execution worker
+
+#### Terminal 2: Development Servers
+```bash
+pnpm dev
+```
+
+This starts:
+- Frontend (Next.js) on port 3000
+- Auth Server (Express) on port 4000
+- Portfolio Server (FastAPI) on port 8000
+- Notification Server on port 8099
+- AlphaCopilot Server on port 8069
+
+#### Terminal 3: Prisma Studio (Optional)
+```bash
+pnpm studio
+```
+
+Opens Prisma Studio for database inspection:
+- Auth DB: http://localhost:5555
+- Portfolio DB: http://localhost:5556
+
+---
+
+## 📊 Monitoring & Observability
+
+The platform includes comprehensive monitoring with Prometheus, Grafana, and Loki.
+
+### Accessing Grafana
+
+1. Start monitoring stack:
+   ```bash
+   ./docker.sh monitoring start
+   # Or with ./setup.sh
+   ./setup.sh monitoring
+   ```
+
+2. Access Grafana at http://localhost:3001
+   - Default credentials: `admin` / `admin`
+
+### Available Dashboards
+
+Our Grafana setup includes pre-configured dashboards for:
+
+#### 1. **Celery Workers Dashboard**
+- Task execution metrics (success/failure rates)
+- Queue lengths and processing times
+- Worker health and utilization
+- Task distribution across queues
+
+#### 2. **Portfolio Server Dashboard**
+- API request rates and latencies
+- Trade execution metrics (success/failure)
+- Position monitoring alerts
+- Database query performance
+- Python process metrics (memory, CPU)
+
+#### 3. **Auth Server Dashboard**
+- Authentication flow metrics
+- API endpoint performance
+- Session management statistics
+- Node.js runtime metrics (event loop lag, memory)
+
+#### 4. **AlphaCopilot Dashboard**
+- Backtest execution metrics
+- Hypothesis generation rates
+- Model training statistics
+- Resource utilization
+
+#### 5. **Notification Server Dashboard**
+- Kafka consumption rates
+- Redis pub/sub metrics
+- Notification delivery statistics
+
+#### 6. **Trading KPIs Dashboard**
+- Real-time P&L tracking
+- Win rate and Sharpe ratios
+- Position distribution
+- Risk metrics and drawdowns
+
+### Prometheus Metrics
+
+Access raw metrics at:
+- Portfolio Server: http://localhost:8000/metrics
+- Auth Server: http://localhost:4000/metrics
+- AlphaCopilot Server: http://localhost:8069/metrics
+- Notification Server: http://localhost:9201/metrics
+- Celery Workers: http://localhost:9808/metrics
+- Prometheus UI: http://localhost:9090
+
+---
 
 ## 🔧 Development Workflow
 
-### Kafka Management
-
-The platform uses Apache Kafka for event-driven communication between microservices. A convenience script (`kafka.sh`) is provided to launch Kafka locally using Docker with KRaft mode (no ZooKeeper required).
-
-#### Starting Kafka
+### Kafka Topic Management
 
 ```bash
-# Start Kafka container (Apache Kafka 3.8.0 in KRaft mode)
-./kafka.sh
-```
-
-**What the script does**:
-- Pulls the official Apache Kafka 3.8.0 Docker image
-- Removes any existing `pathway-kafka` container
-- Starts Kafka on `localhost:9092` with auto-topic creation enabled
-- Uses KRaft consensus protocol (eliminates ZooKeeper dependency)
-- Configures single-node cluster suitable for local development
-
-#### Managing Kafka
-
-```bash
-# Monitor Kafka logs
-docker logs -f pathway-kafka
-
 # List all topics
-docker exec pathway-kafka kafka-topics.sh --bootstrap-server localhost:9092 --list
+docker exec pathway-kafka kafka-topics.sh \
+  --bootstrap-server localhost:9092 --list
 
-# Describe a specific topic
-docker exec pathway-kafka kafka-topics.sh --bootstrap-server localhost:9092 --describe --topic nse_pipeline_trade_logs
+# View messages from a topic
+docker exec pathway-kafka kafka-console-consumer.sh \
+  --bootstrap-server localhost:9092 \
+  --topic nse_pipeline_trade_logs \
+  --from-beginning
 
-# Consume messages from a topic (for debugging)
-docker exec pathway-kafka kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic nse_pipeline_trade_logs --from-beginning
+# Key topics:
+# - nse_pipeline_trade_logs: Automated trade execution logs
+# - nse_filings_trading_signal: NSE filing sentiment signals
+# - news_pipeline_stock_recomendations: AI stock recommendations
+# - risk_agent_alerts: Portfolio risk alerts
 ```
 
-#### Key Kafka Topics
-
-| Topic | Purpose | Producer | Consumer |
-|-------|---------|----------|----------|
-| `nse_pipeline_trade_logs` | NSE automated trade execution events | Portfolio Server | Trade Workers, Analytics |
-| `nse_filings_trading_signal` | NSE filing sentiment signals | NSE Filings Pipeline | Portfolio Server |
-| `news_pipeline_stock_recomendations` | Stock recommendations from news | News Pipeline | Portfolio Server |
-| `news_pipeline_sentiment_articles` | News sentiment analysis | News Pipeline | Analytics |
-| `news_pipeline_sector_analysis` | Sector-level news analysis | News Pipeline | Analytics |
-| `risk_agent_alerts` | Portfolio risk alerts | Risk Monitor | Notification Service |
-
-**Monitoring Topics**: Use the `subscriber.sh` script to monitor any topic in real-time:
+### Running Tests
 
 ```bash
-# Monitor NSE trading signals
-./subscriber.sh --channel nse_filings_trading_signal --from-beginning
+# Portfolio Server tests
+cd apps/portfolio-server
+pytest tests/ -v --cov
 
-# Monitor trade execution logs
-./subscriber.sh --channel nse_pipeline_trade_logs --from-beginning
+# Auth Server tests
+cd apps/auth_server
+pnpm test
 
-# Monitor news recommendations
-./subscriber.sh --channel news_pipeline_stock_recomendations --from-beginning
+# Frontend tests
+cd apps/frontend
+pnpm test
 ```
 
-### Database Migrations
+### Code Quality
 
 ```bash
-# Auth server migrations (schema located in shared/prisma/)
-pnpm --filter auth_server prisma:migrate
+# Format code
+pnpm format
 
-# Portfolio server schema updates
-cd apps/portfolio-server && prisma db push
+# Lint all projects
+pnpm lint
+
+# Type checking
+pnpm check-types
 ```
 
-## 🧪 Testing
+---
+
+## 🌐 Current Deployment
+
+The platform is currently deployed on a cloud VM for production use.
+
+### Production URLs
+
+**Note:** Access credentials will be provided separately.
+
+- **Frontend**: [URL_TO_BE_ADDED]
+- **API Gateway**: [URL_TO_BE_ADDED]
+- **Monitoring Dashboard**: [URL_TO_BE_ADDED]
+
+### Access Restrictions
+
+For testing and demonstration purposes, the platform currently has **restricted access** with three hardcoded user accounts. This limitation exists due to:
+
+- Limited availability of LLM API tokens
+- Controlled testing environment
+- Resource optimization
+
+**Production credentials will be provided separately to authorized users.**
+
+---
+
+## 🚢 Deployment Options
+
+### Docker Production Deployment
 
 ```bash
-# Run portfolio server tests (requires DATABASE_URL in .env)
-cd apps/portfolio-server && pytest tests/ -v
+# Build and push images to registry
+./build-and-push.sh
 
-# Run NSE automation demo in dry-run mode
-python tests/demo_nse_automation.py --dry-run
+# Deploy with production compose file
+./docker-prod.sh start
 ```
 
-See individual service READMEs for comprehensive testing documentation.
+### Kubernetes Deployment (Future Scope)
 
-## 📚 Documentation
+Complete Kubernetes manifests are available in the `devops/kubernetes/` directory for future production deployments:
 
-- **[Architecture Overview](docs/ARCHITECTURE.md)** - System design and data flows
-- **[NSE Automated Trading](docs/NSE_AUTOMATED_TRADING.md)** - Filings-driven trading stack
-- **[API Documentation](apps/portfolio-server/README.md)** - Portfolio service endpoints
-- **[Deployment Guide](devops/README.md)** - Kubernetes and cloud deployment
+- Deployment configurations for all services
+- Service mesh setup with Istio
+- Horizontal Pod Autoscaling (HPA)
+- Persistent volume claims for databases
+- ConfigMaps and Secrets management
+- Ingress configurations with TLS
+
+**Note:** Kubernetes deployment is planned for future scaling requirements. Current production deployment uses Docker Compose on cloud VMs.
+
+---
 
 ## 🔒 Security & Compliance
 
@@ -255,6 +521,9 @@ See individual service READMEs for comprehensive testing documentation.
 - **API Authentication**: JWT-based authentication with role-based access control
 - **Audit Logging**: Comprehensive logging of all trading activities
 - **Regulatory Compliance**: Built-in compliance checks for Indian market regulations
+- **Secret Management**: Environment-based configuration with secure secret storage
+
+---
 
 ## 🤝 Contributing
 
@@ -271,9 +540,13 @@ See individual service READMEs for comprehensive testing documentation.
 - **Documentation**: All public APIs must be documented
 - **Security**: Regular dependency updates and security audits
 
+---
+
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is proprietary and confidential. All rights reserved.
+
+---
 
 ## 🙏 Acknowledgments
 
@@ -284,4 +557,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**AgentInvest Platform** - Democratizing institutional-grade investment automation for wealth management teams worldwide.
+**Built with ❤️ for modern algorithmic trading**

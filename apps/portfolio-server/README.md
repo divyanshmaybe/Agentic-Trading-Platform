@@ -1,19 +1,115 @@
 # Portfolio Server
 
-FastAPI service that integrates the NSE pipeline and now leverages the shared PostgreSQL database via Prisma.
+FastAPI service powering the trading engine, risk management, and Pathway streaming pipelines.
 
-## Features
+## 🏗️ Architecture Overview
 
-- FastAPI server with shared utilities
-- Centralized PostgreSQL access through Prisma Client Python
-- Streaming market data via Pathway websocket connector and shared price cache
-- Trading engine with market, limit, stop, and take-profit order support
-- Celery worker for asynchronous execution of pending orders
-- NSE pipeline integration (dispatched to Celery worker automatically)
-- Health check endpoints and pipeline status monitoring
-- Structured error handling middleware
+The Portfolio Server is the core trading and risk management service that orchestrates:
 
-## Setup
+- **Pathway Streaming Pipelines**: Real-time NSE filings, news sentiment, and market regime analysis
+- **Trade Execution Engine**: Automated order placement with broker integration (Angel One)
+- **Risk Monitoring**: Real-time position monitoring with sub-second alert latency
+- **Portfolio Allocation**: AI-driven capital allocation across trading strategies
+- **Market Data Aggregation**: WebSocket-based real-time price feeds
+
+### Technology Stack
+
+| Component | Technology | Purpose |
+|-----------|------------|---------|
+| **API Framework** | FastAPI | High-performance async REST API |
+| **Streaming Engine** | Pathway | Real-time data pipeline processing |
+| **Task Queue** | Celery + Redis | Async job processing and scheduling |
+| **Database** | PostgreSQL + Prisma | Relational data with type-safe ORM |
+| **Caching** | Redis | Price cache and session storage |
+| **Event Bus** | Kafka | Inter-service event streaming |
+| **Monitoring** | Prometheus | Metrics collection and alerting |
+
+### Data Flow
+
+```
+External Data Sources                Portfolio Server                 Consumers
+─────────────────────              ──────────────────               ───────────
+                                   
+NSE Filings ─────┐                ┌──────────────┐                ┌──────────────┐
+News APIs ───────┼───Pathway──────▶│  Processing  │───Kafka────────▶│  Frontend    │
+Market Data ─────┘   Pipelines    │   Pipelines  │   Events       │  Dashboard   │
+                                   └──────────────┘                └──────────────┘
+                                          │                                │
+                                          ▼                                ▼
+REST API Calls ───────────────────▶ ┌──────────────┐             ┌──────────────┐
+(Portfolio/Trades)                  │   FastAPI    │─────────────▶│ Angel One    │
+                                   │   Endpoints  │   Orders      │   Broker     │
+                                   └──────────────┘             └──────────────┘
+                                          │
+                                          ▼
+                                   ┌──────────────┐
+                                   │  PostgreSQL  │
+                                   │   Database   │
+                                   └──────────────┘
+```
+
+## 🎯 Key Features
+
+### 1. Pathway Streaming Pipelines
+
+#### NSE Filings Sentiment Pipeline
+- Scrapes NSE/MCA regulatory filings every 60 seconds
+- LLM-based sentiment analysis (Gemini/Groq)
+- Generates trading signals with confidence scores
+- Publishes to Kafka topic: `nse_filings_trading_signal`
+
+#### News Sentiment Pipeline
+- Hourly news fetching from NewsAPI
+- Multi-source aggregation and deduplication
+- Sector-wise sentiment analysis
+- Stock recommendations published to Kafka
+
+#### Risk Agent Pipeline
+- Real-time position monitoring (<1s latency)
+- Stop-loss and take-profit threshold tracking
+- Immediate Kafka alerts on breach
+- Integrates with WebSocket price cache
+
+### 2. Trade Execution Engine
+
+**Order Types:**
+- Market orders (immediate execution)
+- Limit orders (price-conditional)
+- Stop-loss orders (risk management)
+- Take-profit orders (profit booking)
+
+**Broker Integration:**
+- Angel One API (primary)
+- Simulation mode for testing
+- Automatic position tracking
+
+### 3. Portfolio Allocation System
+
+**Allocation Triggers:**
+- API-triggered (immediate on portfolio creation)
+- Startup sweep (pending portfolios)
+- Scheduled rebalancing (daily at 5:00 AM)
+
+**Regime-Based Allocation:**
+- Bull market strategy allocation
+- Bear market hedging
+- Sideways market neutral strategies
+- Dynamic weight adjustment
+
+### 4. Real-Time Risk Monitoring
+
+**Streaming Risk Monitor** (Recommended):
+- <1 second alert latency
+- Continuous WebSocket-based monitoring
+- Symbol-based price fetching
+- Immediate Kafka alert publishing
+
+**Batch Risk Monitor** (Legacy):
+- 15-minute intervals via Celery Beat
+- Backward compatible for testing
+- Email + Kafka alerts
+
+## ⚙️ Setup
 
 ### Environment Variables
 
@@ -221,3 +317,157 @@ ANGELONE_TOTP_SECRET=your_totp_secret
 
 📖 **Full documentation**: `shared/py/MARKET_DATA_CONFIG.md`
 
+---
+
+## 🔄 Important Flows
+
+### Trade Execution Flow
+
+```
+1. Signal Generation (Pathway Pipeline)
+   └─▶ NSE filing detected → LLM sentiment analysis → Trading signal
+
+2. Signal Validation
+   └─▶ Confidence threshold check → Risk limits → Position sizing
+
+3. Order Creation
+   └─▶ Portfolio allocation → Order params (symbol, qty, type) → Trade queue
+
+4. Order Execution (Celery Worker)
+   └─▶ Broker API call → Order placement → Position update → Kafka log
+
+5. Position Monitoring (Streaming Risk Monitor)
+   └─▶ Price updates → Threshold checks → Alert generation (if needed)
+```
+
+### Portfolio Allocation Flow
+
+```
+1. Regime Detection
+   └─▶ Market indicators → Regime classification (Bull/Bear/Sideways)
+
+2. Strategy Selection
+   └─▶ User objectives → Risk profile → Regime → Strategy weights
+
+3. Capital Allocation
+   └─▶ Total capital → Strategy weights → Per-strategy allocation
+
+4. Trading Agent Assignment
+   └─▶ Allocated capital → Agent creation → Symbol assignment
+
+5. Rebalancing Schedule
+   └─▶ Frequency setting → Next rebalance date → Celery Beat task
+```
+
+### Risk Alert Flow
+
+```
+1. Price Update (WebSocket)
+   └─▶ Real-time price → Pathway cache → Risk monitor fetch
+
+2. Threshold Evaluation
+   └─▶ Current price vs stop-loss/take-profit → Breach detection
+
+3. Alert Generation
+   └─▶ Alert creation → Kafka publish → Database log
+
+4. Notification Delivery
+   └─▶ Notification Server → Redis pub/sub → Frontend real-time update
+```
+
+---
+
+## 📊 Monitoring & Metrics
+
+The service exposes Prometheus metrics at `/metrics`:
+
+**Key Metrics:**
+- `http_requests_total` - Total API requests by endpoint
+- `http_request_duration_seconds` - Request latency histogram
+- `trade_executions_total` - Trade count by status (success/failure)
+- `portfolio_positions_total` - Active positions count
+- `risk_alerts_total` - Risk alerts by severity
+- `celery_task_duration_seconds` - Task execution time
+
+**Health Checks:**
+- `GET /health` - Service health status
+- `GET /api/pipeline/status` - Pipeline execution status
+
+**Grafana Dashboard:**
+Access pre-configured dashboard at http://localhost:3001 (Portfolio Server Dashboard)
+
+---
+
+## 🧪 Testing
+
+```bash
+# Run all tests
+pytest tests/ -v
+
+# Run with coverage
+pytest tests/ --cov --cov-report=html
+
+# Run specific test file
+pytest tests/test_trade_execution.py -v
+
+# Run integration tests
+pytest tests/integration/ -v
+```
+
+---
+
+## 🔐 Security Considerations
+
+1. **API Authentication**: All endpoints require JWT validation via Auth Server
+2. **Broker Credentials**: Stored securely in environment variables
+3. **Database Access**: Connection pooling with SSL enabled
+4. **Kafka Security**: SASL authentication for production
+5. **Rate Limiting**: Implemented at API gateway level
+
+---
+
+## 🐛 Troubleshooting
+
+### Pipeline Not Running
+```bash
+# Check Celery worker status
+pnpm celery
+
+# View pipeline logs
+docker logs portfolio_celery_nse -f
+
+# Check Kafka topics
+docker exec pathway-kafka kafka-topics.sh --list --bootstrap-server localhost:9092
+```
+
+### Trade Execution Failures
+```bash
+# Check broker connection
+# View trade execution logs
+docker logs portfolio_celery_trading -f
+
+# Verify market data cache
+redis-cli -p 6381 keys "price:*"
+```
+
+### Database Connection Issues
+```bash
+# Test database connection
+psql -h localhost -p 5434 -U portfolio_user -d portfolio_db
+
+# View connection pool stats
+curl http://localhost:8000/metrics | grep postgres
+```
+
+---
+
+## 📚 Related Documentation
+
+- [Architecture Overview](../../docs/ARCHITECTURE.md)
+- [NSE Automated Trading](../../docs/NSE_AUTOMATED_TRADING.md)
+- [Market Data Configuration](../../shared/py/MARKET_DATA_CONFIG.md)
+- [API Documentation](http://localhost:8000/docs) (when server is running)
+
+---
+
+**Built with ❤️ for algorithmic trading**
