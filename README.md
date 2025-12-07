@@ -8,6 +8,17 @@
 
 An institutional-grade multi-agent investment platform that orchestrates autonomous financial agents for real-time portfolio automation. Built with Pathway's streaming data processing framework, the platform synthesizes regulatory filings, market microstructure, and quantitative signals through a coordinated ecosystem of specialized agents.
 
+**Production URLs**
+- Frontend: https://agentinvest.space
+- Grafana: https://grafana.agentinvest.space
+- Prometheus: https://prometheus.agentinvest.space
+- Flower (Celery): https://flower.agentinvest.space
+
+**Demo testing accounts** (restricted; for QA only)
+- user1@demo.com / User1DemoPassword1@3$
+- user2@demo.com / User2DemoPassword##2@!
+- user3@demo.com / User3!!Pass#$%#word
+
 ## 🏗️ Architecture Overview
 
 The platform implements a hierarchical agent architecture with specialized components:
@@ -489,9 +500,11 @@ The platform is currently deployed on a cloud VM for production use.
 
 **Note:** Access credentials and endpoints are provided separately to authorized users.
 
-- **Frontend Application**: Accessible via secure production URL
-- **API Gateway**: Protected by JWT authentication
-- **Monitoring Dashboard**: Restricted to admin access
+- **Frontend Application**: https://agentinvest.space
+- **API Gateway**: Protected by JWT authentication (same domain)
+- **Monitoring Dashboard**: https://grafana.agentinvest.space
+- **Prometheus**: https://prometheus.agentinvest.space
+- **Celery/Flower**: https://flower.agentinvest.space
 
 ### Access Restrictions
 
@@ -501,6 +514,11 @@ For testing and demonstration purposes, the platform currently has **restricted 
 - Limited availability of LLM API tokens
 - Controlled testing environment
 - Resource optimization
+
+**Testing accounts (demo only):**
+- user1@demo.com / User1DemoPassword1@3$
+- user2@demo.com / User2DemoPassword##2@!
+- user3@demo.com / User3!!Pass#$%#word
 
 **Production credentials will be provided separately to authorized users.**
 
