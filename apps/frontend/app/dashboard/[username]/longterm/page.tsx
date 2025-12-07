@@ -368,7 +368,7 @@ export default function LongTermPage() {
 
 				<section className="grid grid-cols-1 gap-6 lg:grid-cols-2">
 					<AgentOverview data={agentData} loading={agentLoading} isAllocating={isAllocating} />
-					<AgentTradesTable trades={agentData?.recent_trades ?? []} loading={agentLoading} />
+					<AgentTradesTable trades={agentData?.recent_trades ?? []} loading={agentLoading} agentId={agentData?.agent_id} />
 				</section>
 
 				<section>

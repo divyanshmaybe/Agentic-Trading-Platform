@@ -84,6 +84,7 @@ async def get_recent_trades(
     side: Optional[str] = Query(None, description="buy or sell"),
     order_type: Optional[str] = Query(None, alias="orderType"),
     status_filter: Optional[str] = Query(None, alias="status"),
+    agent_id: Optional[str] = Query(None, description="Filter by agent ID"),
 ) -> TradeListResponse:
     return await controller.list_recent_trades(
         request_user,
@@ -93,6 +94,7 @@ async def get_recent_trades(
         side=side,
         order_type=order_type,
         status_filter=status_filter,
+        agent_id=agent_id,
     )
 
 

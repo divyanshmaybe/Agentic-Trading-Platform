@@ -365,6 +365,7 @@ export async function getRecentTrades(
   side?: string,
   orderType?: string,
   status?: string,
+  agentId?: string,
   accessToken?: string,
 ): Promise<RecentTradesResponse> {
   const token = resolveAccessToken(accessToken)
@@ -378,6 +379,7 @@ export async function getRecentTrades(
   if (side) params.append("side", side)
   if (orderType) params.append("orderType", orderType)
   if (status) params.append("status", status)
+  if (agentId) params.append("agent_id", agentId)
 
   return request<RecentTradesResponse>(`/api/portfolio/recent-trades?${params}`, {
     method: "GET",

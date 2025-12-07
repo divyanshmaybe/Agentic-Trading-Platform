@@ -46,6 +46,7 @@ interface AgentTradesTableProps {
   trades?: AgentTrade[]
   loading?: boolean
   agentType?: string
+  agentId?: string
   mode?: "simple" | "advanced"
 }
 
@@ -259,7 +260,7 @@ function SimpleTradesTable({ trades, loading }: { trades: AgentTrade[]; loading:
 // =====================================================
 // ADVANCED TABLE - Used for alphas page with pagination
 // =====================================================
-function AdvancedTradesTable({ initialTrades, initialLoading }: { initialTrades?: AgentTrade[]; initialLoading?: boolean }) {
+function AdvancedTradesTable({ initialTrades, initialLoading, agentId }: { initialTrades?: AgentTrade[]; initialLoading?: boolean; agentId?: string }) {
   const [trades, setTrades] = useState<AgentTrade[]>([])
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(1)
@@ -275,7 +276,7 @@ function AdvancedTradesTable({ initialTrades, initialLoading }: { initialTrades?
   const fetchTrades = useCallback(async (targetPage: number, targetPageSize: number) => {
     setLoading(true)
     try {
-      const response = await getRecentTrades(targetPage, targetPageSize)
+      const response = await getRecentTrades(targetPage, targetPageSize, undefined, undefined, undefined, undefined, agentId)
       setTrades(response.items as unknown as AgentTrade[])
       setTotal(response.total)
     } catch (error) {
@@ -283,7 +284,7 @@ function AdvancedTradesTable({ initialTrades, initialLoading }: { initialTrades?
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [agentId])
 
   // Fetch current prices for symbols in trades
   const fetchCurrentPrices = useCallback(async (tradesList: AgentTrade[]) => {
@@ -724,9 +725,9 @@ function AdvancedTradesTable({ initialTrades, initialLoading }: { initialTrades?
 // =====================================================
 // MAIN EXPORT - Switches between simple and advanced modes
 // =====================================================
-export function AgentTradesTable({ trades = [], loading = false, agentType, mode = "simple" }: AgentTradesTableProps) {
+export function AgentTradesTable({ trades = [], loading = false, agentType, agentId, mode = "simple" }: AgentTradesTableProps) {
   if (mode === "advanced") {
-    return <AdvancedTradesTable initialTrades={trades} initialLoading={loading} />
+    return <AdvancedTradesTable initialTrades={trades} initialLoading={loading} agentId={agentId} />
   }
   
   return <SimpleTradesTable trades={trades} loading={loading} />

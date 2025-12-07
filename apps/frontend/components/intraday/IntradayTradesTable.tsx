@@ -21,9 +21,10 @@ const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const
 
 interface IntradayTradesTableProps {
   className?: string
+  agentId?: string
 }
 
-export function IntradayTradesTable({ className }: IntradayTradesTableProps) {
+export function IntradayTradesTable({ className, agentId }: IntradayTradesTableProps) {
   const [trades, setTrades] = useState<Trade[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -59,7 +60,8 @@ export function IntradayTradesTable({ className }: IntradayTradesTableProps) {
         appliedFilters.symbol || undefined,
         appliedFilters.side !== "all" ? appliedFilters.side : undefined,
         appliedFilters.orderType !== "all" ? appliedFilters.orderType : undefined,
-        appliedFilters.status !== "all" ? appliedFilters.status : undefined
+        appliedFilters.status !== "all" ? appliedFilters.status : undefined,
+        agentId
       )
       
       // Filter out pending trades on client side if showPending is false
@@ -105,7 +107,7 @@ export function IntradayTradesTable({ className }: IntradayTradesTableProps) {
     } finally {
       setLoading(false)
     }
-  }, [page, pageSize, appliedFilters])
+  }, [page, pageSize, appliedFilters, agentId])
 
   useEffect(() => {
     fetchTrades()

@@ -1571,7 +1571,7 @@ export default function AlphasPage() {
             <PortfolioSnapshots agentType="alpha" title="Alpha Portfolio Snapshot History" />
 
             {/* Trades Table */}
-            <AgentTradesTable trades={alphaData?.recent_trades || []} loading={alphaLoading} mode="advanced" />
+            <AgentTradesTable trades={alphaData?.recent_trades || []} loading={alphaLoading} mode="advanced" agentId={alphaData?.agent_id} />
 
             {/* Mobile Chat */}
             <div className="lg:hidden">

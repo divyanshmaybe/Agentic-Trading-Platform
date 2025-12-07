@@ -343,6 +343,7 @@ class PortfolioController:
         side: Optional[str],
         order_type: Optional[str],
         status_filter: Optional[str],
+        agent_id: Optional[str] = None,
         target_user_id: Optional[str] = None,
     ) -> TradeListResponse:
         user_id = target_user_id or request_user.get("id")
@@ -357,6 +358,8 @@ class PortfolioController:
 
         where: Dict[str, object] = {"portfolio_id": portfolio.id}
 
+        if agent_id:
+            where["agent_id"] = {"equals": agent_id}
         if symbol:
             where["symbol"] = {"equals": symbol, "mode": "insensitive"}
         if side:

@@ -118,7 +118,7 @@ export default function IntradayCommandCenterPage() {
         </section>
 
         <section>
-          <IntradayTradesTable />
+          <IntradayTradesTable agentId={agentData?.agent_id} />
         </section>
 
         <section>
