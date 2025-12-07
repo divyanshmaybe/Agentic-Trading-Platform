@@ -340,9 +340,14 @@ async def generate_signals_for_alpha_core(
         
         for rank, (_, row) in enumerate(buy_candidates.iterrows(), 1):
             symbol = row['symbol']
-            # Use live price if available, otherwise fall back to historical close
-            current_price = live_prices.get(symbol, float(row.get('close', 100)))
-            if current_price <= 0:
+            # Use live price if available; otherwise require a valid close price and skip if missing
+            current_price = live_prices.get(symbol)
+            if current_price is None:
+                try:
+                    current_price = float(row.get('close'))
+                except (TypeError, ValueError):
+                    continue
+            if current_price is None or current_price <= 0:
                 continue
             
             quantity = int(allocation_per_stock / current_price)

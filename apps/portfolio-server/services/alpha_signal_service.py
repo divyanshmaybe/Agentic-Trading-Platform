@@ -603,7 +603,10 @@ class AlphaSignalService:
         for _, row in ranked_df.iterrows():
             symbol = row['symbol']
             score = row.get('score', 0.5)
-            close_price = row.get('close', 100.0)
+            try:
+                close_price = float(row.get('close'))
+            except (TypeError, ValueError):
+                continue
             
             # Skip if close price is invalid
             if close_price <= 0:
