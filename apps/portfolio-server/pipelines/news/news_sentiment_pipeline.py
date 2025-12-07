@@ -622,7 +622,6 @@ def execute_news_sentiment_pipeline(
         log.info("Computing technical indicators for Nifty 500 stocks using AngelOne...")
         
         # Load Nifty 500 stock list from CSV
-        # Path: /home/manav/dev_ws/Pathway-Inter-IIT/scripts/ind_nifty500listbrief.csv
         csv_path = Path(__file__).resolve().parents[4] / "scripts" / "ind_nifty500listbrief.csv"
         if csv_path.exists():
             try:
