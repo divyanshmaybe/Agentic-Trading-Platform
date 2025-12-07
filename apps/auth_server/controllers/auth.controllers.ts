@@ -13,6 +13,7 @@ import { AuthenticatedRequest } from "../../../types/auth";
 import { prisma } from "../lib/prisma";
 import { OAuth2Client } from "google-auth-library";
 import { generateUsername } from "../utils/username";
+import { authConfig } from "../config";
 
 export const registerOrganization = async (
   req: Request,
@@ -20,6 +21,13 @@ export const registerOrganization = async (
   next: NextFunction
 ) => {
   try {
+    // Check if signup is allowed
+    if (!authConfig.ALLOW_SIGNUP) {
+      return next(
+        new ErrorHandling("The admin has blocked further signups", 403)
+      );
+    }
+
     const {
       name,
       email,
