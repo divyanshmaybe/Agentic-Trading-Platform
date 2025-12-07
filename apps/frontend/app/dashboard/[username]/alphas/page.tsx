@@ -614,11 +614,13 @@ function DeployAlphaModal({
   onOpenChange,
   run,
   onDeploy,
+  alphaData,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   run: AlphaCopilotRun | null
   onDeploy: (name: string, amount: number) => Promise<void>
+  alphaData: ReturnType<typeof useAgentDashboard>["data"]
 }) {
   const [name, setName] = useState("")
   const [amount, setAmount] = useState(100000)
@@ -635,6 +637,13 @@ function DeployAlphaModal({
 
   const handleDeploy = async () => {
     if (!name.trim() || amount <= 0) return
+
+    // Validate that allocated capital is less than or equal to available cash
+    const availableCash = parseFloat(alphaData?.allocation?.available_cash || "0")
+    if (amount > availableCash) {
+      setError(`Allocated capital (₹${amount.toLocaleString()}) cannot exceed available cash (₹${availableCash.toLocaleString()})`)
+      return
+    }
 
     setDeploying(true)
     setError(null)
@@ -704,6 +713,18 @@ function DeployAlphaModal({
                 />
               </div>
 
+              {/* Available Cash Display */}
+              <div className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 p-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs uppercase tracking-wide text-white/50">
+                    Available Cash
+                  </span>
+                  <span className="text-sm font-semibold text-cyan-300">
+                    ₹{parseFloat(alphaData?.allocation?.available_cash || "0").toLocaleString()}
+                  </span>
+                </div>
+              </div>
+
               <div className="space-y-1.5">
                 <label className="text-xs uppercase tracking-wide text-white/50">
                   Allocated Capital (₹)
@@ -714,6 +735,9 @@ function DeployAlphaModal({
                   onChange={(e) => setAmount(parseInt(e.target.value) || 0)}
                   className="w-full rounded-xl border border-white/15 bg-black/40 px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
                 />
+                <p className="text-xs text-white/50">
+                  Must be less than or equal to available cash
+                </p>
               </div>
 
               {error && (
@@ -1600,6 +1624,7 @@ export default function AlphasPage() {
         onOpenChange={setDeployModalOpen}
         run={selectedRun}
         onDeploy={handleDeployAlpha}
+        alphaData={alphaData}
       />
 
       <ResultsModal
