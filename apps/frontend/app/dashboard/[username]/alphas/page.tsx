@@ -1553,7 +1553,6 @@ export default function AlphasPage() {
             </div>
 
             {/* Performance Graph */}
-            <AlphaGraph />
 
             {/* Portfolio Snapshots */}
             <PortfolioSnapshots agentType="alpha" title="Alpha Portfolio Snapshot History" />
