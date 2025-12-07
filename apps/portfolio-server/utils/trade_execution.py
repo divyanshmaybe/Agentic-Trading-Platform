@@ -269,23 +269,15 @@ def prepare_trade_execution_payloads(
             else:
                 logger.warning("⚠️ reference_price NOT found in signal metadata. Keys: %s", list(signal_meta.keys()))
             
-            # If still no price, use a reasonable default for testing ONLY in demo mode
+            # If still no price, skip signal instead of using synthetic defaults
             if reference_price <= 0:
                 demo_mode = os.getenv("DEMO_MODE", "false").lower() in {"1", "true", "yes"}
-                if demo_mode:
-                    logger.warning(
-                        "No price available for %s, using default price 100.0 for testing (DEMO_MODE enabled). "
-                        "This should be replaced with actual market data in production.",
-                        signal.symbol
-                    )
-                    reference_price = 100.0  # Default fallback price for testing
-                else:
-                    logger.error(
-                        "❌ No price available for %s and DEMO_MODE is disabled. Skipping this signal. "
-                        "Check market data service connectivity.",
-                        signal.symbol
-                    )
-                    continue  # Skip this signal entirely in production if no price available
+                logger.error(
+                    "❌ No price available for %s (DEMO_MODE=%s). Skipping signal; ensure market data is reachable.",
+                    signal.symbol,
+                    demo_mode,
+                )
+                continue  # Never execute with a synthetic placeholder price
 
         for portfolio in eligible_portfolios:
             logger.info(

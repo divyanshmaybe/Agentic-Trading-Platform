@@ -1625,7 +1625,12 @@ async def generate_signals_for_alpha(
             expires_at = expires_at + timedelta(days=1)
         
         for rank, (_, row) in enumerate(buy_candidates.iterrows(), 1):
-            close_price = float(row.get('close', 100))
+            # Require a real close price; skip if missing/invalid instead of using synthetic defaults
+            close_val = row.get('close')
+            try:
+                close_price = float(close_val)
+            except (TypeError, ValueError):
+                continue
             if close_price <= 0:
                 continue
             
