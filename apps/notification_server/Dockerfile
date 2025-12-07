@@ -25,7 +25,7 @@ RUN pnpm fetch --filter notification_server...
 
 FROM pnpm-base AS builder
 
-RUN apk add --no-cache openssl curl
+RUN apk update && apk add --no-cache openssl3 openssl3-dev curl
 
 COPY --from=deps /pnpm /pnpm
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.json turbo.json ./
