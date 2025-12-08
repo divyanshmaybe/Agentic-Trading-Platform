@@ -931,9 +931,9 @@ def allocate_for_objective_task(
                     )
                     weights = default_user_inputs.get("allocation_strategy", {
                         "low_risk": 0.6,
-                        "high_risk": 0.2,
-                        "alpha": 0.2,
-                        "liquid": 0.0
+                        "high_risk": 0.15,
+                        "alpha": 0.15,
+                        "liquid": 0.1
                     })
                     logger.info(f"Using default weights from transcript.py: {weights}")
                 

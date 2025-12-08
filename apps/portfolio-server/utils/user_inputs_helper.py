@@ -39,9 +39,9 @@ def create_user_inputs(
     # Default allocation strategy from transcript.py (single source of truth)
     defaults_from_transcript = {
         "low_risk": 0.6,
-        "high_risk": 0.2,
-        "alpha": 0.2,
-        "liquid": 0.0
+        "high_risk": 0.15,
+        "alpha": 0.15,
+        "liquid": 0.1
     }
     expected_segments = {"low_risk", "high_risk", "alpha", "liquid"}
     
