@@ -46,6 +46,7 @@ try:
         tracer_provider = register(
             project_name="stock-selection-pipeline",
             endpoint=collector_endpoint,
+            auto_instrument=True,
         )
         print(f"✅ Phoenix tracing initialized for stock selection: {collector_endpoint}")
     else:

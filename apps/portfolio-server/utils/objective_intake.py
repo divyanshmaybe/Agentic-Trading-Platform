@@ -19,6 +19,25 @@ import yaml
 from jinja2 import Environment, StrictUndefined
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
+# Initialize Phoenix tracing for objective intake
+try:
+    from phoenix.otel import register
+    
+    collector_endpoint = os.getenv("COLLECTOR_ENDPOINT")
+    if collector_endpoint:
+        tracer_provider = register(
+            project_name="objective-intake",
+            endpoint=collector_endpoint,
+            auto_instrument=True,
+        )
+        print(f"✅ Phoenix tracing initialized for objective intake: {collector_endpoint}")
+    else:
+        print("⚠️ COLLECTOR_ENDPOINT not set, Phoenix tracing disabled for objective intake")
+except ImportError:
+    print("⚠️ Phoenix not installed, tracing disabled for objective intake")
+except Exception as e:
+    print(f"⚠️ Failed to initialize Phoenix tracing for objective intake: {e}")
+
 logger = logging.getLogger(__name__)
 
 # -----------------------------------------------------------------------------

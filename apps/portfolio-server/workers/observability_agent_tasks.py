@@ -28,7 +28,24 @@ import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Optional, Tuple
+
+# Initialize Phoenix tracing for observability agent
+try:
+    from phoenix.otel import register
+    
+    collector_endpoint = os.getenv("COLLECTOR_ENDPOINT")
+    if collector_endpoint:
+        tracer_provider = register(
+            project_name="observability-agent",
+            endpoint=collector_endpoint,
+            auto_instrument=True,
+        )
+        print(f"✅ Phoenix tracing initialized for observability agent: {collector_endpoint}")
+except ImportError:
+    pass
+except Exception:
+    pass
 
 import httpx
 from celery.utils.log import get_task_logger

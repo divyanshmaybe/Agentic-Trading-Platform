@@ -466,6 +466,31 @@ class PortfolioManager:
         except ValueError:
             regime = MarketRegime.SIDEWAYS
 
+        # Check if this is the first run (no historical data)
+        # Skip optimization and use user's allocation preferences directly
+        has_historical_data = any(len(self.monitor.history[seg]) > 0 for seg in self.segments)
+        
+        if not has_historical_data:
+            # First run: No historical performance data exists
+            # Use user's allocation preferences (current_weights) as-is
+            print(f"DEBUG: First run detected (no historical data), using user allocation preferences")
+            user_weights = self.current_weights.copy()
+            
+            # Normalize to ensure sum = 1.0
+            user_weights = user_weights / user_weights.sum()
+            
+            return OptimizationResult(
+                weights={seg: float(user_weights[i]) for i, seg in enumerate(self.segments)},
+                expected_return=0.0,  # Unknown until we have data
+                expected_risk=0.0,     # Unknown until we have data
+                objective_value=0.0,
+                drift_from_previous={seg: 0.0 for seg in self.segments},  # No drift on first run
+                success=True,
+                message=f"Initial allocation using user preferences (no historical data available)",
+                regime=regime.value,
+                progress_ratio=0.0
+            )
+
         # Get metrics
         if use_rolling_metrics and self.monitor.time_semi_annual >= 2:
             metrics = self.monitor.get_rolling_metrics(lookback_semi_annual=lookback_semi_annual)

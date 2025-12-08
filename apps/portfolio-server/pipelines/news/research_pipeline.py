@@ -18,6 +18,23 @@ import pathway as pw
 from langchain_core.messages import HumanMessage, SystemMessage
 import pandas as pd
 
+# Initialize Phoenix tracing for news research pipeline
+try:
+    from phoenix.otel import register
+    
+    collector_endpoint = os.getenv("COLLECTOR_ENDPOINT")
+    if collector_endpoint:
+        tracer_provider = register(
+            project_name="news-research-pipeline",
+            endpoint=collector_endpoint,
+            auto_instrument=True,
+        )
+        print(f"✅ Phoenix tracing initialized for news research: {collector_endpoint}")
+except ImportError:
+    pass
+except Exception:
+    pass
+
 try:
     from market_data import get_market_data_service  # type: ignore
 except ImportError:  # pragma: no cover - defensive

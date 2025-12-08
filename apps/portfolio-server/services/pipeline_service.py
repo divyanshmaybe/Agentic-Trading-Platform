@@ -828,6 +828,16 @@ class PipelineService:
 
         next_rebalance_at = self._compute_next_rebalance_at(portfolio, as_of)
 
+        # Determine if this is initial allocation or a rebalance
+        is_initial_allocation = portfolio.last_rebalanced_at is None
+        
+        update_data = {
+            "last_rebalanced_at": as_of,
+            "next_rebalance_at": next_rebalance_at,
+            "metadata": fields.Json(metadata_payload),
+        }
+        
+        # Always store allocation_strategy, but preserve user preference message on first run
         allocation_strategy_payload = {
             "weights": weights,
             "expected_return": result.get("expected_return"),
@@ -838,15 +848,17 @@ class PipelineService:
             "progress_ratio": result.get("progress_ratio"),
             "updated_at": as_of.isoformat() + "Z",
         }
+        
+        # Mark if this was initial allocation (no optimization, just user preference)
+        if is_initial_allocation:
+            allocation_strategy_payload["initial_allocation"] = True
+            allocation_strategy_payload["based_on"] = "user_preference"
+        
+        update_data["allocation_strategy"] = fields.Json(allocation_strategy_payload)
 
         await client.portfolio.update(
             where={"id": portfolio.id},
-            data={
-                "allocation_strategy": fields.Json(allocation_strategy_payload),
-                "last_rebalanced_at": as_of,
-                "next_rebalance_at": next_rebalance_at,
-                "metadata": fields.Json(metadata_payload),
-            },
+            data=update_data,
         )
 
         snapshot_value_dec = self._to_decimal(current_value, places=4)

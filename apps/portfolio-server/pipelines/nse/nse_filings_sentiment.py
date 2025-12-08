@@ -55,6 +55,23 @@ from kafka_service import (  # type: ignore  # noqa: E402
 from celery_app import celery_app  # type: ignore  # noqa: E402
 import httpx
 
+# Initialize Phoenix tracing for NSE filings sentiment
+try:
+    from phoenix.otel import register
+    
+    collector_endpoint = os.getenv("COLLECTOR_ENDPOINT")
+    if collector_endpoint:
+        tracer_provider = register(
+            project_name="nse-filings-sentiment",
+            endpoint=collector_endpoint,
+            auto_instrument=True,
+        )
+        print(f"✅ Phoenix tracing initialized for NSE filings sentiment: {collector_endpoint}")
+except ImportError:
+    pass
+except Exception:
+    pass
+
 # LLM imports
 from pathway.xpacks.llm import llms
 

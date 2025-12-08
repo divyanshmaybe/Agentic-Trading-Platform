@@ -34,6 +34,23 @@ from celery.utils.log import get_task_logger
 from jinja2 import Environment, StrictUndefined
 from pydantic import BaseModel, Field
 
+# Initialize Phoenix tracing for low risk observability
+try:
+    from phoenix.otel import register
+    
+    collector_endpoint = os.getenv("COLLECTOR_ENDPOINT")
+    if collector_endpoint:
+        tracer_provider = register(
+            project_name="low-risk-observability",
+            endpoint=collector_endpoint,
+            auto_instrument=True,
+        )
+        print(f"✅ Phoenix tracing initialized for low risk observability: {collector_endpoint}")
+except ImportError:
+    pass
+except Exception:
+    pass
+
 # Add paths for imports
 SERVER_ROOT = Path(__file__).resolve().parents[1]
 if str(SERVER_ROOT) not in sys.path:
