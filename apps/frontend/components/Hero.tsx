@@ -18,7 +18,9 @@ export default function Hero() {
         Empowering businesses through the Pathway Framework for performance-driven portfolio management.
       </p>
       <div className="mt-6 flex gap-4 relative z-10">
-        <Button>Get Started</Button>
+        <Button asChild>
+          <a href="/login">Get Started</a>
+        </Button>
         <Button variant="outline">View Platform</Button>
       </div>
       <Image src="/images/hero-bg.jpg" alt="Hero Background" fill className="object-cover opacity-50 absolute top-0 z-0" />

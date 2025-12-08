@@ -181,6 +181,54 @@ async def trigger_low_risk_pipeline(
         f"Status: {agent_status} | Allocated: ₹{allocated_cash:,.2f} | Available: ₹{available_cash:,.2f}"
     )
 
+    # Check if summary already exists within last 180 days (prevent duplicate runs)
+    from datetime import datetime, timezone, timedelta
+    auth_db = Prisma(datasource={"url": AUTH_DATABASE_URL})
+    try:
+        await auth_db.connect()
+        cooldown_start = datetime.now(timezone.utc) - timedelta(days=180)
+        
+        summaries_recent = await auth_db.query_raw(
+            '''
+            SELECT id, "createdAt"
+            FROM low_risk_user_summaries
+            WHERE "userId" = $1 AND "createdAt" >= $2
+            ORDER BY "createdAt" DESC
+            LIMIT 1
+            ''',
+            user_id,
+            cooldown_start
+        )
+        
+        if summaries_recent and len(summaries_recent) > 0:
+            last_run = summaries_recent[0].get("createdAt")
+            if last_run:
+                if isinstance(last_run, str):
+                    from dateutil import parser
+                    last_run = parser.parse(last_run)
+                if last_run.tzinfo is None:
+                    last_run = last_run.replace(tzinfo=timezone.utc)
+                
+                days_elapsed = (datetime.now(timezone.utc) - last_run).days
+                days_remaining = 180 - days_elapsed
+                
+                logger.warning(f"🚫 Summary already exists for user {user_id} within last 180 days ({days_elapsed} days ago)")
+                await auth_db.disconnect()
+                return PipelineTriggerResponse(
+                    success=False,
+                    message=f"Pipeline was already run {days_elapsed} days ago. Please wait {days_remaining} more days before running again (180-day cooldown).",
+                    task_id=None,
+                    user_id=user_id,
+                    fund_allocated=allocated_cash
+                )
+        
+        logger.info(f"✅ No summary found within last 180 days - proceeding with pipeline")
+    except Exception as e:
+        logger.error(f"⚠️ Failed to check existing summaries: {e}", exc_info=True)
+        # Continue anyway - better to run than block on DB error
+    finally:
+        await auth_db.disconnect()
+
     # Initialize Redis and pipeline status BEFORE checking
     redis_client = Redis.from_url(BROKER_URL)
     pipeline_status = PipelineStatus(redis_client, user_id)
@@ -499,17 +547,19 @@ async def trigger_low_risk_rebalance(
                 
                 now = datetime.now(timezone.utc)
                 time_diff = now - latest_created
-                six_months = timedelta(days=180)  # Approximately 6 months
+                
+                # Check: 180-day cooldown for rebalancing
+                cooldown_period = timedelta(days=180)
                 
                 logger.info(f"⏱️ Time since last run: {time_diff.days} days (cooldown: 180 days)")
                 
-                if time_diff < six_months:
-                    days_remaining = (six_months - time_diff).days
+                if time_diff < cooldown_period:
+                    days_remaining = (cooldown_period - time_diff).days
                     logger.warning(f"🚫 COOLDOWN ACTIVE: {time_diff.days} days elapsed, {days_remaining} days remaining")
                     await auth_db.disconnect()
                     return RebalanceTriggerResponse(
                         success=False,
-                        message=f"Low-risk pipeline cannot be re-triggered before 6 months. Last run was {time_diff.days} days ago. Please wait {days_remaining} more days.",
+                        message=f"Low-risk pipeline cannot be re-triggered before 180 days. Last run was {time_diff.days} days ago. Please wait {days_remaining} more days.",
                         task_id=None,
                         user_id=user_id,
                         fund_allocated=allocated_cash,

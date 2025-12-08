@@ -543,7 +543,7 @@ async def generate_signals_for_alpha_core(
     autoretry_for=(Exception,),
     retry_backoff=True,
     retry_kwargs={"max_retries": 3},
-    acks_late=True,
+    # acks_late=False by default - safe for auto-retry (no duplicate executions)
     reject_on_worker_lost=True,
 )
 def generate_daily_alpha_signals(self) -> Dict[str, Any]:

@@ -157,8 +157,8 @@ class PipelineStatus:
     # DO NOT use autoretry_for - it causes task duplication on success
     acks_late=False,  # Acknowledge immediately to prevent re-queuing
     reject_on_worker_lost=True,
-    soft_time_limit=3600*2,  # 2 hours (no SoftTimeLimitExceeded interruption)
-    time_limit=3600*2,  # 2 hours hard limit
+    soft_time_limit=3600*3,  # 3 hours (no SoftTimeLimitExceeded interruption)
+    time_limit=3600*3,  # 3 hours hard limit
 )
 def run_low_risk_pipeline(
     self,

@@ -27,12 +27,12 @@ export function Header() {
         </nav>
         <div className="hidden items-center gap-3 md:flex">
         	<Button asChild className="bg-(--brand-navy) text-white hover:opacity-90">
-            <Link href="/signup">Get Started</Link>
+            <Link href="/login">Get Started</Link>
 			</Button>		
         </div>
         <div className="flex items-center gap-2 md:hidden">
           <Button asChild size="sm" className="bg-(--brand-navy) text-white hover:opacity-90">
-            <Link href="/signup">Get Started</Link>
+            <Link href="/login">Get Started</Link>
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

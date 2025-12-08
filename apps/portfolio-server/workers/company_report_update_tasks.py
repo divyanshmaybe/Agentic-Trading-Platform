@@ -99,7 +99,7 @@ def _download_pdf_as_base64(url: str) -> Optional[str]:
     autoretry_for=(Exception,),
     retry_backoff=True,
     retry_kwargs={"max_retries": 3},
-    acks_late=True,
+    # acks_late=False by default - safe for auto-retry (prevents duplicate executions on worker crash)
 )
 def update_company_report_from_nse_filing(
     self,
@@ -170,7 +170,7 @@ def update_company_report_from_nse_filing(
     autoretry_for=(Exception,),
     retry_backoff=True,
     retry_kwargs={"max_retries": 3},
-    acks_late=True,
+    # acks_late=False by default - safe for auto-retry (prevents duplicate executions on worker crash)
     soft_time_limit=300,  # 5 minutes
     time_limit=360,  # 6 minutes
 )
@@ -272,7 +272,7 @@ def update_company_report_from_nse_filing_url(
     autoretry_for=(Exception,),
     retry_backoff=True,
     retry_kwargs={"max_retries": 3},
-    acks_late=True,
+    # acks_late=False by default - safe for auto-retry (prevents duplicate executions on worker crash)
 )
 def update_company_report_from_news(
     self,
@@ -323,7 +323,7 @@ def update_company_report_from_news(
     autoretry_for=(Exception,),
     retry_backoff=True,
     retry_kwargs={"max_retries": 2},
-    acks_late=True,
+    # acks_late=False by default - safe for auto-retry (prevents duplicate executions on worker crash)
     # Extended time limit for batch processing
     soft_time_limit=3600,  # 1 hour
     time_limit=3900,  # 1 hour 5 min
@@ -383,7 +383,7 @@ def batch_update_company_reports_from_news(
     autoretry_for=(Exception,),
     retry_backoff=True,
     retry_kwargs={"max_retries": 2},
-    acks_late=True,
+    # acks_late=False by default - safe for auto-retry (prevents duplicate executions on worker crash)
     soft_time_limit=7200,  # 2 hours
     time_limit=7500,  # 2 hours 5 min
 )

@@ -134,8 +134,8 @@ def start_nse_pipeline(self) -> None:
     autoretry_for=(Exception,),
     retry_backoff=True,
     retry_kwargs={"max_retries": 3},
-    # Prevent concurrent execution - only one instance can run at a time
-    acks_late=True,
+    # acks_late=False by default - safe for auto-retry (prevents duplicate executions on worker crash)
+    # Prevent concurrent execution - only one instance can run at a time (Redis lock protects this)
     reject_on_worker_lost=True,
 )
 def run_news_sentiment_pipeline(self, top_k: int | None = None) -> dict:
