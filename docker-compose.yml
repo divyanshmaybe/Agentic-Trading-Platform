@@ -96,6 +96,37 @@ services:
     networks:
       - agentInvest
 
+  # Arize Phoenix (LLM Observability & Tracing)
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    container_name: phoenix
+    restart: unless-stopped
+    environment:
+      # Authentication Configuration
+      PHOENIX_ENABLE_AUTH: "true"
+      PHOENIX_SECRET: "3413f9a7735bb780c6b8e4db7d946a492b64d26112a955cdea6a797f4c833593"
+      PHOENIX_DEFAULT_ADMIN_INITIAL_PASSWORD: "Admin@2024Secure"
+      PHOENIX_USE_SECURE_COOKIES: "true"
+      # Optional: Configure trusted origins for CSRF protection (adjust to your domain)
+      # PHOENIX_CSRF_TRUSTED_ORIGINS: "http://localhost:3000,https://yourdomain.com"
+      # Token expiry settings (optional, using reasonable defaults)
+      PHOENIX_ACCESS_TOKEN_EXPIRY_MINUTES: "60"
+      PHOENIX_REFRESH_TOKEN_EXPIRY_MINUTES: "10080"  # 7 days
+      # Storage
+      PHOENIX_WORKING_DIR: "/phoenix-data"
+    ports:
+      - "6006:6006"  # UI and OTLP HTTP collector
+      - "4317:4317"  # OTLP gRPC collector
+    volumes:
+      - phoenix_data:/phoenix-data
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:6006"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - agentInvest
+
   # Auth Server Application
   auth_server:
     image: auth_server:latest
@@ -174,6 +205,7 @@ services:
     environment:
       PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
       KAFKA_CLIENT_ID: portfolio-server
+      COLLECTOR_ENDPOINT: http://phoenix:6006/v1/traces
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "cp /app/apps/portfolio-server/docker.env /app/apps/portfolio-server/.env 2>/dev/null || true &&
@@ -213,6 +245,7 @@ services:
       PROMETHEUS_PORT: "9101"
       WORKER_NAME: trading@docker
       KAFKA_CLIENT_ID: portfolio-celery-trading
+      COLLECTOR_ENDPOINT: http://phoenix:6006/v1/traces
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "cp /app/apps/portfolio-server/docker.env /app/apps/portfolio-server/.env 2>/dev/null || true &&
@@ -253,6 +286,7 @@ services:
       PROMETHEUS_PORT: "9102"
       WORKER_NAME: nse_pipeline@docker
       KAFKA_CLIENT_ID: portfolio-celery-nse-pipeline
+      COLLECTOR_ENDPOINT: http://phoenix:6006/v1/traces
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "cp /app/apps/portfolio-server/docker.env /app/apps/portfolio-server/.env 2>/dev/null || true &&
@@ -292,6 +326,7 @@ services:
       PROMETHEUS_PORT: "9108"
       WORKER_NAME: news_pipeline@docker
       KAFKA_CLIENT_ID: portfolio-celery-news-pipeline
+      COLLECTOR_ENDPOINT: http://phoenix:6006/v1/traces
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "cp /app/apps/portfolio-server/docker.env /app/apps/portfolio-server/.env 2>/dev/null || true &&
@@ -331,6 +366,7 @@ services:
       PROMETHEUS_PORT: "9107"
       WORKER_NAME: low_risk@docker
       KAFKA_CLIENT_ID: portfolio-celery-low-risk
+      COLLECTOR_ENDPOINT: http://phoenix:6006/v1/traces
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "cp /app/apps/portfolio-server/docker.env /app/apps/portfolio-server/.env 2>/dev/null || true &&
@@ -370,6 +406,7 @@ services:
       PROMETHEUS_PORT: "9103"
       WORKER_NAME: allocation@docker
       KAFKA_CLIENT_ID: portfolio-celery-allocation
+      COLLECTOR_ENDPOINT: http://phoenix:6006/v1/traces
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "cp /app/apps/portfolio-server/docker.env /app/apps/portfolio-server/.env 2>/dev/null || true &&
@@ -448,6 +485,7 @@ services:
       PROMETHEUS_PORT: "9105"
       WORKER_NAME: general@docker
       KAFKA_CLIENT_ID: portfolio-celery-general
+      COLLECTOR_ENDPOINT: http://phoenix:6006/v1/traces
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "cp /app/apps/portfolio-server/docker.env /app/apps/portfolio-server/.env 2>/dev/null || true &&
@@ -527,6 +565,7 @@ services:
       PROMETHEUS_PORT: "9109"
       WORKER_NAME: regime@docker
       KAFKA_CLIENT_ID: portfolio-celery-regime
+      COLLECTOR_ENDPOINT: http://phoenix:6006/v1/traces
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "cp /app/apps/portfolio-server/docker.env /app/apps/portfolio-server/.env 2>/dev/null || true &&
@@ -748,6 +787,7 @@ services:
       - apps/alphacopilot-server/docker.env
     environment:
       PYTHONPATH: /app:/app/shared/py:/app/quant-stream:/app/apps/alphacopilot-server
+      COLLECTOR_ENDPOINT: http://phoenix:6006/v1/traces
     working_dir: /app/apps/alphacopilot-server
     command: python -m uvicorn main:app --host 0.0.0.0 --port 8069
     ports:
@@ -780,6 +820,7 @@ services:
       - apps/alphacopilot-server/docker.env
     environment:
       PYTHONPATH: /app:/app/shared/py:/app/quant-stream:/app/apps/alphacopilot-server
+      COLLECTOR_ENDPOINT: http://phoenix:6006/v1/traces
     working_dir: /app/quant-stream
     command: celery -A quant_stream.mcp_server.core.celery_config worker --loglevel=info -Q backtest --concurrency=2 --hostname=backtest@%h --max-tasks-per-child=50
     volumes:
@@ -942,6 +983,20 @@ services:
     profiles:
       - monitoring
 
+  # Portainer (Docker Management UI)
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    restart: unless-stopped
+    ports:
+      - "9443:9443"
+      - "8100:8000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    networks:
+      - agentInvest
+
 networks:
   agentInvest:
     driver: bridge
@@ -962,4 +1017,8 @@ volumes:
   grafana_data:
     driver: local
   loki_data:
+    driver: local
+  portainer_data:
+    driver: local
+  phoenix_data:
     driver: local

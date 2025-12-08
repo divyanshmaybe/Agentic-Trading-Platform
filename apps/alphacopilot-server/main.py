@@ -10,6 +10,26 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
+# Initialize Phoenix tracing (must be done early, before loading .env)
+try:
+    from phoenix.otel import register
+    
+    # Configure Phoenix tracer with OTLP endpoint
+    collector_endpoint = os.getenv("COLLECTOR_ENDPOINT")
+    if collector_endpoint:
+        tracer_provider = register(
+            project_name="alphacopilot-server",
+            endpoint=collector_endpoint,
+            auto_instrument=True
+        )
+        print(f"✅ Phoenix tracing initialized: {collector_endpoint}")
+    else:
+        print("⚠️ COLLECTOR_ENDPOINT not set, Phoenix tracing disabled")
+except ImportError:
+    print("⚠️ Phoenix not installed, tracing disabled")
+except Exception as e:
+    print(f"⚠️ Failed to initialize Phoenix tracing: {e}")
+
 # Add quant-stream to path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 QUANT_STREAM_PATH = PROJECT_ROOT / "quant-stream"

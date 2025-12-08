@@ -53,7 +53,6 @@ from utils.trade_execution import (  # type: ignore  # noqa: E402
     TradeSignal,
     prepare_trade_execution_payloads,
 )
-from workers.risk_alert_tasks import send_risk_alert_email_task  # type: ignore  # noqa: E402
 from services.trade_execution_service import TradeExecutionService  # type: ignore  # noqa: E402
 
 class PipelineService:
@@ -508,6 +507,8 @@ class PipelineService:
                     if severity_rank.get(alert.severity, 0) > severity_rank.get(batch["severity"], 0):
                         batch["severity"] = alert.severity
 
+            from celery_app import celery_app
+            
             for recipient, data in email_batches.items():
                 alerts_payload = data["alerts"]
                 if not alerts_payload:
@@ -515,7 +516,12 @@ class PipelineService:
                 severity = data["severity"].upper()
                 portfolios_list = ", ".join(sorted(p for p in data["portfolios"] if p))
                 subject = f"[Risk Alert:{severity}] {portfolios_list or 'Portfolio'}"
-                send_risk_alert_email_task.delay(recipient, subject, alerts_payload)
+                celery_app.send_task(
+                    "risk.alerts.send_email",
+                    args=[recipient, subject, alerts_payload],
+                    queue="risk",
+                    routing_key="risk"
+                )
                 emails_dispatched += 1
 
         self.logger.info(

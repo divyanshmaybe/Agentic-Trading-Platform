@@ -30,13 +30,32 @@ from utils.low_risk_utils import (
 )
 from .industry_indicators_pipeline import IndustryIndicatorsPipeline
 
-# Extract LANGSMITH_API_KEY
+# Initialize Phoenix tracing for industry pipeline
+try:
+    from phoenix.otel import register
+    
+    collector_endpoint = os.getenv("COLLECTOR_ENDPOINT")
+    if collector_endpoint:
+        tracer_provider = register(
+            project_name="industry-pipeline",
+            endpoint=collector_endpoint,
+            auto_instrument=True
+        )
+        print(f"✅ Phoenix tracing initialized for industry pipeline: {collector_endpoint}")
+    else:
+        print("⚠️ COLLECTOR_ENDPOINT not set, Phoenix tracing disabled for industry pipeline")
+except ImportError:
+    print("⚠️ Phoenix not installed, tracing disabled for industry pipeline")
+except Exception as e:
+    print(f"⚠️ Failed to initialize Phoenix tracing for industry pipeline: {e}")
+
+# LangSmith tracing (optional - can run alongside Phoenix)
 langsmith_api_key = os.getenv("LANGSMITH_API_KEY", "")
-if not langsmith_api_key:
-    raise ValueError("LANGSMITH_API_KEY not found in .env file")
-os.environ["LANGSMITH_API_KEY"] = langsmith_api_key
-os.environ["LANGSMITH_TRACING_V2"] = "true"
-os.environ["LANGSMITH_PROJECT"] = "portfolio_prod"
+if langsmith_api_key:
+    os.environ["LANGSMITH_API_KEY"] = langsmith_api_key
+    os.environ["LANGSMITH_TRACING_V2"] = "true"
+    os.environ["LANGSMITH_PROJECT"] = "portfolio_prod"
+    print("🔍 LangSmith tracing also enabled")
 
 logger = logging.getLogger(__name__)
 

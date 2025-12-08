@@ -350,9 +350,14 @@ class LiveAlphaPipeline:
                 "Failed to publish to Kafka, falling back to direct execution: %s",
                 exc
             )
-            # Fall back to direct task dispatch
-            from workers.alpha_signal_tasks import process_alpha_signal_batch
-            process_alpha_signal_batch.delay(signals)
+            # Fall back to direct task dispatch using send_task
+            from celery_app import celery_app
+            celery_app.send_task(
+                "alpha.process_signal_batch",
+                args=[signals],
+                queue="trading",
+                routing_key="trading"
+            )
 
 
 

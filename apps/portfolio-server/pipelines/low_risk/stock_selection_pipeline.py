@@ -37,14 +37,32 @@ from . fundamental_analyzer_pipeline import FundamentalAnalyzerPipeline
 env_path = Path(__file__).parent.parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
-# Extract LANGSMITH_API_KEY (optional - tracing disabled if not set)
+# Initialize Phoenix tracing for stock selection pipeline
+try:
+    from phoenix.otel import register
+    
+    collector_endpoint = os.getenv("COLLECTOR_ENDPOINT")
+    if collector_endpoint:
+        tracer_provider = register(
+            project_name="stock-selection-pipeline",
+            endpoint=collector_endpoint,
+        )
+        print(f"✅ Phoenix tracing initialized for stock selection: {collector_endpoint}")
+    else:
+        print("⚠️ COLLECTOR_ENDPOINT not set, Phoenix tracing disabled for stock selection")
+except ImportError:
+    print("⚠️ Phoenix not installed, tracing disabled for stock selection")
+except Exception as e:
+    print(f"⚠️ Failed to initialize Phoenix tracing for stock selection: {e}")
+
+# LangSmith tracing (optional - can run alongside Phoenix)
 langsmith_api_key = os.getenv("LANGSMITH_API_KEY", "")
 if langsmith_api_key:
     os.environ["LANGSMITH_API_KEY"] = langsmith_api_key
     os.environ["LANGSMITH_TRACING_V2"] = "true"
     os.environ["LANGSMITH_PROJECT"] = "portfolio_prod"
+    print("🔍 LangSmith tracing also enabled")
 else:
-    logger.warning("LANGSMITH_API_KEY not found - LangSmith tracing disabled")
     os.environ["LANGSMITH_TRACING_V2"] = "false"
 
 from utils.low_risk_utils import (
@@ -395,7 +413,8 @@ class StockSelectionPipeline:
             Output:
             - A string of reasoning tokens with proper analysis, interpretation, and possible next steps.
             """
-            reasoning_llm = ChatGoogleGenerativeAI(model="gemini-3-pro-preview", thinking_budget=2000, temperature=0.5)
+            # reasoning_llm = ChatGoogleGenerativeAI(model="gemini-3-pro-preview", thinking_budget=2000, temperature=0.5)
+            reasoning_llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", temperature=0.5)
             messages = runtime.state["messages"]
             reasoning_messages = runtime.state["reasoning_messages"]
             if len(reasoning_messages) == 0:
@@ -420,7 +439,7 @@ class StockSelectionPipeline:
             else:
                 reasoning = ""
                 new_reasoning_message = AIMessage("")
-            msg = reasoning[0]["text"]
+            msg = reasoning
             to_send = {
                 "status": "thinking",
                 "content": {

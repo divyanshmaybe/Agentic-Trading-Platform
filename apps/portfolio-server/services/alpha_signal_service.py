@@ -662,10 +662,15 @@ class AlphaSignalService:
         
         # Import here to avoid circular imports
         try:
-            from workers.alpha_signal_tasks import process_alpha_signal_batch
+            from celery_app import celery_app
             
-            # Queue for async processing
-            process_alpha_signal_batch.delay(signals)
+            # Queue for async processing using send_task
+            celery_app.send_task(
+                "alpha.process_signal_batch",
+                args=[signals],
+                queue="trading",
+                routing_key="trading"
+            )
             
             self.logger.info(
                 "Dispatched %d signals for alpha %s to trade execution",

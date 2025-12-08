@@ -11,6 +11,26 @@ from dotenv import load_dotenv
 if os.getenv("SKIP_DOTENV") != "true":
     load_dotenv()
 
+# Initialize Phoenix tracing (must be done early)
+try:
+    from phoenix.otel import register
+    
+    # Configure Phoenix tracer with OTLP endpoint
+    collector_endpoint = os.getenv("COLLECTOR_ENDPOINT")
+    if collector_endpoint:
+        tracer_provider = register(
+            project_name="portfolio-server",
+            endpoint=collector_endpoint,
+            auto_instrument=True
+        )
+        print(f"✅ Phoenix tracing initialized: {collector_endpoint}")
+    else:
+        print("⚠️ COLLECTOR_ENDPOINT not set, Phoenix tracing disabled")
+except ImportError:
+    print("⚠️ Phoenix not installed, tracing disabled")
+except Exception as e:
+    print(f"⚠️ Failed to initialize Phoenix tracing: {e}")
+
 # Add project root and shared/middleware directories to path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 shared_py_path = os.path.join(project_root, "shared/py")
@@ -43,7 +63,6 @@ from routes.low_risk_routes import router as low_risk_router
 from routes.admin_routes import router as admin_router
 from routes.observability_routes import router as observability_router
 from utils.pipeline_utils import get_pipeline_status
-from workers.pipeline_tasks import start_nse_pipeline, run_news_sentiment_pipeline
 from monitoring.http_metrics import PrometheusMiddleware, metrics_endpoint
 
 # Get server directory for pipelines
@@ -73,8 +92,13 @@ def create_lifespan(base_app_instance, pipeline_service_instance):
         # Dispatch news pipeline on startup if configured
         if news_on_startup:
             try:
+                from celery_app import celery_app
                 base_app_instance.logger.info("🚀 Dispatching news sentiment pipeline at startup...")
-                result = run_news_sentiment_pipeline.delay()
+                result = celery_app.send_task(
+                    "pipeline.news_sentiment.run",
+                    queue="news_pipeline",
+                    routing_key="news_pipeline"
+                )
                 app.state.news_pipeline_job_id = result.id
                 base_app_instance.logger.info(f"✅ News pipeline started: task_id={result.id}")
             except Exception as exc:
@@ -83,8 +107,13 @@ def create_lifespan(base_app_instance, pipeline_service_instance):
         # Dispatch NSE pipeline on startup if configured
         if nse_on_startup:
             try:
+                from celery_app import celery_app
                 base_app_instance.logger.info("🚀 Dispatching NSE pipeline at startup...")
-                result = start_nse_pipeline.delay()
+                result = celery_app.send_task(
+                    "pipeline.start",
+                    queue="nse_pipeline",
+                    routing_key="nse_pipeline"
+                )
                 app.state.pipeline_job_id = result.id
                 app.state.pipeline_status = "running"
                 base_app_instance.logger.info(f"✅ NSE pipeline started: task_id={result.id}")
@@ -99,9 +128,13 @@ def create_lifespan(base_app_instance, pipeline_service_instance):
         allocation_on_startup = os.getenv("ALLOCATION_SWEEP_ON_STARTUP", "true").lower() in {"1", "true", "yes"}
         if allocation_on_startup:
             try:
+                from celery_app import celery_app
                 base_app_instance.logger.info("🔄 Running regime check and allocation sweep at startup...")
-                from workers.allocation_tasks import check_regime_and_rebalance_task
-                result = check_regime_and_rebalance_task.delay()
+                result = celery_app.send_task(
+                    "portfolio.check_regime_and_rebalance",
+                    queue="regime",
+                    routing_key="regime"
+                )
                 base_app_instance.logger.info(f"✅ Regime check and allocation sweep started: task_id={result.id}")
             except Exception as exc:
                 base_app_instance.logger.error(f"❌ Failed to dispatch regime check and allocation sweep: {exc}")
@@ -123,12 +156,20 @@ def create_lifespan(base_app_instance, pipeline_service_instance):
         snapshot_on_startup = os.getenv("SNAPSHOT_CAPTURE_ON_STARTUP", "false").lower() in {"1", "true", "yes"}
         if snapshot_on_startup:
             try:
+                from celery_app import celery_app
                 base_app_instance.logger.info("📸 Capturing portfolio snapshots at startup...")
-                from workers.snapshot_tasks import capture_portfolio_snapshots, capture_trading_agent_snapshots
                 
                 # Dispatch both snapshot tasks
-                portfolio_result = capture_portfolio_snapshots.delay()
-                agent_result = capture_trading_agent_snapshots.delay()
+                portfolio_result = celery_app.send_task(
+                    "snapshot.capture_portfolio_snapshots",
+                    queue="general",
+                    routing_key="general"
+                )
+                agent_result = celery_app.send_task(
+                    "snapshot.capture_agent_snapshots",
+                    queue="general",
+                    routing_key="general"
+                )
                 
                 base_app_instance.logger.info(
                     "✅ Snapshot tasks dispatched: portfolio=%s, agents=%s",
@@ -155,9 +196,13 @@ def create_lifespan(base_app_instance, pipeline_service_instance):
         streaming_risk_enabled = os.getenv("STREAMING_RISK_MONITOR_ENABLED", "true").lower() in {"1", "true", "yes"}
         if streaming_risk_enabled:
             try:
+                from celery_app import celery_app
                 base_app_instance.logger.info("🚀 Starting streaming risk monitor for real-time alerts...")
-                from workers.streaming_risk_tasks import start_streaming_risk_monitor_task
-                result = start_streaming_risk_monitor_task.delay()
+                result = celery_app.send_task(
+                    "risk.streaming_monitor.start",
+                    queue="streaming",
+                    routing_key="streaming"
+                )
                 app.state.streaming_risk_job_id = result.id
                 base_app_instance.logger.info(
                     f"✅ Streaming risk monitor started: task_id={result.id} "

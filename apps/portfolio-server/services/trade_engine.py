@@ -776,9 +776,14 @@ class TradeEngine:
 
     def _enqueue_pending_trade(self, trade_id: str) -> None:
         try:
-            from workers.trade_tasks import process_pending_trade
+            from celery_app import celery_app
 
-            process_pending_trade.delay(trade_id)
+            celery_app.send_task(
+                "trading.process_pending_trade",
+                args=[trade_id],
+                queue="trading",
+                routing_key="trading"
+            )
         except Exception:  # pragma: no cover - defensive logging
             import logging
 

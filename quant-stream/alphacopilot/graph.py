@@ -32,17 +32,30 @@ from .nodes import (
 load_dotenv()
 
 # ============================================================================
-# LangSmith Configuration
+# Phoenix Tracing Configuration
 # ============================================================================
-# LangSmith tracing is automatically enabled when these env vars are set:
-# - LANGSMITH_TRACING=true (or LANGCHAIN_TRACING_V2=true)
-# - LANGSMITH_API_KEY (or LANGCHAIN_API_KEY)
-# - LANGSMITH_PROJECT (optional, defaults to "default")
-# - LANGSMITH_ENDPOINT (optional, defaults to https://api.smith.langchain.com)
-#
-# The environment variables are read by langchain/langgraph automatically.
-# No additional code is needed - all LLM calls and graph runs will be traced.
+# Initialize Phoenix tracing for AlphaCopilot workflow
+try:
+    from phoenix.otel import register
+    
+    collector_endpoint = os.getenv("COLLECTOR_ENDPOINT")
+    if collector_endpoint:
+        tracer_provider = register(
+            project_name="alphacopilot-workflow",
+            endpoint=collector_endpoint,
+            auto_instrument=True
+        )
+        print(f"✅ Phoenix tracing initialized for AlphaCopilot workflow: {collector_endpoint}")
+    else:
+        print("⚠️ COLLECTOR_ENDPOINT not set, Phoenix tracing disabled for AlphaCopilot")
+except ImportError:
+    print("⚠️ Phoenix not installed, tracing disabled for AlphaCopilot")
+except Exception as e:
+    print(f"⚠️ Failed to initialize Phoenix tracing for AlphaCopilot: {e}")
 
+# ============================================================================
+# LangSmith Configuration (Optional - can run alongside Phoenix)
+# ============================================================================
 def is_langsmith_enabled() -> bool:
     """Check if LangSmith tracing is enabled."""
     tracing = os.getenv("LANGSMITH_TRACING", os.getenv("LANGCHAIN_TRACING_V2", "false"))
@@ -55,9 +68,9 @@ def get_langsmith_project() -> str:
 
 # Log LangSmith status on module load
 if is_langsmith_enabled():
-    print(f"🔍 LangSmith tracing enabled for project: {get_langsmith_project()}")
+    print(f"🔍 LangSmith tracing also enabled for project: {get_langsmith_project()}")
 else:
-    print("ℹ️  LangSmith tracing disabled. Set LANGSMITH_TRACING=true and LANGSMITH_API_KEY to enable.")
+    print("ℹ️ LangSmith tracing disabled. Set LANGSMITH_TRACING=true and LANGSMITH_API_KEY to enable.")
 
 # Initialize LLM
 llm = ChatOpenAI(

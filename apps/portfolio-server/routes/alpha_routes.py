@@ -1731,12 +1731,17 @@ async def trigger_signal_generation(
         raise HTTPException(status_code=400, detail=f"Alpha must be running to generate signals (current: {alpha.status})")
     
     try:
-        from workers.alpha_signal_tasks import generate_signals_for_single_alpha
         from redis import Redis
-        from celery_app import BROKER_URL
+        from celery_app import celery_app, BROKER_URL
         
-        # Queue the task
-        task = generate_signals_for_single_alpha.delay(alpha_id)
+        # Queue the task using send_task (works even if task module not imported)
+        # This avoids circular import issues while ensuring task is properly queued
+        task = celery_app.send_task(
+            "alpha.generate_signals_for_alpha",
+            args=[alpha_id],
+            queue="trading",
+            routing_key="trading"
+        )
         
         # Store task ID in Redis so it can be retrieved on page reload
         # Key format: alpha_task:{alpha_id} -> task_id
@@ -1763,10 +1768,14 @@ async def trigger_all_signal_generation(
     This is the same as the scheduled daily task but triggered manually.
     """
     try:
-        from workers.alpha_signal_tasks import generate_daily_alpha_signals
+        from celery_app import celery_app
         
-        # Queue the task
-        task = generate_daily_alpha_signals.delay()
+        # Queue the task using send_task (avoids circular import issues)
+        task = celery_app.send_task(
+            "alpha.generate_daily_signals",
+            queue="pipelines",
+            routing_key="pipelines"
+        )
         
         return SignalGenerationTaskResponse(
             task_id=task.id,

@@ -177,9 +177,6 @@ setup.sh
 # =====================
 # Top-level data directory
 /data/
-# Hidden data directories
-.data/
-**/.data/
 # Data files (not code directories)
 *.csv
 *.parquet
@@ -189,8 +186,6 @@ setup.sh
 *.hdf5
 *.sqlite
 *.db
-# Explicitly include the small Nifty500 sample CSV needed at runtime
-!quant-stream/.data/indian_stock_market_nifty500.csv
 
 # =====================
 # Large model files / ML artifacts
@@ -208,9 +203,12 @@ checkpoints/
 # =====================
 # Quant-stream data (large files, mount as volume)
 # =====================
-quant-stream/.data/
+# Exclude most data but keep the required CSV for portfolio-server
+.data/
+**/.data/
+# Explicitly include the small Nifty500 sample CSV needed at runtime in portfolio-server
+!quant-stream/.data/indian_stock_market_nifty500.csv
 quant-stream/data/
-quant-stream/**/*.csv
 quant-stream/**/*.parquet
 
 # =====================

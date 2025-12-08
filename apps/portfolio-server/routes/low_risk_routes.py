@@ -14,7 +14,7 @@ from prisma import Prisma
 from redis import Redis
 
 from utils.auth import get_authenticated_user
-from workers.low_risk_tasks import run_low_risk_pipeline, get_low_risk_pipeline_status, PipelineStatus
+from workers.low_risk_tasks import get_low_risk_pipeline_status, PipelineStatus
 from db import prisma_client, DBManager
 from celery_app import BROKER_URL
 
@@ -192,12 +192,12 @@ async def trigger_low_risk_pipeline(
             '''
             SELECT id, "createdAt"
             FROM low_risk_user_summaries
-            WHERE "userId" = $1 AND "createdAt" >= $2
+            WHERE "userId" = $1 AND "createdAt" >= $2::timestamp
             ORDER BY "createdAt" DESC
             LIMIT 1
             ''',
             user_id,
-            cooldown_start
+            cooldown_start.isoformat()
         )
         
         if summaries_recent and len(summaries_recent) > 0:
@@ -225,9 +225,19 @@ async def trigger_low_risk_pipeline(
         logger.info(f"✅ No summary found within last 180 days - proceeding with pipeline")
     except Exception as e:
         logger.error(f"⚠️ Failed to check existing summaries: {e}", exc_info=True)
-        # Continue anyway - better to run than block on DB error
-    finally:
         await auth_db.disconnect()
+        return PipelineTriggerResponse(
+            success=False,
+            message=f"Unable to verify cooldown period due to database error. Please try again or contact support.",
+            task_id=None,
+            user_id=user_id,
+            fund_allocated=allocated_cash
+        )
+    finally:
+        try:
+            await auth_db.disconnect()
+        except:
+            pass
 
     # Initialize Redis and pipeline status BEFORE checking
     redis_client = Redis.from_url(BROKER_URL)
@@ -262,10 +272,17 @@ async def trigger_low_risk_pipeline(
 
     # Trigger pipeline asynchronously with allocated cash
     try:
-        result = run_low_risk_pipeline.delay(
-            user_id=user_id,
-            fund_allocated=allocated_cash,
-            _skip_lock=True,  # Lock already acquired in route
+        from celery_app import celery_app
+        
+        result = celery_app.send_task(
+            "pipeline.low_risk.run",
+            args=[user_id],
+            kwargs={
+                "fund_allocated": allocated_cash,
+                "_skip_lock": True,  # Lock already acquired in route
+            },
+            queue="low_risk_pipeline",
+            routing_key="low_risk_pipeline"
         )
 
         logger.info(f"✅ Low-risk pipeline triggered for user {user_id}, task_id: {result.id}")
@@ -677,12 +694,19 @@ async def trigger_low_risk_rebalance(
             latest_summary_content = prev_summaries[-1].get("content", {})
             logger.info(f"📋 Using latest summary with keys: {list(latest_summary_content.keys())}")
         
-        result = run_low_risk_pipeline.delay(
-            user_id=user_id,
-            fund_allocated=allocated_cash,
-            rebalance=True,
-            prev_summary=to_send_summary,
-            _skip_lock=True,  # Lock already acquired above
+        from celery_app import celery_app
+        
+        result = celery_app.send_task(
+            "pipeline.low_risk.run",
+            args=[user_id],
+            kwargs={
+                "fund_allocated": allocated_cash,
+                "rebalance": True,
+                "prev_summary": to_send_summary,
+                "_skip_lock": True,  # Lock already acquired above
+            },
+            queue="low_risk_pipeline",
+            routing_key="low_risk_pipeline"
         )
 
         # Check queue length after queuing to inform user
