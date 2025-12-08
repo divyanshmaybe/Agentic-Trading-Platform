@@ -50,4 +50,4 @@ nest-asyncio==1.6.0
 prometheus-client==0.21.1
 PyYAML==6.0.3
 arize-phoenix==12.20.0
-openinference-instrumentation-langchain>=0.1.0
+openinference-instrumentation-langchain==0.1.56
