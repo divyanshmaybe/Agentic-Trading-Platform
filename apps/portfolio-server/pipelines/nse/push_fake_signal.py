@@ -52,6 +52,10 @@ def push_fake_signal(
             f"FAKE SIGNAL for testing: {symbol} shows {'bullish' if signal > 0 else 'bearish' if signal < 0 else 'neutral'} "
             f"sentiment with {confidence:.1%} confidence."
         ),
+        # Include timing metadata for consistency (0 for fake signals)
+        "llm_delay_ms": 0,
+        "llm_start_time": timestamp,
+        "llm_end_time": timestamp,
     }
     
     print(f"\n{'='*60}")

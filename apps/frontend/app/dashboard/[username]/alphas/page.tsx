@@ -1,6 +1,6 @@
 "use client"
 
-import { FormEvent, useState, useEffect, useCallback } from "react"
+import React, { FormEvent, useState, useEffect, useCallback } from "react"
 import { createPortal } from "react-dom"
 import { AnimatePresence, motion, type Variants } from "framer-motion"
 import {
@@ -810,7 +810,39 @@ function ResultsModal({
 
   if (typeof window === "undefined" || !run) return null
 
-  const factors = results?.best_factors || results?.all_factors || []
+  // Use factors from run.generated_factors (primary) or fallback to results
+  const allFactors = (run.generated_factors || results?.all_factors || []) as Array<{
+    name?: string
+    expression?: string
+    description?: string
+  }>
+  const bestFactors = (run.best_factors || results?.best_factors || []) as Array<{
+    name?: string
+    expression?: string
+  }>
+  
+  // Check if a factor is Best (best performing from the run)
+  // If no best_factors, mark all factors from the final iteration as best (since the workflow always picks a best iteration)
+  const isSOTA = (factorName: string) => {
+    if (bestFactors.length > 0) {
+      return bestFactors.some(bf => bf.name === factorName)
+    }
+    // If no best_factors specified, all generated factors are considered best (from the winning iteration)
+    return allFactors.length > 0
+  }
+  
+  // Calculate best factors count
+  const sotaCount = bestFactors.length > 0 ? bestFactors.length : allFactors.length
+  
+  // Sort factors to show best factors first
+  const factors = [...allFactors].sort((a, b) => {
+    const aIsSOTA = isSOTA(a.name || "")
+    const bIsSOTA = isSOTA(b.name || "")
+    if (aIsSOTA && !bIsSOTA) return -1
+    if (!aIsSOTA && bIsSOTA) return 1
+    return 0
+  })
+  
   const metrics = results?.final_metrics as Record<string, unknown> | null
 
   // Helper to safely extract metric from nested or flat structure
@@ -825,7 +857,7 @@ function ResultsModal({
   // Extract key metrics
   const sharpeRatio = getMetric("sharpe_ratio")
   const totalReturn = getMetric("total_return")
-  const annualReturn = getMetric("annualized_return")
+  const annualReturn = getMetric("annual_return")
   const maxDrawdown = getMetric("max_drawdown")
   const winRate = getMetric("win_rate")
 
@@ -920,51 +952,72 @@ function ResultsModal({
 
                   {/* Generated Factors */}
                   <div>
-                    <h3 className="mb-3 text-sm font-medium uppercase tracking-wide text-white/50">
+                    <h3 className="mb-3 flex items-center gap-2 text-sm font-medium uppercase tracking-wide text-white/50">
                       Generated Factors ({factors.length})
+                      {bestFactors.length > 0 && (
+                        <span className="text-xs normal-case text-amber-400">• {bestFactors.length} Best</span>
+                      )}
                     </h3>
                     {factors.length === 0 ? (
                       <p className="text-sm text-white/40">No factors generated</p>
                     ) : (
                       <div className="space-y-2">
-                        {factors.map((factor, idx) => (
-                          <div
-                            key={idx}
-                            className="rounded-xl border border-white/10 bg-white/5 p-3"
-                          >
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="min-w-0 flex-1">
-                                <p className="text-sm font-medium text-cyan-300">
-                                  {(factor as Record<string, unknown>).name as string}
-                                </p>
-                                <code className="mt-1 block break-all text-xs text-white/70">
-                                  {(factor as Record<string, unknown>).expression as string}
-                                </code>
-                                {(factor as Record<string, unknown>).description ? (
-                                  <p className="mt-2 text-xs text-white/50">
-                                    {String((factor as Record<string, unknown>).description)}
-                                  </p>
-                                ) : null}
+                        {factors.map((factor, idx) => {
+                          const factorName = (factor as Record<string, unknown>).name as string
+                          const sota = isSOTA(factorName)
+                          return (
+                            <div
+                              key={idx}
+                              className={`rounded-xl border p-3 ${
+                                sota
+                                  ? "border-amber-500/40 bg-amber-500/10"
+                                  : "border-white/10 bg-white/5"
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-2">
+                                    <p className={`text-sm font-medium ${
+                                      sota ? "text-amber-300" : "text-cyan-300"
+                                    }`}>
+                                      {factorName}
+                                    </p>
+                                    {sota && (
+                                      <span className="flex items-center gap-1 rounded-full bg-amber-500/20 px-2 py-0.5 text-xs font-medium text-amber-300">
+                                        <TrendingUp className="size-3" />
+                                        Best
+                                      </span>
+                                    )}
+                                  </div>
+                                  <code className="mt-1 block break-all text-xs text-white/70">
+                                    {(factor as Record<string, unknown>).expression as string}
+                                  </code>
+                                  {(factor as Record<string, unknown>).description ? (
+                                    <p className="mt-2 text-xs text-white/50">
+                                      {String((factor as Record<string, unknown>).description)}
+                                    </p>
+                                  ) : null}
+                                </div>
+                                <button
+                                  onClick={() =>
+                                    handleCopyFactor(
+                                      (factor as Record<string, unknown>).expression as string,
+                                      factorName
+                                    )
+                                  }
+                                  className="shrink-0 rounded-lg border border-white/10 bg-white/5 p-1.5 text-white/50 transition hover:bg-white/10 hover:text-white"
+                                  title="Copy expression"
+                                >
+                                  {copiedFactor === factorName ? (
+                                    <Check className="size-3.5 text-emerald-400" />
+                                  ) : (
+                                    <Copy className="size-3.5" />
+                                  )}
+                                </button>
                               </div>
-                              <button
-                                onClick={() =>
-                                  handleCopyFactor(
-                                    (factor as Record<string, unknown>).expression as string,
-                                    (factor as Record<string, unknown>).name as string
-                                  )
-                                }
-                                className="shrink-0 rounded-lg border border-white/10 bg-white/5 p-1.5 text-white/50 transition hover:bg-white/10 hover:text-white"
-                                title="Copy expression"
-                              >
-                                {copiedFactor === (factor as Record<string, unknown>).name ? (
-                                  <Check className="size-3.5 text-emerald-400" />
-                                ) : (
-                                  <Copy className="size-3.5" />
-                                )}
-                              </button>
                             </div>
-                          </div>
-                        ))}
+                          )
+                        })}
                       </div>
                     )}
                   </div>
@@ -1314,6 +1367,7 @@ export default function AlphasPage() {
   const [selectedResults, setSelectedResults] = useState<AlphaCopilotResult | null>(null)
   const [resultsLoading, setResultsLoading] = useState(false)
   const [triggeringAgent, setTriggeringAgent] = useState(false)
+  const [runResults, setRunResults] = useState<Record<string, AlphaCopilotResult>>({})
 
   // Auth
   const { user: authUser, loading: authLoading } = useAuth()
@@ -1332,6 +1386,30 @@ export default function AlphasPage() {
     createRun,
     getRunResults,
   } = useAlphaCopilotRuns()
+
+  // Fetch results for completed runs with best_factors
+  useEffect(() => {
+    const fetchRunResults = async () => {
+      const completedRuns = runs.filter(
+        r => r.status.toLowerCase() === "completed" && r.best_factors && r.best_factors.length > 0
+      )
+      
+      for (const run of completedRuns) {
+        if (!runResults[run.id]) {
+          try {
+            const results = await getRunResults(run.id)
+            setRunResults(prev => ({ ...prev, [run.id]: results }))
+          } catch (error) {
+            console.error(`Failed to fetch results for run ${run.id}:`, error)
+          }
+        }
+      }
+    }
+
+    if (runs.length > 0 && !runsLoading) {
+      fetchRunResults()
+    }
+  }, [runs, runsLoading])
 
   // Live alphas
   const {
@@ -1352,16 +1430,23 @@ export default function AlphasPage() {
   const handleViewResults = async (run: AlphaCopilotRun) => {
     setSelectedRun(run)
     setResultsModalOpen(true)
-    setResultsLoading(true)
-    setSelectedResults(null)
-
-    try {
-      const results = await getRunResults(run.id)
-      setSelectedResults(results)
-    } catch (error) {
-      console.error("Failed to fetch results:", error)
-    } finally {
+    
+    // Use cached results if available, otherwise fetch
+    if (runResults[run.id]) {
+      setSelectedResults(runResults[run.id])
       setResultsLoading(false)
+    } else {
+      setResultsLoading(true)
+      setSelectedResults(null)
+      try {
+        const results = await getRunResults(run.id)
+        setRunResults(prev => ({ ...prev, [run.id]: results }))
+        setSelectedResults(results)
+      } catch (error) {
+        console.error("Failed to fetch results:", error)
+      } finally {
+        setResultsLoading(false)
+      }
     }
   }
 
@@ -1369,8 +1454,12 @@ export default function AlphasPage() {
   const handleDeployAlpha = async (name: string, amount: number) => {
     if (!selectedRun) return
 
-    // Get the results from the run
-    const results = await getRunResults(selectedRun.id)
+    // Use cached results if available, otherwise fetch
+    let results = runResults[selectedRun.id]
+    if (!results) {
+      results = await getRunResults(selectedRun.id)
+      setRunResults(prev => ({ ...prev, [selectedRun.id]: results }))
+    }
 
     await createAlpha({
       name,
@@ -1588,6 +1677,121 @@ export default function AlphasPage() {
                 isAllocating={alphaAllocating}
               />
             </div>
+
+            {/* Best Factors Table - Only shown for Research tab */}
+            {activeTab === "research" && runs.some(r => r.status.toLowerCase() === "completed" && r.best_factors && r.best_factors.length > 0) && (
+              <Card className="card-glass rounded-2xl border border-white/10 bg-white/6 shadow-[0_28px_65px_-38px_rgba(0,0,0,0.9)] backdrop-blur">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-xl text-[#fafafa]">
+                    <TrendingUp className="size-5 text-amber-400" />
+                    Best Factors
+                  </CardTitle>
+                  <CardDescription className="text-xs uppercase tracking-[0.3em] text-white/45">
+                    Best performing factors from completed research runs
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-6">
+                    {runs
+                      .filter(r => r.status.toLowerCase() === "completed" && r.best_factors && r.best_factors.length > 0)
+                      .slice(0, 5)
+                      .map(run => {
+                        // Get actual results for this run
+                        const results = runResults[run.id]
+                        const metrics = results?.final_metrics as Record<string, unknown> | undefined
+                        
+                        // Extract test metrics (final_metrics contains test data)
+                        const sharpe = typeof metrics?.sharpe_ratio === 'number' ? metrics.sharpe_ratio : 0
+                        const ic = typeof metrics?.IC === 'number' ? metrics.IC : 0
+                        const annualReturn = typeof metrics?.annual_return === 'number' ? metrics.annual_return : 0
+                        const maxDrawdown = typeof metrics?.max_drawdown === 'number' ? metrics.max_drawdown : 0
+                        
+                        return (
+                          <div key={run.id} className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
+                            {/* Run Header */}
+                            <div className="mb-4 flex items-start justify-between gap-4">
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm font-medium text-white/80">{run.hypothesis}</p>
+                                <p className="mt-1 text-xs text-white/50">
+                                  {new Date(run.created_at).toLocaleDateString()} • {(run.best_factors || []).length} factors
+                                </p>
+                              </div>
+                              <div className="flex shrink-0 gap-2">
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => handleViewResults(run)}
+                                  className="h-8 border-cyan-500/30 bg-cyan-500/10 px-3 text-xs text-cyan-300 hover:bg-cyan-500/20"
+                                >
+                                  <Eye className="mr-1.5 size-3" />
+                                  View
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => {
+                                    setSelectedRun(run)
+                                    setDeployModalOpen(true)
+                                  }}
+                                  className="h-8 border-emerald-500/30 bg-emerald-500/10 px-3 text-xs text-emerald-300 hover:bg-emerald-500/20"
+                                >
+                                  <Rocket className="mr-1.5 size-3" />
+                                  Deploy
+                                </Button>
+                              </div>
+                            </div>
+
+                            {/* Metrics Grid */}
+                            <div className="mb-4 grid grid-cols-4 gap-4">
+                              <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+                                <p className="text-xs text-white/50">Sharpe Ratio</p>
+                                <p className="mt-1 text-lg font-semibold text-emerald-400">
+                                  {sharpe.toFixed(2)}
+                                </p>
+                              </div>
+                              <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+                                <p className="text-xs text-white/50">IC</p>
+                                <p className="mt-1 text-lg font-semibold text-white/90">
+                                  {ic.toFixed(3)}
+                                </p>
+                              </div>
+                              <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+                                <p className="text-xs text-white/50">Annual Return</p>
+                                <p className="mt-1 text-lg font-semibold text-emerald-400">
+                                  {(annualReturn * 100).toFixed(1)}%
+                                </p>
+                              </div>
+                              <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+                                <p className="text-xs text-white/50">Max Drawdown</p>
+                                <p className="mt-1 text-lg font-semibold text-rose-400">
+                                  {(maxDrawdown * 100).toFixed(1)}%
+                                </p>
+                              </div>
+                            </div>
+
+                            {/* Factors List */}
+                            <div className="space-y-2">
+                              {(run.best_factors || []).map((factor, idx) => (
+                                <div
+                                  key={idx}
+                                  className="flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3"
+                                >
+                                  <span className="inline-flex shrink-0 rounded-full bg-amber-500/30 p-1.5">
+                                    <TrendingUp className="size-3.5 text-amber-300" />
+                                  </span>
+                                  <span className="text-sm font-medium text-amber-200">
+                                    {(factor as Record<string, unknown>).name as string}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )
+                      })}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
 
             {/* Performance Graph */}
 

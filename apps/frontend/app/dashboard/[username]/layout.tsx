@@ -1,5 +1,10 @@
+import type { Metadata } from "next"
 import { redirect } from "next/navigation";
 import { getCurrentUser, canAccessDashboard } from "@/lib/auth-server";
+
+export const metadata: Metadata = {
+  title: "Dashboard",
+}
 
 interface DashboardLayoutProps {
   children: React.ReactNode;

@@ -1352,7 +1352,9 @@ class PipelineService:
             metadata["llm_delay_ms"] = llm_delay_ms
             self.logger.info("⏱️ _build_trade_signal: Added llm_delay_ms=%dms to metadata", llm_delay_ms)
         else:
-            self.logger.warning("⚠️ _build_trade_signal: llm_delay_ms NOT in payload. Payload keys: %s", list(payload.keys()))
+            # Default to 0 for signals without LLM timing data (e.g., test signals)
+            metadata["llm_delay_ms"] = 0
+            self.logger.debug("⏱️ _build_trade_signal: llm_delay_ms not in payload, defaulting to 0ms")
         
         llm_start_time = payload.get("llm_start_time")
         if llm_start_time:

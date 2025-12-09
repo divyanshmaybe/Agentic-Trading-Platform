@@ -320,9 +320,6 @@ def prepare_trade_execution_payloads(
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
                 
-                # Use asyncio.run_coroutine_threadsafe or nest_asyncio
-                import nest_asyncio
-                nest_asyncio.apply()
                 price_decimal = loop.run_until_complete(
                     fetch_market_price_via_http(signal.symbol, timeout=price_fetch_timeout)
                 )
@@ -476,44 +473,3 @@ __all__ = [
     "DEFAULT_STOP_LOSS_PCT",
 ]
 
-
-# HTTP Market Data Helper (added for Celery workers)
-async def fetch_market_price_via_http(symbol: str, timeout: float = 10.0):
-    """Fetch market price via HTTP from portfolio server"""
-    import httpx
-    import logging
-    from decimal import Decimal
-    
-    logger = logging.getLogger(__name__)
-    portfolio_server_url = os.getenv("PORTFOLIO_SERVER_URL", "http://portfolio.agentinvest.space")
-    
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.get(
-                f"{portfolio_server_url}/api/market/quotes",
-                params={"symbols": symbol}
-            )
-            
-            if response.status_code != 200:
-                logger.warning("Market API returned status %d for %s", response.status_code, symbol)
-                return None
-            
-            data = response.json()
-            quotes = data.get("data", [])
-            
-            if not quotes:
-                logger.warning("No market data returned for %s", symbol)
-                return None
-            
-            quote = quotes[0]
-            price = quote.get("price")
-            
-            if price is None:
-                logger.warning("Price is None in market data for %s", symbol)
-                return None
-            
-            return Decimal(str(price))
-            
-    except Exception as exc:
-        logger.warning("Failed to fetch market price for %s via HTTP: %s", symbol, exc)
-        return None

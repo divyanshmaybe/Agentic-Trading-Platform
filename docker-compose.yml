@@ -246,6 +246,7 @@ services:
       WORKER_NAME: trading@docker
       KAFKA_CLIENT_ID: portfolio-celery-trading
       COLLECTOR_ENDPOINT: http://phoenix:6006/v1/traces
+      PORTFOLIO_SERVER_URL: http://portfolio_server:8000
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "cp /app/apps/portfolio-server/docker.env /app/apps/portfolio-server/.env 2>/dev/null || true &&
@@ -287,6 +288,7 @@ services:
       WORKER_NAME: nse_pipeline@docker
       KAFKA_CLIENT_ID: portfolio-celery-nse-pipeline
       COLLECTOR_ENDPOINT: http://phoenix:6006/v1/traces
+      PORTFOLIO_SERVER_URL: http://portfolio_server:8000
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "cp /app/apps/portfolio-server/docker.env /app/apps/portfolio-server/.env 2>/dev/null || true &&
@@ -327,6 +329,7 @@ services:
       WORKER_NAME: news_pipeline@docker
       KAFKA_CLIENT_ID: portfolio-celery-news-pipeline
       COLLECTOR_ENDPOINT: http://phoenix:6006/v1/traces
+      PORTFOLIO_SERVER_URL: http://portfolio_server:8000
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "cp /app/apps/portfolio-server/docker.env /app/apps/portfolio-server/.env 2>/dev/null || true &&
@@ -367,6 +370,7 @@ services:
       WORKER_NAME: low_risk@docker
       KAFKA_CLIENT_ID: portfolio-celery-low-risk
       COLLECTOR_ENDPOINT: http://phoenix:6006/v1/traces
+      PORTFOLIO_SERVER_URL: http://portfolio_server:8000
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "cp /app/apps/portfolio-server/docker.env /app/apps/portfolio-server/.env 2>/dev/null || true &&
@@ -407,6 +411,7 @@ services:
       WORKER_NAME: allocation@docker
       KAFKA_CLIENT_ID: portfolio-celery-allocation
       COLLECTOR_ENDPOINT: http://phoenix:6006/v1/traces
+      PORTFOLIO_SERVER_URL: http://portfolio_server:8000
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "cp /app/apps/portfolio-server/docker.env /app/apps/portfolio-server/.env 2>/dev/null || true &&
@@ -486,6 +491,7 @@ services:
       WORKER_NAME: general@docker
       KAFKA_CLIENT_ID: portfolio-celery-general
       COLLECTOR_ENDPOINT: http://phoenix:6006/v1/traces
+      PORTFOLIO_SERVER_URL: http://portfolio_server:8000
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "cp /app/apps/portfolio-server/docker.env /app/apps/portfolio-server/.env 2>/dev/null || true &&
@@ -566,6 +572,7 @@ services:
       WORKER_NAME: regime@docker
       KAFKA_CLIENT_ID: portfolio-celery-regime
       COLLECTOR_ENDPOINT: http://phoenix:6006/v1/traces
+      PORTFOLIO_SERVER_URL: http://portfolio_server:8000
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "cp /app/apps/portfolio-server/docker.env /app/apps/portfolio-server/.env 2>/dev/null || true &&
@@ -793,6 +800,9 @@ services:
     ports:
       - "8069:8069"
     volumes:
+      # Mount source code for development
+      - ./apps/alphacopilot-server:/app/apps/alphacopilot-server
+      - ./shared:/app/sharedx
       # Mount data directory for market data (not baked into image)
       - ./quant-stream/.data:/app/quant-stream/.data:ro
       - ./data:/app/data
@@ -994,6 +1004,47 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - portainer_data:/data
+    networks:
+      - agentInvest
+
+  # Pathway Order Monitor - Real-time TP/SL monitoring (Reactive Pathway pipeline)
+  pathway_order_monitor:
+    image: portfolio_server:latest
+    container_name: pathway_order_monitor
+    restart: unless-stopped
+    env_file:
+      - docker.env
+      - apps/portfolio-server/docker.env
+    environment:
+      PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
+      PATHWAY_ORDER_MONITOR_ENABLED: "true"
+      REDIS_HOST: portfolio_redis
+      REDIS_PORT: "6379"
+      PORTFOLIO_SERVER_URL: http://portfolio_server:8000
+      KAFKA_CLIENT_ID: pathway-order-monitor
+      COLLECTOR_ENDPOINT: http://phoenix:6006/v1/traces
+    working_dir: /app/apps/portfolio-server
+    command: >
+      bash -c "cp /app/apps/portfolio-server/docker.env /app/apps/portfolio-server/.env 2>/dev/null || true &&
+               python -m prisma generate &&
+               until python -m prisma db push --accept-data-loss; do
+                 echo 'Waiting for Postgres...';
+                 sleep 2;
+               done &&
+               echo '🚀 Starting Pathway Order Monitor (Reactive TP/SL)...' &&
+               python -m workers.pathway_order_monitor"
+    volumes:
+      - ./apps/portfolio-server:/app/apps/portfolio-server
+      - ./shared:/app/shared
+      - ./middleware:/app/middleware
+      - ./scripts:/app/scripts
+    depends_on:
+      portfolio_postgres:
+        condition: service_healthy
+      portfolio_redis:
+        condition: service_healthy
+      portfolio_server:
+        condition: service_started
     networks:
       - agentInvest
 

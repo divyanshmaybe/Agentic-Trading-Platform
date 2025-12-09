@@ -89,6 +89,10 @@ class RunResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     error_message: Optional[str] = None
+    # Final results (if run is completed)
+    generated_factors: Optional[List[Dict[str, Any]]] = None
+    workflow_config: Optional[Dict[str, Any]] = None
+    best_factors: Optional[List[Dict[str, Any]]] = None
 
     class Config:
         from_attributes = True

@@ -312,13 +312,13 @@ function AdvancedTradesTable({ initialTrades, initialLoading, agentId }: { initi
     }
   }, [])
 
-  // Fetch on mount to get actual total count
+  // Fetch on mount to get actual total count (wait for agentId to be available)
   useEffect(() => {
-    if (!hasInitialized.current) {
+    if (!hasInitialized.current && agentId) {
       hasInitialized.current = true
       fetchTrades(1, pageSize)
     }
-  }, [fetchTrades, pageSize])
+  }, [fetchTrades, pageSize, agentId])
 
   // Fetch prices whenever trades change
   useEffect(() => {

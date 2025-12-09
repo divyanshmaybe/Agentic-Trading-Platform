@@ -68,6 +68,9 @@ export type AlphaCopilotRun = {
   created_at: string
   updated_at: string
   error_message?: string
+  generated_factors?: Array<Record<string, unknown>> | null
+  workflow_config?: Record<string, unknown> | null
+  best_factors?: Array<Record<string, unknown>> | null
 }
 
 export type AlphaCopilotResult = {

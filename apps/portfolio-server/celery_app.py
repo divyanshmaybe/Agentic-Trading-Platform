@@ -467,16 +467,18 @@ ORDER_MONITOR_QUEUE = os.getenv("ORDER_MONITOR_QUEUE", QUEUE_NAMES["orders"])
 # Initialize empty beat schedule
 celery_app.conf.beat_schedule = {}
 
-# NSE Pipeline - runs once on startup (long-running task)
-if NSE_PIPELINE_ENABLED:
-    celery_app.conf.beat_schedule["nse-filings-pipeline"] = {
-        "task": "pipeline.start",
-        "schedule": timedelta(seconds=300),  # Check every 5 minutes (task has internal lock)
-        "options": {
-            "queue": NSE_PIPELINE_QUEUE,
-            "expires": 240,  # Expire after 4 minutes if not picked up
-        },
-    }
+# NSE Pipeline - runs continuously (started manually, NOT via beat scheduler)
+# Disabled beat schedule to prevent task accumulation since pipeline.start runs 24/7
+# To start: manually trigger pipeline.start task or let it start on worker boot
+# if NSE_PIPELINE_ENABLED:
+#     celery_app.conf.beat_schedule["nse-filings-pipeline"] = {
+#         "task": "pipeline.start",
+#         "schedule": timedelta(seconds=300),  # Check every 5 minutes (task has internal lock)
+#         "options": {
+#             "queue": NSE_PIPELINE_QUEUE,
+#             "expires": 240,  # Expire after 4 minutes if not picked up
+#         },
+#     }
 
 # Only enable news pipeline via Beat if explicitly configured
 if NEWS_PIPELINE_ENABLED:
@@ -515,22 +517,22 @@ if RISK_MONITOR_ENABLED:
         },
     }
 
-# Snapshot capture - Every 3 hours (0:00, 3:00, 6:00, 9:00, 12:00, 15:00, 18:00, 21:00 UTC)
+# Snapshot capture - Every 1 hour
 SNAPSHOT_ENABLED = os.getenv("SNAPSHOT_CAPTURE_ENABLED", "true").lower() in {"1", "true", "yes"}
 SNAPSHOT_QUEUE = os.getenv("SNAPSHOT_QUEUE", DEFAULT_QUEUE)
 
 if SNAPSHOT_ENABLED:
-    # Trading agent snapshots - every 3 hours
+    # Trading agent snapshots - every 1 hour
     celery_app.conf.beat_schedule["trading-agent-snapshots"] = {
         "task": "snapshot.capture_agent_snapshots",
-        "schedule": crontab(hour="*/3", minute=0),  # Every 3 hours
+        "schedule": crontab(minute=0),  # Every hour on the hour
         "options": {"queue": SNAPSHOT_QUEUE},
     }
     
-    # Portfolio snapshots - every 3 hours
+    # Portfolio snapshots - every 1 hour
     celery_app.conf.beat_schedule["portfolio-snapshots"] = {
         "task": "snapshot.capture_portfolio_snapshots",
-        "schedule": crontab(hour="*/3", minute=5),  # Every 3 hours (offset by 5 minutes)
+        "schedule": crontab(minute=5),  # Every hour at 5 minutes past
         "options": {"queue": SNAPSHOT_QUEUE},
     }
 

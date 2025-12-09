@@ -35,6 +35,19 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        <script async src="https://www.googletagmanager.com/gtag/js?id=G-R1QZEMES4B"></script>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              window.dataLayer = window.dataLayer || [];
+              function gtag(){dataLayer.push(arguments);}
+              gtag('js', new Date());
+              gtag('config', 'G-R1QZEMES4B');
+            `,
+          }}
+        />
+      </head>
       <body className={`${inter.variable} ${playfair.variable} antialiased`}>
         <ThemeProvider attribute="class" forcedTheme="dark">
           {children}

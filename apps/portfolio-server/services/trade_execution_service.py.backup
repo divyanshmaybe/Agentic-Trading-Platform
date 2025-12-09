@@ -418,10 +418,11 @@ class TradeExecutionService:
             "metadata": Json(metadata),  # Use Prisma Json wrapper for proper storage
         }
         
-        # Debug: Log LLM timing metadata if present
-        llm_delay = metadata.get("llm_delay_ms", 0)
-        if llm_delay > 0:
-            self.logger.info("⏱️ Trade metadata includes llm_delay_ms=%dms for %s", llm_delay, job_row.get("symbol"))
+        # Debug: Log metadata being stored in Trade record
+        if "llm_delay_ms" in metadata:
+            self.logger.info("✅ Trade metadata INCLUDES llm_delay_ms=%dms for %s", metadata.get("llm_delay_ms"), job_row.get("symbol"))
+        else:
+            self.logger.warning("❌ Trade metadata MISSING llm_delay_ms for %s. Metadata keys: %s", job_row.get("symbol"), list(metadata.keys()))
         
         # Only add TP/SL for non-manual trades
         if not is_manual_trade:

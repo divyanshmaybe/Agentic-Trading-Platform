@@ -981,6 +981,7 @@ class PathwayOrderMonitor:
             trade_payload = TradeCreate(
                 organization_id=trade.organization_id or "",
                 portfolio_id=signal.portfolio_id,
+                agent_id=trade.agent_id,  # Inherit agent_id from original trade
                 customer_id=str(trade.customer_id or ""),
                 trade_type="auto",
                 symbol=signal.symbol,
@@ -1326,6 +1327,7 @@ class PathwayOrderMonitor:
             trade_payload = TradeCreate(
                 organization_id=trade.organization_id or "",
                 portfolio_id=signal.portfolio_id,
+                agent_id=trade.agent_id,  # Inherit agent_id from original trade
                 customer_id=str(trade.customer_id or ""),
                 trade_type="auto",
                 symbol=signal.symbol,

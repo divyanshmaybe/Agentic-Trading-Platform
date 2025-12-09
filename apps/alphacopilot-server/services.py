@@ -179,7 +179,15 @@ class RunService:
         client = await self._get_client()
         run = await client.alphacopilotrun.find_unique(where={"id": run_id})
         if run:
-            return self._run_to_dict(run)
+            run_dict = self._run_to_dict(run)
+            # Fetch results separately to get generated factors
+            result = await client.alphacopilotresult.find_first(where={"run_id": run_id})
+            if result:
+                result_dict = self._result_to_dict(result)
+                run_dict["generated_factors"] = result_dict.get("all_factors")
+                run_dict["workflow_config"] = result_dict.get("workflow_config")
+                run_dict["best_factors"] = result_dict.get("best_factors")
+            return run_dict
         return None
 
     async def list_runs(
@@ -204,7 +212,25 @@ class RunService:
             take=limit,
         )
         
-        return [self._run_to_dict(run) for run in runs], total
+        # Convert runs to dict and add results data
+        run_dicts = []
+        for run in runs:
+            run_dict = self._run_to_dict(run)
+            # Fetch results separately for each run
+            logger.info(f"Fetching result for run_id: {run.id}")
+            result = await client.alphacopilotresult.find_first(where={"run_id": run.id})
+            logger.info(f"Result found: {result is not None}")
+            if result:
+                result_dict = self._result_to_dict(result)
+                run_dict["generated_factors"] = result_dict.get("all_factors")
+                run_dict["workflow_config"] = result_dict.get("workflow_config")
+                run_dict["best_factors"] = result_dict.get("best_factors")
+                logger.info(f"Run {run.id}: added {len(result_dict.get('all_factors') or [])} factors, {len(result_dict.get('best_factors') or [])} best_factors, and workflow_config={result_dict.get('workflow_config') is not None}")
+            else:
+                logger.warning(f"No result found for run {run.id}")
+            run_dicts.append(run_dict)
+        
+        return run_dicts, total
 
     async def update_run_status(
         self,
@@ -568,6 +594,25 @@ class RunService:
                                 if result_data.get("test_metrics"):
                                     final_metrics["test"] = result_data["test_metrics"]
             
+            # Fallback: If no SOTA iteration found (no decision=True), select best iteration by metrics
+            if not best_factors and all_factors:
+                logger.info("No SOTA iteration marked, selecting best iteration by metrics...")
+                await self._select_best_iteration_as_sota(run_id)
+                # Re-fetch iterations to find the best one
+                client = await self._get_client()
+                iterations = await client.alphacopilotiteration.find_many(
+                    where={"run_id": run_id},
+                    order={"iteration_number": "asc"}
+                )
+                if iterations:
+                    best_iter = self._find_best_iteration(iterations)
+                    if best_iter:
+                        best_factors = json.loads(best_iter.factors) if isinstance(best_iter.factors, str) else best_iter.factors
+                        best_metrics = json.loads(best_iter.metrics) if isinstance(best_iter.metrics, str) else best_iter.metrics
+                        if best_metrics:
+                            final_metrics = best_metrics
+                        logger.info(f"Selected iteration {best_iter.iteration_number} as SOTA with {len(best_factors or [])} factors")
+            
             # Build final workflow config for deployment
             final_workflow_config = self._build_workflow_config(config, best_factors or all_factors)
             
@@ -761,6 +806,56 @@ class RunService:
             "iteration_number": log.iteration_number,
             "timestamp": log.created_at,  # Map to API-compatible name
         }
+
+    def _find_best_iteration(self, iterations):
+        """Find the best iteration based on test metrics (Sharpe, IC, Return)."""
+        if not iterations:
+            return None
+        
+        best_iter = None
+        best_score = -float('inf')
+        
+        for iteration in iterations:
+            try:
+                metrics = json.loads(iteration.metrics) if isinstance(iteration.metrics, str) else iteration.metrics
+                if not metrics:
+                    continue
+                
+                # Extract test metrics (if available) or use train metrics
+                test_metrics = metrics
+                if isinstance(metrics, dict) and 'test' in metrics:
+                    # Handle circular reference case
+                    if metrics['test'] == "<circular reference>":
+                        test_metrics = metrics  # Use top-level metrics which are test metrics
+                    else:
+                        test_metrics = metrics['test']
+                
+                # Calculate composite score: prioritize Sharpe, IC, and Return
+                sharpe = float(test_metrics.get('sharpe_ratio', 0))
+                ic = float(test_metrics.get('IC', 0))
+                annual_return = float(test_metrics.get('annual_return', 0))
+                
+                # Weighted score: Sharpe (50%), IC (30%), Return (20%)
+                score = (sharpe * 0.5) + (ic * 0.3) + (annual_return * 0.2)
+                
+                logger.info(f"Iteration {iteration.iteration_number}: Sharpe={sharpe:.3f}, IC={ic:.4f}, Return={annual_return:.2%}, Score={score:.4f}")
+                
+                if score > best_score:
+                    best_score = score
+                    best_iter = iteration
+            except Exception as e:
+                logger.warning(f"Error evaluating iteration {iteration.iteration_number}: {e}")
+                continue
+        
+        return best_iter
+
+    async def _select_best_iteration_as_sota(self, run_id: str):
+        """Log selection of best iteration when no SOTA was marked."""
+        await self.add_log(
+            run_id,
+            "INFO",
+            "No SOTA iteration marked by workflow. Automatically selecting best iteration based on test metrics (Sharpe, IC, Return)."
+        )
 
 
 
