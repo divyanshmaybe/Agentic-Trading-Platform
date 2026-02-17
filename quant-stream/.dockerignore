@@ -1,0 +1,94 @@
+# Quant-stream Docker ignore
+# Large data files should be mounted as volumes, not baked into images
+
+# =====================
+# Environment files
+# =====================
+.env
+.env.*
+
+# =====================
+# Data files (CRITICAL - these are huge, mount as volumes)
+# =====================
+.data/
+data/
+*.csv
+*.parquet
+*.pkl
+*.pickle
+*.h5
+*.hdf5
+# Allow the lightweight Nifty500 CSV used in runtime market checks
+!/.data/indian_stock_market_nifty500.csv
+
+# =====================
+# Model files
+# =====================
+*.pt
+*.pth
+*.onnx
+*.bin
+# Exclude model checkpoints, but NOT the quant_stream/models code directory
+checkpoints/
+
+# =====================
+# Python artifacts
+# =====================
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+.eggs/
+
+# =====================
+# Virtual environments
+# =====================
+.venv/
+venv/
+
+# =====================
+# Testing
+# =====================
+tests/
+**/*.test.py
+pytest.ini
+
+# =====================
+# IDE
+# =====================
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# =====================
+# Logs
+# =====================
+*.log
+logs/
+
+# =====================
+# Temp files
+# =====================
+tmp/
+temp/
+*.tmp
+
+# =====================
+# Documentation
+# =====================
+docs/
+*.md
+!README.md
+
+# =====================
+# Jupyter notebooks (dev only)
+# =====================
+*.ipynb
+.ipynb_checkpoints/

@@ -1,0 +1,118 @@
+# Beta Neutral Strategy Configuration
+# Long-short strategy with intraday short square-off for Indian markets
+
+data:
+  path: ".data/indian_stock_market_nifty500.csv"
+  symbols_file: ".data/nifty500.txt"
+  symbol_col: "symbol"
+  timestamp_col: "timestamp"
+
+# Momentum-based features for long-short signal generation
+features:
+  # Short-term momentum (for intraday signals)
+  - name: "momentum_1d"
+    expression: "TS_PCTCHANGE($close, 1)"
+  
+  - name: "momentum_5d"
+    expression: "TS_PCTCHANGE($close, 5)"
+  
+  - name: "momentum_10d"
+    expression: "TS_PCTCHANGE($close, 10)"
+  
+  # Relative strength
+  - name: "rsi_5"
+    expression: "($close - TS_MIN($low, 5)) / (TS_MAX($high, 5) - TS_MIN($low, 5) + 1e-8)"
+  
+  - name: "rsi_10"
+    expression: "($close - TS_MIN($low, 10)) / (TS_MAX($high, 10) - TS_MIN($low, 10) + 1e-8)"
+  
+  # Volume signals
+  - name: "volume_ratio"
+    expression: "$volume / (TS_MEAN($volume, 20) + 1e-8)"
+  
+  - name: "price_volume_corr"
+    expression: "TS_CORR($close, $volume, 10)"
+  
+  # Volatility-adjusted momentum
+  - name: "vol_adj_momentum"
+    expression: "TS_PCTCHANGE($close, 5) / (TS_STD($close, 20) / $close + 1e-8)"
+  
+  # Mean reversion signal (for shorts)
+  - name: "mean_reversion_5d"
+    expression: "($close - TS_MEAN($close, 5)) / (TS_STD($close, 5) + 1e-8)"
+  
+  - name: "mean_reversion_10d"
+    expression: "($close - TS_MEAN($close, 10)) / (TS_STD($close, 10) + 1e-8)"
+
+model:
+  type: "LightGBM"
+  include_ohlcv: false
+  params:
+    objective: "regression"
+    metric: "l2"
+    boosting_type: "gbdt"
+    learning_rate: 0.05
+    num_leaves: 63
+    max_depth: 4
+    subsample: 0.8
+    subsample_freq: 1
+    colsample_bytree: 0.8
+    reg_alpha: 2.0
+    reg_lambda: 5.0
+    min_child_samples: 30
+    num_threads: 10
+    random_state: 42
+    verbose: -1
+    num_boost_round: 200
+    early_stopping_rounds: 25
+  target: "forward_return_1d"
+
+# Beta Neutral Strategy Configuration
+# Long top-N signals, Short bottom-N signals
+# Dollar-neutral with intraday square-off
+strategy:
+  type: "BetaNeutral"
+  params:
+    # Number of positions
+    n_long: 20           # Top 20 stocks to go long
+    n_short: 20          # Bottom 20 stocks to go short
+    
+    # Weight allocation
+    long_weight: 0.5     # 50% gross exposure long
+    short_weight: 0.5    # 50% gross exposure short
+    # Net exposure: 0% (dollar neutral)
+    # Gross exposure: 100%
+    
+    # Neutrality type
+    neutrality: "dollar" # Options: "dollar", "count", "beta" (beta not yet implemented)
+    
+    # Weight allocation method within long/short buckets
+    method: "equal"      # Options: "equal", "signal", "rank"
+    
+    # Minimum absolute signal to consider
+    min_signal_threshold: 0.0
+
+backtest:
+  segments:
+    train: ["2022-01-01", "2022-12-31"]
+    validation: ["2023-01-01", "2023-03-31"]
+    test: ["2023-04-01", "2023-11-28"]
+  initial_capital: 1000000
+  commission: 0.001       # 10 bps commission
+  slippage: 0.001         # 10 bps slippage
+  min_commission: 20.0
+  rebalance_frequency: 1
+  
+  # Short selling configuration (Indian market specific)
+  allow_short: true             # Enable short positions
+  intraday_short_only: true     # Square off all shorts at end of day
+  short_funding_rate: 0.0002    # Additional cost for shorts (securities lending proxy)
+
+experiment:
+  name: "beta_neutral"
+  tracking_uri: "sqlite:///mlruns.db"
+  run_name: "beta_neutral_intraday"
+  tags:
+    strategy: "beta_neutral"
+    dataset: "indian_stocks"
+    market: "intraday_short"

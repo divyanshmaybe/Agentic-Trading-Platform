@@ -1,0 +1,38 @@
+[project]
+name = "alphacopilot"
+version = "0.1.0"
+description = "Automated alpha factor generation with LangGraph and LLMs"
+readme = "README.md"
+requires-python = ">=3.11, <3.14"
+dependencies = [
+    "langchain-community>=0.4.1",
+    "langchain-groq>=1.0.0",
+    "langchain-mcp-adapters>=0.1.12",
+    "langchain-openai>=1.0.2",
+    "langgraph>=1.0.2",
+    "langsmith>=0.1.0",
+    "fire>=0.7.1", # command line interface
+    "jinja2>=3.1.0", # template rendering for prompts
+    "pyyaml>=6.0.0", # YAML config generation for binary backend
+    "fastmcp>=0.1.0", # MCP client with SSE/stdio auto-detection
+    "fastapi>=0.104.0", # REST API server
+    "uvicorn[standard]>=0.24.0", # ASGI server
+    "sqlalchemy>=2.0.0", # Database ORM
+    "pydantic>=2.0.0", # Data validation
+    "python-multipart>=0.0.6", # Form data parsing
+]
+
+[project.scripts]
+alphacopilot = "alphacopilot.cli:main"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["alphacopilot", "alphacopilot.nodes", "alphacopilot.server"]
+
+[tool.setuptools.package-dir]
+"alphacopilot" = "."
+"alphacopilot.nodes" = "nodes"
+"alphacopilot.server" = "server"

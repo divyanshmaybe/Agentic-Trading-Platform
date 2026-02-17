@@ -1,0 +1,14 @@
+confluent-kafka==2.4.0
+fastapi==0.121.0
+httpx==0.28.1
+pathway==0.26.4
+prisma==0.15.0
+PyJWT==2.10.1
+pyotp==2.9.0
+pydantic==2.12.4
+python-dotenv==1.2.1
+redis==5.2.1
+requests==2.32.5
+uvicorn==0.38.0
+websockets==15.0.1
+langchain-community==0.4.1

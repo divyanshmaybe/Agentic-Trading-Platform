@@ -1,0 +1,35 @@
+# Portfolio server Docker ignore
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+*.py[cod]
+*.pyo
+
+# Environment files - CRITICAL: prevent env files from overriding Docker env vars
+.env
+.env.*
+.env.local
+.env.development
+.env.production
+.env.test
+docker.env
+
+# Testing
+tests/
+tests/__pycache__/
+
+# Documentation
+docs/
+
+# Celery
+celerybeat-schedule
+celerybeat-schedule.*
+
+# Coverage
+.coverage
+htmlcov/
+
+# Shared caches
+/tmp/
+*.log
+

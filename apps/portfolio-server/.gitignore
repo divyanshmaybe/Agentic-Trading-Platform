@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Pipeline output files
+pipelines/**/*.jsonl
+pipelines/**/*.pdf
+pipelines/**/processed_announcements.json
+
+# Data files
+*.csv
+*.json
+!package.json
+!requirements.txt
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+
+docker.env

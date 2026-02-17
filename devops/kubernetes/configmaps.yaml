@@ -1,0 +1,326 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: auth-config
+  namespace: agent-invest
+data:
+  NODE_ENV: production
+  PORT: "4000"
+  REDIS_HOST: auth-redis
+  REDIS_PORT: "6379"
+  REDIS_URL: redis://auth-redis:6379
+  PORTFOLIO_SERVICE_URL: http://portfolio-server:8000
+  CLIENT_URL: http://localhost
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: notification-config
+  namespace: agent-invest
+data:
+  NODE_ENV: production
+  REDIS_HOST: auth-redis
+  REDIS_PORT: "6379"
+  KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  KAFKA_CLIENT_ID: notification-server
+  KAFKA_GROUP_ID: notifications-consumer
+  KAFKA_ENABLED: "true"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: portfolio-config
+  namespace: agent-invest
+data:
+  PORT: "8000"
+  SKIP_DOTENV: "true"
+  AUTH_SERVER_URL: http://auth-server:4000
+  PORTFOLIO_SERVICE_URL: http://portfolio-server:8000
+  CLIENT_URL: http://localhost
+  REDIS_HOST: portfolio-redis
+  REDIS_PORT: "6379"
+  MARKET_DATA_PROVIDER: finnhub
+  MARKET_DATA_WS_URL: wss://example.org/dummy
+  ENABLE_NIFTY500_PREFETCH: "false"
+  PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware:/app/middleware/py
+  # Trading Mode Configuration
+  DEMO_MODE: "true"
+  ENABLE_AUTO_TRADING: "true"
+  MARKET_CLOSE_SELL_ENABLED: "false"
+  # Pathway Logging Suppression
+  PATHWAY_LOG_LEVEL: "ERROR"
+  PATHWAY_DISABLE_PROGRESS: "1"
+  PATHWAY_MONITORING_LEVEL: "none"
+  # NSE Pipeline Configuration
+  NSE_REFRESH_INTERVAL: "60"
+  NSE_PIPELINE_TIMEOUT: "20"
+  NSE_MAX_TIMEOUT: "60"
+  NEWS_FETCH_RATE: "3600"
+  NEWS_TOP_K: "3"
+  # Worker Availability Checks
+  MIN_AVAILABLE_WORKERS: "1"
+  WORKER_CHECK_ENABLED: "true"
+  CELERY_WORKER_RUNNING: "1"
+  # Queue Configuration (matching docker-compose)
+  CELERY_DEFAULT_QUEUE: general
+  CELERY_QUEUE_ALLOCATIONS: allocations
+  CELERY_QUEUE_TRADING: trading
+  CELERY_QUEUE_NSE_PIPELINE: nse_pipeline
+  CELERY_QUEUE_NEWS_PIPELINE: news_pipeline,pipelines
+  CELERY_QUEUE_LOW_RISK: low_risk_pipeline
+  CELERY_QUEUE_MARKET: market,tokens
+  CELERY_QUEUE_GENERAL: general,risk,orders,pipelines
+  CELERY_QUEUE_STREAMING: streaming
+  CELERY_WORKER_PREFETCH_MULTIPLIER: "1"
+  CELERY_VISIBILITY_TIMEOUT: "900"
+  CELERY_RESULT_TTL: "86400"
+  CELERY_TASK_SOFT_TIME_LIMIT: "600"
+  CELERY_TASK_TIME_LIMIT: "720"
+  CELERY_REDBEAT_LOCK_TIMEOUT: "600"
+  CELERY_REDBEAT_LOCK_KEY: redbeat::lock
+  # Concurrency settings per worker type
+  CELERY_CONCURRENCY_ALLOCATIONS: "2"
+  CELERY_CONCURRENCY_TRADING: "4"
+  CELERY_CONCURRENCY_NSE_PIPELINE: "1"
+  CELERY_CONCURRENCY_NEWS_PIPELINE: "1"
+  CELERY_CONCURRENCY_LOW_RISK: "1"
+  CELERY_CONCURRENCY_MARKET: "4"
+  CELERY_CONCURRENCY_GENERAL: "4"
+  CELERY_CONCURRENCY_STREAMING: "1"
+  CELERY_LOG_LEVEL: info
+  # Auto-Sell Configuration
+  AUTO_SELL_CHECK_INTERVAL_SECONDS: "60"
+  AUTO_SELL_HOLD_DURATION_MINUTES: "15"
+  # Angel One Configuration
+  ANGELONE_RETRY_ATTEMPTS: "3"
+  ANGELONE_RETRY_DELAY: "5"
+  ANGELONE_MAX_RETRY_DELAY: "20"
+  # Market Data Configuration
+  MARKET_DATA_RECONNECT_DELAY: "5"
+  MARKET_DATA_MAX_RECONNECT_DELAY: "60"
+  # Kafka Configuration
+  KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  KAFKA_CLIENT_ID: portfolio-server
+  KAFKA_ENABLED: "true"
+  KAFKA_NSE_TOPIC: nse_filings_trading_signal
+  KAFKA_TRADE_LOGS_TOPIC: nse_pipeline_trade_logs
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-config
+  namespace: agent-invest
+data:
+  PORT: "3000"
+  NEXT_TELEMETRY_DISABLED: "1"
+  NODE_ENV: production
+  # Redis for notifications pub/sub (uses auth-redis)
+  REDIS_HOST: auth-redis
+  REDIS_PORT: "6379"
+  NEXT_PUBLIC_API_BASE_URL: http://api.localhost
+  NEXT_PUBLIC_PORTFOLIO_API_URL: http://api.localhost/portfolio
+  NEXT_PUBLIC_AUTH_BASE_URL: http://api.localhost/auth
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-alert-rules
+  namespace: agent-invest
+data:
+  alert-rules.yml: |
+    groups:
+      - name: celery_alerts
+        interval: 30s
+        rules:
+          - alert: CeleryWorkerDown
+            expr: celery_worker_up == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Celery worker {{ $labels.worker }} is down"
+              description: "Celery worker {{ $labels.worker }} has been down for more than 2 minutes"
+          
+          - alert: CeleryTaskFailureRate
+            expr: rate(celery_task_failed_total[5m]) > 0.1
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High task failure rate on {{ $labels.queue }}"
+              description: "Task failure rate is {{ $value }} on queue {{ $labels.queue }}"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards-provisioning
+  namespace: agent-invest
+data:
+  dashboards.yml: |
+    apiVersion: 1
+    providers:
+      - name: 'default'
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        updateIntervalSeconds: 10
+        allowUiUpdates: true
+        options:
+          path: /var/lib/grafana/dashboards
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: promtail-config
+  namespace: agent-invest
+data:
+  promtail.yml: |
+    server:
+      http_listen_port: 3101
+    
+    positions:
+      filename: /tmp/positions.yaml
+    
+    clients:
+      - url: http://loki:3100/loki/api/v1/push
+    
+    scrape_configs:
+      - job_name: kubernetes-pods
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            target_label: app
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+    
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets: []
+    
+    rule_files:
+      - /etc/prometheus/alert-rules.yml
+    
+    scrape_configs:
+      - job_name: 'prometheus'
+        static_configs:
+          - targets: ['localhost:9090']
+      
+      - job_name: 'auth-server'
+        static_configs:
+          - targets: ['auth-server:4000']
+        metrics_path: '/health'
+        scrape_interval: 30s
+      
+      - job_name: 'portfolio-server'
+        static_configs:
+          - targets: ['portfolio-server:8000']
+        metrics_path: '/health'
+        scrape_interval: 30s
+      
+      - job_name: 'alphacopilot-server'
+        static_configs:
+          - targets: ['alphacopilot-server:8069']
+        metrics_path: '/health'
+        scrape_interval: 30s
+      
+      - job_name: 'frontend'
+        static_configs:
+          - targets: ['frontend:3000']
+        scrape_interval: 30s
+      
+      - job_name: 'celery-exporter'
+        static_configs:
+          - targets: ['celery-metrics:9808']
+        scrape_interval: 15s
+      
+      - job_name: 'redis-exporter'
+        static_configs:
+          - targets: ['redis-exporter:9121']
+        scrape_interval: 30s
+      
+      - job_name: 'postgres-exporter'
+        static_configs:
+          - targets: ['postgres-exporter:9187']
+        scrape_interval: 30s
+      
+      - job_name: 'flower'
+        static_configs:
+          - targets: ['portfolio-celery-flower:5555']
+        scrape_interval: 30s
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loki-config
+data:
+  loki.yml: |
+    auth_enabled: false
+    server:
+      http_listen_port: 3100
+    ingester:
+      wal:
+        enabled: true
+        dir: /loki/wal
+      lifecycler:
+        address: 127.0.0.1
+        ring:
+          kvstore:
+            store: inmemory
+          replication_factor: 1
+    schema_config:
+      configs:
+        - from: 2024-01-01
+          store: tsdb
+          object_store: filesystem
+          schema: v13
+          index:
+            prefix: index_
+            period: 24h
+    storage_config:
+      tsdb_shipper:
+        active_index_directory: /loki/tsdb-index
+        cache_location: /loki/tsdb-cache
+      filesystem:
+        directory: /loki/chunks
+    compactor:
+      working_directory: /loki/compactor
+    limits_config:
+      allow_structured_metadata: false
+      reject_old_samples: true
+      reject_old_samples_max_age: 168h
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  labels:
+    grafana_datasource: "1"
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus:9090
+        isDefault: true
+      - name: Loki
+        type: loki
+        access: proxy
+        url: http://loki:3100
+

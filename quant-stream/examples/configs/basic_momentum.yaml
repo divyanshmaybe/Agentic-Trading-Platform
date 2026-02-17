@@ -1,0 +1,70 @@
+# Basic momentum strategy configuration
+# This example demonstrates a simple momentum-based trading strategy
+
+data:
+  path: ".data/indian_stock_market_nifty500.csv"
+  start_date: "2021-06-01"
+  end_date: "2021-12-31"
+  symbol_col: "symbol"
+  timestamp_col: "timestamp"
+
+# Option 1: Named features (original format)
+features:
+  - name: "VolumeWeightedMomentum_5D_10D"
+    expression: "DIVIDE($volume, SMA($volume, 20))"
+
+# Tip: duplicate entries in the features list to explore alternative formulas.
+
+model:
+  type: "LightGBM"
+  # Explicit feature selection - can mix factor names and inline expressions
+  features:
+    - "VolumeWeightedMomentum_5D_10D"  # Reference computed factor
+    - "($close - $open) / $open"        # Inline expression (qlib-style)
+    - "TS_PCTCHANGE($close, 5)"         # Another inline expression
+  include_ohlcv: false  # Exclude OHLCV columns
+  params:
+    # Core LightGBM hyperparameters
+    objective: "regression"
+    metric: "l2"
+    boosting_type: "gbdt"
+    learning_rate: 0.05
+    num_leaves: 31
+    max_depth: 5
+    min_child_samples: 20
+    subsample: 0.8
+    subsample_freq: 1
+    colsample_bytree: 0.8
+    reg_alpha: 0.1
+    reg_lambda: 0.1
+    random_state: 42
+    verbose: -1
+    # Training parameters
+    num_boost_round: 100
+    early_stopping_rounds: 10
+  target: "forward_return_1d"
+
+strategy:
+  type: "TopkDropout"
+  params:
+    topk: 30
+    n_drop: 5
+    method: "equal"
+
+backtest:
+  segments:
+    train: ["2021-06-01", "2021-12-01"]
+    test: ["2021-12-01", "2021-12-31"]
+  initial_capital: 1000000
+  commission: 0.001
+  slippage: 0.001
+  min_commission: 0.0
+  rebalance_frequency: 1
+
+experiment:
+  name: "basic_momentum"
+  tracking_uri: "sqlite:///mlruns.db"
+  run_name: "momentum_strategy"
+  tags:
+    strategy: "momentum"
+    dataset: "indian_stocks"

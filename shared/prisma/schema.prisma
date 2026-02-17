@@ -1,0 +1,156 @@
+generator client {
+  provider = "prisma-client-js"
+  previewFeatures = ["tracing"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
+  relationMode = "prisma"
+  // Connection pool settings to prevent exhaustion
+  // connection_limit sets max connections per Prisma client instance
+  // pool_timeout sets how long to wait for available connection (seconds)
+}
+
+model Organization {
+  id                  String    @id @default(uuid())
+  name                String
+  email               String    @unique
+  phone               String?
+  address             String?
+  registration_number String?
+  tax_id              String?
+  status              String    @default("active") // 'active' | 'suspended' | 'inactive'
+  subscription_tier   String    @default("basic") // 'basic' | 'standard' | 'premium' | 'enterprise'
+  billing_cycle        String?  // 'monthly' | 'quarterly' | 'annual'
+  metadata            Json?     @default("{}")
+  created_at          DateTime  @default(now())
+  updated_at          DateTime  @updatedAt
+  deleted_at          DateTime?
+
+  users               User[]
+
+  @@index([email])
+  @@index([status])
+  @@map("organizations")
+}
+
+model User {
+  id                  String    @id @default(uuid())
+  organization_id     String
+  email               String
+  password_hash       String?
+  first_name          String
+  last_name           String
+  phone               String?
+  role                String    @default("staff") // 'admin' | 'staff' | 'viewer'
+  status              String    @default("active") // 'active' | 'suspended' | 'inactive'
+  last_login_at       DateTime?
+  two_factor_enabled  Boolean   @default(false)
+  two_factor_secret   String?
+  metadata            Json?     @default("{}")
+  subscriptions       String[]  @default([])
+  created_at          DateTime  @default(now())
+  updated_at          DateTime  @updatedAt
+  deleted_at          DateTime?
+
+  organization        Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  lowRiskEvents       LowRiskEvent[]
+  lowRiskUserSummaries LowRiskUserSummaries[]
+
+  @@unique([organization_id, email])
+  @@index([email])
+  @@index([organization_id])
+  @@index([status])
+  @@map("users")
+}
+
+model Notification {
+  id           String   @id @default(uuid())
+  kafkaKey     String?  @unique
+  topic        String
+  category     String
+  title        String?
+  summary      String?
+  symbol       String?
+  sector       String?
+  sentiment    String?
+  signal       String?
+  confidence   Float?
+  url          String?
+  rawPayload   Json
+  createdAt    DateTime @default(now())
+  eventTime    DateTime?
+
+  dashboardStates DashboardNotificationState[]
+  intradayStates  IntradayNotificationState[]
+
+  @@index([topic])
+  @@index([category])
+  @@index([symbol])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+model DashboardNotificationState {
+  id             String      @id @default(uuid())
+  userId         String
+  notificationId String
+  dismissedAt    DateTime    @default(now())
+
+  notification   Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, notificationId])
+  @@index([userId])
+  @@index([notificationId])
+  @@index([dismissedAt])
+  @@map("dashboard_notification_states")
+}
+
+model IntradayNotificationState {
+  id             String      @id @default(uuid())
+  userId         String
+  notificationId String
+  dismissedAt    DateTime    @default(now())
+
+  notification   Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, notificationId])
+  @@index([userId])
+  @@index([notificationId])
+  @@index([dismissedAt])
+  @@map("intraday_notification_states")
+}
+
+model LowRiskEvent {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind       String   // "info" | "industry" | "stock" | "report" | "summary"
+  eventType  String?  // "industry" | "stock" | "report" | null (null for info/summary)
+  status     String?  // "fetching" | "fetched" | "generating" | "generated" | null
+  content    Json?    // structured payload for notifications
+  rawPayload Json     // full Kafka message
+  eventTime  DateTime?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([kind])
+  @@index([eventType])
+  @@index([createdAt])
+  @@map("low_risk_events")
+}
+
+model LowRiskUserSummaries {
+  id        String   @id @default(uuid())
+  userId    String
+  type      String   // "metrics" | "summary"
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jsonContent   Json     // summary content as JSON
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("low_risk_user_summaries")
+}

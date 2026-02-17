@@ -1,0 +1,2 @@
+.data/indian_market_data.csv filter=lfs diff=lfs merge=lfs -text
+# .data/indian_stock_market_nifty500.csv filter=lfs diff=lfs merge=lfs -text

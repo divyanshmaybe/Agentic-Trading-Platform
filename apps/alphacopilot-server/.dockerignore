@@ -1,0 +1,63 @@
+# AlphaCopilot Server Docker ignore
+# This file is used when building from the app directory context
+
+# =====================
+# Python artifacts
+# =====================
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# =====================
+# Virtual environments
+# =====================
+.venv/
+venv/
+.virtualenvs/
+
+# =====================
+# Testing
+# =====================
+tests/
+**/*.test.py
+pytest.ini
+
+# =====================
+# IDE
+# =====================
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# =====================
+# Logs
+# =====================
+*.log
+logs/
+
+# =====================
+# Data files (mount as volume)
+# =====================
+data/
+.data/
+*.csv
+*.parquet
+*.pkl
+*.h5
+mlruns/
+mlruns.db
+
+# =====================
+# Documentation
+# =====================
+docs/
+*.md
+!README.md

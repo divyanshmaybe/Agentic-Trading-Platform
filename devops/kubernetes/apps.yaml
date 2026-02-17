@@ -1,0 +1,1087 @@
+# Replace {{DOCKERHUB_USERNAME}} with your DockerHub username in all image references below
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: agent-invest
+  labels:
+    app: frontend
+spec:
+  selector:
+    app: frontend
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: agent-invest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: {{DOCKERHUB_USERNAME}}/agent-invest-frontend:latest
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: frontend-config
+            - secretRef:
+                name: auth-env-secret
+          ports:
+            - containerPort: 3000
+              name: http
+          command:
+            - sh
+            - -c
+            - pnpm --filter frontend exec next start -H 0.0.0.0 -p ${PORT:-3000}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-server
+  namespace: agent-invest
+  labels:
+    app: auth-server
+spec:
+  selector:
+    app: auth-server
+  ports:
+    - name: http
+      port: 4000
+      targetPort: 4000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-server
+  namespace: agent-invest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auth-server
+  template:
+    metadata:
+      labels:
+        app: auth-server
+    spec:
+      containers:
+        - name: auth-server
+          image: {{DOCKERHUB_USERNAME}}/agent-invest-auth-server:latest
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: auth-config
+            - secretRef:
+                name: auth-env-secret
+          ports:
+            - containerPort: 4000
+              name: http
+          command:
+            - sh
+            - -c
+            - |
+              pnpm prisma generate --schema ../../shared/prisma/schema.prisma && \
+              pnpm prisma db push --schema ../../shared/prisma/schema.prisma && \
+              pnpm run start
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 40
+            periodSeconds: 30
+---
+# =============================================================================
+# Notification Server (Kafka Consumer -> Redis Publisher)
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-server
+  namespace: agent-invest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: notification-server
+  template:
+    metadata:
+      labels:
+        app: notification-server
+    spec:
+      containers:
+        - name: notification-server
+          image: {{DOCKERHUB_USERNAME}}/agent-invest-notification-server:latest
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: notification-config
+            - secretRef:
+                name: auth-env-secret
+          command:
+            - sh
+            - -c
+            - |
+              cd apps/notification_server && \
+              pnpm prisma generate --schema /app/shared/prisma/schema.prisma && \
+              pnpm prisma db push --schema /app/shared/prisma/schema.prisma --accept-data-loss && \
+              node -r tsconfig-paths/register dist/apps/notification_server/src/index.js
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: portfolio-server
+  namespace: agent-invest
+  labels:
+    app: portfolio-server
+spec:
+  selector:
+    app: portfolio-server
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portfolio-server
+  namespace: agent-invest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: portfolio-server
+  template:
+    metadata:
+      labels:
+        app: portfolio-server
+    spec:
+      containers:
+        - name: portfolio-server
+          image: {{DOCKERHUB_USERNAME}}/agent-invest-portfolio-server:latest
+          imagePullPolicy: Always
+          env:
+            - name: PYTHONPATH
+              value: "/app:/app/apps/portfolio-server:/app/shared/py:/app/middleware:/app/middleware/py"
+          envFrom:
+            - configMapRef:
+                name: portfolio-config
+            - secretRef:
+                name: portfolio-env-secret
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "1Gi"
+            limits:
+              cpu: "1"
+              memory: "2Gi"
+          ports:
+            - containerPort: 8000
+              name: http
+          command:
+            - sh
+            - -c
+            - |
+              rm -f /app/apps/portfolio-server/.env && \
+              python -m prisma generate && \
+              until python -m prisma db push --accept-data-loss; do \
+                echo "Waiting for Postgres..."; \
+                sleep 2; \
+              done && \
+              uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portfolio-celery-allocations
+  namespace: agent-invest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: portfolio-celery-allocations
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: portfolio-celery-allocations
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: portfolio-celery-allocations
+      containers:
+        - name: worker
+          image: {{DOCKERHUB_USERNAME}}/agent-invest-portfolio-server:latest
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: portfolio-config
+            - secretRef:
+                name: portfolio-env-secret
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+          command:
+            - sh
+            - -c
+            - |
+              rm -f /app/apps/portfolio-server/.env && \
+              python -m prisma generate && \
+              until python -m prisma db push --accept-data-loss; do \
+                echo "Waiting for Postgres..."; \
+                sleep 2; \
+              done && \
+              exec celery -A celery_app:celery_app worker \
+                --loglevel=${CELERY_LOG_LEVEL:-info} \
+                --queues=allocations \
+                --concurrency=${CELERY_CONCURRENCY_ALLOCATIONS:-2} \
+                --prefetch-multiplier=1 \
+                --hostname=allocation@%h \
+                --max-tasks-per-child=100 \
+                --events
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: portfolio-celery-allocations
+  namespace: agent-invest
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: portfolio-celery-allocations
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: portfolio-celery-allocations
+  namespace: agent-invest
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: portfolio-celery-allocations
+  minReplicas: 1
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portfolio-celery-trading
+  namespace: agent-invest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: portfolio-celery-trading
+  template:
+    metadata:
+      labels:
+        app: portfolio-celery-trading
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: portfolio-celery-trading
+      containers:
+        - name: worker
+          image: {{DOCKERHUB_USERNAME}}/agent-invest-portfolio-server:latest
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: portfolio-config
+            - secretRef:
+                name: portfolio-env-secret
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+          command:
+            - sh
+            - -c
+            - |
+              rm -f /app/apps/portfolio-server/.env && \
+              python -m prisma generate && \
+              until python -m prisma db push --accept-data-loss; do \
+                echo "Waiting for Postgres..."; \
+                sleep 2; \
+              done && \
+              exec celery -A celery_app:celery_app worker \
+                --loglevel=${CELERY_LOG_LEVEL:-info} \
+                --queues=trading \
+                --concurrency=${CELERY_CONCURRENCY_TRADING:-4} \
+                --prefetch-multiplier=1 \
+                --hostname=trading@%h \
+                --max-tasks-per-child=100 \
+                --events
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: portfolio-celery-trading
+  namespace: agent-invest
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: portfolio-celery-trading
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portfolio-celery-market
+  namespace: agent-invest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: portfolio-celery-market
+  template:
+    metadata:
+      labels:
+        app: portfolio-celery-market
+    spec:
+      containers:
+        - name: worker
+          image: {{DOCKERHUB_USERNAME}}/agent-invest-portfolio-server:latest
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: portfolio-config
+            - secretRef:
+                name: portfolio-env-secret
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "2Gi"
+          command:
+            - sh
+            - -c
+            - |
+              rm -f /app/apps/portfolio-server/.env && \
+              python -m prisma generate && \
+              until python -m prisma db push --accept-data-loss; do \
+                echo "Waiting for Postgres..."; \
+                sleep 2; \
+              done && \
+              exec celery -A celery_app:celery_app worker \
+                --loglevel=${CELERY_LOG_LEVEL:-info} \
+                --queues=market,tokens \
+                --concurrency=${CELERY_CONCURRENCY_MARKET:-4} \
+                --prefetch-multiplier=1 \
+                --hostname=market@%h \
+                --max-tasks-per-child=500 \
+                --events
+---
+# =============================================================================
+# Celery Worker - NSE Pipeline Queue (NSE filings - dedicated)
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portfolio-celery-nse-pipeline
+  namespace: agent-invest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: portfolio-celery-nse-pipeline
+  template:
+    metadata:
+      labels:
+        app: portfolio-celery-nse-pipeline
+    spec:
+      containers:
+        - name: worker
+          image: {{DOCKERHUB_USERNAME}}/agent-invest-portfolio-server:latest
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: portfolio-config
+            - secretRef:
+                name: portfolio-env-secret
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "2Gi"
+          command:
+            - sh
+            - -c
+            - |
+              rm -f /app/apps/portfolio-server/.env && \
+              python -m prisma generate && \
+              until python -m prisma db push --accept-data-loss; do \
+                echo "Waiting for Postgres..."; \
+                sleep 2; \
+              done && \
+              exec celery -A celery_app:celery_app worker \
+                --loglevel=${CELERY_LOG_LEVEL:-info} \
+                --queues=nse_pipeline \
+                --concurrency=${CELERY_CONCURRENCY_NSE_PIPELINE:-1} \
+                --prefetch-multiplier=1 \
+                --hostname=nse_pipeline@%h \
+                --max-tasks-per-child=10 \
+                --events
+---
+# =============================================================================
+# Celery Worker - News Pipeline Queue (News sentiment - dedicated)
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portfolio-celery-news-pipeline
+  namespace: agent-invest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: portfolio-celery-news-pipeline
+  template:
+    metadata:
+      labels:
+        app: portfolio-celery-news-pipeline
+    spec:
+      containers:
+        - name: worker
+          image: {{DOCKERHUB_USERNAME}}/agent-invest-portfolio-server:latest
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: portfolio-config
+            - secretRef:
+                name: portfolio-env-secret
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "2Gi"
+          command:
+            - sh
+            - -c
+            - |
+              rm -f /app/apps/portfolio-server/.env && \
+              python -m prisma generate && \
+              until python -m prisma db push --accept-data-loss; do \
+                echo "Waiting for Postgres..."; \
+                sleep 2; \
+              done && \
+              exec celery -A celery_app:celery_app worker \
+                --loglevel=${CELERY_LOG_LEVEL:-info} \
+                --queues=news_pipeline,pipelines \
+                --concurrency=${CELERY_CONCURRENCY_NEWS_PIPELINE:-1} \
+                --prefetch-multiplier=1 \
+                --hostname=news_pipeline@%h \
+                --max-tasks-per-child=10 \
+                --events
+---
+# =============================================================================
+# Celery Worker - Low Risk Pipeline Queue (Low-risk stock selection)
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portfolio-celery-low-risk
+  namespace: agent-invest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: portfolio-celery-low-risk
+  template:
+    metadata:
+      labels:
+        app: portfolio-celery-low-risk
+    spec:
+      containers:
+        - name: worker
+          image: {{DOCKERHUB_USERNAME}}/agent-invest-portfolio-server:latest
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: portfolio-config
+            - secretRef:
+                name: portfolio-env-secret
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "2Gi"
+          command:
+            - sh
+            - -c
+            - |
+              rm -f /app/apps/portfolio-server/.env && \
+              python -m prisma generate && \
+              until python -m prisma db push --accept-data-loss; do \
+                echo "Waiting for Postgres..."; \
+                sleep 2; \
+              done && \
+              exec celery -A celery_app:celery_app worker \
+                --loglevel=${CELERY_LOG_LEVEL:-info} \
+                --queues=low_risk_pipeline \
+                --concurrency=${CELERY_CONCURRENCY_LOW_RISK:-1} \
+                --prefetch-multiplier=1 \
+                --hostname=low_risk@%h \
+                --max-tasks-per-child=5 \
+                --events
+---
+# =============================================================================
+# Celery Worker - General Queue (Misc tasks, risk, orders)
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portfolio-celery-general
+  namespace: agent-invest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: portfolio-celery-general
+  template:
+    metadata:
+      labels:
+        app: portfolio-celery-general
+    spec:
+      containers:
+        - name: worker
+          image: {{DOCKERHUB_USERNAME}}/agent-invest-portfolio-server:latest
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: portfolio-config
+            - secretRef:
+                name: portfolio-env-secret
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "2Gi"
+          command:
+            - sh
+            - -c
+            - |
+              rm -f /app/apps/portfolio-server/.env && \
+              python -m prisma generate && \
+              until python -m prisma db push --accept-data-loss; do \
+                echo "Waiting for Postgres..."; \
+                sleep 2; \
+              done && \
+              exec celery -A celery_app:celery_app worker \
+                --loglevel=${CELERY_LOG_LEVEL:-info} \
+                --queues=general,risk,orders,pipelines \
+                --concurrency=${CELERY_CONCURRENCY_GENERAL:-4} \
+                --prefetch-multiplier=1 \
+                --hostname=general@%h \
+                --max-tasks-per-child=200 \
+                --events
+---
+# =============================================================================
+# Celery Worker - Streaming Queue (Long-running streaming tasks)
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portfolio-celery-streaming
+  namespace: agent-invest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: portfolio-celery-streaming
+  template:
+    metadata:
+      labels:
+        app: portfolio-celery-streaming
+    spec:
+      containers:
+        - name: worker
+          image: {{DOCKERHUB_USERNAME}}/agent-invest-portfolio-server:latest
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: portfolio-config
+            - secretRef:
+                name: portfolio-env-secret
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+          command:
+            - sh
+            - -c
+            - |
+              rm -f /app/apps/portfolio-server/.env && \
+              python -m prisma generate && \
+              until python -m prisma db push --accept-data-loss; do \
+                echo "Waiting for Postgres..."; \
+                sleep 2; \
+              done && \
+              exec celery -A celery_app:celery_app worker \
+                --loglevel=${CELERY_LOG_LEVEL:-info} \
+                --queues=streaming \
+                --concurrency=${CELERY_CONCURRENCY_STREAMING:-1} \
+                --prefetch-multiplier=1 \
+                --hostname=streaming@%h \
+                --max-tasks-per-child=1 \
+                --without-heartbeat \
+                --without-gossip \
+                --events
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portfolio-celery-beat
+  namespace: agent-invest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: portfolio-celery-beat
+  template:
+    metadata:
+      labels:
+        app: portfolio-celery-beat
+    spec:
+      containers:
+        - name: beat
+          image: {{DOCKERHUB_USERNAME}}/agent-invest-portfolio-server:latest
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: portfolio-config
+            - secretRef:
+                name: portfolio-env-secret
+          env:
+            - name: AUTO_SELL_ENABLED
+              value: "true"
+            - name: SNAPSHOT_TASKS_ENABLED
+              value: "true"
+            - name: MARKET_CLOSE_SELL_ENABLED
+              value: "false"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+          command:
+            - sh
+            - -c
+            - |
+              rm -f /app/apps/portfolio-server/.env && \
+              python -m prisma generate && \
+              until python -m prisma db push --accept-data-loss; do \
+                echo "Waiting for Postgres..."; \
+                sleep 2; \
+              done && \
+              exec celery -A celery_app:celery_app beat \
+                --loglevel=${CELERY_LOG_LEVEL:-info} \
+                --pidfile= \
+                --scheduler=redbeat.RedBeatScheduler
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portfolio-celery-flower
+  namespace: agent-invest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: portfolio-celery-flower
+  template:
+    metadata:
+      labels:
+        app: portfolio-celery-flower
+    spec:
+      containers:
+        - name: flower
+          image: mher/flower:2.0.1
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: FLOWER_PORT
+              value: "5555"
+            - name: FLOWER_BASIC_AUTH
+              value: admin:admin
+          envFrom:
+            - secretRef:
+                name: portfolio-env-secret
+          command:
+            - sh
+            - -c
+            - |
+              exec celery flower \
+                --port=${FLOWER_PORT:-5555} \
+                --broker=${CELERY_BROKER_URL} \
+                --basic_auth=${FLOWER_BASIC_AUTH:-admin:admin} \
+                --persistent=True \
+                --db=/data/flower.db
+          ports:
+            - name: http
+              containerPort: 5555
+          volumeMounts:
+            - name: flower-data
+              mountPath: /data
+      volumes:
+        - name: flower-data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: portfolio-celery-flower
+  namespace: agent-invest
+spec:
+  selector:
+    app: portfolio-celery-flower
+  ports:
+    - name: http
+      port: 5555
+      targetPort: 5555
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: celery-metrics-exporter
+  namespace: agent-invest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: celery-metrics-exporter
+  template:
+    metadata:
+      labels:
+        app: celery-metrics-exporter
+    spec:
+      containers:
+        - name: exporter
+          image: danihodovic/celery-exporter:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: CE_BROKER_URL
+              valueFrom:
+                secretKeyRef:
+                  name: portfolio-env-secret
+                  key: CELERY_BROKER_URL
+            - name: CE_LISTEN_ADDRESS
+              value: "0.0.0.0:9808"
+            - name: CE_NAMESPACE
+              value: "celery"
+            - name: CE_MAX_TASKS
+              value: "10000"
+            - name: CE_RETRY_INTERVAL
+              value: "5"
+          ports:
+            - name: metrics
+              containerPort: 9808
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: celery-metrics
+  namespace: agent-invest
+  labels:
+    app: celery-metrics-exporter
+spec:
+  selector:
+    app: celery-metrics-exporter
+  ports:
+    - name: http
+      port: 9808
+      targetPort: 9808
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka
+  namespace: agent-invest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka
+  template:
+    metadata:
+      labels:
+        app: kafka
+    spec:
+      containers:
+        - name: kafka
+          image: apache/kafka:3.8.0
+          ports:
+            - containerPort: 9092
+              name: kafka
+            - containerPort: 9093
+              name: controller
+          env:
+            - name: KAFKA_NODE_ID
+              value: "1"
+            - name: KAFKA_PROCESS_ROLES
+              value: "broker,controller"
+            - name: KAFKA_LISTENERS
+              value: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"
+            - name: KAFKA_ADVERTISED_LISTENERS
+              value: "PLAINTEXT://kafka:9092"
+            - name: KAFKA_CONTROLLER_LISTENER_NAMES
+              value: "CONTROLLER"
+            - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+              value: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+            - name: KAFKA_CONTROLLER_QUORUM_VOTERS
+              value: "1@kafka:9093"
+            - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+              value: "1"
+            - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
+              value: "1"
+            - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
+              value: "1"
+            - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
+              value: "true"
+            - name: CLUSTER_ID
+              value: "MkU3OEVBNTcwNTJENDM2Qk"
+          volumeMounts:
+            - name: kafka-data
+              mountPath: /var/lib/kafka/data
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "2Gi"
+      volumes:
+        - name: kafka-data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  namespace: agent-invest
+  labels:
+    app: kafka
+spec:
+  selector:
+    app: kafka
+  ports:
+    - name: kafka
+      port: 9092
+      targetPort: 9092
+    - name: controller
+      port: 9093
+      targetPort: 9093
+---
+# =============================================================================
+# AlphaCopilot Server (AI Trading Copilot)
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: alphacopilot-server
+  namespace: agent-invest
+  labels:
+    app: alphacopilot-server
+spec:
+  selector:
+    app: alphacopilot-server
+  ports:
+    - name: http
+      port: 8069
+      targetPort: 8069
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alphacopilot-server
+  namespace: agent-invest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alphacopilot-server
+  template:
+    metadata:
+      labels:
+        app: alphacopilot-server
+    spec:
+      containers:
+        - name: alphacopilot-server
+          image: {{DOCKERHUB_USERNAME}}/agent-invest-alphacopilot-server:latest
+          imagePullPolicy: Always
+          env:
+            - name: PYTHONPATH
+              value: "/app:/app/shared/py:/app/quant-stream:/app/apps/alphacopilot-server"
+          envFrom:
+            - secretRef:
+                name: portfolio-env-secret
+          ports:
+            - containerPort: 8069
+              name: http
+          command:
+            - sh
+            - -c
+            - |
+              python -m uvicorn main:app --host 0.0.0.0 --port 8069
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "2Gi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 40
+            periodSeconds: 30
+---
+# =============================================================================
+# AlphaCopilot Celery Worker (Backtest Processing)
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alphacopilot-celery
+  namespace: agent-invest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alphacopilot-celery
+  template:
+    metadata:
+      labels:
+        app: alphacopilot-celery
+    spec:
+      containers:
+        - name: worker
+          image: {{DOCKERHUB_USERNAME}}/agent-invest-alphacopilot-server:latest
+          imagePullPolicy: Always
+          env:
+            - name: PYTHONPATH
+              value: "/app:/app/shared/py:/app/quant-stream:/app/apps/alphacopilot-server"
+          envFrom:
+            - secretRef:
+                name: portfolio-env-secret
+          command:
+            - sh
+            - -c
+            - |
+              cd /app/quant-stream && \
+              celery -A quant_stream.mcp_server.core.celery_config worker \
+                --loglevel=info \
+                --queues=backtest \
+                --concurrency=2 \
+                --hostname=backtest@%h \
+                --max-tasks-per-child=50
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+

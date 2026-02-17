@@ -1,0 +1,596 @@
+generator client {
+  provider                    = "prisma-client-py"
+  enable_experimental_decimal = "true"
+  recursive_type_depth        = "-1"
+}
+
+datasource db {
+  provider          = "postgresql"
+  url               = env("DATABASE_URL")
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
+  // Connection pool settings (see .env for PRISMA_CONNECTION_LIMIT)
+  // Recommended: PRISMA_CONNECTION_LIMIT=3, CELERY_WORKER_CONCURRENCY=4
+  // Calculation: 3 connections × 4 workers = 12 per process (safe for 100 max)
+}
+
+/// --------------------
+/// User investment objective (both structured and raw json)
+/// --------------------
+model Objective {
+  id                       String      @id @default(uuid())
+  user_id                  String
+  name                     String?
+  raw                      Json?       @default("{}")
+  source                   String?
+  structured_payload       Json?       @default("{}")
+  investable_amount        Decimal?    @db.Decimal(20, 4)
+  investment_horizon_years Int?
+  investment_horizon_label String?
+  target_return            Decimal?    @db.Decimal(9, 6)
+  target_returns           Json?       @default("[]")
+  risk_tolerance           String?
+  risk_aversion_lambda     Decimal?    @db.Decimal(9, 6)
+  liquidity_needs          String?
+  rebalancing_frequency    String?
+  constraints              Json?       @default("{}")
+  preferences              Json?       @default("{}")
+  generic_notes            Json?       @default("[]")
+  missing_fields           Json?       @default("[]")
+  completion_status        String      @default("pending")
+  status                   String      @default("active")
+  created_at               DateTime    @default(now())
+  updated_at               DateTime    @updatedAt
+  sector_constraints       Json?       @default("{}")
+  portfolios               Portfolio[]
+
+  @@index([user_id])
+  @@map("objectives")
+}
+
+/// --------------------
+/// Portfolio (modified)
+/// --------------------
+model Portfolio {
+  id                       String                @id @default(uuid())
+  user_id                  String?
+  objective_id             String?
+  organization_id          String
+  customer_id              String
+  portfolio_name           String
+  initial_investment       Decimal               @db.Decimal(20, 4)
+  investment_amount        Decimal               @db.Decimal(20, 4)
+  investment_horizon_years Int
+  expected_return_target   Decimal               @db.Decimal(7, 4)
+  risk_tolerance           String
+  liquidity_needs          String
+  rebalancing_frequency    Json?
+  allocation_strategy      Json?
+  constraints              Json?
+  status                   String                @default("active")
+  allocation_status        String                @default("pending")
+  rebalancing_date         DateTime?
+  last_rebalanced_at       DateTime?
+  next_rebalance_at        DateTime?
+  allocation_trades        Json?
+  metadata                 Json?                 @default("{}")
+  created_at               DateTime              @default(now())
+  updated_at               DateTime              @updatedAt
+  deleted_at               DateTime?
+  available_cash           Decimal               @default(0) @db.Decimal(20, 4)
+  total_realized_pnl       Decimal               @default(0) @db.Decimal(20, 4)
+  allocations              PortfolioAllocation[]
+  portfolio_snapshots      PortfolioSnapshot[]
+  objective                Objective?            @relation(fields: [objective_id], references: [id])
+  positions                Position[]
+  rebalance_runs           RebalanceRun[]
+  trades                   Trade[]
+  agents                   TradingAgent[]
+  live_alphas              LiveAlpha[]
+
+  @@index([organization_id])
+  @@index([customer_id])
+  @@index([status])
+  @@index([user_id])
+  @@map("portfolios")
+}
+
+/// --------------------
+/// Portfolio allocation
+/// --------------------
+model PortfolioAllocation {
+  id                   String               @id @default(uuid())
+  portfolio_id         String
+  allocation_type      String
+  target_weight        Decimal              @db.Decimal(9, 6)
+  current_weight       Decimal              @default(0) @db.Decimal(9, 6)
+  allocated_amount     Decimal              @default(0) @db.Decimal(20, 4)
+  expected_return      Decimal?             @db.Decimal(9, 6)
+  expected_risk        Decimal?             @db.Decimal(9, 6)
+  regime               String?
+  pnl                  Decimal              @default(0) @db.Decimal(20, 4)
+  pnl_percentage       Decimal              @default(0) @db.Decimal(9, 6)
+  realized_pnl         Decimal              @default(0) @db.Decimal(20, 4)
+  drift_percentage     Decimal              @default(0) @db.Decimal(9, 6)
+  requires_rebalancing Boolean              @default(false)
+  metadata             Json?                @default("{}")
+  created_at           DateTime             @default(now())
+  updated_at           DateTime             @updatedAt
+  available_cash       Decimal              @default(0) @db.Decimal(20, 4)
+  allocation_snapshots AllocationSnapshot[]
+  portfolio            Portfolio            @relation(fields: [portfolio_id], references: [id], onDelete: Cascade)
+  positions            Position[]
+  tradingAgent         TradingAgent?        @relation("AllocationAgent")
+
+  @@index([portfolio_id])
+  @@index([allocation_type])
+  @@map("portfolio_allocations")
+}
+
+/// --------------------
+/// Trading agent
+/// --------------------
+model TradingAgent {
+  id                      String                 @id @default(uuid())
+  portfolio_id            String?
+  portfolio_allocation_id String                 @unique
+  agent_type              String
+  agent_name              String
+  status                  String                 @default("active")
+  strategy_config         Json?
+  performance_metrics     Json?
+  realized_pnl            Decimal                @default(0) @db.Decimal(20, 4)
+  last_executed_at        DateTime?
+  error_count             Int                    @default(0)
+  last_error_message      String?
+  metadata                Json?                  @default("{}")
+  created_at              DateTime               @default(now())
+  updated_at              DateTime               @updatedAt
+  positions               Position[]
+  trades                  Trade[]
+  snapshots               TradingAgentSnapshot[]
+  live_alphas             LiveAlpha[]
+  allocation              PortfolioAllocation    @relation("AllocationAgent", fields: [portfolio_allocation_id], references: [id], onDelete: Cascade)
+  portfolio               Portfolio?             @relation(fields: [portfolio_id], references: [id], onDelete: Cascade)
+
+  @@index([portfolio_id])
+  @@index([portfolio_allocation_id])
+  @@index([agent_type])
+  @@map("trading_agents")
+}
+
+/// --------------------
+/// Trades
+/// --------------------
+model Trade {
+  id                String              @id @default(uuid())
+  organization_id   String
+  portfolio_id      String
+  agent_id          String?
+  customer_id       String
+  trade_type        String
+  symbol            String
+  exchange          String
+  segment           String
+  side              String
+  order_type        String
+  quantity          Int
+  limit_price       Decimal?            @db.Decimal(20, 4)
+  price             Decimal?            @db.Decimal(20, 4)
+  trigger_price     Decimal?            @db.Decimal(20, 4)
+  executed_quantity Int                 @default(0)
+  executed_price    Decimal?            @db.Decimal(20, 4)
+  status            String              @default("pending")
+  order_id          String?
+  execution_time    DateTime?
+  rejection_reason  String?
+  fees              Decimal?            @db.Decimal(20, 4)
+  taxes             Decimal?            @db.Decimal(20, 4)
+  net_amount        Decimal?            @db.Decimal(20, 4)
+  realized_pnl      Decimal?            @db.Decimal(20, 4)
+  source            String?
+  metadata          Json?               @default("{}")
+  created_at        DateTime            @default(now())
+  updated_at        DateTime            @updatedAt
+  auto_cover_at     DateTime?
+  auto_sell_at      DateTime?
+  allocated_capital Decimal?            @db.Decimal(20, 4)
+  confidence        Decimal?            @db.Decimal(9, 6)
+  signal_id         String?
+  stop_loss_pct     Decimal?            @db.Decimal(9, 6)
+  stop_loss_price   Decimal?            @db.Decimal(20, 4)
+  take_profit_pct   Decimal?            @db.Decimal(9, 6)
+  take_profit_price Decimal?            @db.Decimal(20, 4)
+  executions        TradeExecutionLog[]
+  agent             TradingAgent?       @relation(fields: [agent_id], references: [id])
+  portfolio         Portfolio           @relation(fields: [portfolio_id], references: [id], onDelete: Cascade)
+  alpha_signals     AlphaSignal[]
+
+  @@index([organization_id])
+  @@index([portfolio_id])
+  @@index([customer_id])
+  @@index([status])
+  @@index([auto_sell_at])
+  @@index([auto_cover_at])
+  @@index([side])
+  @@map("trades")
+}
+
+/// --------------------
+/// Positions
+/// --------------------
+model Position {
+  id                String              @id @default(uuid())
+  portfolio_id      String
+  agent_id          String              // NOT NULL - Required for accounting
+  symbol            String
+  exchange          String
+  segment           String
+  quantity          Int
+  average_buy_price Decimal             @db.Decimal(20, 4)
+  position_type     String
+  status            String              @default("open")
+  opened_at         DateTime?
+  closed_at         DateTime?
+  metadata          Json?               @default("{}")
+  updated_at        DateTime            @updatedAt
+  allocation_id     String              // NOT NULL - Required for accounting
+  realized_pnl      Decimal             @default(0) @db.Decimal(20, 4)
+  agent             TradingAgent        @relation(fields: [agent_id], references: [id], onDelete: Cascade)
+  allocation        PortfolioAllocation @relation(fields: [allocation_id], references: [id], onDelete: Cascade)
+  portfolio         Portfolio           @relation(fields: [portfolio_id], references: [id], onDelete: Cascade)
+
+  @@index([portfolio_id])
+  @@index([agent_id])
+  @@index([allocation_id])
+  @@index([status])
+  @@index([position_type])
+  @@map("positions")
+}
+
+/// --------------------
+/// Rebalance run
+/// --------------------
+model RebalanceRun {
+  id                       String               @id @default(uuid())
+  portfolio_id             String
+  triggered_by             String?
+  triggered_at             DateTime             @default(now())
+  snapshot_portfolio_value Decimal              @db.Decimal(20, 4)
+  snapshot_cash            Decimal              @db.Decimal(20, 4)
+  snapshot_invested        Decimal              @db.Decimal(20, 4)
+  time_elapsed_days        Int?
+  expected_progress        Json?
+  metadata                 Json?                @default("{}")
+  created_at               DateTime             @default(now())
+  updated_at               DateTime             @updatedAt
+  allocation_snapshots     AllocationSnapshot[]
+  portfolio                Portfolio            @relation(fields: [portfolio_id], references: [id], onDelete: Cascade)
+
+  @@index([portfolio_id])
+  @@map("rebalance_runs")
+}
+
+/// --------------------
+/// Portfolio snapshot (minimal tracking)
+/// --------------------
+model PortfolioSnapshot {
+  id             String    @id @default(uuid())
+  portfolio_id   String
+  snapshot_at    DateTime  @default(now())
+  current_value  Decimal   @db.Decimal(20, 4)
+  realized_pnl   Decimal   @db.Decimal(20, 4)
+  unrealized_pnl Decimal   @db.Decimal(20, 4)
+  created_at     DateTime  @default(now())
+  portfolio      Portfolio @relation(fields: [portfolio_id], references: [id], onDelete: Cascade)
+
+  @@index([portfolio_id])
+  @@index([snapshot_at])
+  @@map("portfolio_snapshots")
+}
+
+/// --------------------
+/// Allocation snapshot (minimal tracking)
+/// --------------------
+model AllocationSnapshot {
+  id                      String              @id @default(uuid())
+  rebalance_run_id        String
+  portfolio_allocation_id String
+  metadata                Json?               @default("{}")
+  created_at              DateTime            @default(now())
+  current_value           Decimal             @db.Decimal(20, 4)
+  realized_pnl            Decimal             @db.Decimal(20, 4)
+  snapshot_at             DateTime            @default(now())
+  unrealized_pnl          Decimal             @db.Decimal(20, 4)
+  portfolio_allocation    PortfolioAllocation @relation(fields: [portfolio_allocation_id], references: [id], onDelete: Cascade)
+  rebalance_run           RebalanceRun        @relation(fields: [rebalance_run_id], references: [id], onDelete: Cascade)
+
+  @@index([rebalance_run_id])
+  @@index([portfolio_allocation_id])
+  @@map("allocation_snapshots")
+}
+
+model TradeExecutionLog {
+  id              String    @id @default(uuid())
+  request_id      String    @unique
+  status          String    @default("pending")
+  broker_order_id String?
+  error_message   String?
+  metadata        Json?     @default("{}")
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+  execution_time  DateTime?
+  order_type      String
+  trade_id        String
+  trade_delay     Int?      // Delay in milliseconds between signal generation and trade execution (for buy/short_sell)
+  trade           Trade     @relation(fields: [trade_id], references: [id], onDelete: Cascade)
+
+  @@index([trade_id])
+  @@index([status])
+  @@index([request_id])
+  @@index([order_type])
+  @@map("trade_execution_logs")
+}
+
+/// --------------------
+/// Trading Agent Snapshot (minimal tracking)
+/// --------------------
+model TradingAgentSnapshot {
+  id             String       @id @default(uuid())
+  agent_id       String
+  portfolio_id   String
+  snapshot_at    DateTime     @default(now())
+  realized_pnl   Decimal      @db.Decimal(20, 4)
+  metadata       Json?        @default("{}")
+  created_at     DateTime     @default(now())
+  agent_type     String
+  current_value  Decimal      @db.Decimal(20, 4)
+  unrealized_pnl Decimal      @db.Decimal(20, 4)
+  agent          TradingAgent @relation(fields: [agent_id], references: [id], onDelete: Cascade)
+
+  @@index([agent_id])
+  @@index([portfolio_id])
+  @@index([snapshot_at])
+  @@index([agent_type])
+  @@map("trading_agent_snapshots")
+}
+
+/// --------------------
+/// Company Reports (MongoDB - schema for reference only)
+/// Note: This model is for documentation. Actual storage uses MongoDB via mongodb_provider.
+/// --------------------
+model CompanyReport {
+  id                      String   @id @default(uuid())
+  company_name           String
+  ticker                  String   @unique
+  market_cap              String?
+  company_description     String?
+  business_model          String?
+  segment_exposure        String?
+  geographic_exposure      String?
+  major_clients           String?
+  major_partnerships       String?
+  leadership_governance    String?
+  recent_strategic_actions String?
+  rnd_intensity           String?
+  brand_value_drivers     String?
+  negatives_risks         String?
+  metadata                Json?    @default("{}")
+  created_at              DateTime @default(now())
+  updated_at              DateTime @updatedAt
+
+  @@index([ticker])
+  @@index([company_name])
+  @@map("company_reports")
+}
+
+/// --------------------
+/// AlphaCopilot Run (Research/Hypothesis Testing)
+/// --------------------
+model AlphaCopilotRun {
+  id                String                 @id @default(uuid())
+  customer_id       String                 // User who created the run
+  hypothesis        String
+  status            String                 @default("pending") // pending, running, completed, failed
+  symbols_file      String?
+  data_path         String?
+  max_iterations    Int                    @default(5)
+  current_iteration Int                    @default(0)
+  created_at        DateTime               @default(now())
+  updated_at        DateTime               @updatedAt
+  completed_at      DateTime?
+  metadata          Json?                  @default("{}")
+  
+  iterations        AlphaCopilotIteration[]
+  results           AlphaCopilotResult[]
+  logs              AlphaCopilotLog[]
+  live_alphas       LiveAlpha[]
+
+  @@index([customer_id])
+  @@index([status])
+  @@index([created_at])
+  @@map("alphacopilot_runs")
+}
+
+/// --------------------
+/// AlphaCopilot Iteration
+/// --------------------
+model AlphaCopilotIteration {
+  id                String            @id @default(uuid())
+  run_id            String
+  iteration_number  Int
+  factors           Json?             @default("[]") // Array of factor expressions
+  metrics           Json?             @default("{}") // Evaluation metrics
+  status            String            @default("pending") // pending, completed, failed
+  created_at        DateTime          @default(now())
+  updated_at        DateTime          @updatedAt
+  
+  run               AlphaCopilotRun   @relation(fields: [run_id], references: [id], onDelete: Cascade)
+
+  @@unique([run_id, iteration_number])
+  @@index([run_id])
+  @@map("alphacopilot_iterations")
+}
+
+/// --------------------
+/// AlphaCopilot Result (Final Results)
+/// --------------------
+model AlphaCopilotResult {
+  id                String            @id @default(uuid())
+  run_id            String            @unique
+  factors           Json?             @default("[]") // Final selected factors
+  metrics           Json?             @default("{}") // Final evaluation metrics
+  workflow_config   Json?             @default("{}") // Complete workflow configuration
+  created_at        DateTime          @default(now())
+  updated_at        DateTime          @updatedAt
+  
+  run               AlphaCopilotRun   @relation(fields: [run_id], references: [id], onDelete: Cascade)
+
+  @@index([run_id])
+  @@map("alphacopilot_results")
+}
+
+/// --------------------
+/// AlphaCopilot Log
+/// --------------------
+model AlphaCopilotLog {
+  id                String            @id @default(uuid())
+  run_id            String
+  level             String            // INFO, WARNING, ERROR
+  message           String
+  node_name         String?
+  iteration_number  Int?
+  created_at        DateTime          @default(now())
+  
+  run               AlphaCopilotRun   @relation(fields: [run_id], references: [id], onDelete: Cascade)
+
+  @@index([run_id])
+  @@index([created_at])
+  @@map("alphacopilot_logs")
+}
+
+/// --------------------
+/// Live Alpha (Deployed Alpha for Trading)
+/// --------------------
+model LiveAlpha {
+  id                String            @id @default(uuid())
+  name              String
+  hypothesis        String?
+  run_id            String?
+  
+  // Complete workflow config (matches quant-stream WorkflowConfig schema)
+  workflow_config   Json              // Full config: data, features, model, strategy, backtest
+  
+  // Extracted key fields for querying
+  symbols           String[]          // Symbols to trade (from data.symbols)
+  model_type        String?           // e.g., "LightGBM", "XGBoost" (from model.type)
+  strategy_type     String            // e.g., "TopkDropout" (from strategy.type)
+  
+  status            String            @default("stopped") // running, stopped, error
+  allocated_amount  Decimal           @db.Decimal(18, 4)
+  portfolio_id      String
+  agent_id          String?           // Link to TradingAgent
+  
+  // Performance tracking
+  last_signal_at    DateTime?
+  total_signals     Int               @default(0)
+  metadata          Json?             @default("{}")
+  
+  created_at        DateTime          @default(now())
+  updated_at        DateTime          @updatedAt
+  
+  run               AlphaCopilotRun?  @relation(fields: [run_id], references: [id], onDelete: SetNull)
+  portfolio         Portfolio         @relation(fields: [portfolio_id], references: [id], onDelete: Cascade)
+  agent             TradingAgent?     @relation(fields: [agent_id], references: [id], onDelete: SetNull)
+  signals           AlphaSignal[]
+
+  @@index([portfolio_id])
+  @@index([status])
+  @@index([run_id])
+  @@map("live_alphas")
+}
+
+/// --------------------
+/// Alpha Signal (Generated trading signals from Live Alpha)
+/// --------------------
+model AlphaSignal {
+  id                String      @id @default(uuid())
+  live_alpha_id     String
+  batch_id          String      // UUID to group signals from the same generation run
+  
+  // Signal details
+  symbol            String
+  signal_type       String      // "buy", "sell", "hold"
+  quantity          Int
+  predicted_return  Float
+  confidence        Float
+  price             Float       // Price at signal generation time
+  allocated_amount  Float       // Amount allocated for this signal
+  rank              Int?        // Ranking within the batch
+  
+  // Execution tracking
+  status            String      @default("pending") // pending, executed, expired, cancelled
+  generated_at      DateTime    @default(now())
+  executed_at       DateTime?
+  expires_at        DateTime?   // Auto-expire time (default: end of trading day)
+  
+  // Link to executed trade
+  trade_id          String?
+  
+  // Metadata
+  metadata          Json?       @default("{}")
+  
+  live_alpha        LiveAlpha   @relation(fields: [live_alpha_id], references: [id], onDelete: Cascade)
+  trade             Trade?      @relation(fields: [trade_id], references: [id], onDelete: SetNull)
+
+  @@index([live_alpha_id])
+  @@index([batch_id])
+  @@index([status])
+  @@index([generated_at])
+  @@map("alpha_signals")
+}
+
+/// --------------------
+/// NSE Observability Log (Analysis of losing trades from NSE pipeline)
+/// --------------------
+model NseObservabilityLog {
+  id                          String    @id @default(uuid())
+  
+  // Trade reference
+  trade_id                    String    @unique
+  signal_id                   String?
+  
+  // Symbol and market info
+  symbol                      String
+  filing_type                 String?
+  
+  // Analysis results from LLM
+  trading_decision            String    // Trading decision made by NSE agent
+  timestamp_of_trade_execution String?  // Timestamp of trade execution
+  reasoning_of_nse_agent      String    @db.Text // Original reasoning from NSE agent
+  loss_incurred               String    // Profit or loss incurred (formatted string)
+  feedback_on_agent_performance String  @db.Text // Analysis and feedback on agent decision
+  
+  // Numeric fields for filtering/sorting
+  realized_pnl                Float     @default(0)
+  confidence_score            Float     @default(0)
+  
+  // Trigger context
+  triggered_by                String    // "stop_loss", "negative_pnl", "batch_analysis", etc.
+  
+  // Metadata
+  source                      String    @default("nse_observability_agent")
+  metadata                    Json?     @default("{}")
+  
+  // Timestamps
+  analyzed_at                 DateTime  @default(now())
+  created_at                  DateTime  @default(now())
+  updated_at                  DateTime  @updatedAt
+  
+  @@index([symbol])
+  @@index([filing_type])
+  @@index([triggered_by])
+  @@index([realized_pnl])
+  @@index([analyzed_at])
+  @@index([created_at])
+  @@map("nse_observability_logs")
+}

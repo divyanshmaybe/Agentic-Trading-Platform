@@ -1,0 +1,33 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Downloaded/generated data
+stock_data/
+.pytest_cache/
+.ruff_cache/
+
+# Test and coverage reports
+coverage.xml
+junit.xml
+.coverage
+htmlcov/
+
+# Output files from examples
+outputs/
+output_*.csv
+result*.csv
+result*.h5
+
+mlruns/
+mlruns.db
+log/
+
+.env

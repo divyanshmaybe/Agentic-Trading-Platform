@@ -1,0 +1,28 @@
+# Auth Server specific .dockerignore
+
+# Node modules
+node_modules
+npm-debug.log*
+pnpm-debug.log*
+
+# Build outputs
+dist
+*.tsbuildinfo
+
+# Testing
+*.test.ts
+*.spec.ts
+__tests__
+coverage
+
+# Development - CRITICAL: prevent env files from overriding Docker env vars
+.env
+.env.*
+.env.local
+.env.development
+.env.production
+.env.test
+
+# Logs
+logs
+*.log

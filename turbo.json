@@ -1,0 +1,158 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "ui": "tui",
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", ".env*"],
+      "outputs": [".next/**", "!.next/cache/**"]
+    },
+    "lint": {
+      "dependsOn": ["^lint"]
+    },
+    "check-types": {
+      "dependsOn": ["^check-types"]
+    },
+    "test": {
+      "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", "tests/**", "**/*.test.ts", "**/*.test.py"],
+      "outputs": ["coverage/**", "*.coverage", "coverage.xml"]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "celery": {
+      "cache": false,
+      "persistent": true
+    },
+    "celery:trading": {
+      "cache": false,
+      "persistent": true
+    },
+    "celery:nse": {
+      "cache": false,
+      "persistent": true
+    },
+    "celery:news": {
+      "cache": false,
+      "persistent": true
+    },
+    "celery:lowrisk": {
+      "cache": false,
+      "persistent": true
+    },
+    "celery:allocation": {
+      "cache": false,
+      "persistent": true
+    },
+    "celery:market": {
+      "cache": false,
+      "persistent": true
+    },
+    "celery:general": {
+      "cache": false,
+      "persistent": true
+    },
+    "celery:streaming": {
+      "cache": false,
+      "persistent": true
+    },
+    "celery:regime": {
+      "cache": false,
+      "persistent": true
+    },
+    "celery:beat": {
+      "cache": false,
+      "persistent": true
+    },
+    "streaming:orders": {
+      "cache": false,
+      "persistent": true
+    },
+    "pathway:orders": {
+      "cache": false,
+      "persistent": true
+    },
+    "studio": {
+      "cache": false,
+      "persistent": true
+    },
+    "studio:kafka": {
+      "cache": false,
+      "persistent": true
+    },
+    "logs:databases": {
+      "cache": false,
+      "persistent": true
+    },
+    "logs:redis": {
+      "cache": false,
+      "persistent": true
+    },
+    "logs:auth": {
+      "cache": false,
+      "persistent": true
+    },
+    "logs:notif": {
+      "cache": false,
+      "persistent": true
+    },
+    "logs:portfolio": {
+      "cache": false,
+      "persistent": true
+    },
+    "logs:celery-trading": {
+      "cache": false,
+      "persistent": true
+    },
+    "logs:celery-nse": {
+      "cache": false,
+      "persistent": true
+    },
+    "logs:celery-news": {
+      "cache": false,
+      "persistent": true
+    },
+    "logs:celery-lowrisk": {
+      "cache": false,
+      "persistent": true
+    },
+    "logs:celery-allocation": {
+      "cache": false,
+      "persistent": true
+    },
+    "logs:celery-market": {
+      "cache": false,
+      "persistent": true
+    },
+    "logs:celery-general": {
+      "cache": false,
+      "persistent": true
+    },
+    "logs:celery-streaming": {
+      "cache": false,
+      "persistent": true
+    },
+    "logs:celery-beat": {
+      "cache": false,
+      "persistent": true
+    },
+    "logs:kafka": {
+      "cache": false,
+      "persistent": true
+    },
+    "logs:frontend": {
+      "cache": false,
+      "persistent": true
+    },
+    "logs:alphacopilot": {
+      "cache": false,
+      "persistent": true
+    },
+    "logs:alphacopilot-celery": {
+      "cache": false,
+      "persistent": true
+    }
+  }
+}

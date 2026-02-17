@@ -1,0 +1,147 @@
+# Prometheus configuration for Docker deployment
+# Uses Docker container names for service discovery
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'trading-platform'
+    env: 'docker'
+
+# Load alert rules
+rule_files:
+  - '/etc/prometheus/alert-rules.yml'
+
+scrape_configs:
+  # ============================================================================
+  # Application Services (Docker container names)
+  # ============================================================================
+  
+  # Auth Server (Express.js on port 4000)
+  - job_name: 'auth_server'
+    static_configs:
+      - targets: ['auth_server:4000']
+        labels:
+          service: 'auth'
+          environment: 'docker'
+    metrics_path: /metrics
+
+  # Notification Server (Node.js Kafka consumer on port 9201)
+  - job_name: 'notification_server'
+    static_configs:
+      - targets: ['notification_server:9201']
+        labels:
+          service: 'notification'
+          environment: 'docker'
+    metrics_path: /metrics
+
+  # Portfolio Server (FastAPI on port 8000)
+  - job_name: 'portfolio_server'
+    static_configs:
+      - targets: ['portfolio_server:8000']
+        labels:
+          service: 'portfolio'
+          environment: 'docker'
+    metrics_path: /metrics
+
+  # AlphaCopilot Server (FastAPI on port 8069)
+  - job_name: 'alphacopilot_server'
+    static_configs:
+      - targets: ['alphacopilot_server:8069']
+        labels:
+          service: 'alphacopilot'
+          environment: 'docker'
+    metrics_path: /metrics
+
+  # ============================================================================
+  # Celery Workers (Docker container names with internal ports)
+  # ============================================================================
+  
+  - job_name: 'celery-trading'
+    static_configs:
+      - targets: ['portfolio_celery_trading:9101']
+        labels:
+          worker_pool: 'trading'
+          environment: 'docker'
+          
+  - job_name: 'celery-pipeline'
+    static_configs:
+      - targets: ['portfolio_celery_nse_pipeline:9102']
+        labels:
+          worker_pool: 'pipeline'
+          environment: 'docker'
+          
+  - job_name: 'celery-allocation'
+    static_configs:
+      - targets: ['portfolio_celery_allocation:9103']
+        labels:
+          worker_pool: 'allocation'
+          environment: 'docker'
+          
+  - job_name: 'celery-market'
+    static_configs:
+      - targets: ['portfolio_celery_market:9104']
+        labels:
+          worker_pool: 'market'
+          environment: 'docker'
+          
+  - job_name: 'celery-general'
+    static_configs:
+      - targets: ['portfolio_celery_general:9105']
+        labels:
+          worker_pool: 'general'
+          environment: 'docker'
+
+  - job_name: 'celery-streaming'
+    static_configs:
+      - targets: ['portfolio_celery_streaming:9106']
+        labels:
+          worker_pool: 'streaming'
+          environment: 'docker'
+
+  - job_name: 'celery-news'
+    static_configs:
+      - targets: ['portfolio_celery_news_pipeline:9107']
+        labels:
+          worker_pool: 'news'
+          environment: 'docker'
+
+  - job_name: 'celery-lowrisk'
+    static_configs:
+      - targets: ['portfolio_celery_low_risk:9108']
+        labels:
+          worker_pool: 'lowrisk'
+          environment: 'docker'
+
+  # ============================================================================
+  # Infrastructure
+  # ============================================================================
+
+  # Redis Exporter
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+        labels:
+          environment: 'docker'
+
+  # Celery Exporter (Primary Celery Metrics)
+  - job_name: 'celery-exporter'
+    static_configs:
+      - targets: ['celery-exporter:9808']
+        labels:
+          environment: 'docker'
+          
+  # PostgreSQL Exporter
+  - job_name: 'postgresql'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+        labels:
+          environment: 'docker'
+
+  # Celery Flower (task monitoring)
+  - job_name: 'celery-flower'
+    static_configs:
+      - targets: ['flower:5555']
+        labels:
+          environment: 'docker'
+    metrics_path: /metrics

@@ -1,0 +1,5 @@
+mlruns/
+mlruns.db
+.env
+docker.env
+.env.*

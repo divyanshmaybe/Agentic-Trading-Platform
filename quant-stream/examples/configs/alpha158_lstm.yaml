@@ -1,0 +1,472 @@
+# Alpha 158 Configuration with LSTM Model
+# Complete implementation of 158 factors from Alpha158 feature set
+# Using LSTM neural network for temporal pattern recognition
+# Reference: https://github.com/microsoft/qlib
+
+data:
+  path: ".data/indian_stock_market_nifty500.csv"
+  symbols_file: ".data/nifty500.txt"
+  symbol_col: "symbol"
+  timestamp_col: "timestamp"
+
+# Alpha 158 Factor Set: 9 K-Bar + 4 Raw Price + 145 Rolling = 158 Total
+features:
+  # ==================== K-BAR FEATURES (9 factors) ====================
+  # Candlestick pattern features using OHLC relationships
+
+  - name: "KMID"
+    expression: "($close - $open) / ($high - $low + 1e-8)"
+
+  - name: "KLEN"
+    expression: "($high - $low) / ($open + 1e-8)"
+
+  - name: "KMID2"
+    expression: "($close - $open) / ($open + 1e-8)"
+
+  - name: "KUP"
+    expression: "($high - MAX_ELEMENTWISE($open, $close)) / ($open + 1e-8)"
+
+  - name: "KUP2"
+    expression: "($high - MAX_ELEMENTWISE($open, $close)) / ($high - $low + 1e-8)"
+
+  - name: "KLOW"
+    expression: "(MIN_ELEMENTWISE($open, $close) - $low) / ($open + 1e-8)"
+
+  - name: "KLOW2"
+    expression: "(MIN_ELEMENTWISE($open, $close) - $low) / ($high - $low + 1e-8)"
+
+  - name: "KSFT"
+    expression: "(2 * $close - $high - $low) / ($open + 1e-8)"
+
+  - name: "KSFT2"
+    expression: "(2 * $close - $high - $low) / ($high - $low + 1e-8)"
+
+  # ==================== RAW PRICE FEATURES (4 factors) ====================
+  # Current day raw values
+
+  # - name: "OPEN0"
+  #   expression: "$open"
+
+  # - name: "HIGH0"
+  #   expression: "$high"
+
+  # - name: "LOW0"
+  #   expression: "$low"
+
+  # - name: "VWAP0"
+  #   expression: "($high + $low + $close) / 3"
+
+  # # ==================== ROLLING FEATURES (145 factors) ====================
+  # # A. Momentum & Trend (35 factors = 7 operators × 5 windows)
+
+  # # ROC - Rate of Change (5 factors)
+  # - name: "ROC5"
+  #   expression: "TS_PCTCHANGE($close, 5)"
+  # - name: "ROC10"
+  #   expression: "TS_PCTCHANGE($close, 10)"
+  # - name: "ROC20"
+  #   expression: "TS_PCTCHANGE($close, 20)"
+  # - name: "ROC30"
+  #   expression: "TS_PCTCHANGE($close, 30)"
+  # - name: "ROC60"
+  #   expression: "TS_PCTCHANGE($close, 60)"
+
+  # # MA - Moving Average (5 factors)
+  # - name: "MA5"
+  #   expression: "TS_MEAN($close, 5)"
+  # - name: "MA10"
+  #   expression: "TS_MEAN($close, 10)"
+  # - name: "MA20"
+  #   expression: "TS_MEAN($close, 20)"
+  # - name: "MA30"
+  #   expression: "TS_MEAN($close, 30)"
+  # - name: "MA60"
+  #   expression: "TS_MEAN($close, 60)"
+
+  # # MAX - Maximum High (5 factors)
+  # - name: "MAX5"
+  #   expression: "TS_MAX($high, 5)"
+  # - name: "MAX10"
+  #   expression: "TS_MAX($high, 10)"
+  # - name: "MAX20"
+  #   expression: "TS_MAX($high, 20)"
+  # - name: "MAX30"
+  #   expression: "TS_MAX($high, 30)"
+  # - name: "MAX60"
+  #   expression: "TS_MAX($high, 60)"
+
+  # # MIN - Minimum Low (5 factors)
+  # - name: "MIN5"
+  #   expression: "TS_MIN($low, 5)"
+  # - name: "MIN10"
+  #   expression: "TS_MIN($low, 10)"
+  # - name: "MIN20"
+  #   expression: "TS_MIN($low, 20)"
+  # - name: "MIN30"
+  #   expression: "TS_MIN($low, 30)"
+  # - name: "MIN60"
+  #   expression: "TS_MIN($low, 60)"
+
+  # # BETA - Linear trend slope (5 factors)
+  # - name: "BETA5"
+  #   expression: "REGBETA($close, $close, 5)"
+  # - name: "BETA10"
+  #   expression: "REGBETA($close, $close, 10)"
+  # - name: "BETA20"
+  #   expression: "REGBETA($close, $close, 20)"
+  # - name: "BETA30"
+  #   expression: "REGBETA($close, $close, 30)"
+  # - name: "BETA60"
+  #   expression: "REGBETA($close, $close, 60)"
+
+  # # RANK - Time-series percentile rank (5 factors)
+  # - name: "RANK5"
+  #   expression: "TS_RANK($close, 5)"
+  # - name: "RANK10"
+  #   expression: "TS_RANK($close, 10)"
+  # - name: "RANK20"
+  #   expression: "TS_RANK($close, 20)"
+  # - name: "RANK30"
+  #   expression: "TS_RANK($close, 30)"
+  # - name: "RANK60"
+  #   expression: "TS_RANK($close, 60)"
+
+  # # RSV - Raw Stochastic Value (5 factors)
+  # - name: "RSV5"
+  #   expression: "($close - TS_MIN($low, 5)) / (TS_MAX($high, 5) - TS_MIN($low, 5) + 1e-8)"
+  # - name: "RSV10"
+  #   expression: "($close - TS_MIN($low, 10)) / (TS_MAX($high, 10) - TS_MIN($low, 10) + 1e-8)"
+  # - name: "RSV20"
+  #   expression: "($close - TS_MIN($low, 20)) / (TS_MAX($high, 20) - TS_MIN($low, 20) + 1e-8)"
+  # - name: "RSV30"
+  #   expression: "($close - TS_MIN($low, 30)) / (TS_MAX($high, 30) - TS_MIN($low, 30) + 1e-8)"
+  # - name: "RSV60"
+  #   expression: "($close - TS_MIN($low, 60)) / (TS_MAX($high, 60) - TS_MIN($low, 60) + 1e-8)"
+
+  # # B. Volatility & Distribution (15 factors = 3 operators × 5 windows)
+
+  # # STD - Standard Deviation (5 factors)
+  # - name: "STD5"
+  #   expression: "TS_STD($close, 5)"
+  # - name: "STD10"
+  #   expression: "TS_STD($close, 10)"
+  # - name: "STD20"
+  #   expression: "TS_STD($close, 20)"
+  # - name: "STD30"
+  #   expression: "TS_STD($close, 30)"
+  # - name: "STD60"
+  #   expression: "TS_STD($close, 60)"
+
+  # # QTLU - 80% Quantile (5 factors)
+  # - name: "QTLU5"
+  #   expression: "TS_QUANTILE($close, 5, 0.8)"
+  # - name: "QTLU10"
+  #   expression: "TS_QUANTILE($close, 10, 0.8)"
+  # - name: "QTLU20"
+  #   expression: "TS_QUANTILE($close, 20, 0.8)"
+  # - name: "QTLU30"
+  #   expression: "TS_QUANTILE($close, 30, 0.8)"
+  # - name: "QTLU60"
+  #   expression: "TS_QUANTILE($close, 60, 0.8)"
+
+  # # QTLD - 20% Quantile (5 factors)
+  # - name: "QTLD5"
+  #   expression: "TS_QUANTILE($close, 5, 0.2)"
+  # - name: "QTLD10"
+  #   expression: "TS_QUANTILE($close, 10, 0.2)"
+  # - name: "QTLD20"
+  #   expression: "TS_QUANTILE($close, 20, 0.2)"
+  # - name: "QTLD30"
+  #   expression: "TS_QUANTILE($close, 30, 0.2)"
+  # - name: "QTLD60"
+  #   expression: "TS_QUANTILE($close, 60, 0.2)"
+
+  # # C. Linear Regression & Correlation (20 factors = 4 operators × 5 windows)
+
+  # # RSQR - R-Squared (5 factors)
+  # - name: "RSQR5"
+  #   expression: "POW(TS_CORR($close, $close, 5), 2)"
+  # - name: "RSQR10"
+  #   expression: "POW(TS_CORR($close, $close, 10), 2)"
+  # - name: "RSQR20"
+  #   expression: "POW(TS_CORR($close, $close, 20), 2)"
+  # - name: "RSQR30"
+  #   expression: "POW(TS_CORR($close, $close, 30), 2)"
+  # - name: "RSQR60"
+  #   expression: "POW(TS_CORR($close, $close, 60), 2)"
+
+  # # RESI - Regression Residuals (5 factors)
+  # - name: "RESI5"
+  #   expression: "REGRESI($close, $close, 5)"
+  # - name: "RESI10"
+  #   expression: "REGRESI($close, $close, 10)"
+  # - name: "RESI20"
+  #   expression: "REGRESI($close, $close, 20)"
+  # - name: "RESI30"
+  #   expression: "REGRESI($close, $close, 30)"
+  # - name: "RESI60"
+  #   expression: "REGRESI($close, $close, 60)"
+
+  # # CORR - Correlation between price and log(volume) (5 factors)
+  # - name: "CORR5"
+  #   expression: "TS_CORR($close, LOG($volume + 1), 5)"
+  # - name: "CORR10"
+  #   expression: "TS_CORR($close, LOG($volume + 1), 10)"
+  # - name: "CORR20"
+  #   expression: "TS_CORR($close, LOG($volume + 1), 20)"
+  # - name: "CORR30"
+  #   expression: "TS_CORR($close, LOG($volume + 1), 30)"
+  # - name: "CORR60"
+  #   expression: "TS_CORR($close, LOG($volume + 1), 60)"
+
+  # # CORD - Correlation between price change and volume change (5 factors)
+  # - name: "CORD5"
+  #   expression: "TS_CORR(DELTA($close, 1), DELTA($volume, 1), 5)"
+  # - name: "CORD10"
+  #   expression: "TS_CORR(DELTA($close, 1), DELTA($volume, 1), 10)"
+  # - name: "CORD20"
+  #   expression: "TS_CORR(DELTA($close, 1), DELTA($volume, 1), 20)"
+  # - name: "CORD30"
+  #   expression: "TS_CORR(DELTA($close, 1), DELTA($volume, 1), 30)"
+  # - name: "CORD60"
+  #   expression: "TS_CORR(DELTA($close, 1), DELTA($volume, 1), 60)"
+
+  # # D. Pattern Recognition (15 factors = 3 operators × 5 windows)
+
+  # # IMAX - Days since maximum (5 factors)
+  # - name: "IMAX5"
+  #   expression: "TS_ARGMAX($high, 5)"
+  # - name: "IMAX10"
+  #   expression: "TS_ARGMAX($high, 10)"
+  # - name: "IMAX20"
+  #   expression: "TS_ARGMAX($high, 20)"
+  # - name: "IMAX30"
+  #   expression: "TS_ARGMAX($high, 30)"
+  # - name: "IMAX60"
+  #   expression: "TS_ARGMAX($high, 60)"
+
+  # # IMIN - Days since minimum (5 factors)
+  # - name: "IMIN5"
+  #   expression: "TS_ARGMIN($low, 5)"
+  # - name: "IMIN10"
+  #   expression: "TS_ARGMIN($low, 10)"
+  # - name: "IMIN20"
+  #   expression: "TS_ARGMIN($low, 20)"
+  # - name: "IMIN30"
+  #   expression: "TS_ARGMIN($low, 30)"
+  # - name: "IMIN60"
+  #   expression: "TS_ARGMIN($low, 60)"
+
+  # # IMXD - Time difference between max and min (5 factors)
+  # - name: "IMXD5"
+  #   expression: "TS_ARGMAX($high, 5) - TS_ARGMIN($low, 5)"
+  # - name: "IMXD10"
+  #   expression: "TS_ARGMAX($high, 10) - TS_ARGMIN($low, 10)"
+  # - name: "IMXD20"
+  #   expression: "TS_ARGMAX($high, 20) - TS_ARGMIN($low, 20)"
+  # - name: "IMXD30"
+  #   expression: "TS_ARGMAX($high, 30) - TS_ARGMIN($low, 30)"
+  # - name: "IMXD60"
+  #   expression: "TS_ARGMAX($high, 60) - TS_ARGMIN($low, 60)"
+
+  # # E. Price Movement Counts (15 factors = 3 operators × 5 windows)
+
+  # # CNTP - Count Positive Days (5 factors)
+  # - name: "CNTP5"
+  #   expression: "COUNT($close > DELAY($close, 1), 5)"
+  # - name: "CNTP10"
+  #   expression: "COUNT($close > DELAY($close, 1), 10)"
+  # - name: "CNTP20"
+  #   expression: "COUNT($close > DELAY($close, 1), 20)"
+  # - name: "CNTP30"
+  #   expression: "COUNT($close > DELAY($close, 1), 30)"
+  # - name: "CNTP60"
+  #   expression: "COUNT($close > DELAY($close, 1), 60)"
+
+  # # CNTN - Count Negative Days (5 factors)
+  # - name: "CNTN5"
+  #   expression: "COUNT($close < DELAY($close, 1), 5)"
+  # - name: "CNTN10"
+  #   expression: "COUNT($close < DELAY($close, 1), 10)"
+  # - name: "CNTN20"
+  #   expression: "COUNT($close < DELAY($close, 1), 20)"
+  # - name: "CNTN30"
+  #   expression: "COUNT($close < DELAY($close, 1), 30)"
+  # - name: "CNTN60"
+  #   expression: "COUNT($close < DELAY($close, 1), 60)"
+
+  # # CNTD - Difference between positive and negative counts (5 factors)
+  # - name: "CNTD5"
+  #   expression: "COUNT($close > DELAY($close, 1), 5) - COUNT($close < DELAY($close, 1), 5)"
+  # - name: "CNTD10"
+  #   expression: "COUNT($close > DELAY($close, 1), 10) - COUNT($close < DELAY($close, 1), 10)"
+  # - name: "CNTD20"
+  #   expression: "COUNT($close > DELAY($close, 1), 20) - COUNT($close < DELAY($close, 1), 20)"
+  # - name: "CNTD30"
+  #   expression: "COUNT($close > DELAY($close, 1), 30) - COUNT($close < DELAY($close, 1), 30)"
+  # - name: "CNTD60"
+  #   expression: "COUNT($close > DELAY($close, 1), 60) - COUNT($close < DELAY($close, 1), 60)"
+
+  # # F. Summation (RSI-like logic, 15 factors = 3 operators × 5 windows)
+
+  # # SUMP - Sum of Positive Changes (5 factors)
+  # - name: "SUMP5"
+  #   expression: "SUMIF(DELTA($close, 1), 5, DELTA($close, 1) > 0)"
+  # - name: "SUMP10"
+  #   expression: "SUMIF(DELTA($close, 1), 10, DELTA($close, 1) > 0)"
+  # - name: "SUMP20"
+  #   expression: "SUMIF(DELTA($close, 1), 20, DELTA($close, 1) > 0)"
+  # - name: "SUMP30"
+  #   expression: "SUMIF(DELTA($close, 1), 30, DELTA($close, 1) > 0)"
+  # - name: "SUMP60"
+  #   expression: "SUMIF(DELTA($close, 1), 60, DELTA($close, 1) > 0)"
+
+  # # SUMN - Sum of Negative Changes (absolute value) (5 factors)
+  # - name: "SUMN5"
+  #   expression: "SUMIF(ABS(DELTA($close, 1)), 5, DELTA($close, 1) < 0)"
+  # - name: "SUMN10"
+  #   expression: "SUMIF(ABS(DELTA($close, 1)), 10, DELTA($close, 1) < 0)"
+  # - name: "SUMN20"
+  #   expression: "SUMIF(ABS(DELTA($close, 1)), 20, DELTA($close, 1) < 0)"
+  # - name: "SUMN30"
+  #   expression: "SUMIF(ABS(DELTA($close, 1)), 30, DELTA($close, 1) < 0)"
+  # - name: "SUMN60"
+  #   expression: "SUMIF(ABS(DELTA($close, 1)), 60, DELTA($close, 1) < 0)"
+
+  # # SUMD - Difference ratio (5 factors)
+  # - name: "SUMD5"
+  #   expression: "(SUMIF(DELTA($close, 1), 5, DELTA($close, 1) > 0) - SUMIF(ABS(DELTA($close, 1)), 5, DELTA($close, 1) < 0)) / (TS_SUM(ABS(DELTA($close, 1)), 5) + 1e-8)"
+  # - name: "SUMD10"
+  #   expression: "(SUMIF(DELTA($close, 1), 10, DELTA($close, 1) > 0) - SUMIF(ABS(DELTA($close, 1)), 10, DELTA($close, 1) < 0)) / (TS_SUM(ABS(DELTA($close, 1)), 10) + 1e-8)"
+  # - name: "SUMD20"
+  #   expression: "(SUMIF(DELTA($close, 1), 20, DELTA($close, 1) > 0) - SUMIF(ABS(DELTA($close, 1)), 20, DELTA($close, 1) < 0)) / (TS_SUM(ABS(DELTA($close, 1)), 20) + 1e-8)"
+  # - name: "SUMD30"
+  #   expression: "(SUMIF(DELTA($close, 1), 30, DELTA($close, 1) > 0) - SUMIF(ABS(DELTA($close, 1)), 30, DELTA($close, 1) < 0)) / (TS_SUM(ABS(DELTA($close, 1)), 30) + 1e-8)"
+  # - name: "SUMD60"
+  #   expression: "(SUMIF(DELTA($close, 1), 60, DELTA($close, 1) > 0) - SUMIF(ABS(DELTA($close, 1)), 60, DELTA($close, 1) < 0)) / (TS_SUM(ABS(DELTA($close, 1)), 60) + 1e-8)"
+
+  # # G. Volume Based (30 factors = 6 operators × 5 windows)
+
+  # # VMA - Volume Moving Average (5 factors)
+  # - name: "VMA5"
+  #   expression: "TS_MEAN($volume, 5)"
+  # - name: "VMA10"
+  #   expression: "TS_MEAN($volume, 10)"
+  # - name: "VMA20"
+  #   expression: "TS_MEAN($volume, 20)"
+  # - name: "VMA30"
+  #   expression: "TS_MEAN($volume, 30)"
+  # - name: "VMA60"
+  #   expression: "TS_MEAN($volume, 60)"
+
+  # # VSTD - Volume Standard Deviation (5 factors)
+  # - name: "VSTD5"
+  #   expression: "TS_STD($volume, 5)"
+  # - name: "VSTD10"
+  #   expression: "TS_STD($volume, 10)"
+  # - name: "VSTD20"
+  #   expression: "TS_STD($volume, 20)"
+  # - name: "VSTD30"
+  #   expression: "TS_STD($volume, 30)"
+  # - name: "VSTD60"
+  #   expression: "TS_STD($volume, 60)"
+
+  # # WVMA - Volume-Weighted Price Volatility (5 factors)
+  # - name: "WVMA5"
+  #   expression: "TS_STD($close * $volume, 5) / (TS_MEAN($volume, 5) + 1e-8)"
+  # - name: "WVMA10"
+  #   expression: "TS_STD($close * $volume, 10) / (TS_MEAN($volume, 10) + 1e-8)"
+  # - name: "WVMA20"
+  #   expression: "TS_STD($close * $volume, 20) / (TS_MEAN($volume, 20) + 1e-8)"
+  # - name: "WVMA30"
+  #   expression: "TS_STD($close * $volume, 30) / (TS_MEAN($volume, 30) + 1e-8)"
+  # - name: "WVMA60"
+  #   expression: "TS_STD($close * $volume, 60) / (TS_MEAN($volume, 60) + 1e-8)"
+
+  # # VSUMP - Volume Increase Ratio (5 factors)
+  # - name: "VSUMP5"
+  #   expression: "SUMIF($volume, 5, $volume > DELAY($volume, 1)) / (TS_SUM($volume, 5) + 1e-8)"
+  # - name: "VSUMP10"
+  #   expression: "SUMIF($volume, 10, $volume > DELAY($volume, 1)) / (TS_SUM($volume, 10) + 1e-8)"
+  # - name: "VSUMP20"
+  #   expression: "SUMIF($volume, 20, $volume > DELAY($volume, 1)) / (TS_SUM($volume, 20) + 1e-8)"
+  # - name: "VSUMP30"
+  #   expression: "SUMIF($volume, 30, $volume > DELAY($volume, 1)) / (TS_SUM($volume, 30) + 1e-8)"
+  # - name: "VSUMP60"
+  #   expression: "SUMIF($volume, 60, $volume > DELAY($volume, 1)) / (TS_SUM($volume, 60) + 1e-8)"
+
+  # # VSUMN - Volume Decrease Ratio (5 factors)
+  # - name: "VSUMN5"
+  #   expression: "SUMIF($volume, 5, $volume < DELAY($volume, 1)) / (TS_SUM($volume, 5) + 1e-8)"
+  # - name: "VSUMN10"
+  #   expression: "SUMIF($volume, 10, $volume < DELAY($volume, 1)) / (TS_SUM($volume, 10) + 1e-8)"
+  # - name: "VSUMN20"
+  #   expression: "SUMIF($volume, 20, $volume < DELAY($volume, 1)) / (TS_SUM($volume, 20) + 1e-8)"
+  # - name: "VSUMN30"
+  #   expression: "SUMIF($volume, 30, $volume < DELAY($volume, 1)) / (TS_SUM($volume, 30) + 1e-8)"
+  # - name: "VSUMN60"
+  #   expression: "SUMIF($volume, 60, $volume < DELAY($volume, 1)) / (TS_SUM($volume, 60) + 1e-8)"
+
+  # # VSUMD - Volume Difference Ratio (5 factors)
+  # - name: "VSUMD5"
+  #   expression: "(SUMIF($volume, 5, $volume > DELAY($volume, 1)) - SUMIF($volume, 5, $volume < DELAY($volume, 1))) / (TS_SUM($volume, 5) + 1e-8)"
+  # - name: "VSUMD10"
+  #   expression: "(SUMIF($volume, 10, $volume > DELAY($volume, 1)) - SUMIF($volume, 10, $volume < DELAY($volume, 1))) / (TS_SUM($volume, 10) + 1e-8)"
+  # - name: "VSUMD20"
+  #   expression: "(SUMIF($volume, 20, $volume > DELAY($volume, 1)) - SUMIF($volume, 20, $volume < DELAY($volume, 1))) / (TS_SUM($volume, 20) + 1e-8)"
+  # - name: "VSUMD30"
+  #   expression: "(SUMIF($volume, 30, $volume > DELAY($volume, 1)) - SUMIF($volume, 30, $volume < DELAY($volume, 1))) / (TS_SUM($volume, 30) + 1e-8)"
+  # - name: "VSUMD60"
+  #   expression: "(SUMIF($volume, 60, $volume > DELAY($volume, 1)) - SUMIF($volume, 60, $volume < DELAY($volume, 1))) / (TS_SUM($volume, 60) + 1e-8)"
+
+model:
+  type: "LSTM"
+  include_ohlcv: false
+  params:
+    # LSTM neural network hyperparameters
+    # Architecture parameters
+    hidden_size: 128              # Number of LSTM hidden units
+    num_layers: 2                 # Number of stacked LSTM layers
+    dropout: 0.3                  # Dropout rate between LSTM layers
+    bidirectional: false          # Whether to use bidirectional LSTM
+    sequence_length: 30           # Lookback window (number of time steps)
+
+    # Training parameters
+    batch_size: 128               # Mini-batch size for training
+    epochs: 100                   # Maximum number of training epochs
+    learning_rate: 0.001          # Learning rate for Adam optimizer
+    weight_decay: 0.00001         # L2 regularization (1e-5)
+    early_stopping_patience: 15   # Patience for early stopping
+
+    # Device and output
+    device: null                  # Device ('cuda', 'cpu', or null for auto)
+    verbose: true                 # Print training progress
+  target: "forward_return_1d"
+
+strategy:
+  type: "TopkDropout"
+  params:
+    topk: 30
+    n_drop: 5
+    method: "equal"
+
+backtest:
+  segments:
+    train: ["2015-01-01", "2019-12-31"]
+    validation: ["2020-01-01", "2020-12-31"]
+    test: ["2021-01-01", "2025-12-31"]
+  initial_capital: 1000000
+  commission: 0.0003
+  slippage: 0.0005
+  min_commission: 20.0
+  rebalance_frequency: 1
+
+experiment:
+  name: "alpha_158_lstm"
+  tracking_uri: "sqlite:///mlruns.db"
+  run_name: "alpha_158_lstm_strategy"
+  tags:
+    strategy: "alpha_158_lstm"
+    model: "LSTM"
+    dataset: "indian_stocks"
+    factors: "158"

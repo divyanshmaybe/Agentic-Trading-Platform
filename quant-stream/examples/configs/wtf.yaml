@@ -1,0 +1,82 @@
+# Basic momentum strategy configuration
+# This example demonstrates a simple momentum-based trading strategy
+
+data:
+  path: ".data/indian_stock_market_nifty500.csv"
+  symbols_file: ".data/nifty500.txt"
+  symbol_col: "symbol"
+  timestamp_col: "timestamp"
+
+# Factor set used to reproduce the workflow failure
+features:
+  - name: "LinearComboMomentum_05_15D_Rank"
+    expression: "RANK(0.5 * RANK(TS_PCTCHANGE($close, 15)) + 0.5 * (TS_PCTCHANGE($close, 5) / (DELAY(TS_STD($close, 10), 5) + 1e-6)))"
+
+  - name: "IntermediateMomentum_Vs_SmoothedVolScaled5D_Rank"
+    expression: "RANK(0.4 * RANK(TS_PCTCHANGE($close, 15)) + 0.6 * (TS_PCTCHANGE($close, 5) / (DELAY(TS_STD($close, 10), 5) + 1e-6)) * (10 / TS_STD($close / $open, 10)))"
+
+  - name: "VolatilityNormalizedMomentum_15D_30D_Rank"
+    expression: "RANK(0.5 * (TS_PCTCHANGE($close, 15) / (TS_STD(TS_PCTCHANGE($close, 15), 30) + 1e-6)) + 0.5 * TS_PCTCHANGE($close, 3))"
+
+model:
+  type: "LightGBM"
+  # Explicit feature selection - mix of computed factors and qlib-style inline expressions
+  features:
+    # Computed factors
+    - "LinearComboMomentum_05_15D_Rank"
+    - "IntermediateMomentum_Vs_SmoothedVolScaled5D_Rank"
+    - "VolatilityNormalizedMomentum_15D_30D_Rank"
+    # Qlib-style inline expressions (matching qlib config)
+    - "($close - $open) / $open"
+    - "$close / DELAY($close, 1) - 1"
+    - "$volume / TS_MEAN($volume, 20)"
+    - "($high - $low) / DELAY($close, 1)"
+  include_ohlcv: false
+  params:
+    # LightGBM hyperparameters optimized for quant dataset
+    # Note: qlib uses 'loss: mse', LightGBM uses 'objective: regression' (equivalent)
+    objective: "regression"
+    metric: "l2"
+    boosting_type: "gbdt"
+    learning_rate: 0.05  # Reduced for more stable training
+    num_leaves: 127  # Reduced from 210 to prevent overfitting (2^7-1)
+    max_depth: 5  # Slightly increased to allow more complexity
+    subsample: 0.8  # Slightly reduced for regularization
+    subsample_freq: 1
+    colsample_bytree: 0.8  # Slightly reduced for regularization
+    reg_alpha: 3.0  # L1 regularization (increased to reduce overfitting)
+    reg_lambda: 8.0  # L2 regularization (increased to reduce overfitting)
+    min_child_samples: 20  # Minimum samples in leaf (prevents overfitting)
+    num_threads: 20
+    random_state: 42
+    verbose: -1
+    # Training parameters
+    num_boost_round: 300  # Increased to allow more training
+    early_stopping_rounds: 30  # More patient early stopping
+  target: "forward_return_1d"
+
+strategy:
+  type: "TopkDropout"
+  params:
+    topk: 30
+    n_drop: 5
+    method: "equal"
+
+backtest:
+  segments:
+    train: ["2023-01-01", "2023-06-30"]
+    validation: ["2023-07-01", "2023-08-31"]
+    test: ["2023-09-01", "2023-12-31"]
+  initial_capital: 1000000
+  commission: 0.0003
+  slippage: 0.0005
+  min_commission: 20.0
+  rebalance_frequency: 1
+
+experiment:
+  name: "basic_momentum"
+  tracking_uri: "sqlite:///mlruns.db"
+  run_name: "momentum_strategy"
+  tags:
+    strategy: "momentum"
+    dataset: "indian_stocks"

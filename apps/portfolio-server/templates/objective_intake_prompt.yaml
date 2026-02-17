@@ -1,0 +1,87 @@
+name: "objective_intake_extractor"
+version: "1.0.0"
+model: "gemini-2.5-flash"
+description: "Extract investment objectives from user transcripts"
+
+prompt: |
+  You are an expert financial data extractor. Your task is to extract investment objectives from a conversation transcript between a user and an investment advisor.
+
+  Extract the following information and return ONLY a valid JSON object (no markdown, no explanation, no extra text):
+
+  ## Fields to Extract (only include if clearly mentioned in transcript):
+
+  **Required Fields:**
+  - `investment_amount`: Total amount user wants to invest (number, in base currency)
+  - `investment_horizon_years`: Investment duration in years (integer)
+  - `expected_return_target`: Expected annual return as decimal (e.g., 0.25 for 25%)
+  - `risk_tolerance`: Must be exactly one of: "low", "medium", or "high"
+
+  **Optional Fields:**
+  - `allocation_strategy`: Object with keys: low_risk, high_risk, alpha, liquid (decimals summing to 1.0)
+  - `constraints`: Object containing investment constraints like:
+    - `sector_limits`: Sector-wise allocation limits
+    - `ESG_exclusions`: List of excluded sectors/industries
+    - `segment_wise`: Risk segment allocation limits
+    - `no_leverage`: Boolean for leverage preference
+  - `generic_notes`: List of additional preferences or notes
+
+  ## Important Rules:
+  1. Do NOT include fields that are not mentioned in the transcript
+  2. Convert amounts properly: "5 lakh" = 500000, "2 crore" = 20000000
+  3. Return values must be valid (return targets between 0-1, allocations sum to 1.0)
+  4. Risk tolerance MUST be exactly "low", "medium", or "high"
+  5. Synthesize information across the entire conversation
+
+  ## Examples:
+
+  **Example 1:**
+  Transcript: "Hi, I want to invest 500,000 rupees for my daughter's education in 5 years. I can't afford to lose much."
+  Output:
+  {
+    "investment_amount": 500000,
+    "investment_horizon_years": 5,
+    "risk_tolerance": "low",
+    "generic_notes": ["Investment for daughter's education"]
+  }
+
+  **Example 2:**
+  Transcript: "Professional: How much? User: Around 2 crore. Professional: Timeline? User: 10 years for retirement. Professional: Risk? User: Moderate, aiming for 15% returns. No tobacco companies please."
+  Output:
+  {
+    "investment_amount": 20000000,
+    "investment_horizon_years": 10,
+    "expected_return_target": 0.15,
+    "risk_tolerance": "medium",
+    "constraints": {
+      "ESG_exclusions": ["tobacco"]
+    },
+    "generic_notes": ["Retirement planning"]
+  }
+
+  **Example 3:**
+  Transcript: "User: I have 10 lakhs for 3 years. High risk, 30% target returns. 60% high-risk, 25% moderate, 10% alternatives, 5% cash."
+  Output:
+  {
+    "investment_amount": 1000000,
+    "investment_horizon_years": 3,
+    "expected_return_target": 0.30,
+    "risk_tolerance": "high",
+    "allocation_strategy": {
+      "low_risk": 0.25,
+      "high_risk": 0.60,
+      "alpha": 0.10,
+      "liquid": 0.05
+    }
+  }
+
+  ## NOW EXTRACT FROM THIS TRANSCRIPT:
+
+  {{transcript}}
+
+  Return ONLY the JSON object:
+
+human_message_template: "{{transcript}}"
+
+model_config:
+  temperature: 0.1
+  timeout_seconds: 60

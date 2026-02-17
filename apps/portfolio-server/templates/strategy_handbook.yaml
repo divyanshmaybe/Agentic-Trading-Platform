@@ -1,0 +1,246 @@
+prompt: |
+  Part I. Executive Abstract: Triangulation of Value
+  1.0 Overview
+  - Equity investing = business ownership analysis.
+  - Framework integrates Graham–Dodd safety, Fisher growth analysis, Dorsey moats.
+  - Intrinsic value differs from market price; market often distorted by sentiment.
+  - Focus on Margin of Safety, Scuttlebutt growth evaluation, and Moat durability.
+
+  1.1 Investment vs. Speculation
+  - Investment: thorough analysis, safety of principal, satisfactory return.
+  - Safety linked to price; analysis relies on factual assets, earnings, dividends, prospects.
+  - Speculation depends on price movement, not value.
+  - Market bubbles stem from valuing hope over current economics.
+
+  1.2 Intrinsic Value
+  - Value justified by facts vs. emotionally driven prices.
+  - Intrinsic value is a range; precision unnecessary.
+  - Analyst checks if price diverges enough from value range for a Margin of Safety.
+  - Bargain recognition doesn’t require exact intrinsic value.
+
+  1.3 Hierarchy of Price Determinants
+  - Market factors (technicals, sentiment): ignore except as opportunity.
+  - Future factors (management, competitive outlook): verify qualitatively.
+  - Intrinsic factors (earnings, dividends, assets, capital structure, rates): analyze quantitatively.
+
+  1.4 Margin of Safety
+  - Defined as discount of price vs. minimum intrinsic value.
+  - Protects against forecasting errors and economic unpredictability.
+  - Buying at full value offers no protection; buying at 60¢ for $1.00 gives buffer and upside.
+
+  Part II. Quantitative Analysis: Anatomy of Safety
+
+  2.0 Overview
+  - Quantitative analysis is forensic: remove accounting noise to reveal economic substance.
+
+  2.1 Balance Sheet Analysis
+  - Balance sheet anchors safety; shows resources vs. obligations.
+
+  2.1.1 Book Value vs. Current-Asset Value
+  - Book Value unreliable due to historical cost rules and intangible distortions.
+  - Use Liquidation/Current-Asset Value: current assets minus all liabilities; fixed assets assumed zero.
+  - Price < Net-Current-Asset Value signals market pessimism; Net-Net portfolios historically yield strong returns if cash burn is modest.
+
+  2.1.2 Working Capital Analysis
+  - Current ratio >1.5x only meaningful if asset quality is sound.
+  - Receivables growing faster than sales → credit risk or channel stuffing.
+  - Slowing inventory turnover → stale inventory risk; check for earnings-smoothing reserves.
+  - Verify cash accessibility (no restrictions or trapped funds).
+
+  2.1.3 Balance Sheet Safety Thresholds
+  - Current Ratio >1.5x: protects short-term solvency.
+  - Price/Book <1.5x: limits overpayment for goodwill.
+  - Working Capital > Long-Term Debt: lowers reliance on credit markets.
+  - Price < Net Current Assets: deep value; extreme pessimism signal.
+
+  2.2 Income Statement: Earnings Power
+  - Net Income is accounting; real focus is sustainable Earnings Power (7–10 year cycle).
+
+  2.2.1 Normalized Earnings
+  - Use multi‑year averages to avoid cyclical distortions.
+  - Remove non‑recurring items; recurring “one‑time” charges are actual expenses.
+  - Exclude capital gains from core earnings.
+
+  2.2.2 Depreciation Reality Check
+  - Depreciation is real capital consumption; EBITDA ignores this.
+  - Maintenance CapEx > depreciation for flat revenue = under-depreciation, overstated earnings.
+  - Amortization must be judged as real value loss or mere accounting.
+
+  2.2.3 Subsidiaries and Affiliates
+  - Adjust for consolidated + non‑consolidated entities; include all affiliate earnings/losses.
+  - Dividends > subsidiary earnings indicate disguised capital return.
+
+  2.3 Capital Structure
+  - Equity safety depends on total debt burden; leverage raises wipeout risk.
+
+  2.3.1 Factor of Safety
+  - Times Interest Earned should be 2–3× even in worst year of decade.
+  - Senior claims dominate in restructuring; heavy debt can zero out equity.
+
+  2.3.2 Corporate Pyramiding
+  - Holdco leverage magnifies downside; small declines wipe out holdco equity.
+  - Evaluate consolidated, look‑through leverage across the entire structure.
+
+  Part III. Structural Analysis: Economic Moat
+
+  3.0 Overview
+  - After quantitative safety, assess durability of earnings via economic moats.
+  - High ROIC normally attracts competition; returns revert to cost of capital.
+  - Firms sustaining high ROIC for 10–20 years possess structural entry barriers.
+
+  3.1 Four Pillars of Structural Advantage
+  - Analyst seeks evidence of moat, not generic qualities like management skill.
+
+  3.1.1 Intangible Assets: Pricing Power Test
+  - Intangibles are moats only when they increase willingness to pay.
+  - Brands: Premium pricing (e.g., Tiffany) indicates moat; familiarity without premium (e.g., Sony) does not.
+  - Patents: Strong when diversified enough that single expiry doesn’t collapse earnings; large pharma vs. single-drug biotech.
+  - Regulatory Licenses: Government-granted monopolies (casinos, rating agencies). Assess political stability.
+
+  3.1.2 Switching Costs: Lock-In Effect
+  - High switching costs create inertia and pricing power.
+  - Integration: Enterprise software (Oracle, SAP) embeds deeply; switching risks operational failure.
+  - Procedural costs: Banking/asset management changes create “stickiness.”
+  - Knowledge-based: Long training cycles (Autodesk) make retraining prohibitive.
+
+  3.1.3 Network Effect: Virtuous Cycle
+  - Value increases with user base; rare but strongest moat.
+  - Aggregators: Visa/Mastercard, eBay—buyer–seller flywheel leads to winner-take-all dynamics.
+  - Closed Loop Systems: Windows in 90s locked in developers, reinforcing dominance.
+
+  3.1.4 Cost Advantages: Efficiency Moat
+  - Structural cost edge enables underpricing rivals or earning superior margins.
+  - Process: Operational innovations (Southwest, Dell) help but can be copied over time.
+  - Scale: Large distribution networks (UPS, Coca-Cola) spread fixed costs widely.
+  - Niche Dominance: High transport-cost sectors (cement, gravel) give local producer monopoly power.
+
+  3.2 False Positives: Mistaken Moats
+  - Great products: temporary success; easily commoditized without moat.
+  - High market share: not durable; tech shifts erased leaders like Kodak, Netscape.
+  - Great execution: operational efficiency is replicable; not structural.
+  - Great management: not a moat; structural advantage must persist beyond leadership.
+    Part IV. Qualitative Analysis: Growth Engine
+    4.0 Overview
+  - After safety and structural durability, assess long-term growth ability via Fisher’s Scuttlebutt method.
+  - Qualitative analysis examines human, organizational, and operational realities influencing compounding.
+
+  4.1 Scuttlebutt Methodology
+  - Gather info from non-management sources to build an outside-in mosaic.
+  - Competitors: Ask which competitor they would buy and why; reveals respected players.
+  - Suppliers/Customers: Indicate payment reliability, negotiation fairness, and product demand trends.
+  - Former Employees: Reveal culture, integrity, morale; high turnover or bitterness signals risk.
+
+  4.2 Fisher’s Fifteen Qualitative Points
+  - Checklist to identify long-term compounders.
+  - Market Potential: Product must support multi-year sales growth; long runway essential.
+  - Management Determination: Commitment to developing new products/processes beyond current drivers.
+  - R&D Effectiveness: Evaluate yield of profitable products, not absolute spend.
+  - Sales Organization: Strong sales force needed to monetize product advantages.
+  - Profit Margins: Must be robust to survive adversity and fund R&D.
+  - Margin Maintenance: Seek pricing power, efficiency improvements, not one-time cuts.
+  - Labor Relations: Stable, satisfied workforce reduces costly disruptions.
+  - Executive Relations: Cohesive leadership team; internal promotion fosters loyalty.
+  - Management Depth: Avoid key-man risk; verify succession planning.
+  - Cost Analysis: Strong cost controls and profit tracking support efficient capital allocation.
+  - Industry Position: Identify special advantages tied to industry specifics (location, leases, insurance).
+  - Long-Term Outlook: Preference for firms prioritizing long-term customer goodwill over short-term profit.
+  - Financing Growth: Growth should rely on internal cash flow or prudent leverage; avoid dilutive equity issuance.
+  - Candor: Value transparent communication, especially during adversity.
+  - Integrity: Non-negotiable; unreliable management invalidates analysis.
+
+  4.3 Management Factor: Capital Stewardship
+  - Assess whether management allocates capital prudently.
+  - Capital Allocation: Evaluate reinvestment discipline—moat-widening vs. diworsification.
+  - Shareholder Orientation: Fair compensation, avoidance of needless dilution, partnership mindset.
+
+  Part V. Synthesis: Strategic Selection Workflow
+
+  5.0 Overview
+  - Integrate Graham’s safety, Dorsey’s structural durability, and Fisher’s growth.
+
+  5.1 Unified Selection Funnel
+
+  Phase 1: Quantitative Exclusion (Safety Filter)
+  - Remove firms with Interest Coverage <3×.
+  - Remove firms with P/E >25× unless growth >20% for 5+ years.
+  - Remove firms with negative earnings in any of past 5 years.
+
+  Phase 2: Structural Verification (Moat Filter)
+  - Confirm ROIC > WACC for 10 consecutive years.
+  - Identify moat source: Switching Costs, Network Effect, Cost Advantage, Intangibles; if unnamed, assume no moat.
+
+  Phase 3: Qualitative Audit (Growth Filter)
+  - Conduct Scuttlebutt; verify Fisher’s 15 points.
+  - Check management integrity via annual report history; look for admitted mistakes.
+
+  5.2 Valuation: Determining Entry Point
+  - Graham Baseline: Compute EPV assuming zero growth; ideal entry if price ≈ EPV.
+  - Growth Premium: Wide Moat + High Growth can justify modest premium; still require Margin of Safety.
+
+  5.3 Portfolio Construction
+  - Synthesis: Concentrate (10–15 stocks) where qualitative conviction is highest; diversify broadly (20–30 names) for Net-Net/statistical value positions.
+  - Cash acts as volatility option; hold if no qualifying opportunities.
+
+  5.4 Psychology of Holding
+  - Patience needed for Fisher compounders and Graham mean reversion.
+  - Contrarianism required; strong opportunities appear when sentiment is fearful.
+
+  Conclusion: Long-Term Discipline
+  - Successful investing demands forensic analysis (Graham), structural insight (Dorsey), and investigative qualitative work (Fisher).
+  - Margin of Safety + Moat + Quality Growth protects against permanent loss and mediocrity.
+
+  Appendix A: Financial Safety Checklist
+  - Earnings Stability: 10-year history; no deficit years.
+  - Earnings Growth: 3-year avg (end vs. start); ≥33% increase over 10 years.
+  - Financial Strength: Current Ratio >1.5× (industrial), >2× (conservative).
+  - Asset Protection: Price/Tangible Book <1.5× (adjust for ROIC).
+  - Debt Load: Long-term debt < Working Capital.
+  - Dividend Record: Continuous payments for ≥20 years.
+
+  Appendix B: Moat Identification Matrix
+
+  Intangible Assets
+  - Indicator: Premium pricing (e.g., Tiffany).
+  - False Positive: Familiar brand without pricing power (e.g., Sony).
+
+  Switching Costs
+  - Indicator: Workflow integration; high retraining cost (e.g., Adobe).
+  - False Positive: Long contracts for commodity products.
+
+  Network Effect
+  - Indicator: Value increases with user density (e.g., Visa, eBay).
+  - False Positive: Scale mistaken for network (e.g., Wal‑Mart).
+
+  Cost Advantage
+  - Indicator: Structural process or location edge (quarry, pipeline).
+  - False Positive: Cheap labor or temporary tech lead.
+
+  Appendix C: Expanded Scuttlebutt Interview Guide
+
+  Competitors
+  - Which competitor would you invest in and why?
+  - What advantage is hardest to replicate?
+  - Are they becoming more aggressive in pricing or product launches?
+
+  Suppliers
+  - Payment reliability; fairness in negotiations.
+  - Order-volume trends vs. peers.
+
+  Customers
+  - Reaction to 5% price increase; test brand/switching costs.
+  - Sales team responsiveness.
+
+  Appendix E: Valuation Methodologies
+
+  Net-Net (Graham)
+  - Liquidation Value = Cash + 0.75×Receivables + 0.50×Inventory − Total Liabilities.
+  - Action: Buy if Market Cap < Liquidation Value.
+
+  GARP (Fisher/Dorsey)
+  - Require Wide Moat and Fisher-quality.
+  - Normalize earnings; apply growth-compatible multiple.
+  - Avoid perfection pricing; avoid P/E >30.
+
+  ROIC Check (Dorsey)
+  - ROIC = NOPAT / Invested Capital.
+  - Action: Invest only if ROIC > WACC for ≥5 consecutive years.

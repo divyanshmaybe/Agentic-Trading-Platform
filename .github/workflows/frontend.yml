@@ -1,0 +1,62 @@
+name: Frontend CI
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'apps/frontend/**'
+      - 'packages/**'
+      - 'shared/**'
+      - 'pnpm-lock.yaml'
+      - 'package.json'
+      - '.github/workflows/frontend.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'apps/frontend/**'
+      - 'packages/**'
+      - 'shared/**'
+      - 'pnpm-lock.yaml'
+      - 'package.json'
+      - '.github/workflows/frontend.yml'
+
+env:
+  PNPM_VERSION: 9.0.0
+  NODE_VERSION: 20
+
+jobs:
+  build:
+    name: Frontend Build & Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma Client
+        run: npx prisma generate --schema=./shared/prisma/schema.prisma
+
+      - name: Build frontend
+        run: pnpm --filter frontend run build
+        env:
+          NEXT_DISABLE_ESLINT: 1
+
+      - name: Lint frontend
+        run: pnpm --filter frontend run lint || true
+        continue-on-error: true
+
+

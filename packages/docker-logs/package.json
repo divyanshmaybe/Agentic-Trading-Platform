@@ -1,0 +1,26 @@
+{
+  "name": "@agentinvest/docker-logs",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Docker container log viewers for turbo TUI",
+  "scripts": {
+    "logs:databases": "docker logs -f --tail=100 auth_postgres & docker logs -f --tail=100 portfolio_postgres & wait",
+    "logs:redis": "docker logs -f --tail=100 auth_redis & docker logs -f --tail=100 portfolio_redis & wait",
+    "logs:auth": "docker logs -f --tail=100 auth_server",
+    "logs:notif": "docker logs -f --tail=100 notification_server",
+    "logs:portfolio": "docker logs -f --tail=100 portfolio_server",
+    "logs:celery-trading": "docker logs -f --tail=100 portfolio_celery_trading",
+    "logs:celery-nse": "docker logs -f --tail=100 portfolio_celery_nse_pipeline",
+    "logs:celery-news": "docker logs -f --tail=100 portfolio_celery_news_pipeline",
+    "logs:celery-lowrisk": "docker logs -f --tail=100 portfolio_celery_low_risk",
+    "logs:celery-allocation": "docker logs -f --tail=100 portfolio_celery_allocation",
+    "logs:celery-market": "docker logs -f --tail=100 portfolio_celery_market",
+    "logs:celery-general": "docker logs -f --tail=100 portfolio_celery_general",
+    "logs:celery-streaming": "docker logs -f --tail=100 portfolio_celery_streaming",
+    "logs:celery-beat": "docker logs -f --tail=100 portfolio_celery_beat",
+    "logs:kafka": "docker logs -f --tail=100 pathway-kafka",
+    "logs:frontend": "docker logs -f --tail=100 frontend_web",
+    "logs:alphacopilot": "docker logs -f --tail=100 alphacopilot_server",
+    "logs:alphacopilot-celery": "docker logs -f --tail=100 alphacopilot_celery"
+  }
+}

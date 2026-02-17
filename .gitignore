@@ -1,0 +1,76 @@
+# Dependencies
+node_modules
+.pnp
+.pnp.js
+
+# Local env files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+logs
+
+.venv
+agent_venv
+
+# Testing
+coverage
+tests/
+
+# Turbo
+.turbo
+
+# Vercel
+.vercel
+
+# Build Outputs
+.next/
+out/
+build
+dist
+
+
+# Debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Angel One token cache
+apps/portfolio-server/docs/angelone_tokens.json
+
+# Misc
+.DS_Store
+*.pem
+
+*tfstate*
+*tfvars
+.terraform*
+kubeconfig
+os
+os.lock
+.python-version
+torch
+
+celerybeat-schedule*
+apps/portfolio-server/data/pipeline/news_last_run.txt
+docs/**
+nse_announcements_price_analysis.csv
+
+# Pipeline outputs and lock files
+trading_signals.jsonl
+**/.trading_economics.json.lock
+**/.cpi_data.json.lock
+# Generated Docker env files
+docker.env
+apps/*/docker.env
+apps/alphacopilot-server/mlruns/
+apps/portfolio-server/flower

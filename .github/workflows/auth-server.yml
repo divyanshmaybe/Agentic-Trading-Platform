@@ -1,0 +1,97 @@
+name: Auth Server CI
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'apps/auth_server/**'
+      - 'shared/**'
+      - 'middleware/**'
+      - 'pnpm-lock.yaml'
+      - 'package.json'
+      - '.github/workflows/auth-server.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'apps/auth_server/**'
+      - 'shared/**'
+      - 'middleware/**'
+      - 'pnpm-lock.yaml'
+      - 'package.json'
+      - '.github/workflows/auth-server.yml'
+
+env:
+  PNPM_VERSION: 9.0.0
+  NODE_VERSION: 20
+
+jobs:
+  build-and-test:
+    name: Auth Server Build & Test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma Client
+        run: pnpm --filter auth_server run prisma:generate
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/test_db
+
+      - name: Push Prisma Schema
+        run: pnpm --filter auth_server run prisma:push
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/test_db
+
+      - name: Build auth server
+        run: pnpm --filter auth_server run build
+
+      - name: Run auth server tests
+        run: pnpm --filter auth_server run test
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/test_db
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          JWT_SECRET: test-secret-key-for-ci
+          INTERNAL_SERVICE_SECRET: test-internal-secret
+
+

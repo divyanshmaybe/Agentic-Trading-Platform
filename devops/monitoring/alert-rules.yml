@@ -1,0 +1,504 @@
+# ==============================================================================
+# Celery + Trading Platform Alert Rules
+# ==============================================================================
+# 
+# This file contains Prometheus alerting rules for:
+# - Celery cluster health and worker availability
+# - Task execution SLAs and latency thresholds
+# - Queue backlog monitoring
+# - Trading-specific alerts
+# - Pipeline health monitoring
+# - Infrastructure alerts (Redis, Postgres)
+#
+# Metrics sources:
+# - celery-exporter (danihodovic/celery-exporter) - Primary Celery metrics
+# - flower - Queue depth and additional worker info
+# - Worker-local prometheus exporters - Per-worker metrics
+# - Custom business metrics - Trade execution, risk alerts
+# ==============================================================================
+
+groups:
+  # ============================================================================
+  # CRITICAL ALERTS - Worker Availability
+  # ============================================================================
+  - name: celery_worker_critical
+    interval: 15s
+    rules:
+      # No workers online at all - immediate action required
+      - alert: CeleryNoWorkersOnline
+        expr: |
+          celery_workers_total == 0
+          or absent(celery_workers_total)
+        for: 1m
+        labels:
+          severity: critical
+          component: celery
+          team: platform
+        annotations:
+          summary: "CRITICAL: No Celery workers online"
+          description: "No Celery workers are available to process tasks. All task processing is halted."
+          runbook: "Check worker container health, Redis connectivity, and restart workers if needed."
+
+      # Trading queue worker specifically down
+      - alert: CeleryTradingWorkerDown
+        expr: |
+          absent(celery_worker_up{worker=~".*trading.*"})
+          or celery_worker_up{worker=~".*trading.*"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          component: celery
+          queue: trading
+          team: trading
+        annotations:
+          summary: "CRITICAL: Trading queue worker is down"
+          description: "Trading worker {{ $labels.worker }} is offline. Trade execution is impacted."
+          runbook: "Immediately check portfolio_celery_trading container and restart if needed."
+
+      # Trading queue stalled - tasks queued but not processing
+      - alert: CeleryTradingQueueStalled
+        expr: |
+          (
+            celery_queue_length{queue_name="trading"} > 0
+            and rate(celery_task_succeeded_total{queue="trading"}[5m]) == 0
+          )
+        for: 3m
+        labels:
+          severity: critical
+          component: celery
+          queue: trading
+          team: trading
+        annotations:
+          summary: "CRITICAL: Trading queue is stalled"
+          description: "Trading queue has {{ $value }} pending tasks but no tasks are being processed."
+          runbook: "Check trading worker health, inspect for deadlocks or blocked tasks."
+
+  # ============================================================================
+  # CRITICAL ALERTS - High Failure Rate
+  # ============================================================================
+  - name: celery_failure_critical
+    interval: 30s
+    rules:
+      # Global high failure rate
+      - alert: CeleryHighFailureRate
+        expr: |
+          (
+            sum(rate(celery_task_failed_total[5m]))
+            / 
+            (sum(rate(celery_task_succeeded_total[5m])) + sum(rate(celery_task_failed_total[5m])))
+          ) > 0.15
+        for: 5m
+        labels:
+          severity: critical
+          component: celery
+          team: platform
+        annotations:
+          summary: "CRITICAL: High Celery task failure rate (>15%)"
+          description: "Global task failure rate is {{ $value | humanizePercentage }}. Investigate immediately."
+          runbook: "Check worker logs, database connectivity, external API health."
+
+      # Trading task failure rate
+      - alert: CeleryTradingHighFailureRate
+        expr: |
+          (
+            sum(rate(celery_task_failed_total{name=~".*trade.*|.*signal.*"}[5m]))
+            /
+            (sum(rate(celery_task_succeeded_total{name=~".*trade.*|.*signal.*"}[5m])) + sum(rate(celery_task_failed_total{name=~".*trade.*|.*signal.*"}[5m])) + 0.001)
+          ) > 0.05
+        for: 3m
+        labels:
+          severity: critical
+          component: trading
+          team: trading
+        annotations:
+          summary: "CRITICAL: High trading task failure rate (>5%)"
+          description: "Trading task failure rate is {{ $value | humanizePercentage }}. Trades may be failing."
+          runbook: "Check AngelOne API connectivity, market hours, account status."
+
+  # ============================================================================
+  # CRITICAL ALERTS - SLA Breaches
+  # ============================================================================
+  - name: celery_sla_critical
+    interval: 30s
+    rules:
+      # Trade execution P99 latency > 2s (critical SLA)
+      - alert: TradeExecutionSLABreach
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(celery_task_runtime_seconds_bucket{name=~".*trade.*|.*signal.*"}[5m])) by (le)
+          ) > 2
+        for: 2m
+        labels:
+          severity: critical
+          component: trading
+          team: trading
+          sla: "p99_latency_2s"
+        annotations:
+          summary: "CRITICAL: Trade execution SLA breach - P99 > 2s"
+          description: "Trade execution P99 latency is {{ $value | humanizeDuration }}. SLA target is 2s."
+          runbook: "Check trading worker load, broker latency, database performance."
+
+      # Trade execution P95 latency > 1.5s (warning threshold before SLA)
+      - alert: TradeExecutionLatencyWarning
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(celery_task_runtime_seconds_bucket{name=~".*trade.*|.*signal.*"}[5m])) by (le)
+          ) > 1.5
+        for: 5m
+        labels:
+          severity: warning
+          component: trading
+          team: trading
+        annotations:
+          summary: "WARNING: Trade execution P95 latency > 1.5s"
+          description: "Trade execution P95 latency is {{ $value | humanizeDuration }}. Approaching SLA breach."
+
+  # ============================================================================
+  # WARNING ALERTS - Queue Backlogs
+  # ============================================================================
+  - name: celery_queue_warnings
+    interval: 30s
+    rules:
+      # Trading queue backlog - warning
+      - alert: CeleryTradingQueueBacklog
+        expr: celery_queue_length{queue_name="trading"} > 50
+        for: 2m
+        labels:
+          severity: warning
+          component: celery
+          queue: trading
+          team: trading
+        annotations:
+          summary: "WARNING: Trading queue backlog > 50 tasks"
+          description: "Trading queue has {{ $value }} pending tasks. May impact execution latency."
+
+      # Trading queue backlog - critical
+      - alert: CeleryTradingQueueBacklogCritical
+        expr: celery_queue_length{queue_name="trading"} > 200
+        for: 1m
+        labels:
+          severity: critical
+          component: celery
+          queue: trading
+          team: trading
+        annotations:
+          summary: "CRITICAL: Trading queue backlog > 200 tasks"
+          description: "Trading queue has {{ $value }} pending tasks. Trade execution severely delayed."
+          runbook: "Consider scaling trading workers or investigating blocked tasks."
+
+      # Allocation queue backlog
+      - alert: CeleryAllocationQueueBacklog
+        expr: celery_queue_length{queue_name="allocations"} > 100
+        for: 5m
+        labels:
+          severity: warning
+          component: celery
+          queue: allocations
+          team: platform
+        annotations:
+          summary: "WARNING: Allocation queue backlog > 100 tasks"
+          description: "Allocation queue has {{ $value }} pending tasks."
+
+      # Pipeline queue backlogs
+      - alert: CeleryPipelineQueueBacklog
+        expr: |
+          celery_queue_length{queue_name=~"nse_pipeline|news_pipeline|low_risk_pipeline"} > 50
+        for: 10m
+        labels:
+          severity: warning
+          component: celery
+          team: platform
+        annotations:
+          summary: "WARNING: Pipeline queue backlog"
+          description: "Pipeline queue {{ $labels.queue_name }} has {{ $value }} pending tasks."
+
+  # ============================================================================
+  # WARNING ALERTS - Worker Health (Legacy + Enhanced)
+  # ============================================================================
+  - name: celery_alerts
+    interval: 30s
+    rules:
+      # Worker Down Alert (original)
+      - alert: CeleryWorkerDown
+        expr: celery_worker_up == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: celery
+        annotations:
+          summary: "Celery worker {{ $labels.worker }} is down"
+          description: "Worker {{ $labels.worker }} has been down for more than 1 minute"
+          
+      # High Task Failure Rate (original)
+      - alert: HighTaskFailureRate
+        expr: |
+          (
+            sum(rate(celery_task_failed_total[5m])) by (worker)
+            /
+            (sum(rate(celery_task_succeeded_total[5m])) by (worker) + sum(rate(celery_task_failed_total[5m])) by (worker))
+          ) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: celery
+        annotations:
+          summary: "High task failure rate on {{ $labels.worker }}"
+          description: "Worker {{ $labels.worker }} has a failure rate of {{ $value | humanizePercentage }} over the last 5 minutes"
+          
+      # Task Queue Backlog (original)
+      - alert: TaskQueueBacklog
+        expr: sum(celery_worker_tasks_active) by (worker) > 50
+        for: 10m
+        labels:
+          severity: warning
+          component: celery
+        annotations:
+          summary: "High task backlog on {{ $labels.worker }}"
+          description: "Worker {{ $labels.worker }} has {{ $value }} active tasks for more than 10 minutes"
+          
+      # Slow Task Execution (original)
+      - alert: SlowTaskExecution
+        expr: |
+          histogram_quantile(0.95, 
+            sum(rate(celery_task_duration_seconds_bucket[5m])) by (worker, task_name, le)
+          ) > 300
+        for: 5m
+        labels:
+          severity: warning
+          component: celery
+        annotations:
+          summary: "Slow task execution: {{ $labels.task_name }} on {{ $labels.worker }}"
+          description: "95th percentile task duration is {{ $value }}s for {{ $labels.task_name }} on {{ $labels.worker }}"
+          
+      # High Task Retry Rate (original)
+      - alert: HighTaskRetryRate
+        expr: rate(celery_task_retried_total[5m]) > 1
+        for: 5m
+        labels:
+          severity: warning
+          component: celery
+        annotations:
+          summary: "High retry rate for {{ $labels.task_name }} on {{ $labels.worker }}"
+          description: "Task {{ $labels.task_name }} is retrying at {{ $value }} retries/sec on {{ $labels.worker }}"
+          
+      # No Task Activity (original)
+      - alert: NoTaskActivity
+        expr: rate(celery_task_received_total[10m]) == 0
+        for: 15m
+        labels:
+          severity: info
+          component: celery
+        annotations:
+          summary: "No task activity on {{ $labels.worker }}"
+          description: "Worker {{ $labels.worker }} has not received any tasks in the last 15 minutes"
+          
+      # Worker Pool Near Capacity (original)
+      - alert: WorkerPoolNearCapacity
+        expr: celery_worker_pool_usage > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          component: celery
+        annotations:
+          summary: "Worker pool {{ $labels.worker }} near capacity"
+          description: "Worker {{ $labels.worker }} pool utilization is at {{ $value | humanizePercentage }}"
+
+  # ============================================================================
+  # TRADING PLATFORM ALERTS
+  # ============================================================================
+  - name: trading_platform_alerts
+    interval: 30s
+    rules:
+      # Market Data Pipeline Issues (original + enhanced)
+      - alert: MarketDataPipelineFailure
+        expr: rate(celery_task_failed_total{task_name=~".*market.*"}[5m]) > 0.5
+        for: 3m
+        labels:
+          severity: critical
+          component: market-data
+        annotations:
+          summary: "Market data pipeline failures on {{ $labels.worker }}"
+          description: "Market data tasks are failing at {{ $value }} failures/sec"
+          runbook: "Check AngelOne API status, token validity, rate limits."
+          
+      # Trade Execution Delays (original + enhanced)
+      - alert: TradeExecutionDelay
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(celery_task_duration_seconds_bucket{task_name=~".*trade.*"}[5m])) by (le)
+          ) > 30
+        for: 2m
+        labels:
+          severity: warning
+          component: trading
+        annotations:
+          summary: "Trade execution delays detected"
+          description: "95th percentile trade execution time is {{ $value }}s (threshold: 30s)"
+          
+      # NSE Pipeline Processing Issues (original)
+      - alert: NSEPipelineStalled
+        expr: rate(celery_task_received_total{task_name=~".*nse.*"}[10m]) == 0
+        for: 15m
+        labels:
+          severity: warning
+          component: nse-pipeline
+        annotations:
+          summary: "NSE filing pipeline appears stalled"
+          description: "No NSE filing tasks processed in the last 15 minutes"
+          
+      # Risk Alert Processing Failure (original)
+      - alert: RiskAlertProcessingFailure
+        expr: rate(celery_task_failed_total{task_name=~".*risk.*"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          component: risk-management
+        annotations:
+          summary: "Risk alert processing failures"
+          description: "Risk management tasks are failing on {{ $labels.worker }}"
+          runbook: "Check risk worker health and external notification services."
+
+      # No trading activity during market hours (9:15 AM - 3:30 PM IST = 3:45 AM - 10:00 AM UTC)
+      - alert: NoTradingActivityDuringMarket
+        expr: |
+          (
+            hour() >= 4 and hour() < 10
+            and rate(celery_task_received_total{task_name=~".*trade.*|.*signal.*"}[30m]) == 0
+          )
+        for: 30m
+        labels:
+          severity: warning
+          component: trading
+          team: trading
+        annotations:
+          summary: "WARNING: No trading activity during market hours"
+          description: "No trading tasks received in the last 30 minutes during market hours."
+
+  # ============================================================================
+  # CUSTOM BUSINESS METRICS ALERTS
+  # ============================================================================
+  - name: business_metrics_alerts
+    interval: 30s
+    rules:
+      # High pending risk alerts
+      - alert: HighPendingRiskAlerts
+        expr: sum(portfolio_risk_alerts_pending) > 10
+        for: 5m
+        labels:
+          severity: warning
+          component: risk
+          team: risk
+        annotations:
+          summary: "WARNING: High number of pending risk alerts"
+          description: "{{ $value }} risk alerts are pending processing."
+
+      # Trade error spike
+      - alert: TradeErrorSpike
+        expr: |
+          sum(rate(portfolio_trade_errors_total[5m])) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+          component: trading
+          team: trading
+        annotations:
+          summary: "WARNING: Elevated trade error rate"
+          description: "Trade errors occurring at {{ $value }} errors/sec."
+
+      # Pipeline error spike
+      - alert: PipelineErrorSpike
+        expr: |
+          sum(rate(portfolio_pipeline_errors_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          component: pipelines
+          team: platform
+        annotations:
+          summary: "WARNING: Elevated pipeline error rate"
+          description: "Pipeline errors occurring at {{ $value }} errors/sec."
+
+      # Trade execution latency from business metrics
+      - alert: BusinessTradeLatencyHigh
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(portfolio_trade_execution_latency_seconds_bucket[5m])) by (le)
+          ) > 2
+        for: 2m
+        labels:
+          severity: critical
+          component: trading
+          team: trading
+        annotations:
+          summary: "CRITICAL: Trade execution latency P99 > 2s (business metric)"
+          description: "Business-level trade execution P99 latency is {{ $value | humanizeDuration }}."
+
+  # ============================================================================
+  # INFRASTRUCTURE ALERTS
+  # ============================================================================
+  - name: infrastructure_alerts
+    interval: 30s
+    rules:
+      # Redis memory pressure
+      - alert: RedisMemoryPressure
+        expr: |
+          redis_memory_used_bytes / redis_memory_max_bytes > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          component: redis
+          team: platform
+        annotations:
+          summary: "WARNING: Redis memory usage > 85%"
+          description: "Redis is using {{ $value | humanizePercentage }} of available memory."
+
+      # Redis memory critical
+      - alert: RedisMemoryCritical
+        expr: |
+          redis_memory_used_bytes / redis_memory_max_bytes > 0.95
+        for: 2m
+        labels:
+          severity: critical
+          component: redis
+          team: platform
+        annotations:
+          summary: "CRITICAL: Redis memory usage > 95%"
+          description: "Redis is nearly out of memory. Task queue may fail."
+          runbook: "Clear old task results, check for memory leaks, scale Redis."
+
+      # PostgreSQL connection saturation
+      - alert: PostgresConnectionSaturation
+        expr: |
+          pg_stat_activity_count / pg_settings_max_connections > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          component: postgres
+          team: platform
+        annotations:
+          summary: "WARNING: PostgreSQL connections > 80% capacity"
+          description: "PostgreSQL has {{ $value | humanizePercentage }} connections in use."
+
+      # Redis down
+      - alert: RedisDown
+        expr: redis_up == 0
+        for: 30s
+        labels:
+          severity: critical
+          component: redis
+          team: platform
+        annotations:
+          summary: "CRITICAL: Redis is down"
+          description: "Redis broker is not responding. All Celery tasks are blocked."
+
+      # PostgreSQL down
+      - alert: PostgresDown
+        expr: pg_up == 0
+        for: 30s
+        labels:
+          severity: critical
+          component: postgres
+          team: platform
+        annotations:
+          summary: "CRITICAL: PostgreSQL is down"
+          description: "Portfolio database is not responding."

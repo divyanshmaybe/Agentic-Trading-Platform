@@ -1,0 +1,61 @@
+[project]
+name = "quant-stream"
+version = "0.1.0"
+description = "Stream-native quantitative backtesting with 50+ indicators and alpha factor expression parser"
+readme = "README.md"
+requires-python = ">=3.11, <3.14"
+dependencies = [
+    "fire>=0.7.1", # command line interface
+    "pathway>=0.26.4", # data processing framework
+    "pyyaml>=6.0.3", # YAML parsing
+    "yahooquery>=2.4.1", # Yahoo Finance API
+    "python-dateutil>=2.8.2", # dateutil library
+    "pandas>=2.3.3", # used for testing to make sure the library is working as expected
+    "pyparsing>=3.0.0", # parsing library
+    "mlflow>=2.10.0", # experiment tracking
+    "lightgbm>=4.1.0", # gradient boosting
+    "xgboost>=2.0.0", # gradient boosting
+    "scikit-learn>=1.3.0", # machine learning models
+    "scipy>=1.11.0",
+    "torch>=2.0.0",
+    "growwapi>=1.3.0",
+    "pyotp>=2.9.0",
+]
+
+[project.scripts]
+quant-stream = "quant_stream.cli:main"
+
+[dependency-groups]
+test = [
+    "pytest>=8.4.2",
+    "pytest-cov>=7.0.0",
+    "ruff>=0.14.3",
+    "genbadge[coverage,tests]>=1.1.0",
+    "pytest-asyncio>=1.2.0",
+]
+mcp = [
+    "mcp[cli]>=1.0.0",
+    "celery[redis]>=5.3.0",
+    "redis>=5.0.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["quant_stream*"]
+exclude = ["tests*", "examples*", "assets*", "pathway-source-code*", "alphacopilot*"]
+
+[tool.pytest.ini_options]
+addopts = "--ignore=pathway-source-code"
+filterwarnings = [
+    "ignore:pkg_resources is deprecated:UserWarning",
+    "ignore:DataFrameGroupBy.apply operated on the grouping columns:FutureWarning",
+]
+
+[tool.uv.workspace]
+members = [
+    "alphacopilot",
+]

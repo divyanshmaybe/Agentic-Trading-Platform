@@ -1,0 +1,176 @@
+name: Portfolio Server CI
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'apps/portfolio-server/**'
+      - 'shared/py/**'
+      - 'middleware/py/**'
+      - 'apps/portfolio-server/requirements*.txt'
+      - 'shared/py/requirements.txt'
+      - '.github/workflows/portfolio-server.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'apps/portfolio-server/**'
+      - 'shared/py/**'
+      - 'middleware/py/**'
+      - 'apps/portfolio-server/requirements*.txt'
+      - 'shared/py/requirements.txt'
+      - '.github/workflows/portfolio-server.yml'
+
+env:
+  PYTHON_VERSION: 3.11
+
+jobs:
+  build-and-test:
+    name: Portfolio Server Build & Test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: portfolio_user
+          POSTGRES_PASSWORD: portfolio_password
+          POSTGRES_DB: portfolio_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          # No cache configured - we use --no-cache-dir to save disk space
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            python3-dev \
+            libffi-dev \
+            libssl-dev \
+            libblas-dev \
+            liblapack-dev \
+            gfortran \
+            pkg-config \
+            git \
+            curl
+
+      - name: Check disk space
+        run: df -h
+
+      - name: Free up disk space
+        run: |
+          # Remove unused system packages to free up space (can save several GB)
+          echo "Freeing up disk space..."
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /usr/share/swift || true
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY" || true
+          # Clean up Docker images and containers if not needed
+          sudo docker system prune -af --volumes || true
+          # Clean up apt cache
+          sudo apt-get clean || true
+          sudo rm -rf /var/lib/apt/lists/* || true
+          # Clean up pip cache if it exists
+          pip cache purge || true
+          rm -rf ~/.cache/pip || true
+          echo "Disk space after cleanup:"
+          df -h
+
+      - name: Install Python dependencies
+        working-directory: apps/portfolio-server
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          # Create temporary requirements without torch for CI (use CPU-only version)
+          grep -v "^torch==" requirements.txt > requirements-ci.txt || cp requirements.txt requirements-ci.txt
+          # Install CPU-only PyTorch first (much smaller, no CUDA dependencies)
+          # Use PyTorch CPU index to get CPU-only builds (saves ~2GB+ disk space)
+          echo "Installing CPU-only PyTorch..."
+          pip install --no-cache-dir torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu || \
+            (echo "CPU-only PyTorch install failed, trying default..." && pip install --no-cache-dir torch==2.6.0)
+          # Install other requirements without cache to save disk space
+          pip install --no-cache-dir -r requirements-ci.txt
+          pip install --no-cache-dir -r ../../shared/py/requirements.txt
+          pip install --no-cache-dir -r requirements-test.txt
+          rm -f requirements-ci.txt
+
+      - name: Clean up pip cache
+        run: |
+          pip cache purge || true
+          rm -rf ~/.cache/pip || true
+
+      - name: Check disk space after install
+        run: df -h
+
+      - name: Set up Python path
+        run: |
+          echo "PYTHONPATH=${{ github.workspace }}:${{ github.workspace }}/apps/portfolio-server:${{ github.workspace }}/shared/py:${{ github.workspace }}/middleware/py" >> $GITHUB_ENV
+
+      - name: Generate Prisma Client
+        working-directory: apps/portfolio-server
+        run: python -m prisma generate
+        env:
+          DATABASE_URL: postgresql://portfolio_user:portfolio_password@localhost:5432/portfolio_db
+
+      - name: Push Prisma Schema
+        working-directory: apps/portfolio-server
+        run: python -m prisma db push --accept-data-loss
+        env:
+          DATABASE_URL: postgresql://portfolio_user:portfolio_password@localhost:5432/portfolio_db
+
+      - name: Run portfolio server tests
+        working-directory: apps/portfolio-server
+        run: |
+          pytest tests/ -v --tb=short \
+            --cov=. \
+            --cov=../../shared/py \
+            --cov-report=xml \
+            --cov-report=term-missing \
+            -W ignore::DeprecationWarning \
+            -W ignore::PendingDeprecationWarning
+        env:
+          DATABASE_URL: postgresql://portfolio_user:portfolio_password@localhost:5432/portfolio_db
+          SHADOW_DATABASE_URL: postgresql://portfolio_user:portfolio_password@localhost:5432/portfolio_db
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          CELERY_BROKER_URL: redis://localhost:6379/0
+          CELERY_RESULT_BACKEND: redis://localhost:6379/1
+          INTERNAL_SERVICE_SECRET: test-internal-secret
+          GEMINI_API_KEY: dummy-key
+          AUTH_SERVER_URL: http://localhost:4000
+          PORTFOLIO_SERVICE_URL: http://localhost:8000
+          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/apps/portfolio-server:${{ github.workspace }}/shared/py:${{ github.workspace }}/middleware/py
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./apps/portfolio-server/coverage.xml
+          flags: portfolio-server
+          name: portfolio-server-coverage
+        continue-on-error: true
+
+

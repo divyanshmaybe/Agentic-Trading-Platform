@@ -1,0 +1,15 @@
+# Ignore files not needed for Docker builds
+node_modules
+.next
+npm-debug.log*
+pnpm-debug.log*
+yarn-error.log*
+.DS_Store
+.env
+.env.local
+.env.*
+coverage
+reports
+*.log
+firebase-debug.log
+

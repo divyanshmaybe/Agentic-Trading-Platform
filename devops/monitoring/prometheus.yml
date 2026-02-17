@@ -1,0 +1,115 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'trading-platform'
+    env: 'development'
+
+# Load alert rules
+rule_files:
+  - 'alert-rules.yml'
+
+scrape_configs:
+  # ============================================================================
+  # Application Services
+  # ============================================================================
+  
+  # Auth Server (Express.js on port 4000)
+  - job_name: 'auth_server'
+    static_configs:
+      - targets: ['localhost:4000']
+        labels:
+          service: 'auth'
+          environment: 'local'
+    metrics_path: /metrics
+
+  # Notification Server (Node.js Kafka consumer on port 9201)
+  - job_name: 'notification_server'
+    static_configs:
+      - targets: ['localhost:9201']
+        labels:
+          service: 'notification'
+          environment: 'local'
+    metrics_path: /metrics
+
+  # Portfolio Server (FastAPI on port 8000)
+  - job_name: 'portfolio_server'
+    static_configs:
+      - targets: ['localhost:8000']
+        labels:
+          service: 'portfolio'
+          environment: 'local'
+    metrics_path: /metrics
+
+  # AlphaCopilot Server (FastAPI on port 8069)
+  - job_name: 'alphacopilot_server'
+    static_configs:
+      - targets: ['localhost:8069']
+        labels:
+          service: 'alphacopilot'
+          environment: 'local'
+    metrics_path: /metrics
+
+  # ============================================================================
+  # Celery Workers
+  # ============================================================================
+  
+  - job_name: 'celery-trading'
+    static_configs:
+      - targets: ['localhost:9101']
+        labels:
+          worker_pool: 'trading'
+          environment: 'local'
+          
+  - job_name: 'celery-pipeline'
+    static_configs:
+      - targets: ['localhost:9102']
+        labels:
+          worker_pool: 'pipeline'
+          environment: 'local'
+          
+  - job_name: 'celery-allocation'
+    static_configs:
+      - targets: ['localhost:9103']
+        labels:
+          worker_pool: 'allocation'
+          environment: 'local'
+          
+  - job_name: 'celery-market'
+    static_configs:
+      - targets: ['localhost:9104']
+        labels:
+          worker_pool: 'market'
+          environment: 'local'
+          
+  - job_name: 'celery-general'
+    static_configs:
+      - targets: ['localhost:9105']
+        labels:
+          worker_pool: 'general'
+          environment: 'local'
+
+  # ============================================================================
+  # Infrastructure
+  # ============================================================================
+
+  # Redis Exporter
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['localhost:9121']
+        labels:
+          environment: 'local'
+
+  # Celery Exporter (Primary Celery Metrics)
+  - job_name: 'celery-exporter'
+    static_configs:
+      - targets: ['localhost:9808']
+        labels:
+          environment: 'local'
+          
+  # PostgreSQL Exporter (if running)
+  - job_name: 'postgresql'
+    static_configs:
+      - targets: ['localhost:9187']
+        labels:
+          environment: 'local'

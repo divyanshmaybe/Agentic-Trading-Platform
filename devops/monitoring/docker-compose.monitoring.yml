@@ -1,0 +1,113 @@
+# =============================================================================
+# Monitoring Stack for Trading Platform
+# =============================================================================
+# Works for both local development and Docker environments
+#
+# Usage:
+#   Local Dev:  ./setup.sh monitoring  (uses host network mode)
+#   Docker:     docker-compose -f devops/monitoring/docker-compose.monitoring.yml up -d
+#
+# Services:
+#   - Prometheus (port 9090): Metrics collection and storage
+#   - Grafana (port 3001): Dashboards and visualization  
+#   - Celery Exporter (port 9808): Celery task/worker metrics
+#   - Redis Exporter (port 9121): Redis metrics
+#   - Postgres Exporter (port 9187): PostgreSQL metrics
+# =============================================================================
+
+version: '3.8'
+
+services:
+  # ===========================================================================
+  # Prometheus - Metrics Collection
+  # ===========================================================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: pathway-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    restart: unless-stopped
+    network_mode: host
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # ===========================================================================
+  # Grafana - Visualization & Dashboards
+  # ===========================================================================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_HTTP_PORT=3000
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/trading-kpis-dashboard.json
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+
+  # ===========================================================================
+  # Celery Exporter - Celery Task & Worker Metrics
+  # ===========================================================================
+  celery-exporter:
+    image: danihodovic/celery-exporter:latest
+    container_name: pathway-celery-exporter
+    environment:
+      - CE_BROKER_URL=redis://localhost:6379/0
+      - CE_LISTEN_ADDRESS=0.0.0.0:9808
+      - CE_NAMESPACE=celery
+      - CE_MAX_TASKS=10000
+      - CE_RETRY_INTERVAL=5
+    restart: unless-stopped
+    network_mode: host
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # ===========================================================================
+  # Redis Exporter - Redis Metrics
+  # ===========================================================================
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: pathway-redis-exporter
+    environment:
+      - REDIS_ADDR=redis://localhost:6379
+    restart: unless-stopped
+    network_mode: host
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # ===========================================================================
+  # PostgreSQL Exporter - Database Metrics
+  # ===========================================================================
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    container_name: pathway-postgres-exporter
+    environment:
+      - DATA_SOURCE_NAME=postgresql://postgres:password@localhost:5432/calc_db?sslmode=disable
+    restart: unless-stopped
+    network_mode: host
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
