@@ -172,9 +172,12 @@ services:
       - apps/notification_server/docker.env
     working_dir: /app
     command: >
-      sh -c "cd apps/notification_server && pnpm prisma generate --schema /app/shared/prisma/schema.prisma &&
-             pnpm prisma db push --schema /app/shared/prisma/schema.prisma --accept-data-loss &&
-             node -r tsconfig-paths/register dist/apps/notification_server/src/index.js"
+      sh -c "sleep 10 &&
+             while true; do
+               node apps/notification_server/src/index.js || true
+               echo 'notification_server process exited; retrying in 5s'
+               sleep 5
+             done"
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f 'node.*index.js' > /dev/null || exit 1"]
       interval: 30s
@@ -182,7 +185,7 @@ services:
       retries: 3
       start_period: 60s
     depends_on:
-      postgres:
+      portfolio_postgres:
         condition: service_healthy
       redis:
         condition: service_healthy

@@ -36,6 +36,13 @@ export function useIntradayNotifications(): UseIntradayNotificationsReturn {
     return Array.from(map.values()).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
   }, []);
 
+  // Keep only notifications from the same local day as `date` (default: today)
+  const isSameLocalDay = useCallback((d: Date, date = new Date()) => {
+    return d.getFullYear() === date.getFullYear() &&
+      d.getMonth() === date.getMonth() &&
+      d.getDate() === date.getDate();
+  }, []);
+
   // Fetch initial notifications
   useEffect(() => {
     let cancelled = false;
@@ -56,15 +63,18 @@ export function useIntradayNotifications(): UseIntradayNotificationsReturn {
         const notificationsData: NotificationDTO[] = Array.isArray(data) ? data : (data.notifications || []);
 
         if (!cancelled) {
-          // Intraday shows ALL notifications (no filtering)
           // Convert NotificationDTO (ISO strings) to Notification (Date objects)
-          const notifications = notificationsData.map(dtoToNotification);
+          let notifications = notificationsData.map(dtoToNotification);
+
+          // Keep only today's notifications (frontend requirement)
+          const today = new Date();
+          notifications = notifications.filter((n) => isSameLocalDay(n.createdAt, today));
 
           // Sort by createdAt descending (newest first)
           notifications.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
           // Merge with existing notifications (in case SSE already added some)
-          setNotifications((prev) => mergeNotifications(prev, notifications));
+          setNotifications((prev) => mergeNotifications(prev.filter(p => isSameLocalDay(p.createdAt, today)), notifications));
           
           // Mark all fetched notifications as seen
           notificationsData.forEach((n) => seenIdsRef.current.add(n.id));
@@ -102,15 +112,19 @@ export function useIntradayNotifications(): UseIntradayNotificationsReturn {
       try {
         const dto: NotificationDTO = JSON.parse(event.data);
 
-        // Intraday shows ALL notifications (no filtering)
         // Mark as seen (even if we merge, this prevents duplicate processing)
         seenIdsRef.current.add(dto.id);
 
         // Convert NotificationDTO to Notification (Date objects)
         const notification = dtoToNotification(dto);
 
+        // Only keep notifications from today on the frontend
+        if (!isSameLocalDay(notification.createdAt)) {
+          return;
+        }
+
         // Merge with existing notifications (handles deduplication by ID)
-        setNotifications((prev) => mergeNotifications(prev, [notification]));
+        setNotifications((prev) => mergeNotifications(prev.filter(p => isSameLocalDay(p.createdAt)), [notification]));
       } catch (err) {
         console.warn("[Intraday Notifications] Failed to parse notification:", err);
       }
@@ -240,10 +254,21 @@ export function useIntradayNotifications(): UseIntradayNotificationsReturn {
 
   // Cleanup on unmount
   useEffect(() => {
+    // Schedule a midnight reset so only present-day notifications remain
+    const now = new Date();
+    const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    let midnightTimer = window.setTimeout(function midnightHandler() {
+      // Clear notifications at local midnight
+      setNotifications((prev) => prev.filter((n) => isSameLocalDay(n.createdAt)));
+      // Schedule next reset in 24h
+      midnightTimer = window.setTimeout(midnightHandler, 24 * 60 * 60 * 1000);
+    }, nextMidnight.getTime() - now.getTime());
+
     return () => {
       if (dismissManyTimeoutRef.current) {
         clearTimeout(dismissManyTimeoutRef.current);
       }
+      if (midnightTimer) clearTimeout(midnightTimer);
     };
   }, []);
 
