@@ -489,7 +489,7 @@ async def analyze_trade_with_llm(
         
         # Initialize the Gemini model
         model = ChatGoogleGenerativeAI(
-            model=model_config.get("name", "gemini-2.5-flash"),
+            model=model_config.get("name", "gemini-3.1-flash-lite"),
             google_api_key=GEMINI_API_KEY,
             temperature=model_config.get("temperature", 0.7),
             timeout=model_config.get("timeout", 120),
@@ -620,7 +620,7 @@ async def analyze_trade_with_llm(
         )
         
         # Get model name from config
-        model_name = model_config.get("name", "gemini-2.5-flash")
+        model_name = model_config.get("name", "gemini-3.1-flash-lite")
         
         task_logger.info(f"✅ Observability analysis complete for {context.symbol} (latency={latency_ms}ms)")
         

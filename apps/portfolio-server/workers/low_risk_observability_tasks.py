@@ -297,7 +297,7 @@ async def analyze_drawdown_with_llm(
 
         # Initialize the Gemini model with Google Search tool
         model = ChatGoogleGenerativeAI(
-            model=model_config.get("name", "gemini-2.5-flash"),
+            model=model_config.get("name", "gemini-3.1-flash-lite"),
             google_api_key=GEMINI_API_KEY,
             temperature=model_config.get("temperature", 0.7),
             timeout=model_config.get("timeout_seconds", 120),

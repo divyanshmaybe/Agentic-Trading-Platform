@@ -427,7 +427,7 @@ def create_industry_selection_agent(
 
     # Create LLM
     gemini2 = ChatGoogleGenerativeAI(
-        model="gemini-2.5-flash",
+        model="gemini-3.1-flash-lite",
         google_api_key=gemini_api_key,
         temperature=0.5,
     )

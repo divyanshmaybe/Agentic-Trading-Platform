@@ -100,7 +100,7 @@ MARKET_OPEN = (9, 15)
 MARKET_CLOSE = (15, 30)
 MARKET_CLOSE_BUFFER_MINUTES = int(os.getenv("NSE_FILINGS_MARKET_CLOSE_BUFFER_MINUTES", "15"))
 AUTO_SELL_WINDOW_MINUTES = int(os.getenv("NSE_FILINGS_AUTO_SELL_WINDOW_MINUTES", "25"))
-LLM_MODEL = os.getenv("NSE_FILINGS_LLM_MODEL", "gemini-2.5-flash")
+LLM_MODEL = os.getenv("NSE_FILINGS_LLM_MODEL", "gemini-3.1-flash-lite")
 DEMO_MODE = os.getenv("DEMO_MODE", "true").lower() in {"1", "true", "yes"}  # Default: true for 24/7 signal generation
 print(f"[DEBUG] DEMO_MODE environment variable: '{os.getenv('DEMO_MODE', 'NOT_SET')}'")
 print(f"[DEBUG] DEMO_MODE parsed value: {DEMO_MODE}")
@@ -786,10 +786,9 @@ def generate_trading_signal(
 ) -> str:
     """
     Generate trading signal using two-model approach:
-    - Model 1 (gemini-2.5-flash): Generates trading_signal + explanation
+        - Model 1 (gemini-3.1-flash-lite): Generates trading_signal + explanation
       If pdf_filename is provided, attaches the PDF from the nse/docs folder.
-    - Model 2 (gemini-2.5-pro): Validates logic and generates confidence_score
-      Has access to google_search tool for verification.
+        - Model 2 (gemini-3.1-flash-lite): Validates logic and generates confidence_score
 
     The model returns JSON directly wrapped in ```json...``` block.
     This function extracts the JSON and returns it with timing metadata.
@@ -812,6 +811,11 @@ def generate_trading_signal(
     # Load API key from environment if not provided or empty
     if not api_key or api_key.strip() == "":
         api_key = os.getenv("GEMINI_API_KEY", "")
+
+    # GEMINI_API_KEY supports a comma-separated key pool. Never pass the
+    # complete comma-separated string to Google as though it were one key.
+    gemini_api_keys = [key.strip() for key in api_key.split(",") if key.strip()]
+    model1_api_key = gemini_api_keys[0] if gemini_api_keys else ""
 
     # Validate inputs
     if not pdf_filename or not pdf_filename.strip():
@@ -862,7 +866,7 @@ def generate_trading_signal(
         return content
 
     def extract_json_from_response(response_text: str) -> dict:
-        """Extract JSON from model response (handles ```json...``` blocks)."""
+        """Extract JSON from model response (handles ```json...``` blocks and loose JSON)."""
         # Try to extract JSON from markdown code block
         json_match = re.search(r"```json\s*(.*?)\s*```", response_text, re.DOTALL)
         if json_match:
@@ -871,6 +875,15 @@ def generate_trading_signal(
                 return json.loads(json_text)
             except json.JSONDecodeError as e:
                 print(f"[WARN] Failed to parse JSON from code block: {e}")
+
+        # Try to extract the first JSON object from surrounding text
+        loose_json_match = re.search(r"\{[\s\S]*\}", response_text)
+        if loose_json_match:
+            json_text = loose_json_match.group(0).strip()
+            try:
+                return json.loads(json_text)
+            except json.JSONDecodeError as e:
+                print(f"[WARN] Failed to parse loose JSON from response: {e}")
         
         # Try to parse the entire response as JSON
         try:
@@ -878,9 +891,27 @@ def generate_trading_signal(
         except json.JSONDecodeError:
             pass
         
-        # Fallback: return empty dict with defaults
+        # Fallback: preserve the raw text so we do not lose the model's
+        # reasoning when it returns prose instead of strict JSON.
         print(f"[WARN] Could not extract JSON from response: {response_text[:200]}...")
-        return {"final_signal": 0, "Confidence": 0}
+        fallback_text = response_text.strip()
+        return {
+            "final_signal": 0,
+            "Confidence": 0,
+            "explanation": fallback_text or "No explanation provided",
+            "_raw_response": response_text,
+        }
+
+    def _pick_explanation(result: dict) -> str:
+        """Pick the best available explanation-like field from a parsed result."""
+        for key in ("explanation", "reasoning", "analysis", "justification", "rationale", "details"):
+            value = result.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        raw_text = str(result.get("_raw_response", "") or "").strip()
+        if raw_text and raw_text != "{}":
+            return raw_text
+        return "No explanation provided"
 
     # ============ MODEL 1: Generate signal + explanation ============
     user_prompt = gen_config['prompt_template'].format(
@@ -888,7 +919,7 @@ def generate_trading_signal(
         pos_impact=pos_impact,
         neg_impact=neg_impact,
     )
-    model1_name = gen_config.get('model', 'gemini-2.5-flash')
+    model1_name = gen_config.get('model', 'gemini-3.1-flash-lite')
     model1_temp = gen_config.get('temperature', 0.1)
 
     # Determine PDF path from filename (stored in nse/docs folder)
@@ -902,7 +933,7 @@ def generate_trading_signal(
 
     try:
         # Validate API key
-        if not api_key or api_key.strip() == "":
+        if not model1_api_key:
             error_msg = "GEMINI_API_KEY is empty or not set. Please check your .env file."
             print(f"[ERROR] {error_msg}")
             return json.dumps({"error": error_msg, "final_signal": 0, "Confidence": 0})
@@ -912,18 +943,66 @@ def generate_trading_signal(
         from PyPDF2 import PdfReader
         import base64
 
+        def invoke_with_key_rotation(
+            *,
+            model_name: str,
+            temperature: float,
+            message: HumanMessage,
+            start_index: int = 0,
+            bind_google_search: bool = False,
+        ):
+            """Invoke Gemini and fail over across the configured API key pool."""
+            if not gemini_api_keys:
+                raise ValueError("No Gemini API keys are configured")
+
+            last_error = None
+            ordered_keys = (
+                gemini_api_keys[start_index:] + gemini_api_keys[:start_index]
+            )
+            for attempt, candidate_key in enumerate(ordered_keys, start=1):
+                try:
+                    candidate_model = ChatGoogleGenerativeAI(
+                        model=model_name,
+                        temperature=temperature,
+                        api_key=candidate_key,
+                        max_retries=0,
+                    )
+                    if bind_google_search:
+                        candidate_model = candidate_model.bind_tools([
+                            {"google_search": {}}
+                        ])
+                    return candidate_model.invoke([message])
+                except Exception as exc:
+                    last_error = exc
+                    error_text = str(exc).lower()
+                    retryable = any(
+                        marker in error_text
+                        for marker in (
+                            "429",
+                            "quota",
+                            "resource_exhausted",
+                            "api_key_invalid",
+                            "api key not valid",
+                            "permissiondenied",
+                            "permission denied",
+                            "denied access",
+                            "403",
+                        )
+                    )
+                    if not retryable or attempt == len(ordered_keys):
+                        raise
+                    print(
+                        f"[WARN] Gemini key {attempt}/{len(ordered_keys)} "
+                        f"unavailable for {model_name}; trying next configured key."
+                    )
+
+            raise last_error or RuntimeError("Gemini invocation failed")
+
         # Set GOOGLE_API_KEY env var for langchain
         original_google_key = os.environ.get("GOOGLE_API_KEY", None)
-        os.environ["GOOGLE_API_KEY"] = api_key
+        os.environ["GOOGLE_API_KEY"] = model1_api_key
 
         try:
-            # -------- MODEL 1: Generate signal + explanation --------
-            trading_model = ChatGoogleGenerativeAI(
-                model=model1_name,
-                temperature=model1_temp,
-                api_key=api_key
-            )
-
             # Build message parts for Model 1
             message_parts = [{"type": "text", "text": user_prompt}]
 
@@ -961,7 +1040,11 @@ def generate_trading_signal(
             human_msg = HumanMessage(content=message_parts)
 
             print(f"[PIPELINE] Model 1 ({model1_name}): Generating signal + explanation...")
-            decision_raw = trading_model.invoke([human_msg])
+            decision_raw = invoke_with_key_rotation(
+                model_name=model1_name,
+                temperature=model1_temp,
+                message=human_msg,
+            )
             decision_text = extract_content_from_response(decision_raw)
 
             print(f"[PIPELINE] Model 1 Response: {decision_text[:300]}...")
@@ -978,23 +1061,20 @@ def generate_trading_signal(
                 signal=signal,
                 explanation=json.dumps(model1_result)  # Pass full JSON for validation
             )
-            model2_name = val_config.get('model', 'gemini-2.5-pro')
+            model2_name = val_config.get('model', 'gemini-3.1-flash-lite')
             model2_temp = val_config.get('temperature', 0.1)
 
-            validator_model = ChatGoogleGenerativeAI(
-                model=model2_name,
-                temperature=model2_temp,
-                api_key=api_key
-            )
-            
-            # Bind google_search tool to validator model
-            validator_model_with_search = validator_model.bind_tools([
-                {"google_search": {}}
-            ])
-
-            print(f"[PIPELINE] Model 2 ({model2_name}): Validating signal + generating confidence (with google_search tool)...")
+            print(f"[PIPELINE] Model 2 ({model2_name}): Validating signal + generating confidence...")
             val_msg = HumanMessage(content=[{"type": "text", "text": validation_prompt}])
-            validation_raw = validator_model_with_search.invoke([val_msg])
+            validation_raw = invoke_with_key_rotation(
+                model_name=model2_name,
+                temperature=model2_temp,
+                message=val_msg,
+                start_index=1 if len(gemini_api_keys) > 1 else 0,
+                # Search grounding has a separate, much smaller quota and was
+                # preventing the validation model from running at all.
+                bind_google_search=False,
+            )
             validation_text = extract_content_from_response(validation_raw)
 
             print(f"[PIPELINE] Model 2 Response: {validation_text[:300]}...")
@@ -1019,10 +1099,15 @@ def generate_trading_signal(
             print(f"[PIPELINE] ⏱️ Total LLM delay (both models): {llm_delay_ms}ms")
 
             # Construct final response JSON with timing metadata
+            model2_explanation = _pick_explanation(model2_result)
+            model1_explanation = _pick_explanation(model1_result)
+
             final_result = {
                 "final_signal": final_signal,
                 "Confidence": final_confidence,
-                "explanation": model2_result.get("explanation", model1_result.get("explanation", "")),
+                "explanation": model2_explanation if model2_explanation != "No explanation provided" else model1_explanation,
+                "model1_response": decision_text,
+                "model2_response": validation_text,
                 "llm_start_time": llm_start_time.isoformat() + "Z",
                 "llm_end_time": llm_end_time.isoformat() + "Z",
                 "llm_delay_ms": llm_delay_ms
@@ -1113,10 +1198,19 @@ def parse_trading_signal_explanation(response: str) -> str:
         # Parse JSON response
         try:
             data = json.loads(response)
-            explanation = data.get("explanation", "No explanation provided")
-            if explanation:
-                print(f"[PIPELINE] Parsed explanation from JSON: {explanation[:100]}...")
-            return explanation
+            for key in ("explanation", "reasoning", "analysis", "justification", "rationale", "details"):
+                explanation = data.get(key)
+                if isinstance(explanation, str) and explanation.strip():
+                    print(f"[PIPELINE] Parsed explanation from JSON: {explanation[:100]}...")
+                    return explanation.strip()
+
+            for key in ("model2_response", "model1_response"):
+                raw_text = data.get(key)
+                if isinstance(raw_text, str) and raw_text.strip():
+                    print(f"[PIPELINE] Using fallback raw response for explanation from {key}.")
+                    return raw_text.strip()
+
+            return "No explanation provided"
         except json.JSONDecodeError as e:
             print(f"[WARN] Failed to parse JSON response: {e}")
             return "No explanation provided"

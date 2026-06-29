@@ -312,7 +312,7 @@ REMEMBER YOUR OUTPUT WILL DIRECTLY BE USED AS A PYTHON DICTIONARY IN CODE. ANY M
             prompt += "\n"
 
         model = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
+            model="gemini-3.1-flash-lite",
             temperature=0.2,
             api_key=api_key,
         )
@@ -707,7 +707,7 @@ You must return a structured json output in the following format:
         ).content
 
         model = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
+            model="gemini-3.1-flash-lite",
             temperature=0.2,
             api_key=api_key,
         )

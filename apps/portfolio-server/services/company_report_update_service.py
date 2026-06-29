@@ -154,7 +154,7 @@ class CompanyReportUpdateService:
 
     def _create_llm(self, with_search_tool: bool = False) -> ChatGoogleGenerativeAI:
         """Create LLM instance with optional Google Search tool."""
-        model_name = self._nse_prompt_data.get("model", "gemini-2.5-flash")
+        model_name = self._nse_prompt_data.get("model", "gemini-3.1-flash-lite")
 
         model = ChatGoogleGenerativeAI(
             model=model_name,

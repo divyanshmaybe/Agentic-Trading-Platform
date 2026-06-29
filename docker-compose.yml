@@ -140,9 +140,9 @@ services:
       - apps/auth_server/docker.env
     working_dir: /app/apps/auth_server
     command: >
-      sh -c "pnpm prisma generate --schema ../../shared/prisma/schema.prisma &&
-             pnpm prisma db push --schema ../../shared/prisma/schema.prisma &&
-             pnpm run start"
+      sh -c "../../node_modules/.bin/prisma generate --schema ../../shared/prisma/schema.prisma &&
+             ../../node_modules/.bin/prisma db push --schema ../../shared/prisma/schema.prisma &&
+             node -r tsconfig-paths/register dist/apps/auth_server/server.js"
     ports:
       - "4000:4000"
     depends_on:
@@ -171,9 +171,10 @@ services:
       - docker.env
       - apps/notification_server/docker.env
     working_dir: /app
+    # Prisma Client is generated during the image build. Database schema is
+    # initialized by the auth service, so start the compiled consumer directly.
     command: >
-      sh -c "cd apps/notification_server && pnpm prisma generate --schema /app/shared/prisma/schema.prisma &&
-             pnpm prisma db push --schema /app/shared/prisma/schema.prisma --accept-data-loss &&
+      sh -c "cd apps/notification_server &&
              node -r tsconfig-paths/register dist/apps/notification_server/src/index.js"
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f 'node.*index.js' > /dev/null || exit 1"]
@@ -739,8 +740,7 @@ services:
       - docker.env
       - apps/frontend/docker.env
     working_dir: /app/apps/frontend
-    command: >
-      sh -c "pnpm --filter frontend exec next start -H 0.0.0.0 -p ${PORT:-3000}"
+    command: node_modules/.bin/next start -H 0.0.0.0 -p 3000
     # NOTE: No volumes mounted for production - use the built .next from the image
     ports:
       - "3000:3000"

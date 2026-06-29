@@ -1,6 +1,6 @@
 name: "objective_intake_extractor"
 version: "1.0.0"
-model: "gemini-2.5-flash"
+model: "gemini-3.1-flash-lite"
 description: "Extract investment objectives from user transcripts"
 
 prompt: |

@@ -2,7 +2,7 @@
 # Model 2: Validates logic and generates confidence_score
 # Used by: nse_filings_sentiment.py
 
-model: "gemini-2.5-pro"
+model: "gemini-3.1-flash-lite"
 temperature: 0.1
 
 system_context: |

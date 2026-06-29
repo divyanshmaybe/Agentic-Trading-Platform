@@ -4,7 +4,7 @@
 # Queue: general (via Celery)
 # Original Research: Qualitative Database Updation - NSE & News (Colab)
 
-model: "gemini-2.5-flash"
+model: "gemini-3.1-flash-lite"
 
 system_context: |
   You are an expert Financial Information Extraction and Continuity Agent. You specialize in analyzing diverse corporate disclosures (NSE filings, press releases) to maintain and update a

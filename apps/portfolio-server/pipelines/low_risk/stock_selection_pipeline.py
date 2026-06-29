@@ -153,7 +153,7 @@ class StockSelectionPipeline:
 
             # Create LLM with Google Search
             model = ChatGoogleGenerativeAI(
-                model="gemini-2.5-pro",
+                model="gemini-3.1-flash-lite",
                 google_api_key=self.gemini_api_key,
                 temperature=0.5
             )
@@ -415,7 +415,7 @@ class StockSelectionPipeline:
             - A string of reasoning tokens with proper analysis, interpretation, and possible next steps.
             """
             # reasoning_llm = ChatGoogleGenerativeAI(model="gemini-3-pro-preview", thinking_budget=2000, temperature=0.5)
-            reasoning_llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", temperature=0.5)
+            reasoning_llm = ChatGoogleGenerativeAI(model="gemini-3.1-flash-lite", temperature=0.5)
             messages = runtime.state["messages"]
             reasoning_messages = runtime.state["reasoning_messages"]
             if len(reasoning_messages) == 0:
@@ -600,7 +600,7 @@ class StockSelectionPipeline:
 
             # Create LLM
             llm = ChatGoogleGenerativeAI(
-                model="gemini-2.5-pro",
+                model="gemini-3.1-flash-lite",
                 google_api_key=gemini_api_key,
                 temperature=0.5,
             )

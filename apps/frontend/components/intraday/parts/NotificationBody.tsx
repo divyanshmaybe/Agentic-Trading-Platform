@@ -63,6 +63,11 @@ const notificationRenderers: Record<string, NotificationRenderer> = {
     const signal = normalizeNumber(data.signal)
     const signalLabel = deriveSignalLabel(signal)
     const confidence = normalizePercent(data.confidence)
+    const explanation = typeof data.explanation === "string" ? data.explanation.trim() : ""
+    const hasMeaningfulExplanation =
+      explanation.length > 0 && explanation !== "No explanation provided"
+    const model1Response = typeof data.model1_response === "string" ? data.model1_response.trim() : ""
+    const model2Response = typeof data.model2_response === "string" ? data.model2_response.trim() : ""
 
     // Style signal strength: green for 1 (bullish), yellow for 0 (neutral), red for others
     const signalStrengthValue = signal != null ? signal.toFixed(2) : "N/A"
@@ -96,6 +101,26 @@ const notificationRenderers: Record<string, NotificationRenderer> = {
     return (
       <NotificationBodySection>
         {renderIfPresent(data.explanation)}
+        {!hasMeaningfulExplanation && (model1Response || model2Response) && (
+          <div className="space-y-3 rounded-xl border border-white/10 bg-black/20 p-3 text-xs text-white/70">
+            {model1Response && (
+              <div className="space-y-1">
+                <div className="uppercase tracking-[0.25em] text-white/45">Model 1 Response</div>
+                <p className="whitespace-pre-line break-words text-white/75">
+                  {model1Response}
+                </p>
+              </div>
+            )}
+            {model2Response && (
+              <div className="space-y-1">
+                <div className="uppercase tracking-[0.25em] text-white/45">Model 2 Response</div>
+                <p className="whitespace-pre-line break-words text-white/75">
+                  {model2Response}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
         {subjectOfAnnouncement && (
           <DetailRow label="Subject" value={subjectOfAnnouncement} />
         )}

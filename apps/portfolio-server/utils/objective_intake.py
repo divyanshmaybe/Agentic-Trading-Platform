@@ -2,7 +2,7 @@
 Utility functions and Pydantic models for extracting structured investment
 objectives from transcripts or pre-structured JSON payloads.
 
-Uses gemini-2.5-flash for LLM-based extraction with YAML prompt templates.
+Uses gemini-3.1-flash-lite for LLM-based extraction with YAML prompt templates.
 """
 
 from __future__ import annotations
@@ -121,7 +121,7 @@ class GeminiObjectiveExtractor:
                 from langchain_google_genai import ChatGoogleGenerativeAI
                 
                 model_config = self.config.get("model_config", {})
-                model_name = self.config.get("model", "gemini-2.5-flash")
+                model_name = self.config.get("model", "gemini-3.1-flash-lite")
                 
                 self._model = ChatGoogleGenerativeAI(
                     model=model_name,
