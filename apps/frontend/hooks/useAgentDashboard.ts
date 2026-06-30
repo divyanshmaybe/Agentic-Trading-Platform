@@ -92,13 +92,24 @@ export function useAgentDashboard(agentType: AgentType): UseAgentDashboardReturn
   useEffect(() => {
     fetchAgentData(false)
 
-    // Poll every 10 seconds continuously
+    const refreshNow = () => fetchAgentData(true)
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") refreshNow()
+    }
+
+    window.addEventListener("cfdt:data-updated", refreshNow)
+    window.addEventListener("focus", refreshNow)
+    document.addEventListener("visibilitychange", refreshWhenVisible)
+
     const pollInterval = setInterval(() => {
       fetchAgentData(true)
-    }, 10000) // Poll every 10 seconds
+    }, 5000)
 
     return () => {
       clearInterval(pollInterval)
+      window.removeEventListener("cfdt:data-updated", refreshNow)
+      window.removeEventListener("focus", refreshNow)
+      document.removeEventListener("visibilitychange", refreshWhenVisible)
     }
   }, [fetchAgentData])
 

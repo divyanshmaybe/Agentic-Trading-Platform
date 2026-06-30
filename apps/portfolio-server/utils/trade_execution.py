@@ -16,8 +16,14 @@ import httpx
 import os
 import asyncio
 
-DEFAULT_TAKE_PROFIT_PCT = 0.03
-DEFAULT_STOP_LOSS_PCT = 0.01
+from services.cfdt_strategy import (
+    MAX_POSITION_FRACTION,
+    STOP_LOSS_PCT,
+    TAKE_PROFIT_PCT,
+)
+
+DEFAULT_TAKE_PROFIT_PCT = TAKE_PROFIT_PCT
+DEFAULT_STOP_LOSS_PCT = STOP_LOSS_PCT
 
 
 async def fetch_market_price_via_http(symbol: str, timeout: float = 10.0) -> Optional[Decimal]:
@@ -106,7 +112,7 @@ def get_allocation(capital: float, confidence: float) -> float:
         # Pathway expression - use conditional logic
         fraction = pw.if_else(
             confidence > 0.8,
-            0.40,  # 40% for high confidence (>0.8)
+            MAX_POSITION_FRACTION,
             pw.if_else(
                 confidence > 0.49,
                 0.25,  # 25% for medium confidence (>0.49)
@@ -117,7 +123,7 @@ def get_allocation(capital: float, confidence: float) -> float:
     else:
         # Regular Python values
         if confidence > 0.8:
-            fraction = 0.40
+            fraction = MAX_POSITION_FRACTION
         elif confidence > 0.49:
             fraction = 0.25
         else:
@@ -428,7 +434,12 @@ def prepare_trade_execution_payloads(
 
             payloads.append(
                 TradeExecutionPayload(
-                    request_id=str(uuid.uuid4()),
+                    request_id=str(
+                        uuid.uuid5(
+                            uuid.NAMESPACE_URL,
+                            f"nse:{signal.signal_id}:{portfolio.portfolio_id}",
+                        )
+                    ),
                     signal_id=signal.signal_id,
                     signal=signal.signal,
                     user_id=portfolio.user_id,
@@ -446,6 +457,7 @@ def prepare_trade_execution_payloads(
                     metadata={
                         **dict(signal.metadata),
                         **dict(portfolio.metadata),
+                        "filing_time": signal.filing_time,
                         "trading_agent": {
                             "id": portfolio.agent_id,
                             "type": portfolio.agent_type,

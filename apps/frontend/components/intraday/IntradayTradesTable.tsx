@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
 import { getRecentTrades, fetchQuotes } from "@/lib/portfolio"
-import { formatCurrency, formatDate } from "@/lib/utils/formatters"
+import { formatCurrency } from "@/lib/utils/formatters"
 import type { Trade } from "@/lib/portfolio"
 
 const rowVariants = {
@@ -18,6 +18,28 @@ const rowVariants = {
 }
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const
+
+function formatTradeTimestamp(
+  value: string | null | undefined,
+  kind: "filing" | "execution",
+): string {
+  if (!value) return "-"
+
+  const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value)
+  const normalized = hasTimezone
+    ? value
+    : `${value.replace(" ", "T")}${kind === "filing" ? "+05:30" : "Z"}`
+  const date = new Date(normalized)
+  if (Number.isNaN(date.getTime())) return "-"
+
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Kolkata",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date)
+}
 
 interface IntradayTradesTableProps {
   className?: string
@@ -115,8 +137,20 @@ export function IntradayTradesTable({ className, agentId }: IntradayTradesTableP
 
   // Auto-refresh every 5 seconds
   useEffect(() => {
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") fetchTrades()
+    }
+
+    window.addEventListener("cfdt:data-updated", fetchTrades)
+    window.addEventListener("focus", fetchTrades)
+    document.addEventListener("visibilitychange", refreshWhenVisible)
     const interval = setInterval(fetchTrades, 5000)
-    return () => clearInterval(interval)
+    return () => {
+      clearInterval(interval)
+      window.removeEventListener("cfdt:data-updated", fetchTrades)
+      window.removeEventListener("focus", fetchTrades)
+      document.removeEventListener("visibilitychange", refreshWhenVisible)
+    }
   }, [fetchTrades])
 
   const handleApplyFilters = () => {
@@ -299,7 +333,8 @@ export function IntradayTradesTable({ className, agentId }: IntradayTradesTableP
                   <th className="px-6 py-4 font-medium">Current Price</th>
                   <th className="px-6 py-4 font-medium">Net Amount</th>
                   <th className="px-6 py-4 font-medium">Status</th>
-                  <th className="px-6 py-4 font-medium">Time</th>
+                  <th className="px-6 py-4 font-medium">Filing Published</th>
+                  <th className="px-6 py-4 font-medium">Executed At</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
@@ -394,7 +429,15 @@ export function IntradayTradesTable({ className, agentId }: IntradayTradesTableP
                       </span>
                     </td>
                     <td className="px-6 py-4 text-xs text-white/50">
-                      {formatDate(trade.execution_time || trade.created_at)}
+                      {trade.filing_published_at
+                        ? formatTradeTimestamp(trade.filing_published_at, "filing")
+                        : "-"}
+                    </td>
+                    <td className="px-6 py-4 text-xs text-white/50">
+                      {formatTradeTimestamp(
+                        trade.execution_time || trade.created_at,
+                        "execution",
+                      )}
                     </td>
                   </motion.tr>
                 ))}

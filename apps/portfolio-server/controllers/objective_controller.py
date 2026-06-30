@@ -19,6 +19,7 @@ from schemas import (
 )
 from services.pipeline_service import PipelineService
 from services.regime_service import RegimeService
+from services.intraday_allocation_service import allocate_full_portfolio_to_intraday
 
 
 class ObjectiveController:
@@ -179,44 +180,22 @@ class ObjectiveController:
         allocation_summary = None
         allocation_meta: Dict[str, Any] | None = None
         
-        # Dispatch allocation to Celery worker instead of running synchronously
         try:
-            from workers.allocation_tasks import allocate_for_objective_task
-            from utils.user_inputs_helper import extract_user_inputs_from_objective
-            
-            # Build user inputs from objective (matching transcript.py format)
-            user_inputs = extract_user_inputs_from_objective(objective)
-            
-            # Dispatch to Celery worker
-            task = allocate_for_objective_task.apply_async(
-                kwargs={
-                    "portfolio_id": portfolio_id,
-                    "objective_id": objective.id,
-                    "user_id": user_id,
-                    "user_inputs": user_inputs,
-                    "initial_value": float(payload.investable_amount),
-                    "available_cash": float(payload.investable_amount),
-                    "triggered_by": "objective_created",
-                },
-                countdown=2,  # Delay by 2 seconds to ensure DB commit
+            allocation_meta = await allocate_full_portfolio_to_intraday(
+                self.prisma,
+                portfolio_id=portfolio_id,
+                objective_id=objective.id,
+                user_id=user_id,
+                investable_amount=float(payload.investable_amount),
+                triggered_by="objective_created",
             )
-            
             self.logger.info(
-                f"✅ Dispatched allocation for portfolio {portfolio_id} to Celery "
-                f"(task_id={task.id}, objective={objective.id})"
+                "Allocated 100%% of portfolio %s to intraday immediately",
+                portfolio_id,
             )
-            
-            # Return metadata indicating allocation is pending
-            allocation_meta = {
-                "processed": False,
-                "pending": True,
-                "task_id": task.id,
-                "message": "Portfolio allocation dispatched to background worker",
-            }
-            
         except Exception as exc:
             self.logger.exception(
-                "Failed to dispatch allocation task for objective %s: %s",
+                "Failed to allocate objective %s to intraday: %s",
                 objective.id,
                 exc,
             )
@@ -372,44 +351,22 @@ class ObjectiveController:
             regime_timestamp=regime_timestamp,
         )
 
-        # Dispatch allocation to Celery worker instead of running synchronously
         try:
-            from workers.allocation_tasks import allocate_for_objective_task
-            from utils.user_inputs_helper import extract_user_inputs_from_objective
-            
-            # Build user inputs from updated objective (matching transcript.py format)
-            user_inputs = extract_user_inputs_from_objective(updated_objective)
-            
-            # Dispatch to Celery worker
-            task = allocate_for_objective_task.apply_async(
-                kwargs={
-                    "portfolio_id": portfolio_id,
-                    "objective_id": objective_id,
-                    "user_id": user_id,
-                    "user_inputs": user_inputs,
-                    "initial_value": float(payload.investable_amount),
-                    "available_cash": float(payload.investable_amount),
-                    "triggered_by": "objective_intake_complete",
-                },
-                countdown=2,  # Delay by 2 seconds to ensure DB commit
+            allocation_meta = await allocate_full_portfolio_to_intraday(
+                self.prisma,
+                portfolio_id=portfolio_id,
+                objective_id=objective_id,
+                user_id=user_id,
+                investable_amount=float(payload.investable_amount),
+                triggered_by="objective_intake_complete",
             )
-            
             self.logger.info(
-                f"✅ Dispatched allocation for portfolio {portfolio_id} to Celery "
-                f"(task_id={task.id}, objective={objective_id})"
+                "Allocated 100%% of portfolio %s to intraday immediately",
+                portfolio_id,
             )
-            
-            # Return metadata indicating allocation is pending
-            allocation_meta = {
-                "processed": False,
-                "pending": True,
-                "task_id": task.id,
-                "message": "Portfolio allocation dispatched to background worker",
-            }
-            
         except Exception as exc:
             self.logger.exception(
-                "Failed to dispatch allocation task for objective %s: %s",
+                "Failed to allocate objective %s to intraday: %s",
                 objective_id,
                 exc,
             )

@@ -94,12 +94,12 @@ if not skip_dotenv:
             raise FileNotFoundError(f".env file not found in portfolio-server directory: {env_file}")
 
 # Configuration
-TARGET = 0.04  # +4% profit target
+TARGET = 0.025  # +2.5% CFDT profit target
 STOPLOSS = 0.01  # -1% stoploss
 MARKET_OPEN = (9, 15)
 MARKET_CLOSE = (15, 30)
 MARKET_CLOSE_BUFFER_MINUTES = int(os.getenv("NSE_FILINGS_MARKET_CLOSE_BUFFER_MINUTES", "15"))
-AUTO_SELL_WINDOW_MINUTES = int(os.getenv("NSE_FILINGS_AUTO_SELL_WINDOW_MINUTES", "25"))
+AUTO_SELL_WINDOW_MINUTES = int(os.getenv("NSE_FILINGS_AUTO_SELL_WINDOW_MINUTES", "30"))
 LLM_MODEL = os.getenv("NSE_FILINGS_LLM_MODEL", "gemini-3.1-flash-lite")
 DEMO_MODE = os.getenv("DEMO_MODE", "true").lower() in {"1", "true", "yes"}  # Default: true for 24/7 signal generation
 print(f"[DEBUG] DEMO_MODE environment variable: '{os.getenv('DEMO_MODE', 'NOT_SET')}'")
@@ -671,7 +671,14 @@ def fetch_stock_data(symbol: str, filing_time: str) -> str:
         internal_secret = os.getenv("INTERNAL_SERVICE_SECRET", "agentinvest-secret")
 
         url = f"{portfolio_server_url}/api/market/quotes"
-        params = {"symbols": symbol}
+        context_end = filing_dt
+        context_start = context_end - timedelta(hours=1)
+        params = {
+            "symbols": symbol,
+            "candle": "1h",
+            "start": context_start.isoformat(),
+            "end": context_end.isoformat(),
+        }
         headers = {
             "X-Internal-Service": "true",
             "X-Service-Secret": internal_secret,
@@ -686,7 +693,49 @@ def fetch_stock_data(symbol: str, filing_time: str) -> str:
                     price = data["data"][0].get("price")
                     if price:
                         print(f"[PRICE] ✅ Fetched live price for {symbol}: ₹{price}")
-                        return f"Current price: {price}, timestamp: {filing_time}"
+                        candles = (
+                            data.get("metadata", {})
+                            .get("candles", {})
+                            .get(symbol.upper(), [])
+                        )
+                        technical_context = ""
+                        if candles:
+                            closes = [
+                                float(candle["close"])
+                                for candle in candles
+                                if candle.get("close") is not None
+                            ]
+                            highs = [
+                                float(candle["high"])
+                                for candle in candles
+                                if candle.get("high") is not None
+                            ]
+                            lows = [
+                                float(candle["low"])
+                                for candle in candles
+                                if candle.get("low") is not None
+                            ]
+                            volumes = [
+                                float(candle.get("volume") or 0)
+                                for candle in candles
+                            ]
+                            if closes:
+                                one_hour_return = (
+                                    ((closes[-1] / closes[0]) - 1) * 100
+                                    if closes[0] > 0
+                                    else 0
+                                )
+                                technical_context = (
+                                    f", past_1h_candles: {len(closes)}, "
+                                    f"past_1h_return_pct: {one_hour_return:.3f}, "
+                                    f"past_1h_high: {max(highs) if highs else closes[-1]:.4f}, "
+                                    f"past_1h_low: {min(lows) if lows else closes[-1]:.4f}, "
+                                    f"past_1h_volume: {sum(volumes):.0f}"
+                                )
+                        return (
+                            f"Current price: {price}, timestamp: {filing_time}"
+                            f"{technical_context}"
+                        )
 
             # If API call failed, log but DON'T return error - will trigger fallback
             error_msg = f"HTTP {response.status_code}: {response.text[:100]}"
@@ -728,7 +777,12 @@ def get_pos_impact(file_type: str, use_positive: bool, static_data_path: str = "
             return "not much specific"
 
         staticdf = pd.read_csv(static_data_path)
-        match = staticdf[staticdf["file type"].str.lower() == file_type.lower()]
+        normalized_types = (
+            staticdf["file type"].astype(str).str.strip().str.rstrip(":").str.lower()
+        )
+        match = staticdf[
+            normalized_types == file_type.strip().rstrip(":").lower()
+        ]
 
         if not match.empty:
             return str(match["positive impct "].values[0])
@@ -761,7 +815,12 @@ def get_neg_impact(file_type: str, use_negative: bool, static_data_path: str = "
             return "not much specific"
 
         staticdf = pd.read_csv(static_data_path)
-        match = staticdf[staticdf["file type"].str.lower() == file_type.lower()]
+        normalized_types = (
+            staticdf["file type"].astype(str).str.strip().str.rstrip(":").str.lower()
+        )
+        match = staticdf[
+            normalized_types == file_type.strip().rstrip(":").lower()
+        ]
 
         if not match.empty:
             return str(match["negtive impct"].values[0])
@@ -1307,6 +1366,25 @@ def create_nse_filings_pipeline(
         output_path: Path to write trading signals
     """
 
+    required_static_columns = {
+        "file type",
+        "positive impct ",
+        "negtive impct",
+    }
+    if not os.path.isfile(static_data_path):
+        raise FileNotFoundError(
+            f"CFDT static knowledge base not found: {static_data_path}"
+        )
+    import pandas as pd
+
+    static_columns = set(pd.read_csv(static_data_path, nrows=1).columns)
+    missing_columns = required_static_columns - static_columns
+    if missing_columns:
+        raise ValueError(
+            "CFDT static knowledge base is missing columns: "
+            + ", ".join(sorted(missing_columns))
+        )
+
     from datetime import datetime, time as dt_time, timezone, timedelta
     # Use IST timezone (UTC+5:30) for market hours check
     ist = timezone(timedelta(hours=5, minutes=30))
@@ -1336,15 +1414,8 @@ def create_nse_filings_pipeline(
         print(f"[MARKET] {market_status}")
         logging.warning(market_status)
 
-        # Skip signal processing if market closed (unless DEMO_MODE)
-        if not DEMO_MODE:
-            return filings_source.select(
-                symbol=pw.this.symbol,
-                filing_time=pw.this.sort_date if hasattr(pw.this, 'sort_date') else "",
-                signal=pw.apply(lambda s: 0, pw.this.symbol),
-                explanation=pw.apply(lambda s: f"Market closed - {msg}", pw.this.symbol),
-                confidence=pw.apply(lambda s: 0.0, pw.this.symbol),
-            ).filter(pw.this.symbol == "__NEVER_MATCH__")
+        # Keep the streaming graph alive when started before market open.
+        # Per-filing market-hours checks run when each filing is processed.
 
     # Log market status at pipeline start (only if market is open)
     if DEMO_MODE:
@@ -1359,17 +1430,6 @@ def create_nse_filings_pipeline(
         market_status = f"🔴 MARKET CLOSED - NSE hours: {MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d} - {MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST. Current time: {current_time.strftime('%H:%M:%S')} IST. Skipping signal processing."
         print(f"[MARKET] {market_status}")
         logging.warning(market_status)
-
-    # Skip signal processing only if not in DEMO_MODE and market is closed
-    if not DEMO_MODE and not is_market_open:
-        # Return empty table with correct schema by filtering on a boolean column
-        return filings_source.select(
-            symbol=pw.this.symbol,
-            filing_time=pw.this.sort_date if hasattr(pw.this, 'sort_date') else "",
-            signal=pw.apply(lambda s: 0, pw.this.symbol),
-            explanation=pw.apply(lambda s: "Market closed - skipping new trades", pw.this.symbol),
-            confidence=pw.apply(lambda s: 0.0, pw.this.symbol),
-        ).filter(pw.this.symbol == "__NEVER_MATCH__")
 
     print("[SENTIMENT] Step 1: Processing filings from scraper...")
 

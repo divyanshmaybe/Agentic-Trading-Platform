@@ -445,14 +445,14 @@ NSE_PIPELINE_ENABLED = os.getenv("NSE_PIPELINE_ENABLED", "true").lower() in {"1"
 NSE_PIPELINE_QUEUE = os.getenv("NSE_PIPELINE_QUEUE", QUEUE_NAMES["nse_pipeline"])  # Fixed: use nse_pipeline queue
 
 # Regime monitoring (runs 1h before market open to detect regime changes)
-REGIME_MONITOR_ENABLED = os.getenv("REGIME_MONITOR_ENABLED", "true").lower() in {"1", "true", "yes"}
+REGIME_MONITOR_ENABLED = os.getenv("REGIME_MONITOR_ENABLED", "false").lower() in {"1", "true", "yes"}
 REGIME_MONITOR_HOUR = int(os.getenv("REGIME_MONITOR_HOUR", "8"))  # 8:15 AM = 1h before 9:15 AM market open
 REGIME_MONITOR_MINUTE = int(os.getenv("REGIME_MONITOR_MINUTE", "15"))
 REGIME_MONITOR_DAY_OF_WEEK = os.getenv("REGIME_MONITOR_DAY_OF_WEEK", "mon-fri")
 REGIME_MONITOR_QUEUE = os.getenv("REGIME_MONITOR_QUEUE", QUEUE_NAMES["allocations"])
 
 # Portfolio rebalancing (only rebalances when rebalancing_date reached or regime changed)
-REBALANCE_ENABLED = os.getenv("PORTFOLIO_REBALANCE_ENABLED", "true").lower() in {"1", "true", "yes"}
+REBALANCE_ENABLED = os.getenv("PORTFOLIO_REBALANCE_ENABLED", "false").lower() in {"1", "true", "yes"}
 REBALANCE_QUEUE = os.getenv("PORTFOLIO_REBALANCE_QUEUE", QUEUE_NAMES["allocations"])
 
 RISK_MONITOR_ENABLED = os.getenv("PORTFOLIO_RISK_MONITOR_ENABLED", "false").lower() in {"1", "true", "yes"}

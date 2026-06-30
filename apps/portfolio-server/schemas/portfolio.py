@@ -82,6 +82,7 @@ class TradeSummary(BaseModel):
     trade_type: str
     created_at: datetime
     execution_time: Optional[datetime] = None
+    filing_published_at: Optional[str] = None
     llm_delay: Optional[str] = None  # LLM processing delay in milliseconds (numeric string)
     trade_delay: Optional[str] = None  # Trade execution delay in milliseconds (numeric string)
     agent_id: Optional[str] = None  # Trading agent ID

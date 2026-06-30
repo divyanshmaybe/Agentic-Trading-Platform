@@ -42,6 +42,7 @@ from kafka_service import (  # type: ignore  # noqa: E402
     default_kafka_bus,
 )
 from utils.trade_execution import get_allocation  # type: ignore  # noqa: E402
+from services.cfdt_strategy import MAX_POSITION_FRACTION
 
 LOGGER = logging.getLogger(__name__)
 
@@ -224,7 +225,7 @@ def _calculate_allocation(payload_json: str) -> float:
     
     # Use scalar conditional logic
     if confidence > 0.8:
-        fraction = 0.40
+        fraction = MAX_POSITION_FRACTION
     elif confidence > 0.49:
         fraction = 0.25
     else:

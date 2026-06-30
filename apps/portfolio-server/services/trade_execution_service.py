@@ -35,6 +35,12 @@ from pipelines.nse.trade_execution_pipeline import (  # type: ignore  # noqa: E4
 )
 from services.trade_validation_service import TradeValidationService  # noqa: E402
 from services.trade_engine import FEE_RATE, TAX_RATE  # noqa: E402
+from services.cfdt_strategy import (
+    HOLDING_WINDOW_MINUTES,
+    PAPER_TRADING_ONLY,
+    STOP_LOSS_PCT,
+    TAKE_PROFIT_PCT,
+)
 from utils.market_hours import enforce_market_hours, is_market_hours, get_market_status  # noqa: E402
 
 # Redis for distributed locking
@@ -88,6 +94,12 @@ def _parse_metadata(metadata):
     """Parse metadata from string or dict."""
     if not metadata:
         return {}
+    wrapped_data = getattr(metadata, "data", None)
+    if isinstance(wrapped_data, dict):
+        return dict(wrapped_data)
+    wrapped_value = getattr(metadata, "value", None)
+    if isinstance(wrapped_value, dict):
+        return dict(wrapped_value)
     if isinstance(metadata, str):
         try:
             return json.loads(metadata)
@@ -110,6 +122,7 @@ def _calculate_auto_sell_at(record, execution_time, logger, trade_id):
     metadata = _parse_metadata(getattr(record, "metadata", None))
     triggered_by = metadata.get("triggered_by", "")
     agent_type = getattr(record, "agent_type", None) or metadata.get("agent_type", "")
+    source = str(getattr(record, "source", "") or "")
     
     # If record is a TradeExecutionLog (has .trade), also check the Trade's metadata
     if hasattr(record, "trade") and record.trade:
@@ -118,6 +131,8 @@ def _calculate_auto_sell_at(record, execution_time, logger, trade_id):
             triggered_by = trade_metadata.get("triggered_by", "")
         if not agent_type:
             agent_type = trade_metadata.get("agent_type", "")
+        if not source:
+            source = str(getattr(record.trade, "source", "") or "")
     
     logger.info(
         "🔍 AUTO_SELL_AT DEBUG for trade %s: triggered_by='%s', agent_type='%s', metadata_keys=%s",
@@ -127,6 +142,7 @@ def _calculate_auto_sell_at(record, execution_time, logger, trade_id):
     is_nse_trade = (
         triggered_by == "nse_filings_pipeline" or
         agent_type == "high_risk" or
+        source == "nse_pipeline" or
         "nse" in triggered_by.lower() or
         "nse_filings" in triggered_by.lower()
     )
@@ -138,7 +154,7 @@ def _calculate_auto_sell_at(record, execution_time, logger, trade_id):
         )
         return None
     
-    auto_sell_window_minutes = int(os.getenv("NSE_FILINGS_AUTO_SELL_WINDOW_MINUTES", "15"))
+    auto_sell_window_minutes = HOLDING_WINDOW_MINUTES
     auto_sell_at = execution_time + timedelta(minutes=auto_sell_window_minutes)
     
     logger.info(
@@ -317,6 +333,8 @@ class TradeExecutionService:
             metadata["agent_id"] = job_row["agent_id"]
         if job_row.get("agent_type"):
             metadata["agent_type"] = job_row["agent_type"]
+        if job_row.get("filing_time"):
+            metadata["filing_time"] = str(job_row["filing_time"])
 
         # Get portfolio information for Trade record creation
         portfolio_id = job_row.get("portfolio_id")
@@ -357,14 +375,15 @@ class TradeExecutionService:
         is_manual_trade = triggered_by == "manual_api_trade"
         
         # Default TP/SL percentages for NSE trades if not provided
-        DEFAULT_TP_PCT = Decimal("0.02")  # 2% take profit
-        DEFAULT_SL_PCT = Decimal("0.01")  # 1% stop loss
+        DEFAULT_TP_PCT = Decimal(str(TAKE_PROFIT_PCT))
+        DEFAULT_SL_PCT = Decimal(str(STOP_LOSS_PCT))
         
         reference_price = self._as_decimal(job_row["reference_price"])
         side = job_row["side"]
+        is_closing_trade = side.upper() in {"SELL", "COVER"}
         
         # Calculate TP/SL percentages (skip for manual trades)
-        if is_manual_trade:
+        if is_manual_trade or is_closing_trade:
             tp_pct = None
             sl_pct = None
             tp_price = None
@@ -389,7 +408,7 @@ class TradeExecutionService:
         
         # Set auto-close window based on trade type and configuration
         auto_close_time = None
-        if is_manual_trade:
+        if is_manual_trade or is_closing_trade:
             # For manual trades: use auto_sell_after from job_row if provided (in seconds)
             auto_sell_after = job_row.get("auto_sell_after")
             if auto_sell_after and auto_sell_after > 0:
@@ -399,8 +418,9 @@ class TradeExecutionService:
                     auto_close_time, auto_sell_after
                 )
         else:
-            # For NSE/automated trades: default 15-minute window
-            auto_close_time = datetime.utcnow() + timedelta(minutes=15)
+            auto_close_time = datetime.utcnow() + timedelta(
+                minutes=HOLDING_WINDOW_MINUTES
+            )
         
         trade_data = {
             "organization_id": organization_id,  # From job_row or portfolio
@@ -424,7 +444,7 @@ class TradeExecutionService:
             self.logger.info("⏱️ Trade metadata includes llm_delay_ms=%dms for %s", llm_delay, job_row.get("symbol"))
         
         # Only add TP/SL for non-manual trades
-        if not is_manual_trade:
+        if not is_manual_trade and not is_closing_trade:
             trade_data["take_profit_pct"] = tp_pct
             trade_data["stop_loss_pct"] = sl_pct
             trade_data["take_profit_price"] = tp_price
@@ -954,6 +974,11 @@ class TradeExecutionService:
         if not agent_id:
             self.logger.warning("⚠️ No agent_id found for trade %s - position creation may fail", trade_id)
 
+        if PAPER_TRADING_ONLY and simulate is False:
+            raise RuntimeError(
+                "CFDT live order execution is disabled while CFDT_PAPER_TRADING_ONLY=true"
+            )
+
         simulate = simulate if simulate is not None else (
             os.getenv("ANGELONE_TRADING_ENABLED", "false").lower() not in {"1", "true", "yes"}
         )
@@ -1005,9 +1030,8 @@ class TradeExecutionService:
                         
                         allocation_data = allocation_result[0]
                         available_cash = float(allocation_data.get("available_cash", 0) or 0)
-                        allocated_capital = float(getattr(trade, "allocated_capital", 0) or 0)
                         trade_value = float(getattr(trade, "quantity", 0) or 0) * float(getattr(trade, "price", 0) or 0)
-                        required_capital = Decimal(str(max(allocated_capital, trade_value)))
+                        required_capital = Decimal(str(trade_value))
                         
                         if available_cash < float(required_capital):
                             self.logger.error(
@@ -1115,6 +1139,18 @@ class TradeExecutionService:
                     data={"status": "rejected", "rejection_reason": error_msg}
                 )
                 return {"status": "rejected", "trade_id": trade_id, "reason": error_msg}
+
+            # Reserve the exact simulated fill value, not the larger sizing
+            # budget or a stale reference-price estimate.
+            if trade_side in ["BUY", "SHORT_SELL"]:
+                gross_fill_value = (
+                    Decimal(str(executed_price)) * Decimal(str(executed_quantity))
+                )
+                reserved_cash_amount = (
+                    gross_fill_value
+                    + (gross_fill_value * FEE_RATE)
+                    + (gross_fill_value * TAX_RATE)
+                )
             
             execution_time = datetime.utcnow()
             
@@ -1132,17 +1168,9 @@ class TradeExecutionService:
                 else:
                     update_data["auto_sell_at"] = auto_close_time  # Pass datetime directly, not string
             
-            await self.update_status(
-                execution_log_id,  # Use TradeExecutionLog ID, not Trade ID
-                status="executed",
-                executed_price=executed_price,
-                executed_quantity=executed_quantity,
-                metadata=update_data,
-            )
-            
-            # ATOMIC trade status update - prevent duplicate execution
+            # Atomically claim the pending trade before changing cash/positions.
             client = await self._ensure_client()
-            trade_update_data = {"status": "executed"}
+            trade_update_data = {"status": "processing"}
             if auto_close_time:
                 # SHORT_SELL: set auto_cover_at, BUY: set auto_sell_at
                 if trade_side == "SHORT_SELL":
@@ -1218,13 +1246,6 @@ class TradeExecutionService:
                     executed_price,
                 )
             
-            # Create TP/SL orders for NSE pipeline trades
-            await self._create_tp_sl_orders(
-                record,
-                executed_price=executed_price,
-                executed_quantity=executed_quantity,
-            )
-            
             # Add trade to portfolio allocation and trigger portfolio update
             # This handles: cash reservation (transaction), position update, P&L calculation, metadata
             try:
@@ -1239,6 +1260,18 @@ class TradeExecutionService:
                 )
                 # If transaction returned a rejection (e.g., insufficient cash), return it
                 if rejection_result:
+                    await client.trade.update(
+                        where={"id": trade_id},
+                        data={
+                            "status": "rejected",
+                            "rejection_reason": rejection_result.get("reason"),
+                        },
+                    )
+                    await self.update_status(
+                        execution_log_id,
+                        status="rejected",
+                        error_message=rejection_result.get("reason"),
+                    )
                     return rejection_result
             except Exception as portfolio_error:
                 # Portfolio update failed - this is critical as it includes cash reservation
@@ -1254,11 +1287,35 @@ class TradeExecutionService:
                     status="failed",
                     error_message=f"Portfolio update failed: {portfolio_error}"
                 )
+                await client.trade.update(
+                    where={"id": trade_id},
+                    data={
+                        "status": "failed",
+                        "rejection_reason": f"Portfolio update failed: {portfolio_error}",
+                    },
+                )
                 return {
                     "status": "failed",
                     "trade_id": trade_id,
                     "error": str(portfolio_error),
                 }
+
+            # Mark the execution complete only after cash and position changes
+            # have committed successfully.
+            await self.update_status(
+                execution_log_id,
+                status="executed",
+                executed_price=executed_price,
+                executed_quantity=executed_quantity,
+                metadata=update_data,
+            )
+
+            # Protective orders must never exist for a failed/rejected fill.
+            await self._create_tp_sl_orders(
+                record,
+                executed_price=executed_price,
+                executed_quantity=executed_quantity,
+            )
 
             # AUTO-SELL: The streaming_order_monitor will pick up trades with auto_sell_at set
             # and execute the sell when the time expires. No Celery scheduling needed.
@@ -1407,8 +1464,12 @@ class TradeExecutionService:
         sl_price = float(sl_price_raw)
         
         # Get TP/SL percentages for logging
-        tp_pct = float(getattr(parent_trade, "take_profit_pct", Decimal("0.02")))
-        sl_pct = float(getattr(parent_trade, "stop_loss_pct", Decimal("0.01")))
+        tp_pct = float(
+            getattr(parent_trade, "take_profit_pct", Decimal(str(TAKE_PROFIT_PCT)))
+        )
+        sl_pct = float(
+            getattr(parent_trade, "stop_loss_pct", Decimal(str(STOP_LOSS_PCT)))
+        )
 
         self.logger.debug(
             "Creating TP/SL orders for %s: TP @ ₹%.2f (%.1f%%), SL @ ₹%.2f (%.1f%%)",
@@ -1425,6 +1486,28 @@ class TradeExecutionService:
         try:
             # Get portfolio for organization/customer info
             portfolio = await client.portfolio.find_unique(where={"id": portfolio_id})
+
+            # Protect the entire resulting position, not merely the latest fill.
+            # This also makes manual/add-on fills safe if they occur outside CFDT.
+            open_position = await client.position.find_first(
+                where={
+                    "portfolio_id": portfolio_id,
+                    "symbol": symbol,
+                    "status": "open",
+                }
+            )
+            if open_position:
+                executed_quantity = abs(int(getattr(open_position, "quantity", 0) or 0))
+                position_price = float(
+                    getattr(open_position, "average_buy_price", executed_price)
+                    or executed_price
+                )
+                if side == "BUY":
+                    tp_price = position_price * (1 + tp_pct)
+                    sl_price = position_price * (1 - sl_pct)
+                else:
+                    tp_price = position_price * (1 - tp_pct)
+                    sl_price = position_price * (1 + sl_pct)
 
             # FIRST: Cancel any existing pending TP/SL orders for this symbol
             # This avoids the unique constraint violation (portfolio_id, symbol, status)
@@ -1566,6 +1649,17 @@ class TradeExecutionService:
                 executed_quantity,
                 sl_price,
                 sl_pct * 100,
+            )
+
+            # Child TP/SL orders are the single source of truth. Clearing the
+            # parent trigger fields prevents the parallel parent monitor from
+            # racing these orders and submitting a duplicate close.
+            await client.trade.update(
+                where={"id": str(parent_trade.id)},
+                data={
+                    "take_profit_price": None,
+                    "stop_loss_price": None,
+                },
             )
 
         except Exception as exc:
@@ -1894,10 +1988,9 @@ class TradeExecutionService:
             trade_id = str(parent_trade.id)
             existing_trade = parent_trade
 
-            # Calculate fees and taxes (simulation mode - minimal fees)
-            fees = Decimal("0.0")
-            taxes = Decimal("0.0")
             net_amount = Decimal(str(executed_price * executed_quantity))
+            fees = net_amount * FEE_RATE
+            taxes = net_amount * TAX_RATE
 
             # Log auto_close_time if set
             if auto_close_time:
@@ -2409,6 +2502,10 @@ class TradeExecutionService:
         
         if side.upper() == "BUY":
             if existing_position:
+                if str(getattr(existing_position, "position_type", "")).lower() != "long":
+                    raise ValueError(
+                        f"BUY cannot be applied to an open short position for {symbol}; use COVER"
+                    )
                 # Update existing position (increase quantity, recalculate average price)
                 old_quantity = int(getattr(existing_position, "quantity", 0))
                 old_avg_price = float(getattr(existing_position, "average_buy_price", 0))
@@ -2458,7 +2555,11 @@ class TradeExecutionService:
                 )
             
             # Update main portfolio cash for BUY trades
-            total_cost = executed_price * quantity
+            gross_cost = executed_price * quantity
+            total_cost = gross_cost + float(
+                (Decimal(str(gross_cost)) * FEE_RATE)
+                + (Decimal(str(gross_cost)) * TAX_RATE)
+            )
             portfolio = await tx.portfolio.find_unique(where={"id": portfolio_id})
             if portfolio:
                 portfolio_current_cash = float(getattr(portfolio, "available_cash", 0) or 0)
@@ -2475,6 +2576,8 @@ class TradeExecutionService:
         elif side.upper() == "SELL":
             if not existing_position:
                 raise ValueError(f"No open position found for SELL: {symbol}")
+            if str(getattr(existing_position, "position_type", "")).lower() != "long":
+                raise ValueError(f"SELL requires an open long position for {symbol}")
             
             old_quantity = int(getattr(existing_position, "quantity", 0))
             
@@ -2484,7 +2587,11 @@ class TradeExecutionService:
             new_quantity = old_quantity - quantity
             
             # Calculate sale proceeds to add back to available_cash
-            sale_proceeds = executed_price * quantity
+            gross_proceeds = executed_price * quantity
+            sale_proceeds = gross_proceeds - float(
+                (Decimal(str(gross_proceeds)) * FEE_RATE)
+                + (Decimal(str(gross_proceeds)) * TAX_RATE)
+            )
             
             # Get allocation to update available_cash
             position_allocation_id = getattr(existing_position, "allocation_id", None) or allocation_id
@@ -2541,6 +2648,10 @@ class TradeExecutionService:
         
         elif side.upper() == "SHORT_SELL":
             if existing_position:
+                if str(getattr(existing_position, "position_type", "")).lower() != "short":
+                    raise ValueError(
+                        f"SHORT_SELL cannot be applied to an open long position for {symbol}; use SELL"
+                    )
                 # Adding to existing short position
                 old_quantity = int(getattr(existing_position, "quantity", 0))
                 old_avg_price = float(getattr(existing_position, "average_buy_price", 0))
@@ -2586,25 +2697,55 @@ class TradeExecutionService:
                     "✅ [TX] Created SHORT position: %s | qty: %d @ ₹%.2f",
                     symbol, quantity, executed_price
                 )
-        
+            # Mirror the allocation margin reservation in portfolio cash.
+            short_gross = executed_price * quantity
+            short_margin = short_gross + float(
+                (Decimal(str(short_gross)) * FEE_RATE)
+                + (Decimal(str(short_gross)) * TAX_RATE)
+            )
+            portfolio = await tx.portfolio.find_unique(where={"id": portfolio_id})
+            if portfolio:
+                portfolio_current_cash = float(
+                    getattr(portfolio, "available_cash", 0) or 0
+                )
+                if portfolio_current_cash < short_margin:
+                    raise ValueError(
+                        f"Insufficient portfolio cash for SHORT_SELL {symbol}"
+                    )
+                await tx.portfolio.update(
+                    where={"id": portfolio_id},
+                    data={"available_cash": portfolio_current_cash - short_margin},
+                )
+
         elif side.upper() == "COVER":
             if not existing_position:
                 raise ValueError(f"No open short position found for COVER: {symbol}")
+            if str(getattr(existing_position, "position_type", "")).lower() != "short":
+                raise ValueError(f"COVER requires an open short position for {symbol}")
             
             old_quantity = int(getattr(existing_position, "quantity", 0))
             
-            # For short positions, quantity is stored as negative
-            # COVER reduces the absolute value of the short position
-            short_quantity = abs(old_quantity)  # Convert to positive for comparison
+            # Short quantities are stored as positive absolute quantities.
+            short_quantity = abs(old_quantity)
             
             if quantity > short_quantity:
                 raise ValueError(f"COVER quantity ({quantity}) exceeds short position ({short_quantity})")
             
-            # Reduce short position (add to negative quantity to bring closer to 0)
-            new_quantity = old_quantity + quantity  # e.g., -100 + 100 = 0
-            
-            # Calculate proceeds to add back to available_cash (for COVER, it's the cover cost)
-            cover_proceeds = executed_price * quantity
+            new_quantity = short_quantity - quantity
+
+            entry_price = float(
+                getattr(existing_position, "average_buy_price", 0) or 0
+            )
+            # Release original short margin plus the gross P&L.
+            cover_cash_release = (
+                (entry_price * quantity)
+                + ((entry_price - executed_price) * quantity)
+            )
+            cover_gross = executed_price * quantity
+            cover_cash_release -= float(
+                (Decimal(str(cover_gross)) * FEE_RATE)
+                + (Decimal(str(cover_gross)) * TAX_RATE)
+            )
             
             # Get allocation to update available_cash
             position_allocation_id = getattr(existing_position, "allocation_id", None) or allocation_id
@@ -2614,28 +2755,28 @@ class TradeExecutionService:
                 )
                 if allocation:
                     current_cash = float(getattr(allocation, "available_cash", 0) or 0)
-                    new_cash = current_cash + cover_proceeds
+                    new_cash = current_cash + cover_cash_release
                     await tx.portfolioallocation.update(
                         where={"id": position_allocation_id},
                         data={"available_cash": new_cash}
                     )
                     self.logger.info(
                         "💰 [TX] Cash returned on COVER: ₹%.2f → ₹%.2f (+₹%.2f)",
-                        current_cash, new_cash, cover_proceeds
+                        current_cash, new_cash, cover_cash_release
                     )
             
             # Update main portfolio cash
             portfolio = await tx.portfolio.find_unique(where={"id": portfolio_id})
             if portfolio:
                 portfolio_current_cash = float(getattr(portfolio, "available_cash", 0) or 0)
-                portfolio_new_cash = portfolio_current_cash + cover_proceeds
+                portfolio_new_cash = portfolio_current_cash + cover_cash_release
                 await tx.portfolio.update(
                     where={"id": portfolio_id},
                     data={"available_cash": portfolio_new_cash}
                 )
                 self.logger.info(
                     "💰 [TX] Portfolio cash updated on COVER: ₹%.2f → ₹%.2f (+₹%.2f)",
-                    portfolio_current_cash, portfolio_new_cash, cover_proceeds
+                    portfolio_current_cash, portfolio_new_cash, cover_cash_release
                 )
             
             if new_quantity == 0:

@@ -32,6 +32,7 @@ from schemas import (
     AllocationSnapshotResponse,
 )
 from schemas.portfolio import TradeSummary as PortfolioTradeSummary
+from services.intraday_allocation_service import allocate_full_portfolio_to_intraday
 
 
 def _decimal_from_env(env_key: str, default: str) -> Decimal:
@@ -189,33 +190,25 @@ class PortfolioController:
                 }
             )
             
-            # Trigger portfolio allocation via Celery
             try:
-                from workers.allocation_tasks import allocate_for_objective_task
-                from utils.user_inputs_helper import extract_user_inputs_from_portfolio
-                
-                # Build user inputs from portfolio (matching transcript.py format)
-                user_inputs = extract_user_inputs_from_portfolio(portfolio)
-                
-                task = allocate_for_objective_task.apply_async(
-                    kwargs={
-                        "portfolio_id": portfolio.id,
-                        "objective_id": None,  # Auto-created portfolio without objective
-                        "user_id": user_id,
-                        "user_inputs": user_inputs,
-                        "initial_value": float(defaults["investment_amount"]),
-                        "available_cash": float(defaults["investment_amount"]),
-                        "triggered_by": "portfolio_auto_created",
-                    },
-                    countdown=5,  # Wait 5 seconds for database to sync
+                await allocate_full_portfolio_to_intraday(
+                    self.prisma,
+                    portfolio_id=portfolio.id,
+                    objective_id=None,
+                    user_id=user_id,
+                    investable_amount=float(defaults["investment_amount"]),
+                    triggered_by="portfolio_auto_created",
                 )
-                
                 self.logger.info(
-                    f"✅ Portfolio allocation task dispatched for {portfolio.id} (task_id={task.id})"
+                    "Allocated 100%% of new portfolio %s to intraday immediately",
+                    portfolio.id,
+                )
+                portfolio = await self.prisma.portfolio.find_unique(
+                    where={"id": portfolio.id}
                 )
             except Exception as exc:
                 self.logger.error(
-                    f"❌ Failed to dispatch allocation task for portfolio {portfolio.id}: {exc}",
+                    f"Failed to allocate portfolio {portfolio.id} to intraday: {exc}",
                     exc_info=True
                 )
 
@@ -444,6 +437,7 @@ class PortfolioController:
                 trade_type=trade.trade_type,
                 created_at=trade.created_at,
                 execution_time=trade.execution_time,
+                filing_published_at=metadata.get("filing_time"),
                 llm_delay=f"{llm_delay_ms}ms" if llm_delay_ms is not None else "N/A",
                 trade_delay=f"{trade_delay_ms}ms" if trade_delay_ms is not None else "N/A",
                 agent_id=trade.agent_id,

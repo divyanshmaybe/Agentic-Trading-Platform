@@ -73,11 +73,35 @@ NSE_HOLIDAYS_2025 = [
     (12, 25),  # Christmas
 ]
 
+NSE_HOLIDAYS_2026 = [
+    (1, 15),   # Municipal Corporation Election - Maharashtra
+    (1, 26),   # Republic Day
+    (3, 3),    # Holi
+    (3, 26),   # Shri Ram Navami
+    (3, 31),   # Shri Mahavir Jayanti
+    (4, 3),    # Good Friday
+    (4, 14),   # Dr. Baba Saheb Ambedkar Jayanti
+    (5, 1),    # Maharashtra Day
+    (5, 28),   # Bakri Id
+    (6, 26),   # Muharram
+    (9, 14),   # Ganesh Chaturthi
+    (10, 2),   # Mahatma Gandhi Jayanti
+    (10, 20),  # Dussehra
+    (11, 10),  # Diwali-Balipratipada
+    (11, 24),  # Prakash Gurpurb Sri Guru Nanak Dev
+    (12, 25),  # Christmas
+]
+
 
 def is_market_holiday(dt: datetime) -> bool:
     """Check if given datetime is a market holiday."""
     # Use appropriate year's holiday list
-    holidays = NSE_HOLIDAYS_2025 if dt.year >= 2025 else NSE_HOLIDAYS_2024
+    holidays_by_year = {
+        2024: NSE_HOLIDAYS_2024,
+        2025: NSE_HOLIDAYS_2025,
+        2026: NSE_HOLIDAYS_2026,
+    }
+    holidays = holidays_by_year.get(dt.year, [])
     return (dt.month, dt.day) in holidays
 
 

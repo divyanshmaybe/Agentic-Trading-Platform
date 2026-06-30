@@ -28,6 +28,7 @@ Performance:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass
 from decimal import Decimal
@@ -883,6 +884,127 @@ class PathwayOrderMonitor:
             logger.exception(f"Failed to fetch auto-sell trades: {exc}")
             return []
     
+    async def _execute_cfdt_virtual_close(
+        self,
+        *,
+        parent_trade: Any,
+        side: str,
+        quantity: int,
+        price: float,
+        reason: str,
+        metadata: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Close a CFDT paper position through the canonical virtual ledger."""
+        import json
+        import uuid
+
+        from services.trade_execution_service import TradeExecutionService
+
+        # TP, SL, and timeout loops can observe the same position concurrently.
+        # Only one is allowed to claim and close the parent trade.
+        claimed = await self.db.trade.update_many(
+            where={"id": parent_trade.id, "status": "executed"},
+            data={"status": "closing"},
+        )
+        if claimed != 1:
+            return {
+                "status": "duplicate",
+                "id": None,
+                "reason": "position_close_already_claimed",
+            }
+
+        portfolio = await self.db.portfolio.find_unique(
+            where={"id": parent_trade.portfolio_id}
+        )
+        service = TradeExecutionService(logger=logger)
+        request_id = str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"cfdt-close:{parent_trade.id}:{reason}",
+            )
+        )
+        job = {
+            "request_id": request_id,
+            "signal_id": str(getattr(parent_trade, "signal_id", "") or parent_trade.id),
+            "user_id": str(getattr(portfolio, "user_id", "") or ""),
+            "portfolio_id": parent_trade.portfolio_id,
+            "portfolio_name": str(
+                getattr(portfolio, "portfolio_name", "CFDT Portfolio")
+            ),
+            "organization_id": parent_trade.organization_id,
+            "customer_id": parent_trade.customer_id,
+            "symbol": parent_trade.symbol,
+            "side": side,
+            "quantity": int(quantity),
+            "allocated_capital": float(price) * int(quantity),
+            "confidence": float(getattr(parent_trade, "confidence", 1) or 1),
+            "reference_price": float(price),
+            "take_profit_pct": 0,
+            "stop_loss_pct": 0,
+            "explanation": reason,
+            "filing_time": "",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "metadata_json": json.dumps(
+                {
+                    **metadata,
+                    "parent_trade_id": parent_trade.id,
+                    "triggered_by": reason,
+                },
+                default=str,
+            ),
+            "agent_id": parent_trade.agent_id,
+            "agent_type": "high_risk",
+            "agent_status": "active",
+            "triggered_by": reason,
+        }
+        try:
+            events = await service.persist_and_publish([job], publish_kafka=False)
+            if not events:
+                await self.db.trade.update(
+                    where={"id": parent_trade.id},
+                    data={"status": "executed"},
+                )
+                return {"status": "duplicate", "id": None}
+
+            result = await service.execute_trade(events[0].trade_id, simulate=True)
+            if result.get("status") == "executed":
+                parent_metadata = (
+                    dict(parent_trade.metadata)
+                    if isinstance(parent_trade.metadata, dict)
+                    else {}
+                )
+                parent_metadata.update(
+                    {
+                        "cfdt_closed": True,
+                        "cfdt_close_reason": reason,
+                        "cfdt_close_trade_id": events[0].trade_id,
+                        "cfdt_closed_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+                await self.db.trade.update(
+                    where={"id": parent_trade.id},
+                    data={
+                        "status": "closed",
+                        "auto_sell_at": None,
+                        "auto_cover_at": None,
+                        "take_profit_price": None,
+                        "stop_loss_price": None,
+                        "metadata": json.dumps(parent_metadata),
+                    },
+                )
+            else:
+                await self.db.trade.update(
+                    where={"id": parent_trade.id},
+                    data={"status": "executed"},
+                )
+            return {**result, "id": events[0].trade_id}
+        except Exception:
+            await self.db.trade.update(
+                where={"id": parent_trade.id},
+                data={"status": "executed"},
+            )
+            raise
+
     async def _execute_auto_sell(self, signal: AutoSellSignal):
         """
         Execute an auto-sell when time expires.
@@ -950,15 +1072,7 @@ class PathwayOrderMonitor:
                 logger.warning(f"Price fetch failed for {signal.symbol}, using original: {e}")
             
             # Determine close side
-            close_side = "SELL" if signal.close_type == "sell" else "BUY"  # COVER = BUY
-            
-            # Use TradeEngine for proper execution (handles position updates, TradeExecutionLog)
-            import json
-            from services.trade_engine import TradeEngine
-            from schemas import TradeCreate
-            from decimal import Decimal
-            
-            engine = TradeEngine(self.db)
+            close_side = "SELL" if signal.close_type == "sell" else "COVER"
             
             # Pre-check: verify position exists and has sufficient holdings before execution
             # This prevents noisy retry loops when position was already closed
@@ -977,36 +1091,22 @@ class PathwayOrderMonitor:
                     self._auto_sell_trades.pop(signal.trade_id, None)
                     return
             
-            # Create payload for TradeEngine
-            trade_payload = TradeCreate(
-                organization_id=trade.organization_id or "",
-                portfolio_id=signal.portfolio_id,
-                agent_id=trade.agent_id,  # Inherit agent_id from original trade
-                customer_id=str(trade.customer_id or ""),
-                trade_type="auto",
-                symbol=signal.symbol,
-                exchange=str(trade.exchange) if trade.exchange else "NSE",
-                segment=str(trade.segment) if trade.segment else "EQUITY",
+            close_trade_dict = await self._execute_cfdt_virtual_close(
+                parent_trade=trade,
                 side=close_side,
-                order_type="market",
                 quantity=signal.quantity,
-                source="streaming_order_monitor",
+                price=current_price,
+                reason="cfdt_30_minute_exit",
                 metadata={
-                    "order_type": f"auto_{signal.close_type}",
-                    "parent_trade_id": signal.trade_id,
-                    "triggered_by": "streaming_order_monitor",
                     "original_price": signal.original_price,
                     "execution_price": current_price,
-                    "sell_reason": "auto_sell_at_expired",
-                    "auto_sell_at": signal.auto_sell_at.isoformat() if signal.auto_sell_at else None,
+                    "auto_sell_at": (
+                        signal.auto_sell_at.isoformat()
+                        if signal.auto_sell_at
+                        else None
+                    ),
                     "triggered_at": signal.triggered_at.isoformat(),
                 },
-            )
-            
-            # Execute via TradeEngine (creates trade, updates position, logs execution)
-            close_trade_dict = await engine._execute_market_order(
-                trade_payload,
-                Decimal(str(current_price)),
             )
             
             exec_time_ms = int((time.time() - exec_start) * 1000)
@@ -1316,43 +1416,20 @@ class PathwayOrderMonitor:
                         self._tpsl_by_symbol[signal.symbol].discard(signal.trade_id)
                     return
             
-            # Execute the closing trade via TradeEngine (same pattern as auto-sell)
-            from services.trade_engine import TradeEngine
-            from schemas import TradeCreate
-            from decimal import Decimal
-            
-            engine = TradeEngine(self.db)
-            
-            # Create payload for TradeEngine
-            trade_payload = TradeCreate(
-                organization_id=trade.organization_id or "",
-                portfolio_id=signal.portfolio_id,
-                agent_id=trade.agent_id,  # Inherit agent_id from original trade
-                customer_id=str(trade.customer_id or ""),
-                trade_type="auto",
-                symbol=signal.symbol,
-                exchange=str(trade.exchange) if trade.exchange else "NSE",
-                segment=str(trade.segment) if trade.segment else "EQUITY",
-                side=signal.side,  # SELL to close BUY, BUY to close SHORT
-                order_type="market",
+            close_side = "SELL" if trade.side == "BUY" else "COVER"
+            close_trade_dict = await self._execute_cfdt_virtual_close(
+                parent_trade=trade,
+                side=close_side,
                 quantity=signal.quantity,
-                source="streaming_order_monitor",
+                price=signal.current_price,
+                reason=f"cfdt_{signal.close_type}",
                 metadata={
-                    "order_type": signal.close_type,
-                    "parent_trade_id": signal.trade_id,
-                    "triggered_by": "streaming_order_monitor_tpsl",
                     "entry_price": signal.entry_price,
                     "trigger_price": signal.trigger_price,
                     "execution_price": signal.current_price,
                     "close_reason": signal.close_type,
                     "triggered_at": signal.triggered_at.isoformat(),
                 },
-            )
-            
-            # Execute via TradeEngine (creates trade, updates position, logs execution)
-            close_trade_dict = await engine._execute_market_order(
-                trade_payload,
-                Decimal(str(signal.current_price)),
             )
             
             exec_time_ms = int((time.time() - exec_start) * 1000)

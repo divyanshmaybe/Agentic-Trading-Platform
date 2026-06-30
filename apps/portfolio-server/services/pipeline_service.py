@@ -54,6 +54,7 @@ from utils.trade_execution import (  # type: ignore  # noqa: E402
     prepare_trade_execution_payloads,
 )
 from services.trade_execution_service import TradeExecutionService  # type: ignore  # noqa: E402
+from services.cfdt_strategy import MAX_CONCURRENT_TRADES
 
 class PipelineService:
     """Service for managing pipeline operations."""
@@ -1364,11 +1365,17 @@ class PipelineService:
         if llm_end_time:
             metadata["llm_end_time"] = llm_end_time
 
-        signal_id = (
-            str(payload.get("signal_id"))
-            or str(payload.get("request_id", ""))
-            or str(payload.get("seq_id", ""))
-            or str(uuid.uuid4())
+        signal_id = next(
+            (
+                str(value)
+                for value in (
+                    payload.get("signal_id"),
+                    payload.get("request_id"),
+                    payload.get("seq_id"),
+                )
+                if value is not None and str(value).strip()
+            ),
+            str(uuid.uuid4()),
         )
 
         filing_time = (
@@ -1413,7 +1420,7 @@ class PipelineService:
         trade_service = TradeExecutionService(logger=self.logger)
 
         # Maximum open positions allowed per agent for high_risk trading
-        MAX_OPEN_POSITIONS = 3
+        MAX_OPEN_POSITIONS = MAX_CONCURRENT_TRADES
 
         # Query for active high_risk agents - status=active means auto-trade is enabled
         # No separate auto_trade flag needed - active status IS the flag
@@ -1434,15 +1441,16 @@ class PipelineService:
                 }
             )
         
-        # Filter agents with < MAX_OPEN_POSITIONS open positions
-        eligible_agents = []
+        # Keep active agents eligible until the signal side is known. Otherwise
+        # an agent at the position limit could never receive a closing signal.
+        agent_positions: Dict[str, List[Any]] = {}
         for agent in agents:
             open_positions = getattr(agent, "positions", []) or []
             open_count = len(open_positions)
             agent_id = str(getattr(agent, "id", "unknown"))
+            agent_positions[agent_id] = list(open_positions)
             
             if open_count < MAX_OPEN_POSITIONS:
-                eligible_agents.append(agent)
                 self.logger.info(
                     "✅ Agent %s eligible: %d/%d open positions",
                     agent_id,
@@ -1456,8 +1464,6 @@ class PipelineService:
                     open_count,
                     MAX_OPEN_POSITIONS,
                 )
-        
-        agents = eligible_agents
         
         if not agents:
             self.logger.warning("⚠️ No active high_risk trading agents found (or all have max positions)")
@@ -1581,6 +1587,79 @@ class PipelineService:
         
         # Use direct Python implementation (50-200x faster than Pathway)
         job_rows = calculate_trade_execution_jobs(request_events, logger=self.logger)
+
+        # Resolve signals against actual open paper positions before persistence.
+        resolved_job_rows: List[Dict[str, Any]] = []
+        planned_symbols_by_agent: Dict[str, set[str]] = {
+            agent_id: {
+                str(getattr(position, "symbol", "")).upper()
+                for position in positions
+                if str(getattr(position, "status", "")).lower() == "open"
+            }
+            for agent_id, positions in agent_positions.items()
+        }
+        for job_row in job_rows:
+            agent_id = str(job_row.get("agent_id") or "")
+            symbol = str(job_row.get("symbol") or "").upper()
+            positions = agent_positions.get(agent_id, [])
+            matching_position = next(
+                (
+                    position
+                    for position in positions
+                    if str(getattr(position, "symbol", "")).upper() == symbol
+                    and str(getattr(position, "status", "")).lower() == "open"
+                ),
+                None,
+            )
+            requested_side = str(job_row.get("side") or "").upper()
+
+            if matching_position:
+                position_type = str(
+                    getattr(matching_position, "position_type", "")
+                ).lower()
+                position_quantity = abs(
+                    int(getattr(matching_position, "quantity", 0) or 0)
+                )
+                if (
+                    (requested_side == "BUY" and position_type == "long")
+                    or (requested_side == "SHORT_SELL" and position_type == "short")
+                ):
+                    self.logger.warning(
+                        "Skipping %s %s: an open %s position already exists; "
+                        "CFDT does not pyramid repeated filing signals",
+                        requested_side,
+                        symbol,
+                        position_type,
+                    )
+                    continue
+                if requested_side == "BUY" and position_type == "short":
+                    job_row["side"] = "COVER"
+                    job_row["quantity"] = position_quantity
+                elif requested_side == "SHORT_SELL" and position_type == "long":
+                    job_row["side"] = "SELL"
+                    job_row["quantity"] = position_quantity
+
+                if job_row["side"] in {"SELL", "COVER"}:
+                    job_row["allocated_capital"] = (
+                        position_quantity
+                        * float(job_row.get("reference_price") or 0)
+                    )
+            elif len(planned_symbols_by_agent.setdefault(agent_id, set())) >= MAX_OPEN_POSITIONS:
+                self.logger.info(
+                    "Skipping new %s position for agent %s: %d/%d positions open",
+                    symbol,
+                    agent_id,
+                    len(positions),
+                    MAX_OPEN_POSITIONS,
+                )
+                continue
+            elif requested_side in {"BUY", "SHORT_SELL"}:
+                planned_symbols_by_agent[agent_id].add(symbol)
+
+            if int(job_row.get("quantity") or 0) > 0:
+                resolved_job_rows.append(job_row)
+
+        job_rows = resolved_job_rows
         
         self.logger.info("📊 Trade execution calculation produced %d actionable job(s)", len(job_rows) if job_rows else 0)
         
@@ -1726,13 +1805,19 @@ class PipelineService:
             self.logger.info("=" * 70)
 
             refresh_interval = int(os.getenv("NSE_REFRESH_INTERVAL", "60"))
-            static_data_path = "staticdata.csv"
+            static_data_path = str(
+                Path(__file__).resolve().parents[1] / "staticdata.csv"
+            )
             signals_output = "trading_signals.jsonl"
 
             if not os.path.exists(static_data_path):
-                self.logger.info(
-                    "staticdata.csv not found - using default impact scenarios"
+                raise FileNotFoundError(
+                    f"CFDT static knowledge base not found: {static_data_path}"
                 )
+            self.logger.info(
+                "Loaded CFDT static knowledge base: %s",
+                static_data_path,
+            )
 
             self.logger.info(
                 "Starting live NSE scraper (interval: %ss)...", refresh_interval
@@ -1773,7 +1858,11 @@ class PipelineService:
                     )
                     
                     # Process trade signal immediately for active agents using Celery task
-                    if signal in [1, -1]:  # Only process BUY (1) or SELL (-1) signals
+                    # Trade execution is already queued by publish_signal_to_kafka
+                    # immediately after model completion. Keep this subscriber
+                    # observability-only so notifications never gate execution and
+                    # the same filing cannot be enqueued twice.
+                    if False and signal in [1, -1]:
                         try:
                             # ============================================================
                             # SIGNAL DEDUPLICATION: Prevent duplicate signals from being sent to workers

@@ -359,7 +359,7 @@ class MarketDataService:
                 self._connected = False
                 self._ws = None
                 # Gracefully close the connection
-                if ws and not ws.closed:
+                if ws:
                     try:
                         await asyncio.wait_for(ws.close(), timeout=2.0)
                     except Exception:
@@ -372,7 +372,7 @@ class MarketDataService:
                 self._connected = False
                 self._ws = None
                 # Gracefully close the connection
-                if ws and not ws.closed:
+                if ws:
                     try:
                         await asyncio.wait_for(ws.close(), timeout=2.0)
                     except Exception:

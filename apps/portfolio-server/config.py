@@ -44,6 +44,6 @@ DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() in {"1", "true", "yes"}
 ANGELONE_TRADING_ENABLED = os.getenv("ANGELONE_TRADING_ENABLED", "false").lower() in {"1", "true", "yes"}
 
 # Short Selling Configuration
-SHORT_SELL_AUTO_CLOSE_MINUTES = int(os.getenv("SHORT_SELL_AUTO_CLOSE_MINUTES", "15"))
+SHORT_SELL_AUTO_CLOSE_MINUTES = int(os.getenv("SHORT_SELL_AUTO_CLOSE_MINUTES", "30"))
 MARKET_CLOSE_SELL_ENABLED = os.getenv("MARKET_CLOSE_SELL_ENABLED", "true").lower() in {"1", "true", "yes"}
 

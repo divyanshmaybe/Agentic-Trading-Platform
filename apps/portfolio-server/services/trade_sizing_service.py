@@ -18,6 +18,12 @@ import json
 import logging
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
+from services.cfdt_strategy import (
+    MAX_POSITION_FRACTION,
+    STOP_LOSS_PCT,
+    TAKE_PROFIT_PCT,
+)
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -73,7 +79,7 @@ def _calculate_allocation(data: Dict[str, Any]) -> float:
         return 0.0
     
     if confidence > 0.8:
-        fraction = 0.40
+        fraction = MAX_POSITION_FRACTION
     elif confidence > 0.49:
         fraction = 0.25
     else:
@@ -222,8 +228,8 @@ def calculate_trade_execution_jobs(
         # Extract remaining fields
         confidence = _get_field_float(payload, "confidence", 0.0)
         reference_price = _get_field_float(payload, "reference_price", 0.0)
-        take_profit_pct = _get_field_float(payload, "take_profit_pct", 0.03)
-        stop_loss_pct = _get_field_float(payload, "stop_loss_pct", 0.01)
+        take_profit_pct = _get_field_float(payload, "take_profit_pct", TAKE_PROFIT_PCT)
+        stop_loss_pct = _get_field_float(payload, "stop_loss_pct", STOP_LOSS_PCT)
         explanation = _get_field_str(payload, "explanation")
         filing_time = _get_field_str(payload, "filing_time")
         generated_at = _get_field_str(payload, "generated_at")

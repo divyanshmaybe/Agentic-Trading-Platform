@@ -89,6 +89,7 @@ export type Trade = {
   trade_type: string
   created_at: string
   execution_time: string
+  filing_published_at?: string | null
 }
 
 export type RecentTradesResponse = {

@@ -137,6 +137,13 @@ export async function getNotificationsFromDB(
   userId: string,
   channel: "dashboard" | "intraday"
 ): Promise<NotificationDTO[]> {
+  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const startOfTodayIST =
+    Math.floor((now + IST_OFFSET_MS) / DAY_MS) * DAY_MS - IST_OFFSET_MS;
+  const endOfTodayIST = startOfTodayIST + DAY_MS;
+
   // Get all dismissed notification IDs for this user and channel
   // Using bracket notation to access models that may not be in generated client yet
   const stateModel = channel === "dashboard" 
@@ -166,7 +173,12 @@ export async function getNotificationsFromDB(
 
   // Build query filter to exclude dismissed notifications
   // Category filtering is done at the route level (like intraday does)
-  const queryFilter: any = {};
+  const queryFilter: any = {
+    createdAt: {
+      gte: new Date(startOfTodayIST),
+      lt: new Date(endOfTodayIST),
+    },
+  };
   
   // Filter out dismissed notifications (where dismiss state DOESN'T exist for this userId + notificationId)
   if (dismissedIds.size > 0) {
@@ -200,6 +212,22 @@ export async function getNotificationsFromDB(
     createdAt: n.createdAt.toISOString(),
     eventTime: n.eventTime ? n.eventTime.toISOString() : null,
   }));
+}
+
+export function isNotificationFromTodayIST(
+  notification: NotificationDTO | Notification
+): boolean {
+  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const createdAt =
+    notification.createdAt instanceof Date
+      ? notification.createdAt.getTime()
+      : new Date(notification.createdAt).getTime();
+  if (!Number.isFinite(createdAt)) return false;
+  return (
+    Math.floor((createdAt + IST_OFFSET_MS) / DAY_MS) ===
+    Math.floor((Date.now() + IST_OFFSET_MS) / DAY_MS)
+  );
 }
 
 /**

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import hashlib
 from pathlib import Path
 
 from celery.utils.log import get_task_logger
@@ -350,8 +351,34 @@ def process_trade_signal(self, signal_payload: dict) -> dict:
     This is simpler and reuses existing tested code.
     """
     from pathlib import Path
+    from redis import Redis
+    from celery_app import BROKER_URL
     from services.pipeline_service import PipelineService
-    
+
+    fingerprint_source = "|".join(
+        [
+            str(signal_payload.get("symbol", "")).strip().upper(),
+            str(signal_payload.get("signal", "")).strip(),
+            str(signal_payload.get("explanation", "")).strip(),
+        ]
+    )
+    fingerprint = hashlib.sha256(fingerprint_source.encode("utf-8")).hexdigest()
+    lock_key = f"cfdt:signal:processed:{fingerprint}"
+    lock_owner = str(self.request.id)
+    redis_client = Redis.from_url(BROKER_URL, decode_responses=True)
+
+    if not redis_client.set(lock_key, lock_owner, nx=True, ex=3600):
+        task_logger.warning(
+            "Duplicate CFDT signal blocked for %s (fingerprint=%s)",
+            signal_payload.get("symbol"),
+            fingerprint[:12],
+        )
+        return {
+            "status": "duplicate",
+            "symbol": signal_payload.get("symbol"),
+            "fingerprint": fingerprint,
+        }
+
     try:
         task_logger.info("📊 Processing trade signal for: %s", signal_payload.get('symbol'))
         
@@ -365,6 +392,8 @@ def process_trade_signal(self, signal_payload: dict) -> dict:
         return summary
         
     except Exception as exc:
+        if redis_client.get(lock_key) == lock_owner:
+            redis_client.delete(lock_key)
         task_logger.error("❌ Failed to process trade signal: %s", exc, exc_info=True)
         raise
 

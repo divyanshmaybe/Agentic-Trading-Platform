@@ -125,7 +125,7 @@ def create_lifespan(base_app_instance, pipeline_service_instance):
         )
         
         # Run allocation sweep on startup to handle pending portfolios
-        allocation_on_startup = os.getenv("ALLOCATION_SWEEP_ON_STARTUP", "true").lower() in {"1", "true", "yes"}
+        allocation_on_startup = os.getenv("ALLOCATION_SWEEP_ON_STARTUP", "false").lower() in {"1", "true", "yes"}
         if allocation_on_startup:
             try:
                 from celery_app import celery_app

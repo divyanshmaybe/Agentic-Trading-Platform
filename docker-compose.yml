@@ -306,6 +306,7 @@ services:
       - ./shared:/app/shared
       - ./middleware:/app/middleware
       - ./scripts:/app/scripts
+      - ./staticdata.csv:/app/apps/portfolio-server/staticdata.csv:ro
     depends_on:
       portfolio_postgres:
         condition: service_healthy
@@ -383,47 +384,6 @@ services:
                celery -A celery_app:celery_app worker --loglevel=info -Q low_risk_pipeline --concurrency=1 --hostname=low_risk@%h --max-tasks-per-child=5 --prefetch-multiplier=1"
     ports:
       - "9107:9107"
-    volumes:
-      - ./apps/portfolio-server:/app/apps/portfolio-server
-      - ./shared:/app/shared
-      - ./middleware:/app/middleware
-      - ./scripts:/app/scripts
-    depends_on:
-      portfolio_postgres:
-        condition: service_healthy
-      portfolio_redis:
-        condition: service_healthy
-    networks:
-      - agentInvest
-
-  # Celery Worker - Allocation Queue (Portfolio allocation & rebalancing)
-  portfolio_celery_allocation:
-    image: portfolio_server:latest
-    container_name: portfolio_celery_allocation
-    restart: unless-stopped
-    env_file:
-      - docker.env
-      - apps/portfolio-server/docker.env
-    environment:
-      PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
-      CELERY_WORKER_RUNNING: "1"
-      PROMETHEUS_ENABLED: "true"
-      PROMETHEUS_PORT: "9103"
-      WORKER_NAME: allocation@docker
-      KAFKA_CLIENT_ID: portfolio-celery-allocation
-      COLLECTOR_ENDPOINT: http://phoenix:6006/v1/traces
-      PORTFOLIO_SERVER_URL: http://portfolio_server:8000
-    working_dir: /app/apps/portfolio-server
-    command: >
-      bash -c "cp /app/apps/portfolio-server/docker.env /app/apps/portfolio-server/.env 2>/dev/null || true &&
-               python -m prisma generate &&
-               until python -m prisma db push --accept-data-loss; do
-                 echo 'Waiting for Postgres...';
-                 sleep 2;
-               done &&
-               celery -A celery_app:celery_app worker --loglevel=info -Q allocations --concurrency=2 --hostname=allocation@%h --max-tasks-per-child=100 --prefetch-multiplier=1"
-    ports:
-      - "9103:9103"
     volumes:
       - ./apps/portfolio-server:/app/apps/portfolio-server
       - ./shared:/app/shared
@@ -635,8 +595,6 @@ services:
       portfolio_celery_news_pipeline:
         condition: service_started
       portfolio_celery_low_risk:
-        condition: service_started
-      portfolio_celery_allocation:
         condition: service_started
       portfolio_celery_market:
         condition: service_started
@@ -1033,6 +991,44 @@ services:
                done &&
                echo '🚀 Starting Pathway Order Monitor (Reactive TP/SL)...' &&
                python -m workers.pathway_order_monitor"
+    volumes:
+      - ./apps/portfolio-server:/app/apps/portfolio-server
+      - ./shared:/app/shared
+      - ./middleware:/app/middleware
+      - ./scripts:/app/scripts
+    depends_on:
+      portfolio_postgres:
+        condition: service_healthy
+      portfolio_redis:
+        condition: service_healthy
+      portfolio_server:
+        condition: service_started
+    networks:
+      - agentInvest
+
+  # CFDT virtual exit monitor - enforces TP, SL, and 30-minute closures.
+  cfdt_order_monitor:
+    image: portfolio_server:latest
+    container_name: cfdt_order_monitor
+    restart: unless-stopped
+    env_file:
+      - docker.env
+      - apps/portfolio-server/docker.env
+    environment:
+      PYTHONPATH: /app:/app/apps/portfolio-server:/app/shared/py:/app/middleware/py
+      STREAMING_ORDER_MONITOR_ENABLED: "true"
+      CFDT_PAPER_TRADING_ONLY: "true"
+      ANGELONE_TRADING_ENABLED: "false"
+      PORTFOLIO_SERVER_URL: http://portfolio_server:8000
+    working_dir: /app/apps/portfolio-server
+    command: >
+      bash -c "cp /app/apps/portfolio-server/docker.env /app/apps/portfolio-server/.env 2>/dev/null || true &&
+               python -m prisma generate &&
+               until python -m prisma db push --accept-data-loss; do
+                 echo 'Waiting for Postgres...';
+                 sleep 2;
+               done &&
+               python -m workers.streaming_order_monitor"
     volumes:
       - ./apps/portfolio-server:/app/apps/portfolio-server
       - ./shared:/app/shared

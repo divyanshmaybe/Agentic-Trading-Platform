@@ -111,6 +111,19 @@ export function useIntradayNotifications(): UseIntradayNotificationsReturn {
 
         // Merge with existing notifications (handles deduplication by ID)
         setNotifications((prev) => mergeNotifications(prev, [notification]));
+
+        // Signal generation and paper execution run in parallel. Refresh the
+        // portfolio immediately, then again after the execution worker has had
+        // a brief chance to persist the trade and position.
+        window.dispatchEvent(new Event("cfdt:data-updated"));
+        window.setTimeout(
+          () => window.dispatchEvent(new Event("cfdt:data-updated")),
+          1500
+        );
+        window.setTimeout(
+          () => window.dispatchEvent(new Event("cfdt:data-updated")),
+          4000
+        );
       } catch (err) {
         console.warn("[Intraday Notifications] Failed to parse notification:", err);
       }

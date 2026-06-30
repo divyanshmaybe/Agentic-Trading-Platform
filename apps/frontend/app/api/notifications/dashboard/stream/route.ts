@@ -5,6 +5,7 @@ import {
   getAuthenticatedUser,
   getPrismaClient,
   getNotificationsFromDB,
+  isNotificationFromTodayIST,
   shouldForwardToDashboard,
 } from "../../lib/helpers";
 import type { NotificationDTO } from "@/lib/types/notifications";
@@ -69,7 +70,10 @@ export async function GET(request: NextRequest) {
 
           // NotificationMessage from PubSub already has ISO strings (NotificationDTO format)
           // Filter by category and send as-is (no Date conversion needed)
-          if (shouldForwardToDashboard(notification as NotificationDTO)) {
+          if (
+            isNotificationFromTodayIST(notification as NotificationDTO) &&
+            shouldForwardToDashboard(notification as NotificationDTO)
+          ) {
             enqueueSseEvent(controller, "notification", notification, isCancelled);
           }
         });
