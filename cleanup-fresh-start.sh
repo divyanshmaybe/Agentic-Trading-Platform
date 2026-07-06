@@ -100,7 +100,7 @@ echo -e "${BLUE}[1/9] Cleaning Portfolio Server Pipeline Outputs...${NC}"
 
 # NSE Pipeline outputs
 delete_file "apps/portfolio-server/pipelines/nse/trading_signals.jsonl"
-delete_file "apps/portfolio-server/pipelines/nse/processed_announcements.json"
+delete_file "apps/portfolio-server/pipelines/nse/bse_processed_announcements.json"
 
 # News Pipeline outputs
 delete_file "apps/portfolio-server/pipelines/news/stock_recommendations.json"

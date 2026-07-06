@@ -41,6 +41,7 @@ export interface AppOptions {
   customRateLimit?: {
     windowMs: number;
     max: number;
+    skip?: (req: Request) => boolean;
   };
   customCors?: cors.CorsOptions;
 }
@@ -97,6 +98,17 @@ export class BaseApp {
       message: "Too many requests from this IP, please try again later.",
       standardHeaders: true,
       legacyHeaders: false,
+      skip: (req: Request) => {
+        // Always skip rate limiting for internal API routes
+        if (req.originalUrl && req.originalUrl.includes("/api/internal")) {
+          return true;
+        }
+        // Fallback to custom skip function if defined
+        if (rateLimitConfig.skip) {
+          return rateLimitConfig.skip(req);
+        }
+        return false;
+      }
     });
     this.app.use("/api/", limiter);
 

@@ -21,6 +21,29 @@ task_logger = get_task_logger(__name__)
 
 @celery_app.task(
     bind=True,
+    name="pipeline.bse.process_filing",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=30,
+    retry_kwargs={"max_retries": 3},
+    acks_late=True,
+    reject_on_worker_lost=True,
+)
+def process_bse_filing_task(self, filing: dict) -> dict:
+    """Run PDF, market-data, and single-LLM processing for one BSE filing."""
+    from pipelines.nse.bse_sentiment import process_bse_filing
+
+    static_data_path = str(
+        Path(__file__).resolve().parents[1] / "staticdata.csv"
+    )
+    return process_bse_filing(
+        filing,
+        static_data_path=static_data_path,
+    )
+
+
+@celery_app.task(
+    bind=True,
     name="pipeline.start",
     autoretry_for=(Exception,),
     retry_backoff=True,
@@ -336,6 +359,9 @@ def run_risk_monitor(self) -> dict:
     rate_limit=None,
     # High priority for real-time signal processing
     priority=9,
+    # Redis fingerprinting makes this task idempotent. Early acknowledgement
+    # prevents completed tasks from consuming every trading-worker slot.
+    acks_late=False,
     # NO TIME LIMITS - trade execution can take time
     soft_time_limit=None,
     time_limit=None,
@@ -373,11 +399,13 @@ def process_trade_signal(self, signal_payload: dict) -> dict:
             signal_payload.get("symbol"),
             fingerprint[:12],
         )
-        return {
+        duplicate_result = {
             "status": "duplicate",
             "symbol": signal_payload.get("symbol"),
             "fingerprint": fingerprint,
         }
+        redis_client.close()
+        return duplicate_result
 
     try:
         task_logger.info("📊 Processing trade signal for: %s", signal_payload.get('symbol'))
@@ -389,11 +417,13 @@ def process_trade_signal(self, signal_payload: dict) -> dict:
         summary = service.process_nse_trade_signals([signal_payload])
         
         task_logger.info("✅ Trade signal processed: %s", summary)
+        redis_client.close()
         return summary
         
     except Exception as exc:
         if redis_client.get(lock_key) == lock_owner:
             redis_client.delete(lock_key)
+        redis_client.close()
         task_logger.error("❌ Failed to process trade signal: %s", exc, exc_info=True)
         raise
 

@@ -1,6 +1,6 @@
 # NSE Filing Signal Validation Prompt
 # Model 2: Validates logic and generates confidence_score
-# Used by: nse_filings_sentiment.py
+# Legacy validation prompt; the BSE pipeline uses one model only.
 
 model: "gemini-3.1-flash-lite"
 temperature: 0.1

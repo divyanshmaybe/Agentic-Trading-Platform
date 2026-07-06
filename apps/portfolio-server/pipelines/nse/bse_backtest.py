@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-NSE Filings Backtesting Module - Pathway Implementation
+BSE Filings Backtesting Module - Pathway Implementation
 
 This module provides backtesting functionality for trading signals
-generated from NSE filings sentiment analysis.
+generated from BSE filings sentiment analysis.
 """
 
 import pathway as pw
@@ -280,7 +280,7 @@ def main():
         "trading_signals.jsonl",
         schema=TradingSignalSchema,
         mode="streaming",
-        autocommit_duration_ms=1000,
+        autocommit_duration_ms=50,
     )
     
     # Run backtest

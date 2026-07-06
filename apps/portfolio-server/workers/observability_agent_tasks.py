@@ -78,7 +78,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 OBSERVABILITY_KAFKA_TOPIC = os.getenv("NSE_OBSERVABILITY_TOPIC", "nse_agent_observability_logs")
 OBSERVABILITY_PUBLISHER_NAME = "nse_observability_publisher"
 
-# Filing type impact data (same as in nse_filings_sentiment.py)
+# Filing type impact data (same as in bse_sentiment.py)
 RELEVANT_FILE_TYPES = {
     "Outcome of Board Meeting": {"positive": True, "negative": True},
     "Press Release": {"positive": True, "negative": False},
@@ -407,18 +407,23 @@ def get_filing_impact_data(filing_type: str) -> str:
         String describing positive and negative impacts
     """
     try:
-        static_data_path = SERVER_ROOT / "pipelines" / "nse" / "staticdata.csv"
+        static_data_path = SERVER_ROOT / "staticdata.csv"
         
         if not static_data_path.exists():
             return f"Filing type: {filing_type}\nImpact data not available."
         
         import pandas as pd
         staticdf = pd.read_csv(static_data_path)
-        match = staticdf[staticdf["file type"].str.lower() == filing_type.lower()]
+        normalized_types = (
+            staticdf["file type"].astype(str).str.strip().str.rstrip(":").str.lower()
+        )
+        match = staticdf[
+            normalized_types == filing_type.strip().rstrip(":").lower()
+        ]
         
         if not match.empty:
             pos_impact = str(match["positive impct "].values[0])
-            neg_impact = str(match["negative impact"].values[0])
+            neg_impact = str(match["negtive impct"].values[0])
             return (
                 f"Filing type: {filing_type}\n"
                 f"Positive impact scenarios: {pos_impact}\n"

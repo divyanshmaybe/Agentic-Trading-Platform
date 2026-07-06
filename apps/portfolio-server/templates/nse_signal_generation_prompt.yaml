@@ -1,6 +1,6 @@
 # NSE Filing Signal Generation Prompt
 # Model 1: Generates trading_signal + explanation
-# Used by: nse_filings_sentiment.py
+# Used by: bse_sentiment.py
 
 model: "gemini-3.1-flash-lite"
 temperature: 0.1

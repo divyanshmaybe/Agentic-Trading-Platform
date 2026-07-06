@@ -22,7 +22,7 @@ const app = new BaseApp({
   enableQueues: true,
   customRateLimit: {
     windowMs: 15 * 60 * 1000,
-    max: 500,
+    max: 10000,
   },
   customCors: {
     origin: allowedOrigins,

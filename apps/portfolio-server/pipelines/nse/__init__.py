@@ -1,4 +1,2 @@
-"""
-NSE Pipeline package
-"""
+"""BSE filing and shared trade-execution pipelines."""
 

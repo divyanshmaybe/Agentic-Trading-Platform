@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 """
-NSE Filings Sentiment Agent - Pathway Real-time Implementation
+BSE Filings Sentiment Agent - Pathway Real-time Implementation
 
-This script processes NSE corporate filings in real-time, extracts text from PDFs,
+This script processes BSE corporate filings in real-time, extracts text from PDFs,
 fetches stock technical data, and generates trading signals using LLM analysis.
 """
 
@@ -12,12 +13,11 @@ import os
 import re
 import sys
 import threading
-from concurrent.futures import TimeoutError
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-import pathway as pw
 import requests
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -43,7 +43,10 @@ for logger_name in [
 # Ensure shared utilities (Kafka service, etc.) are importable when the pipeline
 # runs in isolation (e.g. Celery worker context or manual execution).
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
+PORTFOLIO_SERVER_PATH = Path(__file__).resolve().parents[2]
 SHARED_PY_PATH = PROJECT_ROOT / "shared" / "py"
+if str(PORTFOLIO_SERVER_PATH) not in sys.path:
+    sys.path.insert(0, str(PORTFOLIO_SERVER_PATH))
 if str(SHARED_PY_PATH) not in sys.path:
     sys.path.insert(0, str(SHARED_PY_PATH))
 
@@ -55,7 +58,7 @@ from kafka_service import (  # type: ignore  # noqa: E402
 from celery_app import celery_app  # type: ignore  # noqa: E402
 import httpx
 
-# Initialize Phoenix tracing for NSE filings sentiment
+# Initialize Phoenix tracing for BSE filings sentiment
 try:
     from phoenix.otel import register
     
@@ -66,14 +69,11 @@ try:
             endpoint=collector_endpoint,
             auto_instrument=True,
         )
-        print(f"✅ Phoenix tracing initialized for NSE filings sentiment: {collector_endpoint}")
+        print(f"✅ Phoenix tracing initialized for BSE filings sentiment: {collector_endpoint}")
 except ImportError:
     pass
 except Exception:
     pass
-
-# LLM imports
-from pathway.xpacks.llm import llms
 
 # Load environment variables ONLY from portfolio-server .env file
 # The pipeline service loads it before importing, but we ensure it's loaded here too
@@ -187,74 +187,21 @@ else:
 
 
 # ============================================================================
-# SCHEMAS
-# ============================================================================
-
-class NSEFilingSchema(pw.Schema):
-    """Schema for NSE filing data"""
-    symbol: str
-    desc: str
-    dt: str
-    attchmntFile: str
-    sm_name: str
-    sm_isin: str
-    an_dt: str
-    sort_date: str
-    seq_id: str
-    attchmntText: str
-    fileSize: str
-    # New fields from XBRL data
-    subject_of_announcement: str  # SubjectOfAnnouncement from XBRL
-    attachment_url: str  # AttachmentURL from XBRL (may differ from attchmntFile)
-    date_time_of_submission: str  # DateAndTimeOfSubmission from XBRL
-
-
-class FilingWithTextSchema(pw.Schema):
-    """Schema for filings with extracted text"""
-    symbol: str
-    desc: str
-    sort_date: str
-    attchmntFile: str
-    text: str
-    filepath: str
-
-
-class TechnicalDataSchema(pw.Schema):
-    """Schema for stock technical data"""
-    symbol: str
-    timestamp: str
-    open: float
-    high: float
-    low: float
-    close: float
-    volume: int
-
-
-class TradingSignalSchema(pw.Schema):
-    """Schema for trading signals"""
-    symbol: str
-    filing_time: str
-    signal: int  # 1=BUY, -1=SELL, 0=HOLD
-    explanation: str
-    confidence: float
-
-
-# ============================================================================
 # Kafka publishing for generated trading signals
 # ============================================================================
 
 KAFKA_SIGNAL_TOPIC = os.getenv("NSE_FILINGS_SIGNAL_TOPIC", "nse_filings_trading_signal")
-KAFKA_PUBLISHER_NAME = "nse_filings_signal_publisher"
+KAFKA_PUBLISHER_NAME = "bse_filings_signal_publisher"
 
 
-class NSESignalEvent(BaseModel):
+class BSESignalEvent(BaseModel):
     symbol: str
     filing_time: str
     signal: int
     explanation: str
     confidence: float
     generated_at: str
-    source: str = "nse_filings_pipeline"
+    source: str = "bse_filings_pipeline"
     # New fields from XBRL data
     subject_of_announcement: str = ""  # SubjectOfAnnouncement from XBRL
     attachment_url: str = ""  # AttachmentURL from XBRL
@@ -270,7 +217,7 @@ def _publish_loop_runner() -> None:
     _publish_loop.run_forever()
 
 
-_publish_loop_thread = threading.Thread(target=_publish_loop_runner, name="nse-kafka-publisher-loop", daemon=True)
+_publish_loop_thread = threading.Thread(target=_publish_loop_runner, name="bse-kafka-publisher-loop", daemon=True)
 _publish_loop_thread.start()
 
 
@@ -285,8 +232,8 @@ def _get_signal_publisher() -> KafkaPublisher:
         _signal_publisher = bus.register_publisher(
             KAFKA_PUBLISHER_NAME,
             topic=KAFKA_SIGNAL_TOPIC,
-            value_model=NSESignalEvent,
-            default_headers={"stream": "nse_filings"},
+            value_model=BSESignalEvent,
+            default_headers={"stream": "bse_filings"},
         )
     except PublisherAlreadyRegistered:
         _signal_publisher = bus.get_publisher(KAFKA_PUBLISHER_NAME)
@@ -294,14 +241,14 @@ def _get_signal_publisher() -> KafkaPublisher:
     return _signal_publisher
 
 
-def _publish_to_kafka(event: NSESignalEvent) -> None:
+def _publish_to_kafka(event: BSESignalEvent) -> None:
     """Internal function to publish event to Kafka"""
     publisher = _get_signal_publisher()
     payload = event.model_dump()
     publisher.publish(payload, key=event.symbol)
 
 
-print("[KAFKA] Initialising NSE filings signal publisher...")
+print("[KAFKA] Initialising BSE filings signal publisher...")
 try:
     _get_signal_publisher()
     print(f"[KAFKA] Connected to Kafka service; topic '{KAFKA_SIGNAL_TOPIC}' ready.")
@@ -309,7 +256,6 @@ except Exception as exc:
     print(f"[KAFKA] Failed to initialise Kafka publisher: {exc}")
 
 
-@pw.udf
 def publish_signal_to_kafka(
     symbol: str,
     filing_time: str,
@@ -317,7 +263,6 @@ def publish_signal_to_kafka(
     explanation: str,
     confidence: float,
     stocktechdata: str,
-    llm_timing: str = "",
     subject_of_announcement: str = "",
     attachment_url: str = "",
     date_time_of_submission: str = "",
@@ -331,8 +276,6 @@ def publish_signal_to_kafka(
 
     This ensures lowest latency: trade executes while Kafka publish happens in background.
 
-    Args:
-        llm_timing: JSON string with LLM timing metadata (llm_start_time, llm_end_time, llm_delay_ms)
     """
 
     try:
@@ -341,19 +284,6 @@ def publish_signal_to_kafka(
         signal_value = 0
 
     safe_confidence = float(confidence or 0.0)
-
-    # Parse LLM timing metadata
-    llm_timing_data = {}
-    if llm_timing:
-        try:
-            import json
-            llm_timing_data = json.loads(llm_timing)
-            llm_delay_ms = llm_timing_data.get("llm_delay_ms", 0)
-            print(f"[TIMING] ⏱️ LLM delay for {symbol}: {llm_delay_ms}ms")
-        except (json.JSONDecodeError, TypeError) as e:
-            print(f"[TIMING] ⚠️ Failed to parse llm_timing for {symbol}: {e} | llm_timing={llm_timing[:100] if llm_timing else 'None'}")
-    else:
-        print(f"[TIMING] ⚠️ No llm_timing data for {symbol}")
 
     # Extract reference_price from stocktechdata
     # Format: "Current price: 3500.50, timestamp: 2024-01-15 10:30:00"
@@ -382,7 +312,7 @@ def publish_signal_to_kafka(
     else:
         print(f"[PRICE] ⚠️ Empty or invalid stocktechdata for {symbol}: {type(stocktechdata)}")
 
-    event = NSESignalEvent(
+    event = BSESignalEvent(
         symbol=symbol,
         filing_time=filing_time,
         signal=signal_value,
@@ -399,28 +329,18 @@ def publish_signal_to_kafka(
     signal_payload = event.model_dump()
     signal_payload["reference_price"] = reference_price  # Add price to payload
 
-    # Add LLM timing metadata to payload for trade execution tracking
-    if llm_timing_data:
-        signal_payload["llm_delay_ms"] = llm_timing_data.get("llm_delay_ms", 0)
-        signal_payload["llm_start_time"] = llm_timing_data.get("llm_start_time", "")
-        signal_payload["llm_end_time"] = llm_timing_data.get("llm_end_time", "")
-        print(f"[TIMING] ✅ Added llm_delay_ms={signal_payload['llm_delay_ms']}ms to signal_payload for {symbol}")
-    else:
-        print(f"[TIMING] ⚠️ No llm_timing_data to add to signal_payload for {symbol}")
-
     try:
         # STEP 1: Queue trade execution ONLY for actionable signals (1=BUY, -1=SELL)
         # Skip signal=0 (HOLD) - no point sending to trading queue
         if signal_value in (1, -1):
             celery_app.send_task(
                 "pipeline.trade_execution.process_signal",
-                args=[signal_payload],  # Send enriched payload with reference_price + llm_timing
+                args=[signal_payload],
                 queue="trading",  # Route to TRADING queue (NOT pipelines!)
                 priority=9,  # HIGH PRIORITY - execute immediately
             )
             price_str = f"₹{reference_price:.2f}" if reference_price is not None else "N/A (will fetch)"
-            llm_delay_str = f"{llm_timing_data.get('llm_delay_ms', 0)}ms" if llm_timing_data else "N/A"
-            print(f"[CELERY] ✅ Queued HIGH-PRIORITY trade execution for {symbol} signal={signal_value} (price: {price_str}, llm_delay: {llm_delay_str})")
+            print(f"[CELERY] Queued trade execution for {symbol} signal={signal_value} (price: {price_str})")
         else:
             print(f"[CELERY] ⏭️ Skipping signal=0 (HOLD) for {symbol} - no trade needed")
 
@@ -469,7 +389,90 @@ def publish_signal_to_kafka(
 # FILING TYPE MAPPING AND FILTERING
 # ============================================================================
 
-@pw.udf
+BSE_SUBCATEGORY_TO_FILING_TYPE = {
+    "outcome of board meeting": "Outcome of Board Meeting",
+    "outcome without intimation": "Outcome of Board Meeting",
+    "revision of outcome": "Outcome of Board Meeting",
+    "financial results": "Outcome of Board Meeting",
+    "press release / media release": "Press Release",
+    "press release / media release (revised)": "Press Release",
+    "acquisition": "Acquisition",
+    "investor presentation": "Investor Presentation",
+    "diversification / disinvestment": "Sale or Disposal",
+    "sale of shares": "Sale or Disposal",
+    "restructuring": "Sale or Disposal",
+    "award of order / receipt of order": "Bagging/Receiving of Orders/Contracts",
+    "change in management": "Change in Director(s)",
+    "change in directorate": "Change in Director(s)",
+    "resignation of director": "Change in Director(s)",
+    "resignation of managing director": "Change in Director(s)",
+    "cessation": "Change in Director(s)",
+    "appointment of company secretary / compliance officer": "Appointment",
+    "resignation of company secretary / compliance officer": "Appointment",
+    "resignation of chief executive officer (ceo)": "Appointment",
+    "resignation of chief financial officer (cfo)": "Appointment",
+    "updates - corporate insolvency resolution process  (cirp)": (
+        "Action(s) initiated or orders passed"
+    ),
+    "liquidation - corporate insolvency resolution process  (cirp)": "Action(s) initiated or orders passed",
+    "initiation of corporate insolvency resolution process (cirp) by financial creditors": "Action(s) initiated or orders passed",
+    "admission of application by tribunal": "Action(s) initiated or orders passed",
+    "appointment of interim resolution professional (irp)": "Action(s) initiated or orders passed",
+    "intimation of meeting of committee of creditors": "Action(s) initiated or orders passed",
+    "outcome of meeting of committee of creditors": "Action(s) initiated or orders passed",
+    "public announcement": "Action(s) initiated or orders passed",
+    "scheme of arrangement": "Acquisition",
+    "monthly business updates": "Updates",
+    "strikes /lockouts / disturbances": "Updates",
+}
+
+BSE_ADVERSE_ORDER_KEYWORDS = {
+    "income tax",
+    "tax authority",
+    "tax demand",
+    "demand order",
+    "penalty",
+    "adjudication",
+    "regulatory order",
+    "court order",
+    "nclt",
+    "nclat",
+    "gst order",
+    "show cause",
+}
+
+
+def map_bse_filing_type(
+    category_name: str, subcategory_name: str, headline: str
+) -> str:
+    """Normalize BSE taxonomy to the strategy's established filing types."""
+    normalized_subcategory = " ".join(
+        (subcategory_name or "").lower().split()
+    )
+    normalized_map = {
+        " ".join(key.split()): value
+        for key, value in BSE_SUBCATEGORY_TO_FILING_TYPE.items()
+    }
+    if (
+        normalized_subcategory == "award of order / receipt of order"
+        and any(
+            keyword in (headline or "").lower()
+            for keyword in BSE_ADVERSE_ORDER_KEYWORDS
+        )
+    ):
+        return "Action(s) initiated or orders passed"
+    mapped = normalized_map.get(normalized_subcategory)
+    if mapped:
+        return mapped
+
+    # Only BSE's broad General bucket needs headline classification. Named
+    # subcategories are authoritative and should not be reinterpreted using
+    # NSE-era fuzzy matching.
+    if normalized_subcategory in {"", "general"}:
+        return map_filing_type(headline)
+    return ""
+
+
 def map_filing_type(desc: str) -> str:
     """Map announcement description to a relevant filing type
 
@@ -499,7 +502,7 @@ def map_filing_type(desc: str) -> str:
         return "Acquisition"
     elif "update" in desc_lower:
         return "Updates"
-    elif "order" in desc_lower or "action" in desc_lower:
+    elif re.search(r"\b(order|action)\b", desc_lower):
         return "Action(s) initiated or orders passed"
     elif "presentation" in desc_lower or "investor" in desc_lower:
         return "Investor Presentation"
@@ -515,7 +518,6 @@ def map_filing_type(desc: str) -> str:
     return ""
 
 
-@pw.udf
 def should_use_positive_impact(filing_type: str) -> bool:
     """Check if positive impact should be fetched for this filing type"""
     if not filing_type or filing_type not in RELEVANT_FILE_TYPES:
@@ -523,7 +525,6 @@ def should_use_positive_impact(filing_type: str) -> bool:
     return RELEVANT_FILE_TYPES[filing_type].get("positive", False)
 
 
-@pw.udf
 def should_use_negative_impact(filing_type: str) -> bool:
     """Check if negative impact should be fetched for this filing type"""
     if not filing_type or filing_type not in RELEVANT_FILE_TYPES:
@@ -531,7 +532,6 @@ def should_use_negative_impact(filing_type: str) -> bool:
     return RELEVANT_FILE_TYPES[filing_type].get("negative", False)
 
 
-@pw.udf
 def extract_filename_from_url(url: str) -> str:
     """Extract filename from URL path."""
     if not url:
@@ -543,7 +543,6 @@ def extract_filename_from_url(url: str) -> str:
 # PDF DOWNLOAD AND PARSING
 # ============================================================================
 
-@pw.udf
 def download_and_parse_pdf(url: str, filename: str) -> str:
     """Download PDF to docs folder and return the filename only.
     
@@ -560,7 +559,7 @@ def download_and_parse_pdf(url: str, filename: str) -> str:
 
         print(f"[PIPELINE] Downloading PDF: {filename} from {url[:100]}...")
 
-        # Use the nse/docs folder for storing PDFs
+        # Use the pipeline docs folder for temporary PDFs.
         docs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "docs")
         os.makedirs(docs_dir, exist_ok=True)
         
@@ -578,10 +577,10 @@ def download_and_parse_pdf(url: str, filename: str) -> str:
 
         # Ensure URL is complete (some PDFs might be relative URLs)
         if not url.startswith('http'):
-            url = f"https://www.nseindia.com{url}"
+            url = f"https://www.bseindia.com{url}"
 
         try:
-            response = requests.get(url, headers=headers, stream=True, timeout=30)
+            response = requests.get(url, headers=headers, stream=True, timeout=15)
             response.raise_for_status()
 
             print(f"[PIPELINE] PDF download started: {filename} ({response.headers.get('Content-Length', 'unknown')} bytes)")
@@ -616,7 +615,6 @@ def download_and_parse_pdf(url: str, filename: str) -> str:
 # STOCK DATA FETCHING
 # ============================================================================
 
-@pw.udf
 def fetch_stock_data(symbol: str, filing_time: str) -> str:
     """Fetch current stock price using market_data service"""
     from zoneinfo import ZoneInfo
@@ -751,11 +749,63 @@ def fetch_stock_data(symbol: str, filing_time: str) -> str:
         return ""
 
 
+def fetch_cold_path_inputs(
+    symbol: str, filing_time: str, attachment_url: str, filename: str
+) -> str:
+    """Fetch PDF and stock context concurrently without making PDF mandatory."""
+    import json
+    import time
+
+    cold_started = time.perf_counter()
+
+    def timed_pdf():
+        started = time.perf_counter()
+        result = download_and_parse_pdf(attachment_url, filename)
+        return result, int((time.perf_counter() - started) * 1000)
+
+    def timed_stock():
+        started = time.perf_counter()
+        result = fetch_stock_data(symbol, filing_time)
+        return result, int((time.perf_counter() - started) * 1000)
+
+    pdf_filename = ""
+    stocktechdata = ""
+    pdf_ms = stock_ms = 0
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        pdf_future = executor.submit(timed_pdf)
+        stock_future = executor.submit(timed_stock)
+        try:
+            pdf_filename, pdf_ms = pdf_future.result(timeout=30)
+        except Exception as exc:
+            print(f"[COLD-PATH] {symbol} | PDF unavailable: {exc}")
+        try:
+            stocktechdata, stock_ms = stock_future.result(timeout=15)
+        except Exception as exc:
+            print(f"[COLD-PATH] {symbol} | stock data unavailable: {exc}")
+
+    return json.dumps(
+        {
+            "pdf_filename": pdf_filename,
+            "stocktechdata": stocktechdata,
+            "pdf_ms": pdf_ms,
+            "stock_ms": stock_ms,
+            "pre_llm_ms": int((time.perf_counter() - cold_started) * 1000),
+        }
+    )
+
+
+def parse_cold_input(response: str, field: str) -> str:
+    import json
+    try:
+        return str(json.loads(response).get(field, ""))
+    except (TypeError, ValueError):
+        return ""
+
+
 # ============================================================================
 # STATIC DATA LOOKUP
 # ============================================================================
 
-@pw.udf
 def get_pos_impact(file_type: str, use_positive: bool, static_data_path: str = "staticdata.csv") -> str:
     """Get positive impact scenario for filing type
 
@@ -793,7 +843,6 @@ def get_pos_impact(file_type: str, use_positive: bool, static_data_path: str = "
         return "not much specific"
 
 
-@pw.udf
 def get_neg_impact(file_type: str, use_negative: bool, static_data_path: str = "staticdata.csv") -> str:
     """Get negative impact scenario for filing type
 
@@ -835,36 +884,31 @@ def get_neg_impact(file_type: str, use_negative: bool, static_data_path: str = "
 # LLM TRADING SIGNAL GENERATION
 # ============================================================================
 
-@pw.udf
 def generate_trading_signal(
     pos_impact: str,
     neg_impact: str,
     stocktechdata: str,
     api_key: str,
-    pdf_filename: str = ""
+    pdf_filename: str = "",
+    symbol: str = "",
+    cold_inputs: str = "",
 ) -> str:
     """
-    Generate trading signal using two-model approach:
-        - Model 1 (gemini-3.1-flash-lite): Generates trading_signal + explanation
-      If pdf_filename is provided, attaches the PDF from the nse/docs folder.
-        - Model 2 (gemini-3.1-flash-lite): Validates logic and generates confidence_score
+    Generate a trading signal with one Gemini call.
 
     The model returns JSON directly wrapped in ```json...``` block.
     This function extracts the JSON and returns it with timing metadata.
 
     After signal processing, the PDF file is deleted from the docs folder.
 
-    Includes LLM timing metrics in the response for latency tracking:
-    - llm_start_time: ISO timestamp when LLM processing started
-    - llm_end_time: ISO timestamp when LLM processing completed
-    - llm_delay_ms: Time in milliseconds for LLM to generate signal
+    Latency is logged separately so the response stays on the public
+    three-field contract.
     """
     import time
     import yaml
     import json
 
     # Track LLM processing start time
-    llm_start_time = datetime.utcnow()
     llm_start_ts = time.time()
 
     # Load API key from environment if not provided or empty
@@ -876,12 +920,7 @@ def generate_trading_signal(
     gemini_api_keys = [key.strip() for key in api_key.split(",") if key.strip()]
     model1_api_key = gemini_api_keys[0] if gemini_api_keys else ""
 
-    # Validate inputs
-    if not pdf_filename or not pdf_filename.strip():
-        print("[WARN] Empty PDF filename provided to generate_trading_signal")
-        return json.dumps({"error": "Empty PDF filename", "final_signal": 0, "Confidence": 0})
-
-    print(f"[PIPELINE] Generating trading signal with two-model approach (PDF filename: {pdf_filename})...")
+    print(f"[PIPELINE] Generating single-model signal (PDF filename: {pdf_filename or 'none'})...")
     # Load prompt templates from YAML files
     templates_dir = Path(__file__).resolve().parents[2] / "templates"
 
@@ -890,11 +929,6 @@ def generate_trading_signal(
         gen_prompt_path = templates_dir / "nse_signal_generation_prompt.yaml"
         with open(gen_prompt_path, 'r') as f:
             gen_config = yaml.safe_load(f)
-
-        # Load signal validation prompt (Model 2)
-        val_prompt_path = templates_dir / "nse_signal_validation_prompt.yaml"
-        with open(val_prompt_path, 'r') as f:
-            val_config = yaml.safe_load(f)
 
         print(f"[PIPELINE] Loaded prompt templates from {templates_dir}")
     except Exception as e:
@@ -1115,33 +1149,8 @@ def generate_trading_signal(
 
             print(f"[PIPELINE] Model 1 Result: signal={signal}, confidence={confidence}")
 
-            # -------- MODEL 2: Validate & generate confidence --------
-            validation_prompt = val_config['prompt_template'].format(
-                signal=signal,
-                explanation=json.dumps(model1_result)  # Pass full JSON for validation
-            )
-            model2_name = val_config.get('model', 'gemini-3.1-flash-lite')
-            model2_temp = val_config.get('temperature', 0.1)
-
-            print(f"[PIPELINE] Model 2 ({model2_name}): Validating signal + generating confidence...")
-            val_msg = HumanMessage(content=[{"type": "text", "text": validation_prompt}])
-            validation_raw = invoke_with_key_rotation(
-                model_name=model2_name,
-                temperature=model2_temp,
-                message=val_msg,
-                start_index=1 if len(gemini_api_keys) > 1 else 0,
-                # Search grounding has a separate, much smaller quota and was
-                # preventing the validation model from running at all.
-                bind_google_search=False,
-            )
-            validation_text = extract_content_from_response(validation_raw)
-
-            print(f"[PIPELINE] Model 2 Response: {validation_text[:300]}...")
-
-            # Extract JSON from Model 2 response
-            model2_result = extract_json_from_response(validation_text)
-            final_signal = model2_result.get("final_signal", signal)
-            final_confidence = model2_result.get("Confidence", model2_result.get("confidence", confidence))
+            final_signal = signal
+            final_confidence = confidence
 
             # Clamp confidence to [0, 1]
             if isinstance(final_confidence, (int, float)):
@@ -1149,27 +1158,25 @@ def generate_trading_signal(
             else:
                 final_confidence = 0.5
 
-            print(f"[PIPELINE] Model 2 Result: final_signal={final_signal}, confidence={final_confidence}")
-
-            # Calculate LLM delay
-            llm_end_time = datetime.utcnow()
             llm_delay_ms = int((time.time() - llm_start_ts) * 1000)
-
-            print(f"[PIPELINE] ⏱️ Total LLM delay (both models): {llm_delay_ms}ms")
-
-            # Construct final response JSON with timing metadata
-            model2_explanation = _pick_explanation(model2_result)
             model1_explanation = _pick_explanation(model1_result)
-
+            pdf_ms = stock_ms = pre_llm_ms = 0
+            try:
+                cold_metrics = json.loads(cold_inputs or "{}")
+                pdf_ms = int(cold_metrics.get("pdf_ms", 0))
+                stock_ms = int(cold_metrics.get("stock_ms", 0))
+                pre_llm_ms = int(cold_metrics.get("pre_llm_ms", 0))
+            except (TypeError, ValueError):
+                pass
+            print(
+                f"[COLD-PATH] {symbol} | pdf_ms={pdf_ms} | "
+                f"stock_ms={stock_ms} | llm_ms={llm_delay_ms} | "
+                f"total_ms={pre_llm_ms + llm_delay_ms}"
+            )
             final_result = {
                 "final_signal": final_signal,
                 "Confidence": final_confidence,
-                "explanation": model2_explanation if model2_explanation != "No explanation provided" else model1_explanation,
-                "model1_response": decision_text,
-                "model2_response": validation_text,
-                "llm_start_time": llm_start_time.isoformat() + "Z",
-                "llm_end_time": llm_end_time.isoformat() + "Z",
-                "llm_delay_ms": llm_delay_ms
+                "explanation": model1_explanation,
             }
 
             # Delete PDF file after signal is processed
@@ -1219,7 +1226,6 @@ def generate_trading_signal(
         return json.dumps(error_result)
 
 
-@pw.udf
 def parse_trading_signal_value(response: str) -> int:
     """Parse trading signal value (1, 0, or -1) from JSON response."""
     import json
@@ -1246,7 +1252,6 @@ def parse_trading_signal_value(response: str) -> int:
         return 0
 
 
-@pw.udf
 def parse_trading_signal_explanation(response: str) -> str:
     """Parse trading signal explanation from JSON response."""
     import json
@@ -1263,12 +1268,6 @@ def parse_trading_signal_explanation(response: str) -> str:
                     print(f"[PIPELINE] Parsed explanation from JSON: {explanation[:100]}...")
                     return explanation.strip()
 
-            for key in ("model2_response", "model1_response"):
-                raw_text = data.get(key)
-                if isinstance(raw_text, str) and raw_text.strip():
-                    print(f"[PIPELINE] Using fallback raw response for explanation from {key}.")
-                    return raw_text.strip()
-
             return "No explanation provided"
         except json.JSONDecodeError as e:
             print(f"[WARN] Failed to parse JSON response: {e}")
@@ -1279,7 +1278,6 @@ def parse_trading_signal_explanation(response: str) -> str:
         return "No explanation provided"
 
 
-@pw.udf
 def parse_trading_signal_confidence(response: str) -> float:
     """Parse confidence score (0-1) from JSON response."""
     import json
@@ -1308,63 +1306,114 @@ def parse_trading_signal_confidence(response: str) -> float:
         return 0.0
 
 
-@pw.udf
-def parse_llm_timing(response: str) -> str:
-    """
-    Parse LLM timing metadata from JSON response.
+# ============================================================================
+# DIRECT CELERY COLD PATH
+# ============================================================================
 
-    Returns JSON string with timing info:
-    - llm_start_time: ISO timestamp when LLM processing started
-    - llm_end_time: ISO timestamp when LLM processing completed
-    - llm_delay_ms: Time in milliseconds for LLM to generate signal
+def process_bse_filing(
+    filing: dict,
+    static_data_path: str = "staticdata.csv",
+) -> dict:
+    """Process one non-bagging BSE filing without a streaming framework."""
+    symbol = str(filing.get("symbol") or filing.get("scrip_cd") or "").strip()
+    headline = str(filing.get("headline") or "").strip()
+    category_name = str(filing.get("category_name") or "").strip()
+    subcategory_name = str(
+        filing.get("subcategory_name") or ""
+    ).strip()
+    attachment_name = str(filing.get("attachment_name") or "").strip()
+    submission_dt = str(filing.get("submission_dt") or "").strip()
 
-    Returns empty string if timing not found.
-    """
-    import json
-    try:
-        if not response:
-            return ""
+    if not symbol:
+        raise ValueError("BSE filing is missing symbol and scrip code")
+    if filing.get("is_bagging"):
+        raise ValueError("Bagging filings must use the hot path")
 
-        # Parse JSON response and extract timing fields
-        try:
-            data = json.loads(response)
-            llm_start_time = data.get("llm_start_time", "")
-            llm_end_time = data.get("llm_end_time", "")
-            llm_delay_ms = data.get("llm_delay_ms", 0)
+    filing_type = map_bse_filing_type(
+        category_name,
+        subcategory_name,
+        headline,
+    )
+    if not filing_type:
+        return {
+            "status": "skipped",
+            "symbol": symbol,
+            "reason": "irrelevant_filing_type",
+        }
 
-            if llm_start_time and llm_end_time:
-                timing_data = {
-                    "llm_start_time": llm_start_time,
-                    "llm_end_time": llm_end_time,
-                    "llm_delay_ms": llm_delay_ms,
-                }
-                return json.dumps(timing_data)
-        except json.JSONDecodeError:
-            pass
-
-        return ""
-    except Exception as exc:
-        print(f"[ERROR] Error parsing LLM timing: {exc}")
-        return ""
+    filename = extract_filename_from_url(attachment_name)
+    cold_inputs = fetch_cold_path_inputs(
+        symbol,
+        submission_dt,
+        attachment_name,
+        filename,
+    )
+    pdf_filename = parse_cold_input(cold_inputs, "pdf_filename")
+    stocktechdata = parse_cold_input(cold_inputs, "stocktechdata")
+    pos_impact = get_pos_impact(
+        filing_type,
+        should_use_positive_impact(filing_type),
+        static_data_path,
+    )
+    neg_impact = get_neg_impact(
+        filing_type,
+        should_use_negative_impact(filing_type),
+        static_data_path,
+    )
+    llm_response = generate_trading_signal(
+        pos_impact,
+        neg_impact,
+        stocktechdata,
+        GEMINI_API_KEY,
+        pdf_filename,
+        symbol,
+        cold_inputs,
+    )
+    signal = parse_trading_signal_value(llm_response)
+    explanation = parse_trading_signal_explanation(llm_response)
+    confidence = parse_trading_signal_confidence(llm_response)
+    publish_status = publish_signal_to_kafka(
+        symbol,
+        submission_dt,
+        signal,
+        explanation,
+        confidence,
+        stocktechdata,
+        filing_type,
+        attachment_name,
+        submission_dt,
+    )
+    return {
+        "status": publish_status,
+        "symbol": symbol,
+        "filing_time": submission_dt,
+        "signal": signal,
+        "explanation": explanation,
+        "confidence": confidence,
+    }
 
 
 # ============================================================================
-# MAIN PIPELINE
+# LEGACY PATHWAY GRAPH (unused; retained temporarily for API compatibility)
 # ============================================================================
 
-def create_nse_filings_pipeline(
+def create_bse_filings_pipeline(
     filings_source: pw.Table,
     static_data_path: str = "staticdata.csv",
     output_path: str = "trading_signals.jsonl"
 ):
     """
-    Create the main Pathway pipeline for NSE filings sentiment analysis
+    Deprecated compatibility entrypoint.
 
     Args:
-        filings_source: Pathway table with NSE filing data
+        filings_source: Pathway table with BSE filing data
         static_data_path: Path to CSV with filing type impact scenarios
         output_path: Path to write trading signals
     """
+    raise RuntimeError(
+        "Pathway has been removed from the BSE pipeline; use "
+        "process_bse_filing via Celery task 'pipeline.bse.process_filing'."
+    )
 
     required_static_columns = {
         "file type",
@@ -1433,52 +1482,59 @@ def create_nse_filings_pipeline(
 
     print("[SENTIMENT] Step 1: Processing filings from scraper...")
 
-    # Log incoming filings
-    def log_filing(symbol, desc, attchmntFile):
-        print(f"[DEBUG] Incoming filing: {symbol} - {desc[:80]}... PDF: {bool(attchmntFile)}")
+    def log_filing(symbol, headline, attachment_name):
+        print(f"[DEBUG] Incoming BSE filing: {symbol} - {headline[:80]}... PDF: {bool(attachment_name)}")
         return symbol
 
     filings_source = filings_source.select(
         *pw.this,
-        _debug=pw.apply(log_filing, pw.this.symbol, pw.this.desc, pw.this.attchmntFile)
+        _debug=pw.apply(
+            log_filing,
+            pw.this.symbol,
+            pw.this.headline,
+            pw.this.attachment_name,
+        )
     )
 
-    # Map filing descriptions to filing types and filter relevant ones
     filings_with_types = filings_source.select(
         *pw.this,
-        filing_type=map_filing_type(pw.this.desc),
-        filename=extract_filename_from_url(pw.this.attchmntFile),
+        filing_type=pw.if_else(
+            pw.this.category_name != "",
+            pw.this.category_name,
+            map_filing_type(pw.this.headline),
+        ),
+        filename=extract_filename_from_url(pw.this.attachment_name),
     )
 
-    # Filter to only process relevant filing types
-    relevant_filings = filings_with_types.filter(pw.this.filing_type != "")
+    relevant_filings = filings_with_types.filter(
+        (pw.this.filing_type != "") & (~pw.this.is_bagging)
+    )
 
     print("[SENTIMENT] Step 1a: Filtered filings by relevant types...")
     print(f"[SENTIMENT] Relevant filing types: {list(RELEVANT_FILE_TYPES.keys())}")
 
-    print("[SENTIMENT] Step 2: Downloading PDFs...")
-
-    # Download PDFs and get the local filename (with unique suffix)
-    filings_with_pdf = relevant_filings.select(
+    print("[SENTIMENT] Step 2: Fetching PDF and stock data concurrently...")
+    filings_with_inputs = relevant_filings.select(
         symbol=pw.this.symbol,
-        desc=pw.this.desc,
+        headline=pw.this.headline,
         filing_type=pw.this.filing_type,
-        sort_date=pw.this.sort_date,
-        attchmntFile=pw.this.attchmntFile,
-        # Download PDF and get local filename (replaces URL-extracted filename)
-        filename=download_and_parse_pdf(pw.this.attchmntFile, pw.this.filename),
-        # Carry through XBRL fields
-        subject_of_announcement=pw.this.subject_of_announcement,
-        attachment_url=pw.this.attachment_url,
-        date_time_of_submission=pw.this.date_time_of_submission,
-    ).filter(pw.this.filename != "")
+        submission_dt=pw.this.submission_dt,
+        attachment_name=pw.this.attachment_name,
+        category_name=pw.this.category_name,
+        cold_inputs=fetch_cold_path_inputs(
+            pw.this.symbol,
+            pw.this.submission_dt,
+            pw.this.attachment_name,
+            pw.this.filename,
+        ),
+    )
 
-    print("[SENTIMENT] Step 2 complete: PDFs downloaded, proceeding to sentiment analysis...")
     print("[SENTIMENT] Step 3: Fetching impact scenarios and stock data...")
 
-    # Determine which impacts to fetch based on filing type configuration
-    filings_with_impact_flags = filings_with_pdf.select(
+    filings_with_impact_flags = filings_with_inputs.select(
         *pw.this,
+        filename=parse_cold_input(pw.this.cold_inputs, "pdf_filename"),
+        stocktechdata=parse_cold_input(pw.this.cold_inputs, "stocktechdata"),
         use_positive=should_use_positive_impact(pw.this.filing_type),
         use_negative=should_use_negative_impact(pw.this.filing_type),
     )
@@ -1487,7 +1543,6 @@ def create_nse_filings_pipeline(
         *pw.this,
         pos_impact=get_pos_impact(pw.this.filing_type, pw.this.use_positive, static_data_path),
         neg_impact=get_neg_impact(pw.this.filing_type, pw.this.use_negative, static_data_path),
-        stocktechdata=fetch_stock_data(pw.this.symbol, pw.this.sort_date)
     )
 
     print("[SENTIMENT] Step 4: Generating trading signals with LLM...")
@@ -1501,22 +1556,23 @@ def create_nse_filings_pipeline(
             pw.this.neg_impact,
             pw.this.stocktechdata,
             GEMINI_API_KEY,
-            pw.this.filename)
+            pw.this.filename,
+            pw.this.symbol,
+            pw.this.cold_inputs,
+        )
     )
 
     print("[SENTIMENT] Step 5: Parsing trading signals...")
     trading_signals = filings_with_responses.select(
         symbol=pw.this.symbol,
-        filing_time=pw.this.sort_date,
+        filing_time=pw.this.submission_dt,
         signal=parse_trading_signal_value(pw.this.llm_response),
         explanation=parse_trading_signal_explanation(pw.this.llm_response),
         confidence=parse_trading_signal_confidence(pw.this.llm_response),
-        llm_timing=parse_llm_timing(pw.this.llm_response),  # Extract LLM timing metadata
-        stocktechdata=pw.this.stocktechdata,  # Pass through for price extraction
-        # Carry through XBRL fields
-        subject_of_announcement=pw.this.subject_of_announcement,
-        attachment_url=pw.this.attachment_url,
-        date_time_of_submission=pw.this.date_time_of_submission,
+        stocktechdata=pw.this.stocktechdata,
+        subject_of_announcement=pw.this.category_name,
+        attachment_url=pw.this.attachment_name,
+        date_time_of_submission=pw.this.submission_dt,
     )
 
     print("[SENTIMENT] Step 6: Publishing signals to Kafka and writing to disk...")
@@ -1533,10 +1589,9 @@ def create_nse_filings_pipeline(
             pw.this.explanation,
             pw.this.confidence,
             pw.this.stocktechdata,  # Pass stocktechdata for price extraction
-            pw.this.llm_timing,  # Pass LLM timing metadata
-            pw.this.subject_of_announcement,  # XBRL field
-            pw.this.attachment_url,  # XBRL field
-            pw.this.date_time_of_submission,  # XBRL field
+            pw.this.subject_of_announcement,
+            pw.this.attachment_url,
+            pw.this.date_time_of_submission,
         ),
         # Include XBRL fields in output
         subject_of_announcement=pw.this.subject_of_announcement,
@@ -1570,7 +1625,7 @@ def create_filings_input_from_csv(csv_path: str) -> pw.Table:
     """Create Pathway table from CSV file"""
     return pw.io.csv.read(
         csv_path,
-        schema=NSEFilingSchema,
+        schema=BSEFilingSchema,
         mode="streaming",
         autocommit_duration_ms=50,  # Minimal latency for trading signals
     )
@@ -1581,7 +1636,7 @@ def create_filings_input_from_kafka(kafka_settings: dict, topic: str) -> pw.Tabl
     return pw.io.kafka.read(
         kafka_settings,
         topic=topic,
-        schema=NSEFilingSchema,
+        schema=BSEFilingSchema,
         format="json",
         autocommit_duration_ms=50,  # Minimal latency for trading signals
     )
@@ -1590,17 +1645,14 @@ def create_filings_input_from_kafka(kafka_settings: dict, topic: str) -> pw.Tabl
 def create_filings_input_from_http(port: int = 8001) -> tuple[pw.Table, pw.io.http.PathwayWebserver]:
     """Create Pathway table from HTTP REST API"""
     class FilingInputSchema(pw.Schema):
+        slno: str = pw.column_definition(primary_key=True)
         symbol: str
-        desc: str
-        dt: str
-        attchmntFile: str
-        sm_name: str
-        sm_isin: str
-        an_dt: str
-        sort_date: str
-        seq_id: str
-        attchmntText: str
-        fileSize: str
+        scrip_cd: str
+        headline: str
+        category_name: str
+        attachment_name: str
+        submission_dt: str
+        is_bagging: bool
 
     webserver = pw.io.http.PathwayWebserver(host="0.0.0.0", port=port)
 
@@ -1619,16 +1671,11 @@ def create_filings_input_from_http(port: int = 8001) -> tuple[pw.Table, pw.io.ht
 # ============================================================================
 
 def main():
-    """Main execution function"""
-
-    filings_input, writer = create_filings_input_from_http(port=8001)
-
-    trading_signals = create_nse_filings_pipeline(
-        filings_source=filings_input,
-        static_data_path="staticdata.csv",
-        output_path="trading_signals.jsonl"
+    """Explain the worker entrypoint when this module is run directly."""
+    print(
+        "BSE cold-path processing runs as Celery task "
+        "'pipeline.bse.process_filing'. Start bse_scraper.py for ingestion."
     )
-    pw.run()
 
 
 if __name__ == "__main__":

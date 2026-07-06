@@ -221,6 +221,7 @@ services:
       - ./shared:/app/shared
       - ./middleware:/app/middleware
       - ./scripts:/app/scripts
+      - portfolio_prisma_cache:/root/.cache/prisma-python
     ports:
       - "8000:8000"
     depends_on:
@@ -251,12 +252,15 @@ services:
     working_dir: /app/apps/portfolio-server
     command: >
       bash -c "cp /app/apps/portfolio-server/docker.env /app/apps/portfolio-server/.env 2>/dev/null || true &&
-               python -m prisma generate &&
-               until python -m prisma db push --accept-data-loss; do
-                 echo 'Waiting for Postgres...';
+               for i in $$(seq 1 60); do
+                 if find /root/.cache/prisma-python -type f -name '*query-engine*' -perm -111 | grep -q .; then
+                   break;
+                 fi;
+                 echo 'Waiting for shared Prisma query engine...';
                  sleep 2;
                done &&
-               celery -A celery_app:celery_app worker --loglevel=info -Q trading --concurrency=4 --hostname=trading@%h --max-tasks-per-child=100 --prefetch-multiplier=1"
+               find /root/.cache/prisma-python -type f -name '*query-engine*' -perm -111 | grep -q . &&
+               celery -A celery_app:celery_app worker --loglevel=info -Q trading --pool=solo --concurrency=1 --hostname=trading@%h --prefetch-multiplier=1"
     ports:
       - "9101:9101"
     volumes:
@@ -265,11 +269,14 @@ services:
       - ./middleware:/app/middleware
       - ./scripts:/app/scripts
       - ./quant-stream:/app/quant-stream
+      - portfolio_prisma_cache:/root/.cache/prisma-python
     depends_on:
       portfolio_postgres:
         condition: service_healthy
       portfolio_redis:
         condition: service_healthy
+      portfolio_server:
+        condition: service_started
     networks:
       - agentInvest
 
@@ -306,6 +313,7 @@ services:
       - ./shared:/app/shared
       - ./middleware:/app/middleware
       - ./scripts:/app/scripts
+      - portfolio_prisma_cache:/root/.cache/prisma-python
       - ./staticdata.csv:/app/apps/portfolio-server/staticdata.csv:ro
     depends_on:
       portfolio_postgres:
@@ -470,6 +478,7 @@ services:
       - ./middleware:/app/middleware
       - ./scripts:/app/scripts
       - ./quant-stream:/app/quant-stream
+      - ./staticdata.csv:/app/apps/portfolio-server/staticdata.csv:ro
     depends_on:
       portfolio_postgres:
         condition: service_healthy
@@ -1068,4 +1077,6 @@ volumes:
   portainer_data:
     driver: local
   phoenix_data:
+    driver: local
+  portfolio_prisma_cache:
     driver: local

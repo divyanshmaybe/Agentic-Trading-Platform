@@ -28,7 +28,9 @@ class MarketController:
         
         self.finnhub_http_url = os.getenv("FINNHUB_HTTP_URL", "https://finnhub.io/api/v1/quote")
         
-        logger.info("✅ Market controller initialized - No fallback pricing, fail fast on data unavailability")
+        logger.info(
+            "Market controller initialized with live-stream and REST fallback pricing"
+        )
 
         self.symbol_prefix = os.getenv("MARKET_DATA_SYMBOL_PREFIX", "")
         self.symbol_suffix = os.getenv("MARKET_DATA_SYMBOL_SUFFIX", "")
@@ -144,6 +146,16 @@ class MarketController:
         
         import time
         start_time = time.time()
+
+        # Avoid expensive lazy Angel One initialization on the request path.
+        # If no stream service is warm yet, REST pricing provides the paper
+        # engine with a valid exchange reference immediately.
+        if self._service is None:
+            fallback_price, fallback_ticker = await self._fetch_yahoo_price(
+                provider_symbol
+            )
+            if fallback_price is not None:
+                return fallback_price, "rest-fallback", "yahoo-finance"
         
         use_websocket = os.getenv("MARKET_DATA_USE_WEBSOCKET", "true").lower() in ("true", "1", "yes")
         
@@ -156,10 +168,11 @@ class MarketController:
                     logger.debug(f"[PERF] {provider_symbol} from cache in {(time.time()-start_time)*1000:.1f}ms")
                     return price, "cache", self.service.adapter.name
 
-                # Subscribe and wait (10s timeout)
+                # Keep the streaming wait short so REST fallback can still
+                # resolve the paper-trade price inside the caller's timeout.
                 self.service.register_symbol(provider_symbol)
                 ws_start = time.time()
-                price = await self.service.await_price(provider_symbol, timeout=10.0)
+                price = await self.service.await_price(provider_symbol, timeout=0.75)
                 if price is not None:
                     logger.info(f"[PERF] {provider_symbol} from WebSocket in {(time.time()-ws_start)*1000:.1f}ms")
                     return price, "live-stream", self.service.adapter.name
@@ -171,12 +184,67 @@ class MarketController:
             except Exception as ws_exc:
                 logger.error(f"❌ WebSocket error for {provider_symbol}: {ws_exc}")
 
-        # NO FALLBACK - fail fast
+        fallback_price, fallback_ticker = await self._fetch_yahoo_price(
+            provider_symbol
+        )
+        if fallback_price is not None:
+            logger.info(
+                "[PERF] %s from REST fallback (%s) in %.1fms",
+                provider_symbol,
+                fallback_ticker,
+                (time.time() - start_time) * 1000,
+            )
+            return fallback_price, "rest-fallback", "yahoo-finance"
+
         logger.error(
             f"❌ Price unavailable for {provider_symbol} after {(time.time()-start_time)*1000:.1f}ms. "
             f"Check if symbol exists in Angel One token map."
         )
         return None, "unavailable", self.service.adapter.name if self._service else "unavailable"
+
+    async def _fetch_yahoo_price(
+        self, provider_symbol: str
+    ) -> tuple[Optional[Decimal], str]:
+        """Fetch a current or last-close reference price from NSE/BSE."""
+        base_symbol = provider_symbol.strip().upper()
+        candidates = (
+            [base_symbol]
+            if base_symbol.endswith((".NS", ".BO"))
+            else [f"{base_symbol}.NS", f"{base_symbol}.BO"]
+        )
+
+        async with httpx.AsyncClient(
+            timeout=5.0,
+            headers={"User-Agent": "Mozilla/5.0"},
+        ) as client:
+            for ticker in candidates:
+                try:
+                    response = await client.get(
+                        "https://query1.finance.yahoo.com/v8/finance/chart/"
+                        f"{ticker}",
+                        params={"interval": "1m", "range": "1d"},
+                    )
+                    if response.status_code != 200:
+                        continue
+                    results = (
+                        response.json().get("chart", {}).get("result") or []
+                    )
+                    if not results:
+                        continue
+                    metadata = results[0].get("meta", {})
+                    raw_price = (
+                        metadata.get("regularMarketPrice")
+                        or metadata.get("previousClose")
+                        or metadata.get("chartPreviousClose")
+                    )
+                    price = Decimal(str(raw_price))
+                    if price > 0:
+                        return price, ticker
+                except Exception as exc:
+                    logger.debug(
+                        "REST fallback failed for %s: %s", ticker, exc
+                    )
+        return None, ""
 
     async def _fetch_rest_price(self, provider_symbol: str) -> Optional[Decimal]:
         token = (

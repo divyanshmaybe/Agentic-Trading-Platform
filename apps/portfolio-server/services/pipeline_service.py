@@ -85,8 +85,8 @@ class PipelineService:
         self._load_environment()
         self._update_status("starting")
         try:
-            self.logger.info("Starting NSE pipeline in Celery worker")
-            self._execute_nse_pipeline()
+            self.logger.info("Starting BSE pipeline in Celery worker")
+            self._execute_bse_pipeline()
         finally:
             self._update_status("stopped")
 
@@ -1371,7 +1371,7 @@ class PipelineService:
                 for value in (
                     payload.get("signal_id"),
                     payload.get("request_id"),
-                    payload.get("seq_id"),
+                    payload.get("slno"),
                 )
                 if value is not None and str(value).strip()
             ),
@@ -1380,7 +1380,7 @@ class PipelineService:
 
         filing_time = (
             str(payload.get("filing_time", ""))
-            or str(payload.get("sort_date", ""))
+            or str(payload.get("submission_dt", ""))
             or datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
         )
 
@@ -1765,16 +1765,9 @@ class PipelineService:
             
             dispatched = executed  # All dispatched trades were executed immediately
 
-        # Disconnect via DBManager (handles timeouts and SoftTimeLimitExceeded gracefully)
-        # Don't disconnect directly via client - use the manager for proper cleanup
-        try:
-            await asyncio.wait_for(db_manager.disconnect(timeout=3.0), timeout=5.0)
-        except asyncio.TimeoutError:
-            self.logger.warning("⚠️ DB disconnect timed out, continuing...")
-        except Exception as disc_exc:
-            exc_name = type(disc_exc).__name__
-            if exc_name != "SoftTimeLimitExceeded":
-                self.logger.debug("DB disconnect error (non-critical): %s", disc_exc)
+        # Keep the worker-scoped DBManager connection alive. Disconnecting it
+        # after every signal can block the Celery child after processing has
+        # completed, leaving the task permanently active.
 
         return {
             "processed_signals": len(processed_signals),
@@ -1788,23 +1781,36 @@ class PipelineService:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _execute_nse_pipeline(self) -> None:
-        nse_dir = os.path.join(self.server_dir, "pipelines/nse")
+    def _execute_bse_pipeline(self) -> None:
+        pipeline_dir = os.path.join(self.server_dir, "pipelines/nse")
         original_dir = os.getcwd()
 
         try:
-            os.chdir(nse_dir)
-            sys.path.insert(0, nse_dir)
+            os.chdir(pipeline_dir)
+            sys.path.insert(0, pipeline_dir)
 
+            from bse_scraper import BSEScraper
+
+            refresh_interval = int(os.getenv("BSE_REFRESH_INTERVAL", "5"))
+            self.logger.info(
+                "Starting direct BSE poller (interval: %ss, no Pathway)",
+                refresh_interval,
+            )
+            self._update_status("running")
+            BSEScraper(refresh_interval=refresh_interval).run()
+            return
+
+            # Legacy Pathway implementation retained below temporarily for
+            # rollback reference; it is unreachable.
             import pathway as pw
-            from nse_filings_sentiment import create_nse_filings_pipeline
-            from nse_live_scraper import create_nse_scraper_input
+            from bse_sentiment import create_bse_filings_pipeline
+            from bse_scraper import create_bse_scraper_input
 
             self.logger.info("=" * 70)
-            self.logger.info("NSE Live Trading Pipeline - Real-time Sentiment Analysis")
+            self.logger.info("BSE Live Trading Pipeline - Real-time Sentiment Analysis")
             self.logger.info("=" * 70)
 
-            refresh_interval = int(os.getenv("NSE_REFRESH_INTERVAL", "60"))
+            refresh_interval = int(os.getenv("BSE_REFRESH_INTERVAL", "5"))
             static_data_path = str(
                 Path(__file__).resolve().parents[1] / "staticdata.csv"
             )
@@ -1820,18 +1826,18 @@ class PipelineService:
             )
 
             self.logger.info(
-                "Starting live NSE scraper (interval: %ss)...", refresh_interval
+                "Starting live BSE scraper (interval: %ss)...", refresh_interval
             )
             try:
-                filings_input = create_nse_scraper_input(refresh_interval=refresh_interval)
-                self.logger.info("✓ NSE scraper input created successfully")
+                filings_input = create_bse_scraper_input(refresh_interval=refresh_interval)
+                self.logger.info("✓ BSE scraper input created successfully")
             except Exception as scraper_exc:
-                self.logger.error("❌ Failed to create NSE scraper input: %s", scraper_exc, exc_info=True)
+                self.logger.error("❌ Failed to create BSE scraper input: %s", scraper_exc, exc_info=True)
                 raise
 
             self.logger.info("Building sentiment analysis pipeline...")
             try:
-                trading_signals = create_nse_filings_pipeline(
+                trading_signals = create_bse_filings_pipeline(
                     filings_source=filings_input,
                     static_data_path=static_data_path,
                     output_path=signals_output,
