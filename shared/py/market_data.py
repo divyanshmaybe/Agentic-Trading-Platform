@@ -565,6 +565,61 @@ class MarketDataService:
         normalized = self._normalize_symbol(symbol).upper()
         return await self._get_price_async(normalized, timeout)
     
+    async def _fetch_price_via_rest(self, normalized: str) -> Optional[Decimal]:
+        """Fetch current LTP for a symbol using Angel One's HTTP REST API as a fallback."""
+        try:
+            import httpx
+            
+            token_info = self._get_token_info(normalized)
+            if not token_info:
+                return None
+                
+            symbol_token = token_info.get("token")
+            actual_exchange = token_info.get("exch_seg", "NSE")
+            api_symbol = token_info.get("_matched_key") or token_info.get("symbol") or normalized
+            
+            url = "https://apiconnect.angelone.in/rest/secure/angelbroking/order/v1/getLtp"
+            
+            headers = {
+                "Authorization": f"Bearer {self.jwt_token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "X-UserType": "USER",
+                "X-SourceID": "WEB",
+                "X-ClientLocalIP": "127.0.0.1",
+                "X-ClientPublicIP": "127.0.0.1",
+                "X-MACAddress": "00:00:00:00:00:00",
+                "X-PrivateKey": self.api_key
+            }
+            
+            payload = {
+                "exchange": actual_exchange,
+                "tradingsymbol": api_symbol,
+                "symboltoken": symbol_token
+            }
+            
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.post(url, json=payload, headers=headers)
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get("status") and data.get("data"):
+                        ltp = data["data"].get("ltp")
+                        if ltp is not None:
+                            price = Decimal(str(ltp))
+                            # Cache the fetched price
+                            self._prices[normalized] = price
+                            if not normalized.endswith("-EQ"):
+                                self._prices[f"{normalized}-EQ"] = price
+                            else:
+                                self._prices[normalized[:-3]] = price
+                            logger.info(f"☎️ Fetched LTP via REST fallback for {normalized}: ₹{price}")
+                            return price
+                logger.warning(f"REST LTP fetch failed for {normalized}: Status {response.status_code}, Response: {response.text}")
+                return None
+        except Exception as e:
+            logger.warning(f"Error fetching LTP via REST for {normalized}: {e}")
+            return None
+
     async def _get_price_async(self, normalized: str, timeout: float = 1.0) -> Decimal:
         """
         Internal async method to get price:
@@ -592,6 +647,10 @@ class MarketDataService:
             await asyncio.sleep(0.1)
         
         if not self._connected or not self._ws:
+            logger.info(f"WebSocket not connected/active for {normalized}. Trying REST fallback...")
+            rest_price = await self._fetch_price_via_rest(normalized)
+            if rest_price is not None:
+                return rest_price
             raise RuntimeError("WebSocket not connected")
         
         # Get the token map symbol for subscription (might be different format)
@@ -639,6 +698,12 @@ class MarketDataService:
         price = self._get_cached_price_multi(normalized)
         if price is not None:
             return price
+
+        # WebSocket timeout fallback - try fetching via REST before failing
+        logger.info(f"WebSocket price fetch timeout for {normalized}. Trying REST fallback...")
+        rest_price = await self._fetch_price_via_rest(normalized)
+        if rest_price is not None:
+            return rest_price
 
         raise RuntimeError(f"Price for {normalized} not available (timeout {timeout}s)")
     
