@@ -941,3 +941,71 @@ class AdminController:
             "agents_with_errors": error_agents,
             "high_concentration_symbols": high_concentration,
         }
+
+    async def reset_database(self, organization_id: str) -> Dict[str, Any]:
+        """
+        Reset the portfolio database for the organization.
+        Manually deletes NseObservabilityLog, CompanyReport, AlphaCopilot tables,
+        and deletes Portfolio + Objective records (cascades delete allocations, trades, positions, snapshots, signals).
+        """
+        try:
+            self.logger.info(f"♻️ Initiating database reset for organization {organization_id}...")
+
+            # 1. Fetch all portfolio IDs to find related records
+            portfolios = await self.prisma.portfolio.find_many(
+                where={"organization_id": organization_id}
+            )
+            portfolio_ids = [p.id for p in portfolios]
+
+            # 2. Delete NseObservabilityLog manually (linked to trades)
+            trades = await self.prisma.trade.find_many(
+                where={"organization_id": organization_id}
+            )
+            trade_ids = [t.id for t in trades]
+            if trade_ids:
+                await self.prisma.nseobservabilitylog.delete_many(
+                    where={"trade_id": {"in": trade_ids}}
+                )
+                self.logger.info(f"Deleted {len(trade_ids)} trade observability logs")
+
+            # 3. Delete CompanyReports (they are independent)
+            await self.prisma.companyreport.delete_many()
+
+            # 4. Delete AlphaCopilot runs/iter/log/result (they are independent)
+            await self.prisma.alphacopilotrun.delete_many()
+            await self.prisma.alphacopilotiteration.delete_many()
+            await self.prisma.alphacopilotresult.delete_many()
+            await self.prisma.alphacopilotlog.delete_many()
+            self.logger.info("Cleared AlphaCopilot runs and logs")
+
+            # 5. Delete Portfolios for the organization (cascading deletes allocations, trades, positions, snapshots, etc.)
+            if portfolio_ids:
+                await self.prisma.portfolio.delete_many(
+                    where={"id": {"in": portfolio_ids}}
+                )
+                self.logger.info(f"Deleted {len(portfolio_ids)} portfolios and all cascading children")
+
+            # 6. Delete Objectives for this organization's users
+            users = await self._fetch_auth_users(organization_id)
+            user_ids = [u["id"] for u in users if "id" in u]
+            if user_ids:
+                await self.prisma.objective.delete_many(
+                    where={"user_id": {"in": user_ids}}
+                )
+                self.logger.info(f"Deleted objectives for user_ids: {user_ids}")
+            else:
+                # Fallback: delete all objectives
+                await self.prisma.objective.delete_many()
+                self.logger.info("Cleared all objectives (fallback)")
+
+            return {
+                "status": "success",
+                "message": "Database reset completed successfully. A new clean portfolio will be generated on next access.",
+            }
+        except Exception as e:
+            self.logger.error(f"❌ Database reset failed: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to reset database: {str(e)}"
+            )
+

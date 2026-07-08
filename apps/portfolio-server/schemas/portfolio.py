@@ -88,6 +88,11 @@ class TradeSummary(BaseModel):
     agent_id: Optional[str] = None  # Trading agent ID
     agent_name: Optional[str] = None  # Trading agent name
     triggered_by: Optional[str] = None  # What triggered the trade (e.g., alpha signal, user)
+    exit_quantity: Optional[int] = None
+    exit_price: Optional[Decimal] = None
+    exit_time: Optional[datetime] = None
+    exit_reason: Optional[str] = None
+    realized_pnl: Optional[Decimal] = None
 
     class Config:
         from_attributes = True

@@ -230,10 +230,14 @@ def enforce_market_hours(
     - NO EXCEPTIONS, NO FALLBACKS
     """
     if demo_mode is None:
-        demo_mode = os.getenv("DEMO_MODE", "false").lower() in {"1", "true", "yes"}
+        demo_mode = (
+            os.getenv("DEMO_MODE", "false").lower() in {"1", "true", "yes"} or
+            os.getenv("CFDT_PAPER_TRADING_ONLY", "false").lower() in {"1", "true", "yes"} or
+            os.getenv("NSE_TEST_MODE", "false").lower() in {"1", "true", "yes"}
+        )
     
     if demo_mode:
-        logger.debug("Market hours enforcement skipped (DEMO_MODE=true)")
+        logger.debug("Market hours enforcement skipped (DEMO_MODE/PAPER_TRADING/TEST_MODE = true)")
         return
     
     if dt is None:

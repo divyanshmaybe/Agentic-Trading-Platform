@@ -3,7 +3,9 @@ from __future__ import annotations
 import os
 import sys
 import hashlib
+import asyncio
 from pathlib import Path
+from decimal import Decimal
 
 from celery.utils.log import get_task_logger
 
@@ -17,6 +19,76 @@ if str(SHARED_PY_PATH) not in sys.path:
 from services.pipeline_service import PipelineService  # type: ignore  # noqa: E402
 
 task_logger = get_task_logger(__name__)
+
+
+def _normalise_reference_price(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        price = float(value)
+    except (TypeError, ValueError):
+        return None
+    return price if price > 0 else None
+
+
+def _run_price_fetch(symbol: str) -> Decimal | None:
+    from utils.trade_execution import fetch_market_price_via_http
+
+    try:
+        return asyncio.run(fetch_market_price_via_http(symbol, timeout=10.0))
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            return loop.run_until_complete(
+                fetch_market_price_via_http(symbol, timeout=10.0)
+            )
+        finally:
+            asyncio.set_event_loop(None)
+            loop.close()
+
+
+def _ensure_signal_reference_price(signal_payload: dict) -> dict:
+    """Attach a current price to a filing signal before sizing/persistence."""
+
+    payload = dict(signal_payload or {})
+    symbol = str(payload.get("symbol") or "").strip().upper()
+    if not symbol:
+        return payload
+
+    existing_price = _normalise_reference_price(payload.get("reference_price"))
+    if existing_price is not None:
+        payload["reference_price"] = existing_price
+        return payload
+
+    metadata = payload.get("metadata")
+    if isinstance(metadata, str):
+        import json
+
+        try:
+            metadata = json.loads(metadata)
+        except json.JSONDecodeError:
+            metadata = {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+
+    metadata_price = _normalise_reference_price(metadata.get("reference_price"))
+    if metadata_price is not None:
+        payload["reference_price"] = metadata_price
+        payload["metadata"] = metadata
+        return payload
+
+    fetched_price = _run_price_fetch(symbol)
+    if fetched_price is None or fetched_price <= 0:
+        raise RuntimeError(f"Unable to fetch current market price for {symbol}")
+
+    price = float(fetched_price)
+    metadata["reference_price"] = price
+    metadata["price_source"] = "portfolio_market_api"
+    payload["reference_price"] = price
+    payload["metadata"] = metadata
+    task_logger.info("Fetched current price for %s before trade sizing: %.2f", symbol, price)
+    return payload
 
 
 @celery_app.task(
@@ -408,6 +480,7 @@ def process_trade_signal(self, signal_payload: dict) -> dict:
         return duplicate_result
 
     try:
+        signal_payload = _ensure_signal_reference_price(signal_payload)
         task_logger.info("📊 Processing trade signal for: %s", signal_payload.get('symbol'))
         
         server_dir = Path(__file__).resolve().parents[1]

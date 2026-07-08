@@ -434,7 +434,7 @@ class TradeExecutionService:
             "quantity": int(job_row["quantity"]),
             "price": reference_price,
             "status": "pending",
-            "source": "manual_api" if is_manual_trade else "nse_pipeline",
+            "source": job_row.get("source") or ("manual_api" if is_manual_trade else "nse_pipeline"),
             "metadata": Json(metadata),  # Use Prisma Json wrapper for proper storage
         }
         
@@ -991,6 +991,10 @@ class TradeExecutionService:
                 self.logger.warning("No linked Trade found for TradeExecutionLog %s", trade_id)
                 return {"status": "missing_trade", "trade_id": trade_id}
 
+            if str(getattr(trade, "status", "")).lower() not in ["pending", "pending_tp", "pending_sl"]:
+                self.logger.info("⚠️ Trade %s has status '%s', already executed.", trade_id, trade.status)
+                return {"status": "already_executed", "trade_id": trade_id}
+
             # Ensure client is available for all operations
             client = await self._ensure_client()
 
@@ -1400,20 +1404,11 @@ class TradeExecutionService:
         executed_quantity: int,
     ) -> None:
         """
-        Create take-profit and stop-loss orders for an executed trade.
-
-        This creates pending orders that will be monitored by the order monitor worker.
-        Uses the fixed TP/SL prices calculated during trade creation.
-
-        Args:
-            trade_record: The executed TradeExecutionLog record (with linked Trade)
-            executed_price: Price at which the trade was executed
-            executed_quantity: Quantity that was executed
+        Set/recalculate take-profit and stop-loss prices for an executed trade.
+        Stores them on the original parent trade instead of creating child rows.
         """
-
         client = await self._ensure_client()
 
-        # Get the linked Trade record to access TP/SL prices and other fields
         if not hasattr(trade_record, "trade") or not trade_record.trade:
             self.logger.warning(
                 "Cannot create TP/SL orders: no linked Trade for TradeExecutionLog %s",
@@ -1423,7 +1418,6 @@ class TradeExecutionService:
         
         parent_trade = trade_record.trade
         
-        # Skip TP/SL orders for alpha signals - they manage their own exit strategy
         metadata = {}
         if hasattr(parent_trade, "metadata") and parent_trade.metadata:
             meta_raw = parent_trade.metadata
@@ -1444,51 +1438,28 @@ class TradeExecutionService:
             )
             return
         
-        # Extract fields from parent trade
         portfolio_id = str(getattr(parent_trade, "portfolio_id", ""))
         symbol = str(getattr(parent_trade, "symbol", ""))
         side = str(getattr(parent_trade, "side", "BUY"))
         
-        # Get fixed TP/SL prices from parent trade
-        tp_price_raw = getattr(parent_trade, "take_profit_price", None)
-        sl_price_raw = getattr(parent_trade, "stop_loss_price", None)
-        
-        if not tp_price_raw or not sl_price_raw:
-            self.logger.warning(
-                "Cannot create TP/SL orders: missing TP/SL prices for trade %s",
-                getattr(parent_trade, "id", ""),
-            )
-            return
-        
-        tp_price = float(tp_price_raw)
-        sl_price = float(sl_price_raw)
-        
-        # Get TP/SL percentages for logging
         tp_pct = float(
-            getattr(parent_trade, "take_profit_pct", Decimal(str(TAKE_PROFIT_PCT)))
+            getattr(parent_trade, "take_profit_pct", None) or Decimal(str(TAKE_PROFIT_PCT))
         )
         sl_pct = float(
-            getattr(parent_trade, "stop_loss_pct", Decimal(str(STOP_LOSS_PCT)))
+            getattr(parent_trade, "stop_loss_pct", None) or Decimal(str(STOP_LOSS_PCT))
         )
 
-        self.logger.debug(
-            "Creating TP/SL orders for %s: TP @ ₹%.2f (%.1f%%), SL @ ₹%.2f (%.1f%%)",
-            symbol, tp_price, tp_pct * 100, sl_price, sl_pct * 100
-        )
+        tp_price = executed_price * (1 + tp_pct) if side == "BUY" else executed_price * (1 - tp_pct)
+        sl_price = executed_price * (1 - sl_pct) if side == "BUY" else executed_price * (1 + sl_pct)
 
         if not portfolio_id or not symbol:
             self.logger.warning(
-                "Cannot create TP/SL orders: missing required fields for trade %s",
+                "Cannot create TP/SL: missing required fields for trade %s",
                 getattr(parent_trade, "id", ""),
             )
             return
 
         try:
-            # Get portfolio for organization/customer info
-            portfolio = await client.portfolio.find_unique(where={"id": portfolio_id})
-
-            # Protect the entire resulting position, not merely the latest fill.
-            # This also makes manual/add-on fills safe if they occur outside CFDT.
             open_position = await client.position.find_first(
                 where={
                     "portfolio_id": portfolio_id,
@@ -1497,7 +1468,6 @@ class TradeExecutionService:
                 }
             )
             if open_position:
-                executed_quantity = abs(int(getattr(open_position, "quantity", 0) or 0))
                 position_price = float(
                     getattr(open_position, "average_buy_price", executed_price)
                     or executed_price
@@ -1509,162 +1479,21 @@ class TradeExecutionService:
                     tp_price = position_price * (1 - tp_pct)
                     sl_price = position_price * (1 + sl_pct)
 
-            # FIRST: Cancel any existing pending TP/SL orders for this symbol
-            # This avoids the unique constraint violation (portfolio_id, symbol, status)
-            await self._cancel_pending_tp_sl_orders(portfolio_id, symbol, client)
-
-            # Determine TP/SL sides based on original trade side
-            if side == "BUY":
-                # For long positions, TP and SL are both SELL
-                tp_side = "SELL"
-                sl_side = "SELL"
-            else:
-                # For short positions, TP and SL are both BUY
-                tp_side = "BUY"
-                sl_side = "BUY"
-
-            # Create Take-Profit Order
-            tp_metadata = {
-                "order_type": "take_profit",
-                "parent_trade_id": str(parent_trade.id),
-                "triggered_by": "nse_pipeline_tp",
-                "target_price": tp_price,
-                "target_pct": tp_pct,
-            }
-
-            # Create TP Trade record
-            # Use "pending_tp" status to avoid unique constraint with regular "pending" trades
-            tp_trade_data = {
-                "portfolio_id": portfolio_id,
-                "organization_id": getattr(portfolio, "organization_id", None) if portfolio else None,
-                "customer_id": getattr(portfolio, "customer_id", None) if portfolio else None,
-                "trade_type": "auto",
-                "symbol": symbol,
-                "exchange": "NSE",
-                "segment": "EQUITY",
-                "side": tp_side,
-                "order_type": "limit",  # TP is a limit order
-                "quantity": executed_quantity,
-                "limit_price": self._as_decimal(tp_price),
-                "price": self._as_decimal(tp_price),
-                "trigger_price": self._as_decimal(tp_price),
-                "status": "pending_tp",  # Use distinct status to avoid unique constraint
-                "source": "nse_pipeline_tp_sl",
-                "metadata": json.dumps(tp_metadata),
-            }
-
-            # Copy NSE fields from parent trade
-            if hasattr(parent_trade, "signal_id") and parent_trade.signal_id:
-                tp_trade_data["signal_id"] = parent_trade.signal_id
-            if hasattr(parent_trade, "allocated_capital"):
-                tp_trade_data["allocated_capital"] = parent_trade.allocated_capital
-            if hasattr(parent_trade, "confidence"):
-                tp_trade_data["confidence"] = parent_trade.confidence
-            if hasattr(parent_trade, "agent_id") and parent_trade.agent_id:
-                tp_trade_data["agent_id"] = parent_trade.agent_id
-
-            tp_trade_record = await client.trade.create(data=tp_trade_data)
-
-            # Create TP TradeExecutionLog
-            tp_execution_record = await client.tradeexecutionlog.create(
-                data={
-                    "trade_id": tp_trade_record.id,
-                    "request_id": f"tp_{uuid.uuid4().hex[:12]}",
-                    "status": "pending",
-                    "order_type": "take_profit",
-                    "metadata": json.dumps(tp_metadata),
-                }
-            )
-
-            self.logger.info(
-                "✅ Created TP order %s (Trade: %s): %s %s x %d @ ₹%.2f (%.1f%% profit target)",
-                tp_execution_record.id,
-                tp_trade_record.id,
-                tp_side,
-                symbol,
-                executed_quantity,
-                tp_price,
-                tp_pct * 100,
-            )
-
-            # Create Stop-Loss Order
-            sl_metadata = {
-                "order_type": "stop_loss",
-                "parent_trade_id": str(parent_trade.id),
-                "triggered_by": "nse_pipeline_sl",
-                "target_price": sl_price,
-                "target_pct": sl_pct,
-            }
-
-            # Create SL Trade record
-            # Use "pending_sl" status to avoid unique constraint with regular "pending" trades
-            sl_trade_data = {
-                "portfolio_id": portfolio_id,
-                "organization_id": getattr(portfolio, "organization_id", None) if portfolio else None,
-                "customer_id": getattr(portfolio, "customer_id", None) if portfolio else None,
-                "trade_type": "auto",
-                "symbol": symbol,
-                "exchange": "NSE",
-                "segment": "EQUITY",
-                "side": sl_side,
-                "order_type": "stop",  # SL is a stop-loss order
-                "quantity": executed_quantity,
-                "limit_price": self._as_decimal(sl_price),
-                "price": self._as_decimal(sl_price),
-                "trigger_price": self._as_decimal(sl_price),
-                "status": "pending_sl",  # Use distinct status to avoid unique constraint
-                "source": "nse_pipeline_tp_sl",
-                "metadata": json.dumps(sl_metadata),
-            }
-
-            # Copy NSE fields from parent trade
-            if hasattr(parent_trade, "signal_id") and parent_trade.signal_id:
-                sl_trade_data["signal_id"] = parent_trade.signal_id
-            if hasattr(parent_trade, "allocated_capital"):
-                sl_trade_data["allocated_capital"] = parent_trade.allocated_capital
-            if hasattr(parent_trade, "confidence"):
-                sl_trade_data["confidence"] = parent_trade.confidence
-            if hasattr(parent_trade, "agent_id") and parent_trade.agent_id:
-                sl_trade_data["agent_id"] = parent_trade.agent_id
-
-            sl_trade_record = await client.trade.create(data=sl_trade_data)
-
-            # Create SL TradeExecutionLog
-            sl_execution_record = await client.tradeexecutionlog.create(
-                data={
-                    "trade_id": sl_trade_record.id,
-                    "request_id": f"sl_{uuid.uuid4().hex[:12]}",
-                    "status": "pending",
-                    "order_type": "stop_loss",
-                    "metadata": json.dumps(sl_metadata),
-                }
-            )
-
-            self.logger.info(
-                "✅ Created SL order %s (Trade: %s): %s %s x %d @ ₹%.2f (%.1f%% loss limit)",
-                sl_execution_record.id,
-                sl_trade_record.id,
-                sl_side,
-                symbol,
-                executed_quantity,
-                sl_price,
-                sl_pct * 100,
-            )
-
-            # Child TP/SL orders are the single source of truth. Clearing the
-            # parent trigger fields prevents the parallel parent monitor from
-            # racing these orders and submitting a duplicate close.
             await client.trade.update(
                 where={"id": str(parent_trade.id)},
                 data={
-                    "take_profit_price": None,
-                    "stop_loss_price": None,
+                    "take_profit_price": self._as_decimal(tp_price),
+                    "stop_loss_price": self._as_decimal(sl_price),
                 },
+            )
+            self.logger.info(
+                "✅ Updated TP/SL on parent Trade %s: TP @ ₹%.2f, SL @ ₹%.2f",
+                parent_trade.id, tp_price, sl_price
             )
 
         except Exception as exc:
             self.logger.error(
-                "Failed to create TP/SL orders for trade %s: %s",
+                "Failed to update TP/SL prices for trade %s: %s",
                 getattr(trade_record, "id", ""),
                 exc,
                 exc_info=True
@@ -2001,8 +1830,9 @@ class TradeExecutionService:
                 )
 
             # Update Trade record with execution details
+            trade_status = "open" if side.upper() in {"BUY", "SHORT_SELL"} else "closed"
             trade_update_data = {
-                "status": "executed",
+                "status": trade_status,
                 "executed_price": executed_price,
                 "executed_quantity": executed_quantity,
                 "execution_time": datetime.utcnow(),

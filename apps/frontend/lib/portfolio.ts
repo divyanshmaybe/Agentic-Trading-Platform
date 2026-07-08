@@ -90,6 +90,11 @@ export type Trade = {
   created_at: string
   execution_time: string
   filing_published_at?: string | null
+  exit_quantity?: number | null
+  exit_price?: string | null
+  exit_time?: string | null
+  exit_reason?: string | null
+  realized_pnl?: string | null
 }
 
 export type RecentTradesResponse = {

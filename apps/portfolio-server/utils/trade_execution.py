@@ -308,13 +308,26 @@ def prepare_trade_execution_payloads(
             logger.debug("Skipping signal %s with non-positive confidence", signal.signal_id)
             continue
 
-        # Fetch price directly from market data service (more reliable than HTTP API)
+        # The Celery execution worker owns price discovery. Reuse the price it
+        # attached to signal metadata first, then fall back to a direct API fetch.
         reference_price = 0.0
+        signal_meta = dict(signal.metadata or {})
+        if "reference_price" in signal_meta:
+            try:
+                reference_price = _normalise_price(signal_meta["reference_price"])
+                if reference_price > 0:
+                    logger.info(
+                        "Using worker-resolved reference_price for %s: %.2f",
+                        signal.symbol,
+                        reference_price,
+                    )
+            except Exception:
+                reference_price = 0.0
         
         # Check if we're running in a Celery worker (avoid multiple WebSocket connections)
         is_celery_worker = os.getenv("CELERY_WORKER_RUNNING") == "1"
         
-        if is_celery_worker:
+        if reference_price <= 0 and is_celery_worker:
             # Use HTTP API to fetch price from portfolio-server
             try:
                 import asyncio
@@ -342,7 +355,7 @@ def prepare_trade_execution_payloads(
             except Exception as exc:
                 logger.warning("⚠️ Failed to fetch price via HTTP for %s: %s", signal.symbol, exc)
                 reference_price = 0.0
-        else:
+        elif reference_price <= 0:
             # Use WebSocket connection (only in main portfolio-server process)
             try:
                 from market_data import await_live_price
@@ -369,7 +382,6 @@ def prepare_trade_execution_payloads(
 
         # Fallback: Try to extract price from signal metadata if live fetch failed
         if reference_price <= 0:
-            signal_meta = dict(signal.metadata or {})
             if "reference_price" in signal_meta:
                 try:
                     reference_price = _normalise_price(signal_meta["reference_price"])
@@ -486,46 +498,5 @@ __all__ = [
     "get_allocation",
     "DEFAULT_TAKE_PROFIT_PCT",
     "DEFAULT_STOP_LOSS_PCT",
+    "fetch_market_price_via_http",
 ]
-
-
-# HTTP Market Data Helper (added for Celery workers)
-async def fetch_market_price_via_http(symbol: str, timeout: float = 10.0):
-    """Fetch market price via HTTP from portfolio server"""
-    import httpx
-    import logging
-    from decimal import Decimal
-    
-    logger = logging.getLogger(__name__)
-    portfolio_server_url = os.getenv("PORTFOLIO_SERVER_URL", "http://portfolio.agentinvest.space")
-    
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.get(
-                f"{portfolio_server_url}/api/market/quotes",
-                params={"symbols": symbol}
-            )
-            
-            if response.status_code != 200:
-                logger.warning("Market API returned status %d for %s", response.status_code, symbol)
-                return None
-            
-            data = response.json()
-            quotes = data.get("data", [])
-            
-            if not quotes:
-                logger.warning("No market data returned for %s", symbol)
-                return None
-            
-            quote = quotes[0]
-            price = quote.get("price")
-            
-            if price is None:
-                logger.warning("Price is None in market data for %s", symbol)
-                return None
-            
-            return Decimal(str(price))
-            
-    except Exception as exc:
-        logger.warning("Failed to fetch market price for %s via HTTP: %s", symbol, exc)
-        return None

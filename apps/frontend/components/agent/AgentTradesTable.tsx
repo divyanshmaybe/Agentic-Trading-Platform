@@ -134,6 +134,8 @@ function SimpleTradesTable({ trades, loading }: { trades: AgentTrade[]; loading:
 
   const getStatusBadgeColor = (status: string) => {
     const statusLower = status.toLowerCase()
+    if (statusLower === "open") return "bg-blue-500/15 text-blue-200"
+    if (statusLower === "closed") return "bg-emerald-500/15 text-emerald-200"
     if (statusLower === "executed" || statusLower === "completed") return "bg-emerald-500/15 text-emerald-200"
     if (statusLower === "pending") return "bg-amber-500/15 text-amber-200"
     if (statusLower === "failed" || statusLower === "rejected") return "bg-rose-500/15 text-rose-200"
@@ -163,18 +165,21 @@ function SimpleTradesTable({ trades, loading }: { trades: AgentTrade[]; loading:
                   <th className="px-4 py-3">Symbol</th>
                   <th className="px-4 py-3">Side</th>
                   <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">Executed Price</th>
-                  <th className="px-4 py-3">Current Price</th>
+                  <th className="px-4 py-3">Entry Price</th>
+                  <th className="px-4 py-3">Exit / Current Price</th>
                   <th className="px-4 py-3">Quantity</th>
-                  <th className="px-4 py-3">Net Amount</th>
+                  <th className="px-4 py-3">Exit Reason</th>
+                  <th className="px-4 py-3">Exit Time</th>
+                  <th className="px-4 py-3">PnL</th>
                   <th className="px-4 py-3">Response Time</th>
                   <th className="px-4 py-3">Source</th>
                   <th className="px-4 py-3 text-right">Trade Type</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/10">
-                {trades.filter(trade => trade.status === "executed").map((trade, index) => {
-                  const netAmount = parseFloat(trade.net_amount || "0")
+                {trades.filter(trade => ["open", "closed", "executed"].includes(trade.status.toLowerCase())).map((trade, index) => {
+                  const isClosed = trade.status.toLowerCase() === "closed"
+                  const netAmount = parseFloat(trade.realized_pnl || trade.net_amount || "0")
                   const isPositive = netAmount >= 0
                   
                   // Format triggered_by for display
@@ -218,7 +223,9 @@ function SimpleTradesTable({ trades, loading }: { trades: AgentTrade[]; loading:
                         {formatCurrency(trade.executed_price)}
                       </td>
                       <td className="px-4 py-3">
-                        {pricesLoading && currentPrices.size === 0 ? (
+                        {isClosed ? (
+                          <span className="text-amber-300">{formatCurrency(trade.exit_price)}</span>
+                        ) : pricesLoading && currentPrices.size === 0 ? (
                           <span className="text-white/40 text-xs">Loading...</span>
                         ) : currentPrices.has(trade.symbol) ? (
                           <span className="text-blue-300">{formatCurrency(currentPrices.get(trade.symbol))}</span>
@@ -229,8 +236,14 @@ function SimpleTradesTable({ trades, loading }: { trades: AgentTrade[]; loading:
                       <td className="px-4 py-3 text-white/80">
                         {trade.executed_quantity || trade.quantity || "—"}
                       </td>
+                      <td className="px-4 py-3 text-white/60">
+                        {trade.exit_reason || "—"}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-white/60">
+                        {trade.exit_time ? formatTime(trade.exit_time) : "—"}
+                      </td>
                       <td className={`px-4 py-3 font-semibold ${isPositive ? "text-emerald-300" : "text-rose-300"}`}>
-                        {formatCurrency(trade.net_amount)}
+                        {trade.realized_pnl ? formatCurrency(trade.realized_pnl) : formatCurrency(trade.net_amount)}
                       </td>
                       <td className="px-4 py-3 text-blue-300">
                         {formatDuration(trade.llm_delay)}
@@ -331,90 +344,64 @@ function AdvancedTradesTable({ initialTrades, initialLoading, agentId }: { initi
   const { tradePairs, openPositions, totalRealizedPnl } = useMemo(() => {
     const pairs: TradePair[] = []
     const openPos: OpenPosition[] = []
-    
-    // Group trades by symbol
-    const tradesBySymbol = new Map<string, AgentTrade[]>()
+
     trades.forEach((trade) => {
-      const existing = tradesBySymbol.get(trade.symbol) || []
-      existing.push(trade)
-      tradesBySymbol.set(trade.symbol, existing)
-    })
+      const isClosed = trade.status.toLowerCase() === "closed"
+      const price = parseFloat(trade.executed_price || "0")
+      const qty = trade.executed_quantity || trade.quantity || 1
 
-    // For each symbol, match buy/sell pairs
-    tradesBySymbol.forEach((symbolTrades, symbol) => {
-      const buys = symbolTrades.filter((t) => t.side.toLowerCase() === "buy").sort((a, b) => 
-        new Date(a.execution_time || a.created_at).getTime() - new Date(b.execution_time || b.created_at).getTime()
-      )
-      const sells = symbolTrades.filter((t) => t.side.toLowerCase() === "sell").sort((a, b) => 
-        new Date(a.execution_time || a.created_at).getTime() - new Date(b.execution_time || b.created_at).getTime()
-      )
-
-      // Match pairs (FIFO)
-      const minPairs = Math.min(buys.length, sells.length)
-      for (let i = 0; i < minPairs; i++) {
-        const buyTrade = buys[i]
-        const sellTrade = sells[i]
-        const buyPrice = parseFloat(buyTrade.executed_price || "0")
-        const sellPrice = parseFloat(sellTrade.executed_price || "0")
-        const buyAmount = parseFloat(buyTrade.net_amount || "0")
-        const sellAmount = parseFloat(sellTrade.net_amount || "0")
-        const quantity = Math.round(buyAmount / buyPrice) || 1
-
-        const pnl = sellAmount - buyAmount
+      if (isClosed) {
+        const exitPrice = parseFloat(trade.exit_price || "0")
+        const buyAmount = price * qty
+        const sellAmount = exitPrice * qty
+        const pnl = parseFloat(trade.realized_pnl || "0") || (sellAmount - buyAmount)
         const pnlPercent = buyAmount > 0 ? (pnl / buyAmount) * 100 : 0
 
         // Calculate holding time
-        const buyTime = new Date(buyTrade.execution_time || buyTrade.created_at)
-        const sellTime = new Date(sellTrade.execution_time || sellTrade.created_at)
-        const holdingMs = sellTime.getTime() - buyTime.getTime()
-        const holdingMins = Math.round(holdingMs / 60000)
-        const holdingTime = holdingMins < 60 
-          ? `${holdingMins}m` 
-          : holdingMins < 1440 
-            ? `${Math.round(holdingMins / 60)}h` 
-            : `${Math.round(holdingMins / 1440)}d`
+        let holdingTime = "—"
+        if (trade.execution_time && trade.exit_time) {
+          const buyTime = new Date(trade.execution_time)
+          const sellTime = new Date(trade.exit_time)
+          const holdingMs = sellTime.getTime() - buyTime.getTime()
+          const holdingMins = Math.round(holdingMs / 60000)
+          holdingTime = holdingMins < 60 
+            ? `${holdingMins}m` 
+            : holdingMins < 1440 
+              ? `${Math.round(holdingMins / 60)}h` 
+              : `${Math.round(holdingMins / 1440)}d`
+        }
+
+        // Mock a sellTrade object that is compliant with rendering requirements
+        const mockSellTrade = {
+          ...trade,
+          side: trade.side === "BUY" ? "SELL" : "COVER",
+          executed_price: trade.exit_price || "0",
+          execution_time: trade.exit_time || trade.created_at,
+        }
 
         pairs.push({
-          symbol,
-          buyTrade,
-          sellTrade,
-          buyPrice,
-          sellPrice,
-          quantity,
+          symbol: trade.symbol,
+          buyTrade: trade,
+          sellTrade: mockSellTrade,
+          buyPrice: price,
+          sellPrice: exitPrice,
+          quantity: qty,
           pnl,
           pnlPercent,
           holdingTime,
         })
-      }
-
-      // Add remaining unmatched trades as open positions
-      for (let i = minPairs; i < buys.length; i++) {
-        const trade = buys[i]
-        const price = parseFloat(trade.executed_price || "0")
-        const amount = parseFloat(trade.net_amount || "0")
+      } else if (trade.status.toLowerCase() === "open" || trade.status.toLowerCase() === "executed") {
         openPos.push({
-          symbol,
+          symbol: trade.symbol,
           trade,
-          side: "BUY",
+          side: trade.side as "BUY" | "SELL",
           price,
-          quantity: Math.round(amount / price) || 1,
-        })
-      }
-      for (let i = minPairs; i < sells.length; i++) {
-        const trade = sells[i]
-        const price = parseFloat(trade.executed_price || "0")
-        const amount = parseFloat(trade.net_amount || "0")
-        openPos.push({
-          symbol,
-          trade,
-          side: "SELL",
-          price,
-          quantity: Math.round(amount / price) || 1,
+          quantity: qty,
         })
       }
     })
 
-    // Sort pairs by sell time (most recent first)
+    // Sort pairs by exit/sell time (most recent first)
     pairs.sort((a, b) => 
       new Date(b.sellTrade.execution_time || b.sellTrade.created_at).getTime() - 
       new Date(a.sellTrade.execution_time || a.sellTrade.created_at).getTime()

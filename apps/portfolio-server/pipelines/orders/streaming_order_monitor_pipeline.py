@@ -822,7 +822,7 @@ class PathwayOrderMonitor:
             # We'll check expiry in the monitor loop
             long_trades = await self.db.trade.find_many(
                 where={
-                    "status": {"in": ["executed", "pending"]},
+                    "status": {"in": ["open", "executed", "pending"]},
                     "side": "BUY",
                     "auto_sell_at": {"not": None},
                 },
@@ -833,7 +833,7 @@ class PathwayOrderMonitor:
             # Fetch SHORT_SELL trades with auto_cover_at set
             short_trades = await self.db.trade.find_many(
                 where={
-                    "status": {"in": ["executed", "pending"]},
+                    "status": {"in": ["open", "executed", "pending"]},
                     "side": "SHORT_SELL",
                     "auto_cover_at": {"not": None},
                 },
@@ -894,16 +894,16 @@ class PathwayOrderMonitor:
         reason: str,
         metadata: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """Close a CFDT paper position through the canonical virtual ledger."""
+        """Close a CFDT paper position directly on the parent trade record (no new close trade created)."""
         import json
-        import uuid
-
-        from services.trade_execution_service import TradeExecutionService
+        from datetime import datetime, timezone
+        from decimal import Decimal
+        from services.trade_execution_service import FEE_RATE, TAX_RATE, TradeExecutionService
 
         # TP, SL, and timeout loops can observe the same position concurrently.
         # Only one is allowed to claim and close the parent trade.
         claimed = await self.db.trade.update_many(
-            where={"id": parent_trade.id, "status": "executed"},
+            where={"id": parent_trade.id, "status": {"in": ["open", "executed"]}},
             data={"status": "closing"},
         )
         if claimed != 1:
@@ -913,97 +913,157 @@ class PathwayOrderMonitor:
                 "reason": "position_close_already_claimed",
             }
 
-        portfolio = await self.db.portfolio.find_unique(
-            where={"id": parent_trade.portfolio_id}
-        )
-        service = TradeExecutionService(logger=logger)
-        request_id = str(
-            uuid.uuid5(
-                uuid.NAMESPACE_URL,
-                f"cfdt-close:{parent_trade.id}:{reason}",
-            )
-        )
-        job = {
-            "request_id": request_id,
-            "signal_id": str(getattr(parent_trade, "signal_id", "") or parent_trade.id),
-            "user_id": str(getattr(portfolio, "user_id", "") or ""),
-            "portfolio_id": parent_trade.portfolio_id,
-            "portfolio_name": str(
-                getattr(portfolio, "portfolio_name", "CFDT Portfolio")
-            ),
-            "organization_id": parent_trade.organization_id,
-            "customer_id": parent_trade.customer_id,
-            "symbol": parent_trade.symbol,
-            "side": side,
-            "quantity": int(quantity),
-            "allocated_capital": float(price) * int(quantity),
-            "confidence": float(getattr(parent_trade, "confidence", 1) or 1),
-            "reference_price": float(price),
-            "take_profit_pct": 0,
-            "stop_loss_pct": 0,
-            "explanation": reason,
-            "filing_time": "",
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-            "metadata_json": json.dumps(
-                {
-                    **metadata,
-                    "parent_trade_id": parent_trade.id,
-                    "triggered_by": reason,
-                },
-                default=str,
-            ),
-            "agent_id": parent_trade.agent_id,
-            "agent_type": "high_risk",
-            "agent_status": "active",
-            "triggered_by": reason,
-        }
         try:
-            events = await service.persist_and_publish([job], publish_kafka=False)
-            if not events:
-                await self.db.trade.update(
-                    where={"id": parent_trade.id},
-                    data={"status": "executed"},
-                )
-                return {"status": "duplicate", "id": None}
+            service = TradeExecutionService(logger=logger)
+            
+            async with self.db.tx() as tx:
+                # 1. Fetch updated parent trade and position within transaction
+                parent = await tx.trade.find_unique(where={"id": parent_trade.id})
+                if not parent:
+                    raise ValueError(f"Parent trade {parent_trade.id} not found inside transaction")
 
-            result = await service.execute_trade(events[0].trade_id, simulate=True)
-            if result.get("status") == "executed":
-                parent_metadata = (
-                    dict(parent_trade.metadata)
-                    if isinstance(parent_trade.metadata, dict)
-                    else {}
-                )
-                parent_metadata.update(
-                    {
-                        "cfdt_closed": True,
-                        "cfdt_close_reason": reason,
-                        "cfdt_close_trade_id": events[0].trade_id,
-                        "cfdt_closed_at": datetime.now(timezone.utc).isoformat(),
+                position = await tx.position.find_first(
+                    where={
+                        "portfolio_id": parent.portfolio_id,
+                        "symbol": parent.symbol,
+                        "status": "open",
                     }
                 )
-                await self.db.trade.update(
-                    where={"id": parent_trade.id},
+                if not position:
+                    raise ValueError(f"No open position found for {parent.symbol}")
+
+                # 2. Calculate exit pricing, fees, and realized P&L
+                entry_price = float(parent.executed_price or parent.price or price)
+                exit_price = float(price)
+                exit_qty = int(quantity)
+
+                entry_value = entry_price * exit_qty
+                exit_value = exit_price * exit_qty
+
+                # Compute fees & taxes using official rates
+                entry_fees = entry_value * float(FEE_RATE)
+                exit_fees = exit_value * float(FEE_RATE)
+                entry_taxes = entry_value * float(TAX_RATE)
+                exit_taxes = exit_value * float(TAX_RATE)
+                total_fees = entry_fees + exit_fees + entry_taxes + exit_taxes
+
+                if parent.side.upper() == "BUY":
+                    realized_pnl = (exit_price - entry_price) * exit_qty - total_fees
+                    cash_release = exit_value - total_fees
+                else:
+                    realized_pnl = (entry_price - exit_price) * exit_qty - total_fees
+                    cash_release = entry_value + (entry_price - exit_price) * exit_qty - exit_value * (float(FEE_RATE) + float(TAX_RATE))
+
+                realized_pnl_decimal = Decimal(str(realized_pnl))
+
+                # 3. Update the parent trade directly
+                exit_time = datetime.utcnow()
+                exit_reason = "auto_exit"
+                if "take_profit" in reason:
+                    exit_reason = "take_profit"
+                elif "stop_loss" in reason:
+                    exit_reason = "stop_loss"
+
+                await tx.trade.update(
+                    where={"id": parent.id},
                     data={
                         "status": "closed",
+                        "exit_price": Decimal(str(exit_price)),
+                        "exit_quantity": exit_qty,
+                        "exit_time": exit_time,
+                        "exit_reason": exit_reason,
+                        "realized_pnl": realized_pnl_decimal,
                         "auto_sell_at": None,
                         "auto_cover_at": None,
                         "take_profit_price": None,
                         "stop_loss_price": None,
-                        "metadata": json.dumps(parent_metadata),
-                    },
+                    }
                 )
-            else:
+
+                # 4. Update/close position
+                old_qty = int(getattr(position, "quantity", 0))
+                new_qty = old_qty - exit_qty
+                if new_qty <= 0:
+                    await tx.position.update(
+                        where={"id": position.id},
+                        data={"quantity": 0, "status": "closed", "closed_at": datetime.utcnow()}
+                    )
+                    # Cancel any pending TP/SL trigger settings on other models (if any)
+                    await service._cancel_pending_tp_sl_orders_tx(tx, parent.portfolio_id, parent.symbol)
+                else:
+                    await tx.position.update(
+                        where={"id": position.id},
+                        data={"quantity": new_qty}
+                    )
+
+                # 5. Update portfolio cash
+                portfolio = await tx.portfolio.find_unique(where={"id": parent.portfolio_id})
+                if portfolio:
+                    portfolio_current_cash = float(getattr(portfolio, "available_cash", 0) or 0)
+                    portfolio_current_pnl = float(getattr(portfolio, "total_realized_pnl", 0) or 0)
+                    await tx.portfolio.update(
+                        where={"id": parent.portfolio_id},
+                        data={
+                            "available_cash": portfolio_current_cash + cash_release,
+                            "total_realized_pnl": portfolio_current_pnl + realized_pnl,
+                        }
+                    )
+
+                # 6. Update agent & allocation cash/PnL
+                if parent.agent_id:
+                    agent = await tx.tradingagent.find_unique(
+                        where={"id": str(parent.agent_id)},
+                        include={"allocation": True}
+                    )
+                    if agent:
+                        current_agent_pnl = float(getattr(agent, "realized_pnl", 0) or 0)
+                        await tx.tradingagent.update(
+                            where={"id": str(parent.agent_id)},
+                            data={"realized_pnl": current_agent_pnl + realized_pnl}
+                        )
+
+                        if agent.allocation:
+                            current_alloc_cash = float(getattr(agent.allocation, "available_cash", 0) or 0)
+                            current_alloc_pnl = float(getattr(agent.allocation, "realized_pnl", 0) or 0)
+                            await tx.portfolioallocation.update(
+                                where={"id": agent.allocation.id},
+                                data={
+                                    "available_cash": current_alloc_cash + cash_release,
+                                    "realized_pnl": current_alloc_pnl + realized_pnl,
+                                }
+                            )
+
+            # Recalculate portfolio valuation metrics after committing
+            await service._recalculate_portfolio_value(parent_trade.portfolio_id, self.db)
+
+            return {
+                "status": "executed",
+                "id": parent_trade.id,
+                "executed_price": price,
+                "executed_quantity": quantity,
+            }
+
+        except Exception as exc:
+            logger.error(
+                "❌ Failed to directly close trade position %s: %s",
+                parent_trade.id,
+                exc,
+                exc_info=True
+            )
+            # Revert trade status to open so it can retry or be handled correctly
+            try:
                 await self.db.trade.update(
                     where={"id": parent_trade.id},
-                    data={"status": "executed"},
+                    data={"status": "open"},
                 )
-            return {**result, "id": events[0].trade_id}
-        except Exception:
-            await self.db.trade.update(
-                where={"id": parent_trade.id},
-                data={"status": "executed"},
-            )
-            raise
+            except Exception as rollback_exc:
+                logger.error("Failed to restore trade status on failure: %s", rollback_exc)
+            
+            return {
+                "status": "failed",
+                "id": parent_trade.id,
+                "reason": str(exc),
+            }
 
     async def _execute_auto_sell(self, signal: AutoSellSignal):
         """
@@ -1029,7 +1089,7 @@ class PathwayOrderMonitor:
                 logger.warning(f"⚠️ Trade {signal.trade_id} not found, skipping auto-sell")
                 return
             
-            if trade.status not in ["executed", "pending"]:
+            if trade.status not in ["open", "executed", "pending"]:
                 logger.info(f"⏭️ Trade {signal.trade_id} already {trade.status}, skipping")
                 # Remove from cache
                 self._auto_sell_trades.pop(signal.trade_id, None)
@@ -1292,7 +1352,7 @@ class PathwayOrderMonitor:
             # Fetch executed trades with take_profit_price OR stop_loss_price set
             trades_with_tpsl = await self.db.trade.find_many(
                 where={
-                    "status": "executed",
+                    "status": {"in": ["open", "executed"]},
                     "OR": [
                         {"take_profit_price": {"not": None}},
                         {"stop_loss_price": {"not": None}},
@@ -1368,7 +1428,7 @@ class PathwayOrderMonitor:
                 logger.warning(f"⚠️ Trade {signal.trade_id} not found, skipping TPSL")
                 return
             
-            if trade.status != "executed":
+            if trade.status not in ["open", "executed"]:
                 logger.info(f"⏭️ Trade {signal.trade_id} already {trade.status}, skipping TPSL")
                 self._tpsl_trades.pop(signal.trade_id, None)
                 if signal.symbol in self._tpsl_by_symbol:

@@ -329,9 +329,11 @@ export function IntradayTradesTable({ className, agentId }: IntradayTradesTableP
                   <th className="px-6 py-4 font-medium">Side</th>
                   <th className="px-6 py-4 font-medium">Type</th>
                   <th className="px-6 py-4 font-medium">Quantity</th>
-                  <th className="px-6 py-4 font-medium">Executed Price</th>
-                  <th className="px-6 py-4 font-medium">Current Price</th>
-                  <th className="px-6 py-4 font-medium">Net Amount</th>
+                  <th className="px-6 py-4 font-medium">Entry Price</th>
+                  <th className="px-6 py-4 font-medium">Exit / Current Price</th>
+                  <th className="px-6 py-4 font-medium">PnL</th>
+                  <th className="px-6 py-4 font-medium">Exit Reason</th>
+                  <th className="px-6 py-4 font-medium">Exit Time</th>
                   <th className="px-6 py-4 font-medium">Status</th>
                   <th className="px-6 py-4 font-medium">Filing Published</th>
                   <th className="px-6 py-4 font-medium">Executed At</th>
@@ -361,7 +363,7 @@ export function IntradayTradesTable({ className, agentId }: IntradayTradesTableP
                         }`}
                       >
                         {trade.side.toLowerCase() === "buy" ? (
-                          <TrendingUp className="size-3" />
+                           <TrendingUp className="size-3" />
                         ) : (
                           <TrendingDown className="size-3" />
                         )}
@@ -383,7 +385,9 @@ export function IntradayTradesTable({ className, agentId }: IntradayTradesTableP
                     </td>
                     <td className="px-6 py-4">
                       {(() => {
-                        const currentPrice = livePrices.get(trade.symbol)
+                        const isClosed = trade.status.toLowerCase() === "closed"
+                        const exitPrice = trade.exit_price ? parseFloat(trade.exit_price) : null
+                        const currentPrice = isClosed ? exitPrice : (livePrices.get(trade.symbol) || null)
                         const executedPrice = trade.executed_price ? parseFloat(trade.executed_price) : null
                         
                         if (!currentPrice || !executedPrice) {
@@ -410,13 +414,27 @@ export function IntradayTradesTable({ className, agentId }: IntradayTradesTableP
                     </td>
                     <td className="px-6 py-4">
                       <span className="text-sm font-medium text-white">
-                        {formatCurrency(parseFloat(trade.net_amount))}
+                        {trade.realized_pnl 
+                          ? formatCurrency(parseFloat(trade.realized_pnl)) 
+                          : formatCurrency(parseFloat(trade.net_amount))}
                       </span>
+                    </td>
+                    <td className="px-6 py-4 text-sm text-white/70">
+                      {trade.exit_reason || "-"}
+                    </td>
+                    <td className="px-6 py-4 text-xs text-white/50">
+                      {trade.exit_time
+                        ? formatTradeTimestamp(trade.exit_time, "execution")
+                        : "-"}
                     </td>
                     <td className="px-6 py-4">
                       <span
                         className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${
-                          trade.status.toLowerCase() === "executed"
+                          trade.status.toLowerCase() === "open"
+                            ? "bg-blue-500/20 text-blue-300"
+                            : trade.status.toLowerCase() === "closed"
+                            ? "bg-emerald-500/20 text-emerald-300"
+                            : trade.status.toLowerCase() === "executed"
                             ? "bg-emerald-500/20 text-emerald-300"
                             : trade.status.toLowerCase() === "pending"
                             ? "bg-amber-500/20 text-amber-300"

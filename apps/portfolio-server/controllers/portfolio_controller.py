@@ -443,6 +443,11 @@ class PortfolioController:
                 agent_id=trade.agent_id,
                 agent_name=trade.agent.agent_name if trade.agent else None,
                 triggered_by=triggered_by,
+                exit_quantity=trade.exit_quantity,
+                exit_price=trade.exit_price,
+                exit_time=trade.exit_time,
+                exit_reason=trade.exit_reason,
+                realized_pnl=trade.realized_pnl,
             ))
 
         return TradeListResponse(items=summaries, page=page, limit=limit, total=total)
@@ -763,6 +768,11 @@ class PortfolioController:
                 agent_id=agent.id,
                 agent_name=agent.agent_name,
                 triggered_by=triggered_by,
+                exit_quantity=trade.exit_quantity,
+                exit_price=trade.exit_price,
+                exit_time=trade.exit_time,
+                exit_reason=trade.exit_reason,
+                realized_pnl=trade.realized_pnl,
             ))
         
         return AgentDashboardResponse(

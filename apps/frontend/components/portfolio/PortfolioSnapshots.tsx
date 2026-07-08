@@ -235,6 +235,7 @@ export function PortfolioSnapshots({
           pointRadius: 0,
           borderCapStyle: "butt",
           borderJoinStyle: "miter",
+          yAxisID: "y",
         },
         {
           label: "Realized P&L",
@@ -248,6 +249,7 @@ export function PortfolioSnapshots({
           pointHoverRadius: 4,
           borderCapStyle: "butt",
           borderJoinStyle: "miter",
+          yAxisID: "y1",
         },
         {
           label: "Unrealized P&L",
@@ -261,6 +263,7 @@ export function PortfolioSnapshots({
           pointHoverRadius: 4,
           borderCapStyle: "butt",
           borderJoinStyle: "miter",
+          yAxisID: "y1",
         },
       ],
     }
@@ -298,11 +301,36 @@ export function PortfolioSnapshots({
           ticks: { color: "#9CA3AF" },
         },
         y: {
+          type: "linear" as const,
+          display: true,
+          position: "left" as const,
           grid: { color: "rgba(255,255,255,0.05)" },
           ticks: {
-            color: "#9CA3AF",
+            color: "#3b82f6",
             callback: (value: any) => `₹${(value as number).toLocaleString("en-IN")}`,
           },
+          title: {
+            display: true,
+            text: "Current Value",
+            color: "#3b82f6",
+          }
+        },
+        y1: {
+          type: "linear" as const,
+          display: true,
+          position: "right" as const,
+          grid: {
+            drawOnChartArea: false,
+          },
+          ticks: {
+            color: "#22c55e",
+            callback: (value: any) => `₹${(value as number).toLocaleString("en-IN")}`,
+          },
+          title: {
+            display: true,
+            text: "P&L",
+            color: "#22c55e",
+          }
         },
       },
     }

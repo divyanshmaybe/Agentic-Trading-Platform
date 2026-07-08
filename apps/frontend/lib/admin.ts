@@ -262,6 +262,11 @@ export async function getAdminSummary(): Promise<AdminSummaryResponse> {
   return apiClient.get<AdminSummaryResponse>("/api/admin/summary")
 }
 
+export async function resetDatabase(): Promise<{ status: string; message: string }> {
+  return apiClient.post<{ status: string; message: string }>("/api/admin/reset")
+}
+
+
 // Utility Functions
 export interface Position {
   symbol: string

@@ -179,6 +179,10 @@ model Trade {
   trigger_price     Decimal?            @db.Decimal(20, 4)
   executed_quantity Int                 @default(0)
   executed_price    Decimal?            @db.Decimal(20, 4)
+  exit_quantity      Int?
+  exit_price         Decimal?            @db.Decimal(20, 4)
+  exit_time          DateTime?
+  exit_reason        String?
   status            String              @default("pending")
   order_id          String?
   execution_time    DateTime?

@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { useParams } from "next/navigation"
-import { Loader2, Play } from "lucide-react"
+import { Loader2, Play, RotateCcw } from "lucide-react"
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader"
 import { IntradayNotifications, IntradayTradesTable } from "@/components/intraday"
 import { PortfolioSnapshots } from "@/components/portfolio/PortfolioSnapshots"
@@ -12,19 +12,39 @@ import { Button } from "@/components/ui/button"
 import { useAuth } from "@/hooks/useAuth"
 import { AgentOverview } from "@/components/agent"
 import { useAgentDashboard } from "@/hooks/useAgentDashboard"
+import { resetDatabase } from "@/lib/admin"
 
 export default function IntradayCommandCenterPage() {
   const params = useParams()
   const username = params.username as string
   const [triggeringAgent, setTriggeringAgent] = useState(false)
+  const [resetting, setResetting] = useState(false)
+  const [showResetConfirm, setShowResetConfirm] = useState(false)
 
   // SECURE: Get user data from server-validated token, NOT localStorage
   const { user: authUser, loading: authLoading } = useAuth()
   
   const { data: agentData, loading: agentLoading, isAllocating } = useAgentDashboard("high_risk")
 
+  // Handle resetting database
+  const handleResetDatabase = async () => {
+    setResetting(true)
+    try {
+      const response = await resetDatabase()
+      alert(response.message || "Portfolio and trade logs reset successfully!")
+      setShowResetConfirm(false)
+      window.location.reload()
+    } catch (error) {
+      console.error("Failed to reset portfolio database:", error)
+      alert(error instanceof Error ? error.message : "Failed to reset portfolio database")
+    } finally {
+      setResetting(false)
+    }
+  }
+
   // Handle triggering high_risk agent
   const handleTriggerAgent = async () => {
+
     setTriggeringAgent(true)
     try {
       const authServerUrl = process.env.NEXT_PUBLIC_AUTH_BASE_URL 
@@ -88,24 +108,65 @@ export default function IntradayCommandCenterPage() {
           tagline="Intraday Strategy Console"
           title="Intraday Command Center"
           action={
-            <Button
-              onClick={handleTriggerAgent}
-              disabled={triggeringAgent}
-              className="border border-emerald-500/40 bg-emerald-500/20 text-emerald-100 hover:bg-emerald-500/30"
-            >
-              {triggeringAgent ? (
-                <>
-                  <Loader2 className="mr-2 size-4 animate-spin" />
-                  Triggering...
-                </>
+            <div className="flex flex-wrap items-center gap-4">
+              {/* Reset Button with confirmation UI */}
+              {showResetConfirm ? (
+                <div className="flex items-center gap-2 rounded-md border border-rose-500/30 bg-rose-500/5 p-1 px-2 text-xs">
+                  <span className="text-rose-200/90 font-medium">Reset all data?</span>
+                  <Button
+                    size="sm"
+                    onClick={handleResetDatabase}
+                    disabled={resetting}
+                    className="h-7 border border-rose-500/40 bg-rose-500/20 px-2.5 text-xs text-rose-100 hover:bg-rose-500/30"
+                  >
+                    {resetting ? (
+                      <Loader2 className="size-3 animate-spin" />
+                    ) : (
+                      "Yes"
+                    )}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setShowResetConfirm(false)}
+                    disabled={resetting}
+                    className="h-7 px-2.5 text-xs text-zinc-400 hover:text-zinc-200"
+                  >
+                    Cancel
+                  </Button>
+                </div>
               ) : (
-                <>
-                  <Play className="mr-2 size-4" />
-                  Trigger High-Risk Agent
-                </>
+                <Button
+                  onClick={() => setShowResetConfirm(true)}
+                  disabled={triggeringAgent || resetting}
+                  className="border border-rose-500/40 bg-rose-500/20 text-rose-100 hover:bg-rose-500/30"
+                >
+                  <RotateCcw className="mr-2 size-4" />
+                  Reset Portfolio
+                </Button>
               )}
-            </Button>
+
+              {/* Trigger Agent Button */}
+              <Button
+                onClick={handleTriggerAgent}
+                disabled={triggeringAgent || resetting}
+                className="border border-emerald-500/40 bg-emerald-500/20 text-emerald-100 hover:bg-emerald-500/30"
+              >
+                {triggeringAgent ? (
+                  <>
+                    <Loader2 className="mr-2 size-4 animate-spin" />
+                    Triggering...
+                  </>
+                ) : (
+                  <>
+                    <Play className="mr-2 size-4" />
+                    Trigger High-Risk Agent
+                  </>
+                )}
+              </Button>
+            </div>
           }
+
         />
 
         <section className="grid grid-cols-1 gap-6 lg:grid-cols-2">

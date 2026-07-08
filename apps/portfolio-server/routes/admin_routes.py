@@ -76,3 +76,16 @@ async def get_admin_summary(
     """
     org_id = user["organization_id"]
     return await controller.get_summary(org_id)
+
+
+@router.post("/reset")
+async def reset_database(
+    controller: AdminController = Depends(get_admin_controller),
+    user: dict = Depends(require_admin_or_staff),
+) -> Dict[str, Any]:
+    """
+    Reset the portfolio database, clearing all trades, positions, snapshots, and portfolios.
+    Returns status confirmation.
+    """
+    org_id = user["organization_id"]
+    return await controller.reset_database(org_id)

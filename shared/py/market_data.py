@@ -173,13 +173,39 @@ class MarketDataService:
         import pyotp
         import httpx
         import time
+        from email.utils import parsedate_to_datetime
+        import datetime
+        import urllib.request
+
+        # Dynamically calculate the clock offset from reliable public time servers to handle local system clock drift
+        clock_offset = 0.0
+        servers = [
+            "https://www.google.com",
+            "https://www.wikipedia.org",
+            "https://www.cloudflare.com"
+        ]
+        for url in servers:
+            try:
+                start = time.time()
+                req = urllib.request.Request(url, method="HEAD")
+                with urllib.request.urlopen(req, timeout=3.0) as response:
+                    date_header = response.info().get("Date")
+                    if date_header:
+                        end = time.time()
+                        server_time = parsedate_to_datetime(date_header)
+                        local_time = datetime.datetime.fromtimestamp((start + end) / 2, datetime.timezone.utc)
+                        clock_offset = (server_time - local_time).total_seconds()
+                        logger.info(f"⏰ Dynamic clock offset calculated from {url}: {clock_offset:.2f} seconds")
+                        break
+            except Exception as e:
+                logger.debug(f"Failed to fetch time from {url} for clock offset: {e}")
 
         max_retries = 3
         retry_delay = 5  # seconds
         
         for attempt in range(max_retries):
             try:
-                totp = pyotp.TOTP(self.totp_secret).now()
+                totp = pyotp.TOTP(self.totp_secret).at(time.time() + clock_offset)
                 
                 url = "https://apiconnect.angelone.in/rest/auth/angelbroking/user/v1/loginByPassword"
                 headers = {

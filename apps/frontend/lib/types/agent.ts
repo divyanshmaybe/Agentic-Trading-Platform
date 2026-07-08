@@ -73,6 +73,11 @@ export interface AgentTrade {
   agent_id?: string
   agent_name?: string
   triggered_by?: string
+  exit_quantity?: number | null
+  exit_price?: string | null
+  exit_time?: string | null
+  exit_reason?: string | null
+  realized_pnl?: string | null
 }
 
 export interface AgentDashboard {

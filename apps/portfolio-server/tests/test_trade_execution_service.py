@@ -529,6 +529,11 @@ def mock_market_hours(monkeypatch):
 @pytest.fixture
 def service_env(mock_db_manager, mock_market_hours, mock_redis, monkeypatch):
     """Set up complete test environment for TradeExecutionService."""
+    import market_data
+    async def mock_await_live_price(symbol, timeout=10.0):
+        raise RuntimeError("Live price fetch failed - fallback to stored price")
+    monkeypatch.setattr(market_data, "await_live_price", mock_await_live_price)
+    
     from services import trade_execution_service
     monkeypatch.setattr(trade_execution_service, "get_db_manager", lambda: mock_db_manager)
     
@@ -649,6 +654,7 @@ async def setup_position(
         "quantity": quantity,
         "average_buy_price": avg_price,
         "status": "open",
+        "position_type": "long",
         "realized_pnl": Decimal("0"),
     }
     return position_id
@@ -1569,6 +1575,8 @@ async def test_fetch_trade_log_returns_none_for_missing(service_env):
 @pytest.mark.asyncio
 async def test_real_broker_returns_failed_when_not_configured(service_env, monkeypatch):
     """Test that real broker execution fails gracefully when not configured."""
+    import services.trade_execution_service
+    monkeypatch.setattr(services.trade_execution_service, "PAPER_TRADING_ONLY", False)
     from services.trade_execution_service import TradeExecutionService
     
     client = service_env["client"]
@@ -2099,6 +2107,7 @@ async def test_pnl_calculation_for_cover_trade(service_env):
         "quantity": -100,  # Short position
         "average_buy_price": Decimal("220"),  # Shorted at 220
         "status": "open",
+        "position_type": "SHORT",
     }
     
     service = TradeExecutionService()
@@ -2262,6 +2271,7 @@ async def test_execute_trade_sell_closes_position(service_env):
         "quantity": 100,
         "average_buy_price": Decimal("180"),
         "status": "open",
+        "position_type": "long",
     }
     
     service = TradeExecutionService()
@@ -2492,8 +2502,10 @@ async def test_fetch_trade_log_by_trade_id(service_env):
 
 
 @pytest.mark.asyncio
-async def test_execute_trade_live_mode_fails_without_broker(service_env):
+async def test_execute_trade_live_mode_fails_without_broker(service_env, monkeypatch):
     """Test that live execution fails without broker configuration."""
+    import services.trade_execution_service
+    monkeypatch.setattr(services.trade_execution_service, "PAPER_TRADING_ONLY", False)
     from services.trade_execution_service import TradeExecutionService
     
     client = service_env["client"]
@@ -2625,7 +2637,7 @@ async def test_trade_execution_updates_trade_record(service_env):
     
     # After execution
     assert result["status"] == "executed"
-    assert client.trade.rows[trade_id]["status"] == "executed"
+    assert client.trade.rows[trade_id]["status"] == "open"
 
 
 @pytest.mark.asyncio
@@ -2645,6 +2657,7 @@ async def test_pnl_with_fees_deducted_correctly(service_env):
         "quantity": 100,
         "average_buy_price": Decimal("180"),  # Bought at 180
         "status": "open",
+        "position_type": "long",
     }
     
     service = TradeExecutionService()
@@ -3244,6 +3257,7 @@ async def test_realized_pnl_calculation_sell_profit(service_env):
         "quantity": 100,
         "average_buy_price": Decimal("150"),
         "status": "open",
+        "position_type": "long",
     }
     
     service = TradeExecutionService()
@@ -3275,6 +3289,7 @@ async def test_realized_pnl_calculation_sell_loss(service_env):
         "quantity": 100,
         "average_buy_price": Decimal("250"),
         "status": "open",
+        "position_type": "long",
     }
     
     service = TradeExecutionService()
@@ -3419,6 +3434,7 @@ async def test_buy_adds_to_existing_position(service_env):
         "quantity": 100,
         "average_buy_price": Decimal("180"),
         "status": "open",
+        "position_type": "long",
     }
     
     service = TradeExecutionService()
@@ -3450,6 +3466,7 @@ async def test_partial_sell_reduces_position(service_env):
         "quantity": 200,
         "average_buy_price": Decimal("180"),
         "status": "open",
+        "position_type": "long",
     }
     
     service = TradeExecutionService()
@@ -4050,6 +4067,7 @@ async def test_position_tx_sell_existing_position(service_env):
         "quantity": 100,
         "average_buy_price": Decimal("150"),
         "status": "open",
+        "position_type": "long",
     }
     
     service = TradeExecutionService()
@@ -4144,6 +4162,7 @@ async def test_position_tx_partial_sell(service_env):
         "quantity": 200,
         "average_buy_price": Decimal("150"),
         "status": "open",
+        "position_type": "long",
     }
     
     service = TradeExecutionService()
