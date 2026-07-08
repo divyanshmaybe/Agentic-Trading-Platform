@@ -47,3 +47,10 @@ ANGELONE_TRADING_ENABLED = os.getenv("ANGELONE_TRADING_ENABLED", "false").lower(
 SHORT_SELL_AUTO_CLOSE_MINUTES = int(os.getenv("SHORT_SELL_AUTO_CLOSE_MINUTES", "30"))
 MARKET_CLOSE_SELL_ENABLED = os.getenv("MARKET_CLOSE_SELL_ENABLED", "true").lower() in {"1", "true", "yes"}
 
+# Safety & Realism Checks Configuration
+MAX_ORDER_SIZE_PCT_OF_ADV = float(os.getenv("MAX_ORDER_SIZE_PCT_OF_ADV", "2.0"))
+LIVE_LIQUIDITY_BLOCK = os.getenv("LIVE_LIQUIDITY_BLOCK", "true").lower() in {"1", "true", "yes"}
+SLIPPAGE_BASE_SPREAD_BPS = float(os.getenv("SLIPPAGE_BASE_SPREAD_BPS", "5.0"))
+SLIPPAGE_IMPACT_FACTOR = float(os.getenv("SLIPPAGE_IMPACT_FACTOR", "10.0"))
+DEFAULT_FREEZE_QUANTITY = int(os.getenv("DEFAULT_FREEZE_QUANTITY", "100000"))
+DEFAULT_FALLBACK_ADV = int(os.getenv("DEFAULT_FALLBACK_ADV", "1000000"))

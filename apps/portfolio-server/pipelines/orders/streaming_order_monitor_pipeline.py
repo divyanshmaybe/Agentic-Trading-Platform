@@ -913,6 +913,33 @@ class PathwayOrderMonitor:
                 "reason": "position_close_already_claimed",
             }
 
+        # Run execution feasibility checks for exit (outside transaction)
+        exit_price = price
+        try:
+            from services.execution_feasibility_service import ExecutionFeasibilityService
+            feasibility_service = ExecutionFeasibilityService(logger_instance=logger)
+            feasibility = await feasibility_service.check_execution_feasibility(
+                symbol=parent_trade.symbol,
+                quantity=quantity,
+                side=side,
+                intended_holding="delivery",
+                price=price,
+            )
+            if feasibility.simulated_price is not None:
+                exit_price = feasibility.simulated_price
+                
+            # Merge feasibility metadata
+            metadata["naive_price"] = feasibility.naive_price
+            metadata["simulated_realistic_price"] = feasibility.simulated_price
+            metadata["slippage_bps"] = feasibility.slippage_bps
+            if feasibility.warnings:
+                metadata["execution_warnings"] = feasibility.warnings
+                if any("liquidity" in w.lower() for w in feasibility.warnings):
+                    metadata["liquidity_warning"] = True
+        except Exception as feasibility_err:
+            logger.error("Failed to run execution feasibility checks for exit trade %s: %s", parent_trade.id, feasibility_err)
+            exit_price = price
+
         try:
             service = TradeExecutionService(logger=logger)
             
@@ -933,8 +960,8 @@ class PathwayOrderMonitor:
                     raise ValueError(f"No open position found for {parent.symbol}")
 
                 # 2. Calculate exit pricing, fees, and realized P&L
-                entry_price = float(parent.executed_price or parent.price or price)
-                exit_price = float(price)
+                entry_price = float(parent.executed_price or parent.price or exit_price)
+                exit_price = float(exit_price)
                 exit_qty = int(quantity)
 
                 entry_value = entry_price * exit_qty
@@ -964,6 +991,18 @@ class PathwayOrderMonitor:
                 elif "stop_loss" in reason:
                     exit_reason = "stop_loss"
 
+                # Merge feasibility metadata into the trade's existing metadata
+                parent_meta = {}
+                if parent.metadata:
+                    if isinstance(parent.metadata, str):
+                        try:
+                            parent_meta = json.loads(parent.metadata)
+                        except json.JSONDecodeError:
+                            parent_meta = {}
+                    elif isinstance(parent.metadata, dict):
+                        parent_meta = parent.metadata
+                parent_meta.update(metadata)
+
                 await tx.trade.update(
                     where={"id": parent.id},
                     data={
@@ -977,6 +1016,7 @@ class PathwayOrderMonitor:
                         "auto_cover_at": None,
                         "take_profit_price": None,
                         "stop_loss_price": None,
+                        "metadata": json.dumps(parent_meta),
                     }
                 )
 

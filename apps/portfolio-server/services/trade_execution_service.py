@@ -1144,6 +1144,65 @@ class TradeExecutionService:
                 )
                 return {"status": "rejected", "trade_id": trade_id, "reason": error_msg}
 
+            # Run execution feasibility check
+            from services.execution_feasibility_service import ExecutionFeasibilityService
+            feasibility_service = ExecutionFeasibilityService(logger_instance=self.logger)
+
+            intended_holding = "delivery"
+            if getattr(trade, "auto_sell_at", None) or getattr(trade, "auto_cover_at", None):
+                intended_holding = "intraday"
+            else:
+                trade_metadata = _parse_metadata(getattr(trade, "metadata", None))
+                triggered_by = trade_metadata.get("triggered_by", "") or str(getattr(trade, "source", ""))
+                if "cfdt" in triggered_by.lower() or "nse_pipeline" in triggered_by.lower() or "nse_filings_pipeline" in triggered_by.lower():
+                    intended_holding = "intraday"
+
+            feasibility = await feasibility_service.check_execution_feasibility(
+                symbol=symbol,
+                quantity=executed_quantity,
+                side=trade_side,
+                intended_holding=intended_holding,
+                price=executed_price,
+            )
+
+            if not feasibility.is_feasible:
+                # Reject the order
+                error_msg = feasibility.blocking_reason or "Feasibility check failed"
+                if feasibility.warnings:
+                    error_msg += f": {'; '.join(feasibility.warnings)}"
+                
+                self.logger.error("❌ Trade execution blocked: %s", error_msg)
+                
+                await client.trade.update(
+                    where={"id": trade_id},
+                    data={"status": "rejected", "rejection_reason": error_msg}
+                )
+                await self.update_status(
+                    execution_log_id,
+                    status="rejected",
+                    error_message=error_msg
+                )
+                return {
+                    "status": "rejected",
+                    "trade_id": trade_id,
+                    "reason": feasibility.blocking_reason,
+                    "warnings": feasibility.warnings,
+                }
+
+            # If feasible, apply warnings or slippage-adjusted price
+            feasibility_metadata = {}
+            if feasibility.simulated_price is not None:
+                # Update executed price with slippage
+                executed_price = feasibility.simulated_price
+                feasibility_metadata["naive_price"] = feasibility.naive_price
+                feasibility_metadata["simulated_realistic_price"] = feasibility.simulated_price
+                feasibility_metadata["slippage_bps"] = feasibility.slippage_bps
+
+            if feasibility.warnings:
+                feasibility_metadata["execution_warnings"] = feasibility.warnings
+                if any("liquidity" in w.lower() for w in feasibility.warnings):
+                    feasibility_metadata["liquidity_warning"] = True
+
             # Reserve the exact simulated fill value, not the larger sizing
             # budget or a stale reference-price estimate.
             if trade_side in ["BUY", "SHORT_SELL"]:
@@ -1261,6 +1320,7 @@ class TradeExecutionService:
                     auto_close_time=auto_close_time,
                     allocation_id=allocation_id,
                     reserved_cash_amount=reserved_cash_amount,
+                    execution_metadata=feasibility_metadata,
                 )
                 # If transaction returned a rejection (e.g., insufficient cash), return it
                 if rejection_result:
@@ -1698,6 +1758,7 @@ class TradeExecutionService:
         auto_close_time: Optional[datetime] = None,
         allocation_id: Optional[str] = None,
         reserved_cash_amount: Decimal = Decimal("0"),
+        execution_metadata: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Update portfolio allocation and trigger value recalculation after trade execution.
@@ -1865,6 +1926,8 @@ class TradeExecutionService:
                 "execution_price": executed_price,
                 "execution_quantity": executed_quantity,
             })
+            if execution_metadata:
+                existing_metadata.update(execution_metadata)
 
             trade_update_data["metadata"] = json.dumps(existing_metadata)
 

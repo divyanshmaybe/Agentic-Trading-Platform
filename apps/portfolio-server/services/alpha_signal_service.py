@@ -600,8 +600,24 @@ class AlphaSignalService:
         signals = []
         total_positive_score = max(ranked_df[ranked_df['score'] > 0]['score'].sum(), 1e-8)
         
+        from services.execution_feasibility_service import ExecutionFeasibilityService
+        feasibility_service = ExecutionFeasibilityService(logger_instance=self.logger)
+        
+        # Check holding window (default to 30 mins if not specified)
+        holding_window = strategy_config.get("params", {}).get("holding_window_minutes", 30)
+        intended_holding = "intraday" if holding_window < 1440 else "delivery"
+
         for _, row in ranked_df.iterrows():
             symbol = row['symbol']
+            
+            # Filter out T2T stocks if strategy is intraday
+            if feasibility_service.is_t2t_symbol(symbol) and intended_holding == "intraday":
+                self.logger.warning(
+                    "⚠️ Skipping signal for %s: Trade-to-Trade (T2T) symbol is disallowed for intraday strategy",
+                    symbol
+                )
+                continue
+
             score = row.get('score', 0.5)
             try:
                 close_price = float(row.get('close'))
