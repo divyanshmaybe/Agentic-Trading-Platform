@@ -219,7 +219,6 @@ export function PortfolioSnapshots({
 
     const currentValues = sortedData.map((d) => parseDecimalString(d.current_value))
     const realizedPnls = sortedData.map((d) => parseDecimalString(d.realized_pnl))
-    const unrealizedPnls = sortedData.map((d) => parseDecimalString(d.unrealized_pnl))
 
     const chartData: ChartData<"line"> = {
       labels,
@@ -242,20 +241,6 @@ export function PortfolioSnapshots({
           data: realizedPnls,
           borderColor: "#22c55e",
           backgroundColor: "rgba(34,197,94,0.1)",
-          borderWidth: 1.5,
-          tension: 0,
-          fill: false,
-          pointRadius: 2,
-          pointHoverRadius: 4,
-          borderCapStyle: "butt",
-          borderJoinStyle: "miter",
-          yAxisID: "y1",
-        },
-        {
-          label: "Unrealized P&L",
-          data: unrealizedPnls,
-          borderColor: "#fbbf24",
-          backgroundColor: "rgba(251,191,36,0.1)",
           borderWidth: 1.5,
           tension: 0,
           fill: false,

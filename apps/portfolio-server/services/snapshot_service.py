@@ -134,11 +134,13 @@ class TradingAgentSnapshotService:
                     self.logger.warning("Agent %s has no portfolio_id", agent_id)
                     return None
                 
-                # Get available cash from allocation
+                # Get available cash and allocated amount from allocation
                 allocation = getattr(agent, "allocation", None)
                 available_cash = Decimal("0")
+                allocated_amount = Decimal("30000.00")
                 if allocation:
                     available_cash = self._as_decimal(getattr(allocation, "available_cash", 0))
+                    allocated_amount = self._as_decimal(getattr(allocation, "allocated_amount", 30000.00))
                 
                 # Calculate positions value and unrealized P&L
                 positions = getattr(agent, "positions", []) or []
@@ -183,8 +185,8 @@ class TradingAgentSnapshotService:
                     positions_value += position_value
                     unrealized_pnl += (position_value - cost_basis)
                 
-                current_value = available_cash + positions_value
                 realized_pnl = self._as_decimal(getattr(agent, "realized_pnl", 0))
+                current_value = allocated_amount + realized_pnl + unrealized_pnl
                 
                 # Create snapshot (agent relation automatically sets agent_id)
                 snapshot = await client.tradingagentsnapshot.create(
@@ -302,6 +304,7 @@ class TradingAgentSnapshotService:
                     return None
                 
                 available_cash = self._as_decimal(getattr(portfolio, "available_cash", 0))
+                investment_amount = self._as_decimal(getattr(portfolio, "investment_amount", 30000.00))
                 realized_pnl = self._as_decimal(getattr(portfolio, "total_realized_pnl", 0))
                 
                 # Calculate positions value and unrealized P&L
@@ -337,7 +340,7 @@ class TradingAgentSnapshotService:
                     positions_value += position_value
                     unrealized_pnl += (position_value - cost_basis)
                 
-                current_value = available_cash + positions_value
+                current_value = investment_amount + realized_pnl + unrealized_pnl
                 
                 # Create snapshot with relation to portfolio
                 snapshot = await client.portfoliosnapshot.create(

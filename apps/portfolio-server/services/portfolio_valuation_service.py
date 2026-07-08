@@ -170,9 +170,8 @@ class PortfolioValuationService:
             total_position_value += position_value
             total_unrealized_pnl += unrealized_pnl
         
-        # Calculate aggregated metrics
         # GROUND TRUTH FORMULA (from snapshot_service.py):
-        current_portfolio_value = available_cash + total_position_value
+        current_portfolio_value = investment_amount + realized_pnl + total_unrealized_pnl
         total_pnl = realized_pnl + total_unrealized_pnl
         
         # Calculate return percentage
