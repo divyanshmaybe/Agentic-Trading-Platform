@@ -688,20 +688,27 @@ class MarketDataService:
         return await self._get_price_async(normalized, timeout)
     
     async def _fetch_price_via_rest(self, normalized: str) -> Optional[Decimal]:
-        """Fetch current LTP for a symbol using Angel One's HTTP REST API as a fallback."""
+        """Fetch current LTP via Angel One's Market Quote REST API.
+
+        Uses /market/v1/quote/ (token-based) instead of /order/v1/getLtp
+        (WAF-blocked from server IPs). Requires MARKET_DATA subscription on
+        the API key — falls back gracefully if not available.
+        """
         try:
             import httpx
-            
+
             token_info = self._get_token_info(normalized)
             if not token_info:
                 return None
-                
+
             symbol_token = token_info.get("token")
             actual_exchange = token_info.get("exch_seg", "NSE")
-            api_symbol = token_info.get("_matched_key") or token_info.get("symbol") or normalized
-            
-            url = "https://apiconnect.angelone.in/rest/secure/angelbroking/order/v1/getLtp"
-            
+
+            if not symbol_token:
+                logger.debug(f"REST fallback: no token found for {normalized}")
+                return None
+
+            url = "https://apiconnect.angelone.in/rest/secure/angelbroking/market/v1/quote/"
             headers = {
                 "Authorization": f"Bearer {self.jwt_token}",
                 "Content-Type": "application/json",
@@ -713,39 +720,53 @@ class MarketDataService:
                 "X-MACAddress": "00:00:00:00:00:00",
                 "X-PrivateKey": self.api_key
             }
-            
             payload = {
-                "exchange": actual_exchange,
-                "tradingsymbol": api_symbol,
-                "symboltoken": symbol_token
+                "mode": "LTP",
+                "exchangeTokens": {actual_exchange: [str(symbol_token)]}
             }
-            
+
             async with httpx.AsyncClient(timeout=5.0) as client:
                 response = await client.post(url, json=payload, headers=headers)
-                if response.status_code == 200:
-                    # Guard against empty/non-JSON responses (e.g. market closed)
-                    if not response.content:
-                        logger.debug(f"REST LTP: empty body for {normalized} (market may be closed)")
-                        return None
-                    try:
-                        data = response.json()
-                    except Exception:
-                        logger.debug(f"REST LTP: non-JSON body for {normalized}")
-                        return None
-                    if data.get("status") and data.get("data"):
-                        ltp = data["data"].get("ltp")
-                        if ltp is not None:
-                            price = Decimal(str(ltp))
-                            # Cache the fetched price
-                            self._prices[normalized] = price
-                            if not normalized.endswith("-EQ"):
-                                self._prices[f"{normalized}-EQ"] = price
-                            else:
-                                self._prices[normalized[:-3]] = price
-                            logger.info(f"☎️ Fetched LTP via REST fallback for {normalized}: ₹{price}")
-                            return price
-                logger.warning(f"REST LTP fetch failed for {normalized}: Status {response.status_code}, Response: {response.text}")
+
+            if not response.content:
+                logger.debug(f"REST LTP: empty body for {normalized}")
                 return None
+            try:
+                data = response.json()
+            except Exception:
+                logger.debug(f"REST LTP: non-JSON body for {normalized}: {response.text[:100]}")
+                return None
+
+            if not data.get("status"):
+                logger.debug(
+                    f"REST LTP: API error for {normalized}: "
+                    f"{data.get('message')} ({data.get('errorcode')})"
+                )
+                return None
+
+            fetched = (data.get("data") or {}).get("fetched") or []
+            if fetched:
+                ltp = fetched[0].get("ltp")
+                if ltp is not None:
+                    price = Decimal(str(ltp))
+                    # Cache in all key formats
+                    self._prices[normalized] = price
+                    if not normalized.endswith("-EQ"):
+                        self._prices[f"{normalized}-EQ"] = price
+                    else:
+                        self._prices[normalized[:-3]] = price
+                    logger.info(f"☎️ REST fallback price for {normalized}: ₹{price}")
+                    return price
+
+            # Symbol was in 'unfetched' — market may be closed or token wrong
+            unfetched = (data.get("data") or {}).get("unfetched") or []
+            if unfetched:
+                logger.debug(
+                    f"REST LTP: {normalized} unfetched — "
+                    f"{unfetched[0].get('message')} ({unfetched[0].get('errorCode')})"
+                )
+            return None
+
         except Exception as e:
             logger.warning(f"Error fetching LTP via REST for {normalized}: {e}")
             return None
