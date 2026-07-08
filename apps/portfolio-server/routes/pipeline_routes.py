@@ -13,7 +13,7 @@ def create_pipeline_routes(
     server_dir: str
 ) -> APIRouter:
     """Create pipeline routes"""
-    router = APIRouter(prefix="/api/pipeline", tags=["pipeline"])
+    router = APIRouter(tags=["pipeline"])
     
     controller = PipelineController(pipeline_service, server_dir)
     
