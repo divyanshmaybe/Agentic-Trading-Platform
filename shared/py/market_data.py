@@ -99,6 +99,20 @@ class MarketDataService:
         self._connected = False
         self._token_map: Dict[str, Dict[str, any]] = {}
         self._init_done = False
+
+        # ── Active liveness detection ──────────────────────────────────────
+        # Track last pong/message time so a background watchdog can detect
+        # silent disconnects BEFORE a trade exit needs a price.
+        self._last_pong_at: float = time.time()          # updated on every WS message
+        self._last_tick_at: Dict[str, float] = {}        # per-symbol last data tick
+        self._liveness_task: Optional[asyncio.Task] = None
+
+        # Tuning constants
+        # 20s heartbeat beats typical 30s NAT/proxy idle-timeouts;
+        # mirrors Angel One SDK's own 10s heartbeat scaled to our env.
+        self.HEARTBEAT_INTERVAL: int = 20    # seconds between pings
+        self.LIVENESS_POLL_INTERVAL: int = 5 # how often watchdog checks health
+        self.TICK_STALE_SECONDS: int = 90    # force resubscribe if no tick for N s
         
         # Load token map (sync)
         self._load_token_map()
@@ -348,9 +362,12 @@ class MarketDataService:
         return matches
     
     async def _start_websocket(self):
-        """Start WebSocket connection in background"""
+        """Start WebSocket connection and liveness watchdog in background"""
         if self._ws_task is None or self._ws_task.done():
             self._ws_task = asyncio.create_task(self._websocket_loop())
+        # Launch the independent watchdog alongside the WS loop
+        if self._liveness_task is None or self._liveness_task.done():
+            self._liveness_task = asyncio.create_task(self._liveness_watchdog())
     
     async def _websocket_loop(self):
         """Main WebSocket connection loop with proper error handling"""
@@ -364,16 +381,27 @@ class MarketDataService:
             try:
                 async with websockets.connect(
                     ws_url,
-                    ping_interval=30,
+                    # Tuned to 20s to beat typical 30s NAT/proxy idle timeouts.
+                    # Angel One SDK itself uses a 10s heartbeat; 20s is a safe
+                    # middle ground for our containerised network path.
+                    ping_interval=self.HEARTBEAT_INTERVAL,
                     ping_timeout=10,
-                    close_timeout=10,  # Add close timeout
+                    close_timeout=5,
                 ) as ws:
                     self._ws = ws
                     self._connected = True
+                    # Reset liveness clock on every fresh connection so the
+                    # watchdog doesn't immediately fire after a reconnect.
+                    self._last_pong_at = time.time()
                     logger.info("✅ WebSocket connected")
                     
-                    # Subscribe to already requested symbols
+                    # Subscribe to already requested symbols and reset their
+                    # tick timestamps so the stale-tick watchdog doesn't fire
+                    # immediately for symbols that haven't sent a tick yet.
                     if self._subscribed:
+                        now = time.time()
+                        for sym in self._subscribed:
+                            self._last_tick_at[sym] = now
                         await self._subscribe_batch(list(self._subscribed), ws)
                     
                     # Listen for messages
@@ -384,31 +412,119 @@ class MarketDataService:
                 logger.warning(f"WebSocket closed: {e}, reconnecting in {reconnect_delay}s...")
                 self._connected = False
                 self._ws = None
-                # Gracefully close the connection
                 if ws:
                     try:
                         await asyncio.wait_for(ws.close(), timeout=2.0)
                     except Exception:
                         pass
                 await asyncio.sleep(reconnect_delay)
-                # Exponential backoff
-                reconnect_delay = min(reconnect_delay * 2, max_reconnect_delay)
+                # Exponential backoff with multiplier (mirrors Angel One SDK pattern)
+                reconnect_delay = min(reconnect_delay * 1.5, max_reconnect_delay)
             except Exception as e:
                 logger.error(f"WebSocket error: {e}, reconnecting in {reconnect_delay}s...")
                 self._connected = False
                 self._ws = None
-                # Gracefully close the connection
                 if ws:
                     try:
                         await asyncio.wait_for(ws.close(), timeout=2.0)
                     except Exception:
                         pass
                 await asyncio.sleep(reconnect_delay)
-                # Exponential backoff
-                reconnect_delay = min(reconnect_delay * 2, max_reconnect_delay)
+                reconnect_delay = min(reconnect_delay * 1.5, max_reconnect_delay)
             else:
-                # Successful connection - reset delay
+                # Clean exit — reset backoff delay
                 reconnect_delay = 5
+
+    async def _liveness_watchdog(self):
+        """
+        Background task that actively checks WebSocket health every
+        LIVENESS_POLL_INTERVAL seconds.
+
+        Two independent health signals are tracked:
+          1. last_pong_at  — is the TCP pipe still alive?
+             Dead if no pong received in > 2 * HEARTBEAT_INTERVAL seconds.
+          2. last_tick_at  — is data actually flowing per subscribed symbol?
+             A socket can be TCP-alive but silently deliver no ticks.
+             If a symbol's tick goes stale (>TICK_STALE_SECONDS during market
+             hours) we force a targeted resubscription for that symbol only.
+
+        This is the key architectural shift: reconnect detection happens on a
+        timer, not on-demand. By the time a trade exit needs a price the
+        reconnect is already done or in progress — not starting from zero.
+        """
+        logger.info(
+            "🛡️  Liveness watchdog started "
+            f"(poll={self.LIVENESS_POLL_INTERVAL}s, "
+            f"heartbeat={self.HEARTBEAT_INTERVAL}s, "
+            f"tick_stale={self.TICK_STALE_SECONDS}s)"
+        )
+        while True:
+            try:
+                await asyncio.sleep(self.LIVENESS_POLL_INTERVAL)
+
+                now = time.time()
+                silence = now - self._last_pong_at
+                dead_threshold = 2 * self.HEARTBEAT_INTERVAL
+
+                # ── Signal 1: pong-level liveness ─────────────────────────
+                if silence > dead_threshold:
+                    logger.warning(
+                        f"🔴 Liveness watchdog: no pong for {silence:.0f}s "
+                        f"(threshold={dead_threshold}s) — forcing reconnect now"
+                    )
+                    self._connected = False
+                    # Close the stale socket so _websocket_loop exits its
+                    # 'async for' and re-enters the reconnect path immediately.
+                    if self._ws:
+                        try:
+                            await asyncio.wait_for(self._ws.close(), timeout=2.0)
+                        except Exception:
+                            pass
+                        self._ws = None
+                    # Reset liveness clock so we don't trigger again while
+                    # the reconnect is still in progress.
+                    self._last_pong_at = now
+                    continue
+
+                # ── Signal 2: per-symbol tick staleness ───────────────────
+                # Only meaningful during NSE market hours (09:15 – 15:30 IST)
+                import datetime as _dt
+                utc_now = _dt.datetime.utcnow()
+                # IST = UTC+5:30
+                ist_hour = (utc_now.hour * 60 + utc_now.minute + 330) // 60 % 24
+                ist_minute = (utc_now.minute + 30) % 60
+                market_open = (ist_hour, ist_minute) >= (9, 15)
+                market_close = (ist_hour, ist_minute) <= (15, 30)
+                in_market_hours = market_open and market_close
+
+                if in_market_hours and self._connected and self._ws:
+                    stale_symbols = []
+                    for sym in list(self._subscribed):
+                        last = self._last_tick_at.get(sym, 0)
+                        if now - last > self.TICK_STALE_SECONDS:
+                            stale_symbols.append(sym)
+
+                    if stale_symbols:
+                        logger.warning(
+                            f"⚠️  Liveness watchdog: stale ticks for "
+                            f"{stale_symbols} — forcing resubscription"
+                        )
+                        # Reset timestamps first so we don't spam resubscribes
+                        for sym in stale_symbols:
+                            self._last_tick_at[sym] = now
+                        await self._subscribe_batch(stale_symbols, self._ws)
+                    else:
+                        logger.debug(
+                            f"💚 Liveness watchdog: connection healthy "
+                            f"(last pong {silence:.0f}s ago, "
+                            f"{len(self._subscribed)} symbols active)"
+                        )
+
+            except asyncio.CancelledError:
+                logger.info("Liveness watchdog cancelled")
+                return
+            except Exception as e:
+                logger.error(f"Liveness watchdog error: {e}", exc_info=True)
     
     async def _subscribe_batch(self, symbols: list, ws=None):
         """Subscribe to batch of symbols"""
@@ -457,9 +573,13 @@ class MarketDataService:
     
     async def _handle_message(self, message):
         """Handle WebSocket message"""
+        # Any incoming message (pong, tick, error) counts as proof the
+        # connection is alive — update the liveness clock immediately.
+        self._last_pong_at = time.time()
+
         if isinstance(message, str):
             if message == "pong":
-                logger.debug("Received pong")
+                logger.debug("Received pong (liveness clock updated)")
                 return
             # Try to parse JSON error messages
             try:
@@ -496,6 +616,8 @@ class MarketDataService:
                 # Also store without -EQ if it has it
                 if symbol_upper.endswith("-EQ"):
                     self._prices[symbol_upper[:-3]] = price
+                # Update per-symbol tick timestamp for stale-data watchdog
+                self._last_tick_at[symbol_upper] = time.time()
                 logger.debug(f"💰 {symbol_upper}: {price}")
             else:
                 logger.debug(f"Symbol not found for token {token}, exchange {exchange_type}")
@@ -601,7 +723,15 @@ class MarketDataService:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 response = await client.post(url, json=payload, headers=headers)
                 if response.status_code == 200:
-                    data = response.json()
+                    # Guard against empty/non-JSON responses (e.g. market closed)
+                    if not response.content:
+                        logger.debug(f"REST LTP: empty body for {normalized} (market may be closed)")
+                        return None
+                    try:
+                        data = response.json()
+                    except Exception:
+                        logger.debug(f"REST LTP: non-JSON body for {normalized}")
+                        return None
                     if data.get("status") and data.get("data"):
                         ltp = data["data"].get("ltp")
                         if ltp is not None:
