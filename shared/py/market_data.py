@@ -401,7 +401,13 @@ class MarketDataService:
                     if self._subscribed:
                         now = time.time()
                         for sym in self._subscribed:
+                            # Reset both key formats so the stale-tick watchdog
+                            # doesn't immediately fire right after a reconnect.
                             self._last_tick_at[sym] = now
+                            if sym.endswith("-EQ"):
+                                self._last_tick_at[sym[:-3]] = now
+                            else:
+                                self._last_tick_at[f"{sym}-EQ"] = now
                         await self._subscribe_batch(list(self._subscribed), ws)
                     
                     # Listen for messages
