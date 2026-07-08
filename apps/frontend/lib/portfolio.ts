@@ -538,3 +538,24 @@ export async function submitTrade(
     body: JSON.stringify(cleanedData),
   })
 }
+
+export async function getDemoModeStatus(token?: string): Promise<{ status: string; demo_mode: boolean }> {
+  const actualToken = resolveAccessToken(token)
+  return request<{ status: string; demo_mode: boolean }>("/api/pipeline/demo-mode", {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${actualToken}`,
+    },
+  })
+}
+
+export async function setDemoModeStatus(enabled: boolean, token?: string): Promise<{ status: string; demo_mode: boolean }> {
+  const actualToken = resolveAccessToken(token)
+  return request<{ status: string; demo_mode: boolean }>("/api/pipeline/demo-mode", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${actualToken}`,
+    },
+    body: JSON.stringify({ enabled }),
+  })
+}

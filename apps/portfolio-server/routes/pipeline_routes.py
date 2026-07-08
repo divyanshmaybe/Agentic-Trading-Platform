@@ -24,6 +24,25 @@ def create_pipeline_routes(
     ):
         """Get pipeline status (requires authentication)"""
         return await controller.get_status(request)
+
+    from pydantic import BaseModel
+    class DemoModeRequest(BaseModel):
+        enabled: bool
+
+    @router.get("/demo-mode")
+    async def get_demo_mode(
+        _: dict = Depends(get_authenticated_user),
+    ):
+        """Get dynamic demo mode status (requires authentication)"""
+        return await controller.get_demo_mode()
+
+    @router.post("/demo-mode")
+    async def set_demo_mode(
+        body: DemoModeRequest,
+        _: dict = Depends(get_authenticated_user),
+    ):
+        """Set dynamic demo mode status (requires authentication)"""
+        return await controller.set_demo_mode(body.enabled)
     
     return router
 

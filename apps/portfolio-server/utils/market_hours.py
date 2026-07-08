@@ -230,8 +230,9 @@ def enforce_market_hours(
     - NO EXCEPTIONS, NO FALLBACKS
     """
     if demo_mode is None:
+        from utils.demo_mode import is_demo_mode_enabled
         demo_mode = (
-            os.getenv("DEMO_MODE", "false").lower() in {"1", "true", "yes"} or
+            is_demo_mode_enabled() or
             os.getenv("CFDT_PAPER_TRADING_ONLY", "false").lower() in {"1", "true", "yes"} or
             os.getenv("NSE_TEST_MODE", "false").lower() in {"1", "true", "yes"}
         )

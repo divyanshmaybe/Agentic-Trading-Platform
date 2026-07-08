@@ -1,8 +1,8 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useParams } from "next/navigation"
-import { Loader2, Play, RotateCcw } from "lucide-react"
+import { Loader2, Play, RotateCcw, Zap, ZapOff } from "lucide-react"
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader"
 import { IntradayNotifications, IntradayTradesTable } from "@/components/intraday"
 import { PortfolioSnapshots } from "@/components/portfolio/PortfolioSnapshots"
@@ -13,6 +13,7 @@ import { useAuth } from "@/hooks/useAuth"
 import { AgentOverview } from "@/components/agent"
 import { useAgentDashboard } from "@/hooks/useAgentDashboard"
 import { resetDatabase } from "@/lib/admin"
+import { getDemoModeStatus, setDemoModeStatus } from "@/lib/portfolio"
 
 export default function IntradayCommandCenterPage() {
   const params = useParams()
@@ -20,11 +21,41 @@ export default function IntradayCommandCenterPage() {
   const [triggeringAgent, setTriggeringAgent] = useState(false)
   const [resetting, setResetting] = useState(false)
   const [showResetConfirm, setShowResetConfirm] = useState(false)
+  const [demoMode, setDemoMode] = useState(false)
+  const [togglingDemoMode, setTogglingDemoMode] = useState(false)
 
   // SECURE: Get user data from server-validated token, NOT localStorage
   const { user: authUser, loading: authLoading } = useAuth()
   
   const { data: agentData, loading: agentLoading, isAllocating } = useAgentDashboard("high_risk")
+
+  // Fetch current Demo Mode state on mount
+  useEffect(() => {
+    const fetchDemoMode = async () => {
+      try {
+        const res = await getDemoModeStatus()
+        setDemoMode(res.demo_mode)
+      } catch (err) {
+        console.error("Failed to load demo mode status:", err)
+      }
+    }
+    fetchDemoMode()
+  }, [])
+
+  // Handle toggling Demo Mode
+  const handleToggleDemoMode = async () => {
+    setTogglingDemoMode(true)
+    try {
+      const nextState = !demoMode
+      const res = await setDemoModeStatus(nextState)
+      setDemoMode(res.demo_mode)
+    } catch (err) {
+      console.error("Failed to toggle demo mode:", err)
+      alert(err instanceof Error ? err.message : "Failed to change demo mode")
+    } finally {
+      setTogglingDemoMode(false)
+    }
+  }
 
   // Handle resetting database
   const handleResetDatabase = async () => {
@@ -145,6 +176,26 @@ export default function IntradayCommandCenterPage() {
                   Reset Portfolio
                 </Button>
               )}
+
+              {/* Dynamic Demo Mode Toggle Button */}
+              <Button
+                onClick={handleToggleDemoMode}
+                disabled={togglingDemoMode || triggeringAgent || resetting}
+                className={`transition-all duration-300 border ${
+                  demoMode
+                    ? "border-sky-500/40 bg-sky-500/20 text-sky-100 hover:bg-sky-500/30 shadow-[0_0_12px_rgba(14,165,233,0.15)]"
+                    : "border-zinc-700 bg-zinc-800/40 text-zinc-400 hover:bg-zinc-800/80 hover:text-zinc-300"
+                }`}
+              >
+                {togglingDemoMode ? (
+                  <Loader2 className="mr-2 size-4 animate-spin" />
+                ) : demoMode ? (
+                  <Zap className="mr-2 size-4 fill-sky-300 text-sky-300 animate-pulse" />
+                ) : (
+                  <ZapOff className="mr-2 size-4" />
+                )}
+                {demoMode ? "Demo Mode: ON" : "Demo Mode: OFF"}
+              </Button>
 
               {/* Trigger Agent Button */}
               <Button

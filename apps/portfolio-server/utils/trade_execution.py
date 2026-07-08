@@ -393,7 +393,8 @@ def prepare_trade_execution_payloads(
             
             # If still no price, skip signal instead of using synthetic defaults
             if reference_price <= 0:
-                demo_mode = os.getenv("DEMO_MODE", "false").lower() in {"1", "true", "yes"}
+                from utils.demo_mode import is_demo_mode_enabled
+                demo_mode = is_demo_mode_enabled()
                 logger.error(
                     "❌ No price available for %s (DEMO_MODE=%s). Skipping signal; ensure market data is reachable.",
                     signal.symbol,

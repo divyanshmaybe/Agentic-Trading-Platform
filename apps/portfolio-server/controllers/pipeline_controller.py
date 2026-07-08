@@ -40,3 +40,20 @@ class PipelineController:
             "pipeline": status,
         }
 
+    async def get_demo_mode(self) -> Dict[str, Any]:
+        """Get current dynamic demo mode status"""
+        from utils.demo_mode import is_demo_mode_enabled
+        return {
+            "status": "success",
+            "demo_mode": is_demo_mode_enabled(),
+        }
+
+    async def set_demo_mode(self, enabled: bool) -> Dict[str, Any]:
+        """Set dynamic demo mode status"""
+        from utils.demo_mode import set_demo_mode as set_demo_mode_util
+        set_demo_mode_util(enabled)
+        return {
+            "status": "success",
+            "demo_mode": enabled,
+        }
+

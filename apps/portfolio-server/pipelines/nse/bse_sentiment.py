@@ -101,9 +101,8 @@ MARKET_CLOSE = (15, 30)
 MARKET_CLOSE_BUFFER_MINUTES = int(os.getenv("NSE_FILINGS_MARKET_CLOSE_BUFFER_MINUTES", "15"))
 AUTO_SELL_WINDOW_MINUTES = int(os.getenv("NSE_FILINGS_AUTO_SELL_WINDOW_MINUTES", "30"))
 LLM_MODEL = os.getenv("NSE_FILINGS_LLM_MODEL", "gemini-3.1-flash-lite")
-DEMO_MODE = os.getenv("DEMO_MODE", "true").lower() in {"1", "true", "yes"}  # Default: true for 24/7 signal generation
-print(f"[DEBUG] DEMO_MODE environment variable: '{os.getenv('DEMO_MODE', 'NOT_SET')}'")
-print(f"[DEBUG] DEMO_MODE parsed value: {DEMO_MODE}")
+from utils.demo_mode import is_demo_mode_enabled
+print(f"[DEBUG] Dynamic DEMO_MODE value loaded: {is_demo_mode_enabled()}")
 
 # Relevant filing types to filter and process
 RELEVANT_FILE_TYPES = {
@@ -639,7 +638,7 @@ def fetch_stock_data(symbol: str, filing_time: str) -> str:
 
         # Show market status for logging/monitoring
         if not market_open:
-            if DEMO_MODE:
+            if is_demo_mode_enabled():
                 msg = f"🔴 {market_status_msg} for {symbol} 🔵 BUT DEMO_MODE ENABLED - Processing anyway"
                 print(f"[MARKET] {msg}")
                 logging.info(msg)
@@ -658,7 +657,7 @@ def fetch_stock_data(symbol: str, filing_time: str) -> str:
         market_close_time = datetime.strptime(f"{MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d}", "%H:%M").time()
         market_open = market_open_time <= current_time <= market_close_time
 
-        if not market_open and not DEMO_MODE:
+        if not market_open and not is_demo_mode_enabled():
             msg = f"Market closed (NSE hours: {MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d} - {MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST)"
             logging.warning(msg)
             return msg
@@ -1465,16 +1464,6 @@ def create_bse_filings_pipeline(
 
         # Keep the streaming graph alive when started before market open.
         # Per-filing market-hours checks run when each filing is processed.
-
-    # Log market status at pipeline start (only if market is open)
-    if DEMO_MODE:
-        market_status = f"🟢 MARKET OPEN (NSE: {MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d}-{MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST, Current: {current_time.strftime('%H:%M:%S')} IST) 🔵 DEMO MODE ENABLED"
-        print(f"[MARKET] {market_status}")
-        logging.info(market_status)
-    elif is_market_open:
-        market_status = f"🟢 MARKET OPEN - NSE trading hours: {MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d} - {MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST. Current time: {current_time.strftime('%H:%M:%S')} IST"
-        print(f"[MARKET] {market_status}")
-        logging.info(market_status)
     else:
         market_status = f"🔴 MARKET CLOSED - NSE hours: {MARKET_OPEN[0]}:{MARKET_OPEN[1]:02d} - {MARKET_CLOSE[0]}:{MARKET_CLOSE[1]:02d} IST. Current time: {current_time.strftime('%H:%M:%S')} IST. Skipping signal processing."
         print(f"[MARKET] {market_status}")
