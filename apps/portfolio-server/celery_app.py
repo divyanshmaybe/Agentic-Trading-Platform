@@ -252,7 +252,7 @@ celery_app.conf.task_routes = {
     "trading.execute_trade_job": {"queue": QUEUE_NAMES["trading"], "routing_key": "trading"},
     # Signal processing goes to trading queue (not pipelines - that's blocked by streaming pipeline)
     "pipeline.trade_execution.process_signal": {"queue": QUEUE_NAMES["trading"], "routing_key": "trading"},
-    "pipeline.bse.process_filing": {"queue": QUEUE_NAMES["general"], "routing_key": "general"},
+    "pipeline.bse.process_filing": {"queue": QUEUE_NAMES["nse_pipeline"], "routing_key": "nse_pipeline"},
     # NSE pipeline gets dedicated queue (1 worker max)
     "pipeline.start": {"queue": QUEUE_NAMES["nse_pipeline"], "routing_key": "nse_pipeline"},
     # News pipeline gets dedicated queue (1 worker max)

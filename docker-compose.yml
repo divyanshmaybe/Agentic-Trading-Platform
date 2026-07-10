@@ -126,6 +126,8 @@ services:
       retries: 5
     networks:
       - agentInvest
+    profiles:
+      - disabled
 
   # Auth Server Application
   auth_server:
@@ -305,7 +307,7 @@ services:
                  echo 'Waiting for Postgres...';
                  sleep 2;
                done &&
-               celery -A celery_app:celery_app worker --loglevel=info -Q nse_pipeline --concurrency=1 --hostname=nse_pipeline@%h --max-tasks-per-child=10 --prefetch-multiplier=1"
+               celery -A celery_app:celery_app worker --loglevel=info -Q nse_pipeline --concurrency=2 --hostname=nse_pipeline@%h --max-tasks-per-child=10 --prefetch-multiplier=1"
     ports:
       - "9102:9102"
     volumes:
@@ -363,6 +365,8 @@ services:
         condition: service_healthy
     networks:
       - agentInvest
+    profiles:
+      - disabled
 
   # Celery Worker - Low Risk Pipeline Queue (Low-risk stock selection - dedicated, 1 worker, long-running)
   portfolio_celery_low_risk:
@@ -404,6 +408,8 @@ services:
         condition: service_healthy
     networks:
       - agentInvest
+    profiles:
+      - disabled
 
   # Celery Worker - Market Queue (Market data & token management)
   portfolio_celery_market:
@@ -566,6 +572,8 @@ services:
         condition: service_healthy
     networks:
       - agentInvest
+    profiles:
+      - disabled
 
   # Celery Beat (Scheduler for periodic tasks)
   portfolio_celery_beat:
@@ -601,17 +609,11 @@ services:
         condition: service_started
       portfolio_celery_nse_pipeline:
         condition: service_started
-      portfolio_celery_news_pipeline:
-        condition: service_started
-      portfolio_celery_low_risk:
-        condition: service_started
       portfolio_celery_market:
         condition: service_started
       portfolio_celery_general:
         condition: service_started
       portfolio_celery_streaming:
-        condition: service_started
-      portfolio_celery_regime:
         condition: service_started
     networks:
       - agentInvest
@@ -786,6 +788,8 @@ services:
       start_period: 30s
     networks:
       - agentInvest
+    profiles:
+      - disabled
 
   # AlphaCopilot Celery Worker (Backtest Processing)
   alphacopilot_celery:
@@ -811,6 +815,8 @@ services:
         condition: service_started
     networks:
       - agentInvest
+    profiles:
+      - disabled
 
   # Optional: Redis Commander (Redis GUI)
   redis-commander:
@@ -1053,6 +1059,20 @@ services:
     networks:
       - agentInvest
 
+  # MongoDB Database (Local)
+  mongodb:
+    image: mongo:6-jammy
+    container_name: portfolio_mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - agentInvest
+    profiles:
+      - disabled
+
 networks:
   agentInvest:
     driver: bridge
@@ -1080,3 +1100,6 @@ volumes:
     driver: local
   portfolio_prisma_cache:
     driver: local
+  mongodb_data:
+    driver: local
+

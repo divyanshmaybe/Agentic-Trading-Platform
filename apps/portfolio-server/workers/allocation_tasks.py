@@ -119,14 +119,34 @@ async def _get_user_subscriptions(db: Any, user_id: Optional[str]) -> Set[str]:
     if not user_id:
         return set()
 
-    try:
-        rows = await db.query_raw(
-            "SELECT subscriptions FROM users WHERE id = $1",
-            user_id,
-        )
-    except Exception as exc:  # pragma: no cover - defensive logging
-        logger.warning("Failed to fetch subscriptions for user %s: %s", user_id, exc)
-        return set()
+    import os
+    from prisma import Prisma
+    auth_db_url = os.getenv("AUTH_DATABASE_URL")
+    
+    rows = []
+    if auth_db_url:
+        try:
+            # Query the auth database directly
+            auth_db = Prisma(datasource={"url": auth_db_url})
+            await auth_db.connect()
+            rows = await auth_db.query_raw(
+                "SELECT subscriptions FROM users WHERE id = $1",
+                user_id,
+            )
+            await auth_db.disconnect()
+        except Exception as exc:
+            logger.warning("Failed to fetch subscriptions from auth database for user %s: %s", user_id, exc)
+            auth_db_url = None
+            
+    if not auth_db_url:
+        try:
+            rows = await db.query_raw(
+                "SELECT subscriptions FROM users WHERE id = $1",
+                user_id,
+            )
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning("Failed to fetch subscriptions for user %s: %s", user_id, exc)
+            return set()
 
     if not rows:
         return set()
@@ -282,6 +302,10 @@ async def _ensure_trading_agent(
     subscriptions = user_subscriptions or set()
     auto_trade_enabled = subscription_key in subscriptions
     
+    # Force high risk agent to be always active and auto-trade
+    if normalized_type == "high_risk":
+        auto_trade_enabled = True
+    
     agent_name = " ".join(part.capitalize() for part in normalized_type.replace("_", " ").split())
     if agent_name and "agent" not in agent_name.lower():
         agent_name = f"{agent_name} Agent"
@@ -310,7 +334,9 @@ async def _ensure_trading_agent(
     
     # If this is NOT a subscription sync, and agent is already active with auto_trade, keep it active
     # Don't let rebalancing or other operations pause active trading agents
-    if not is_subscription_sync and existing_status == "active" and existing_auto_trade:
+    if normalized_type == "high_risk":
+        status = "active"
+    elif not is_subscription_sync and existing_status == "active" and existing_auto_trade:
         status = "active"
     else:
         # Only update status for subscription syncs or when creating new agents
