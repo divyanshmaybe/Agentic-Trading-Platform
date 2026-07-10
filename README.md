@@ -1,24 +1,24 @@
 # Agentic Trading Platform
 
-A multi-service trading research and automation platform for turning market disclosures, news, portfolio objectives, and quantitative signals into monitored paper-trading workflows.
+A multi-service platform for trading research, signal processing, portfolio automation, and monitored paper-trading workflows.
 
 The project is built around one core question:
 
-> How can an investor react to market-moving information quickly without manually reading every filing, news item, price tick, and portfolio risk update?
+> How can market disclosures, news, portfolio data, and trading signals be processed in a structured and auditable way?
 
-This repository is not a brokerage product and is not investment advice. It is a backend-heavy platform for research, simulation, signal generation, portfolio automation, and trade-execution orchestration.
+This repository is not a brokerage product and is not investment advice. It is a backend-focused system for research, simulation, signal generation, portfolio automation, and trade execution workflows.
 
 ## Problem We Are Solving
 
-Indian markets are becoming more digital and more retail-driven. Demat accounts crossed the 20 crore mark in 2025, and NSE reported over 11 crore unique registered investors around the same period. More participation creates a harder information problem: there are more investors trying to act on public information, but public information arrives as noisy filings, announcements, market data, news, and portfolio changes.
+Indian markets are becoming more digital, and retail participation has increased significantly. Demat accounts crossed the 20 crore mark in 2025, and NSE reported over 11 crore unique registered investors around the same period. This creates a practical information problem: public market information is available, but it is spread across filings, announcements, news, market data, and portfolio records.
 
-The pain points this project focuses on:
+This project focuses on the following problems:
 
-- Corporate announcements are public, but not immediately useful. Someone still has to detect, classify, read, and interpret them.
-- Retail and semi-professional investors cannot monitor filings, news, live prices, risk, and allocation manually all day.
+- Corporate announcements are public, but they still need to be detected, classified, read, and interpreted.
+- Investors cannot manually monitor filings, news, live prices, risk, and allocation changes throughout the day.
 - Trading decisions need guardrails: position sizing, opt-in controls, paper/live execution modes, stop-loss logic, audit logs, and monitoring.
-- ML or LLM signals are not enough by themselves. They need to become explainable, traceable backend workflows.
-- A real trading system is distributed: APIs, workers, queues, databases, market feeds, broker integrations, and observability must work together.
+- ML or LLM outputs need to be converted into traceable backend workflows before they can be used safely.
+- Trading systems require multiple services to work together: APIs, workers, queues, databases, market feeds, broker integrations, and monitoring.
 
 External context:
 
@@ -27,9 +27,9 @@ External context:
 - [BSE corporate announcements](https://www.bseindia.com/corporates/ann.html)
 - [SEBI investor protection and market regulation](https://www.sebi.gov.in/)
 
-## How This Project Tackles It
+## Approach
 
-The platform combines backend services, stream/event processing, LLM-based reasoning, and portfolio execution controls.
+The platform combines backend services, event processing, LLM-based analysis, quantitative logic, and portfolio execution controls.
 
 At a high level:
 
@@ -44,7 +44,7 @@ Market disclosures/news/market data
   -> frontend dashboards and notifications
 ```
 
-The important idea is not just "generate a signal." The system tries to handle the full path:
+The system covers the full path from input data to monitored execution:
 
 1. Detect relevant information.
 2. Convert it into a structured signal.
@@ -52,19 +52,19 @@ The important idea is not just "generate a signal." The system tries to handle t
 4. Size the position.
 5. Execute or simulate the trade.
 6. Track positions, risk, and logs.
-7. Expose the result to dashboards and monitoring.
+7. Show the result in dashboards, logs, and monitoring tools.
 
 ## Main Capabilities
 
 ### Filings-Driven Trading
 
-The codebase has an older "NSE pipeline" naming convention, but the current live filings path mainly uses BSE corporate announcements feeding the same high-risk trade execution flow.
+The codebase has an older "NSE pipeline" naming convention. The current live filings path mainly uses BSE corporate announcements, which feed into the same high-risk trade execution flow.
 
 The filings pipeline:
 
 - polls exchange announcements,
-- detects high-priority order-win or "bagging" announcements,
-- processes other relevant filings through a colder LLM path,
+- detects relevant order-win or "bagging" announcements,
+- processes other relevant filings through an LLM analysis path,
 - creates structured BUY/SELL/HOLD-style signals,
 - routes actionable signals into Celery,
 - sizes trades for active high-risk trading agents,
@@ -76,18 +76,18 @@ For the current implementation details, read:
 - [.codex/NSE_PIPELINE_CONTEXT.md](.codex/NSE_PIPELINE_CONTEXT.md)
 - [docs/NSE_AUTOMATED_TRADING.md](docs/NSE_AUTOMATED_TRADING.md)
 
-### Portfolio And Agent Automation
+### Portfolio and Agent Automation
 
 The backend models portfolios as capital controlled by different strategy agents:
 
-- `high_risk` agents for filing-driven short-term opportunities,
+- `high_risk` agents for filing-driven short-term trades,
 - `low_risk` pipelines for conservative stock selection,
 - `alpha` agents for AlphaCopilot-generated strategy ideas,
 - allocation and rebalancing services for portfolio-level decisions.
 
 ### Trade Execution
 
-Trade execution is handled as a backend workflow, not as a direct button click.
+Trade execution is handled as a backend workflow rather than a standalone action.
 
 Key safety controls include:
 
@@ -103,11 +103,11 @@ Key safety controls include:
 
 ### AlphaCopilot
 
-AlphaCopilot is the research side of the platform. It supports AI-assisted hypothesis generation and backtesting using the `quant-stream` library.
+AlphaCopilot supports research workflows such as hypothesis generation and backtesting using the `quant-stream` library.
 
 ### Observability
 
-The repo includes monitoring hooks for:
+The repository includes monitoring support for:
 
 - Celery queues,
 - FastAPI metrics,
@@ -184,7 +184,7 @@ scripts/                 Operational helper scripts
 
 ## Current Local Setup
 
-Docker Compose is the preferred setup path for this repo. The old VM-specific instructions have been removed from this README because they do not match the current local workflow.
+Docker Compose is the preferred setup path for this repository. Older VM-specific instructions have been removed from this README because they do not match the current local workflow.
 
 ### Prerequisites
 
@@ -225,7 +225,7 @@ Minimum values to check:
 - optional SendGrid key,
 - optional Angel One credentials.
 
-For development safety, keep live trading disabled unless you are deliberately testing broker execution:
+For development, keep live trading disabled unless broker execution is being tested intentionally:
 
 ```env
 ANGELONE_TRADING_ENABLED=false
@@ -234,13 +234,13 @@ CFDT_PAPER_TRADING_ONLY=true
 
 ### 3. Start The Platform
 
-Use Docker Compose directly:
+Start the services with Docker Compose:
 
 ```bash
 docker compose up -d
 ```
 
-Or use the helper script if your shell supports it:
+You can also use the helper script if your shell supports it:
 
 ```bash
 ./docker.sh start
@@ -284,7 +284,7 @@ docker compose logs -f auth_server
 
 ## Local Development Without Full Docker
 
-Use this only when actively editing a service and you already have PostgreSQL, Redis, and Kafka running.
+Use this path only when actively editing a service and PostgreSQL, Redis, and Kafka are already running.
 
 Start app servers:
 
@@ -326,9 +326,9 @@ cd apps/auth_server
 pnpm test
 ```
 
-## Important Backend Flows To Study
+## Important Backend Flows to Study
 
-If you are learning this codebase, study in this order:
+If you are learning the codebase, use this order:
 
 1. `apps/auth_server/server.ts`
    - authentication, Express middleware, Prisma access
@@ -355,7 +355,7 @@ If you are learning this codebase, study in this order:
    - current exchange announcement ingestion
 
 9. `apps/portfolio-server/pipelines/nse/bse_sentiment.py`
-   - cold-path LLM signal generation
+   - LLM-based signal generation for relevant filings
 
 10. `apps/notification_server/src`
     - Kafka notification consumption
@@ -397,11 +397,11 @@ pnpm format
 
 ## Safety Notes
 
-- Keep paper trading enabled by default.
+- Keep paper trading enabled by default during development.
 - Do not commit real broker, database, JWT, SendGrid, or LLM secrets.
-- Treat exchange filings and LLM output as signals, not guaranteed truth.
+- Treat exchange filings and LLM output as inputs for review, not guaranteed truth.
 - Verify all trading changes with tests and paper execution before considering live mode.
-- This project is for research and controlled demonstrations unless explicit production controls are added and reviewed.
+- This project is for research and controlled demonstrations unless production controls are added and reviewed.
 
 ## License
 
